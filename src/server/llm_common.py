@@ -166,29 +166,39 @@ def resolve_api_key(provider, api_key, base_url="", wide_go=False, deepseek_last
 
 # ====== 思考程度 → 上游请求参数（src/main.py 与 harness/review.py 共用）======
 
-def thinking_request_params(provider: str, level: str) -> dict:
+# 智谱 5.x 代模型（glm-5.3 / glm-5.3-flash / 后续 glm-6…）：思考恒开不可关，
+# 强度走 reasoning_effort low/high/max（docs.bigmodel.cn GLM-5.3 页，2026-10-25 检索；
+# thinking.type: "disabled" 对这些模型是非法值——上游整请求 400）
+_ZHIPU_EFFORT_MODEL_RE = re.compile(r"glm-[5-9](\.|$)")
+
+
+def thinking_request_params(provider: str, level: str, model: str = "") -> dict:
     """「思考程度」→ 上游请求参数（纯函数，tests 直测）。
 
-    用户档位 default('')/low/high/max：default 不发送任何思考参数——现状行为
-    零变化。各家 OpenAI 兼容端点的思考字段不统一：OpenAI 系（含 Gemini/
-    OpenRouter/Groq/自定义网关）用 reasoning_effort，千问百炼用 enable_thinking，
-    智谱/MiMo 用 thinking.type，Ollama 用 think。reasoning_effort 只有 low/medium/high
-    三档，low/high/max 按序拉伸映射（low→low、high→medium、max→high），
-    三档在每个 reasoning_effort 供应商上都有区分度；布尔开关族（qwen/zhipu/
-    ollama/mimo）三档同为「开启」。
+    各家 OpenAI 兼容端点的思考字段不统一：OpenAI 系（含 Gemini/OpenRouter/
+    Groq/自定义网关）用 reasoning_effort，千问百炼用 enable_thinking，
+    智谱/MiMo 用 thinking.type，Ollama 用 think。
 
-    2026-10-11 起 on/off 是正式取值（配置界面按供应商给档）：布尔族 on/off 直发
-    enabled/disabled，旧档位 low/high/max 在布尔族仍按「开」兼容，''（default）
-    依旧不发参数。effort 族同日起 off 也表达「关」：发 reasoning_effort "none"
-    （OpenAI 官方取值，gpt-5.1 起；Gemini 兼容层映射到关思考），模型不支持的
-    端点整请求 400 → 调用方剥参降级重试一次，最坏退化＝不发参数跟随模型默认；
-    on 对 effort 族无意义（不存在「比默认更开」），不发参数。
-    上游不认识注入字段而拒绝整个请求时，由调用方
-    剥掉参数降级重试一次（主应用与 harness 各有一级——后者是 2026-09-30 接入的
-    相位档位，Φ 的 evaluate/preset/apply 深、chat 浅，见 harness/review.py
-    PHASE_THINKING）。
+    2026-10-25 起档位语义按「滑块档＝真实 API 值」对齐（滑块去掉「跟随默认」档，
+    见 models-api.md 当日节）：effort 族 off/low/medium/high 分别发
+    reasoning_effort none/low/medium/high（low/medium/high 是 OpenAI 官方三档，
+    一一对应；旧档位 max 是历史遗留，仍按最高可用档发 high——新界面不再提供
+    max 档）。布尔开关族（qwen/zhipu 旧代/ollama/mimo）on/off 直发
+    enabled/disabled，旧档位 low/high/max 仍按「开」兼容，''（default）依旧
+    不发参数——存储里的 '' 语义没动，只是界面不再展示。
+
+    智谱特例（model 参数识别）：glm-5.x 起思考恒开、thinking.type 仅支持
+    enabled，强度改走 reasoning_effort low/high/max（官方默认 max，与用户档位
+    一一同名直发）；off 发不出（不发参数，退化＝默认 max），on 发
+    thinking.type enabled 兼容。旧代（glm-4.x 等）走布尔开关不变。
+
+    on 对 effort 族无意义（不存在「比默认更开」），不发参数。上游不认识注入
+    字段而拒绝整个请求时，由调用方剥掉参数降级重试一次（主应用与 harness 各
+    有一级——后者是 2026-09-30 接入的相位档位，Φ 的 evaluate/preset/apply 深、
+    chat 浅，见 harness/review.py PHASE_THINKING）。
     """
     p = (provider or "").strip().lower()
+    level = (level or "").strip().lower()
     boolean_on = level in ("low", "high", "max", "on")
     boolean_off = level == "off"
     if p == "qwen":
@@ -196,6 +206,15 @@ def thinking_request_params(provider: str, level: str) -> dict:
             return {"enable_thinking": False}
         if boolean_on:
             return {"enable_thinking": True}
+        return {}
+    if p == "zhipu" and _ZHIPU_EFFORT_MODEL_RE.match((model or "").strip().lower()):
+        # 智谱 5.x：reasoning_effort low/high/max 同名直发（官方就这三档，默认 max）
+        if level in ("low", "high", "max"):
+            return {"reasoning_effort": level}
+        if level == "on":
+            return {"thinking": {"type": "enabled"}}
+        if level == "off":
+            return {}  # 思考关不掉：不发参数（退化＝默认 max），不发自欺的 disabled
         return {}
     if p in ("zhipu", "mimo"):
         if boolean_off:
@@ -213,8 +232,10 @@ def thinking_request_params(provider: str, level: str) -> dict:
         # effort 族「关」：reasoning_effort none（OpenAI gpt-5.1+ 正式取值）；
         # 不支持的模型/网关整请求 400 → 调用方剥参重发，退化＝跟随模型默认
         return {"reasoning_effort": "none"}
-    if level in ("low", "high", "max"):
-        return {"reasoning_effort": {"low": "low", "high": "medium", "max": "high"}[level]}
+    if level in ("low", "medium", "high", "max"):
+        # max＝历史遗留档（旧「最深」）：OpenAI 系最高可用档是 high（xhigh 仅
+        # 个别新模型支持，发不出去会被剥参退化成默认，比 high 更差——不冒险）
+        return {"reasoning_effort": "high" if level == "max" else level}
     return {}
 
 

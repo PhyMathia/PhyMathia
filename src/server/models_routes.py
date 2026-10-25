@@ -85,13 +85,15 @@ def _chat_request_headers(provider: str, api_key: str, base_url: str, session_id
     return headers
 
 
-def _thinking_request_params(provider: str, level: str) -> dict:
+def _thinking_request_params(provider: str, level: str, model: str = "") -> dict:
     """「思考程度」→ 上游请求参数（薄包装）。
 
     唯一实现已下沉 llm_common.thinking_request_params（2026-09-30，Φ 智能体
     按相位接同一张表）；此处保留同名函数，调用方与直测它的用例零改动。
+    model 参数（2026-10-25）供智谱 5.x 分支识别模型代次——glm-5.x 强度走
+    reasoning_effort、思考关不掉，旧代仍布尔开关。
     """
-    return llm_common.thinking_request_params(provider, level)
+    return llm_common.thinking_request_params(provider, level, model)
 
 
 def _log_cache_hit_rate(usage) -> None:
@@ -444,7 +446,7 @@ async def api_models_chat(request: Request):
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="max_tokens must be an integer")
     # 思考程度（模型配置弹窗按条目设置）：仅显式选择时注入对应供应商的思考参数
-    thinking_params = _thinking_request_params(provider, str(payload.get("thinking") or ""))
+    thinking_params = _thinking_request_params(provider, str(payload.get("thinking") or ""), model_name)
     if thinking_params:
         body.update(thinking_params)
 
@@ -1044,7 +1046,7 @@ async def api_fix_formula(request: Request):
     body = {"model": model, "messages": msgs, "stream": False, "temperature": 0.0}
     # 思考档跟实际被用的槽走（前端按槽传档，同主聊天的 payload.thinking 口径）；
     # 供应商不认识思考参数（整请求 400）时剥掉重发一次——小任务不能被配错档弄坏
-    thinking_params = _thinking_request_params(provider, str(payload.get("thinking") or ""))
+    thinking_params = _thinking_request_params(provider, str(payload.get("thinking") or ""), model)
     if thinking_params:
         body.update(thinking_params)
     headers = _chat_request_headers(provider, api_key, base_url, "fix-formula")
