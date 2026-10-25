@@ -41,6 +41,9 @@ const entries = [
   'graph-render-preview.js',
   'graph-interact.js',
   'graph-custom.js',
+  // 节点全屏划词快捷工具（2026-10-25）：选区/消息监听自带、画布函数运行期 typeof
+  // 守卫调用，加载期零副作用；放 graph-custom 之后取其全屏/预览页挂接点
+  'node-fs-toolbar.js',
   'graph-recipe-edit.js',
   // 工作流族（2026-10-10 自 graph-workflow.js 拆出，T261 纯搬家；2026-10-24 T397 再拆
   // 流式/生成/执行/入口与 graph-events 五件，同为纯搬家）：主件留尾部——其尾部
