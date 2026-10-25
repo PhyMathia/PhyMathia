@@ -482,7 +482,9 @@ function startWrongQuiz() {
 
 function startReviewQuiz() {
   if (!quizState || !quizState.pool) return;
-  const review = _quizStatSummary().review;
+  const summary = _quizStatSummary();
+  // 待复习清单按全量取（reviewAll），不只看结果页展示的前 8 条
+  const review = (summary.reviewAll && summary.reviewAll.length) ? summary.reviewAll : summary.review;
   const dueKeys = new Set(review.map(item => item.key));
   const candidates = [
     ...(quizState.questions || []),
