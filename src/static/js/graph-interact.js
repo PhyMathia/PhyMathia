@@ -794,7 +794,9 @@ function submitDraftQuestion(nodeId) {
   const node = _findDraftNode(nodeId);
   if (!node) return;
   const input = graphInner?.querySelector('[data-node-id="' + nodeId + '"] .graph-draft-input');
-  const text = (input?.value || '').trim();
+  // 框里空着＝采用灰色建议问题（placeholder 只是提示，不算已输入）；两者皆空才不动作
+  const text = (input?.value || '').trim()
+    || (typeof _draftSuggestionText === 'function' ? _draftSuggestionText(node).trim() : '');
   if (!text) return;
   const meta = node.portMeta || {};
   const sourceNodeId = _findDraftSourceNodeId(nodeId);

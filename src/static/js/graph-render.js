@@ -272,6 +272,15 @@ function _draftPrefill(meta) {
   return meta.question || '';
 }
 
+// 草稿框的建议问题：灰色占位提示与空发回落共用这一份（渲染在 _renderDraftNodeHtml、
+// 回落在 submitDraftQuestion）；进阶学习支线沿用「请详细讲解：」前缀
+function _draftSuggestionText(node) {
+  const meta = node.portMeta || {};
+  return meta.type === 'learn'
+    ? '请详细讲解：' + (meta.question || '')
+    : _draftPrefill(meta);
+}
+
 function _renderDraftNodeHtml(node) {
   const meta = node.portMeta || {};
   const attr = _nodeAttribute(node);
@@ -287,15 +296,13 @@ function _renderDraftNodeHtml(node) {
       + '</div></div>';
   } else {
     // T152：草稿输入的真身在节点对象（draftInput，输入即写回、随重渲存活），
-    // textarea 只是视图——有 draftInput 时（含用户主动清空的空串）不再回落
-    // 端口预填，否则一次全量重渲就把已打的字顶回预填
-    const prefill = typeof node.draftInput === 'string'
-      ? node.draftInput
-      : (isLearn
-        ? '请详细讲解：' + (meta.question || '')
-        : _draftPrefill(meta));
+    // textarea 只是视图——值恒取 draftInput（含用户主动清空的空串），不回落
+    // 端口预填，否则一次全量重渲就把已打的字顶回预填。建议问题只作灰色
+    // 占位提示（placeholder，点进去自动消失），空着发送时由 submitDraftQuestion 回落
+    const suggestion = _draftSuggestionText(node);
+    const value = typeof node.draftInput === 'string' ? node.draftInput : '';
     body = '<div class="graph-draft-body">'
-      + '<textarea class="graph-draft-input" rows="3" oninput="draftInputChanged(\'' + node.id + '\', this.value)">' + escapeHtml(prefill) + '</textarea>'
+      + '<textarea class="graph-draft-input" rows="3" placeholder="' + escapeHtml(suggestion) + '" oninput="draftInputChanged(\'' + node.id + '\', this.value)">' + escapeHtml(value) + '</textarea>'
       + '<button class="graph-draft-btn graph-draft-send" onclick="submitDraftQuestion(\'' + node.id + '\')">发送提问</button>'
       + '</div>';
   }

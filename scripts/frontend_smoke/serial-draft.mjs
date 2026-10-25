@@ -7,8 +7,8 @@ import { check, drain, addFailed, code, sandbox, vm, fs, loose, localStorage, st
 export function run() {
 // ===== 串行边界追加：追问草稿卡重渲保字（T152，2026-10-05）=====
 // 全程同步、只在 vm 沙箱里用假节点，不碰共享键——追加在串行边界之后安全。
-check('追问草稿卡渲染取值（T152）：draftInput 优先、空串不回落预填、无值保留预填', () => {
-  // 本用例断言的是取值口径（draftInput vs 端口预填），不是转义；而 _renderDraftNodeHtml
+check('追问草稿卡渲染（T152→占位提示）：draftInput 作值、建议问题只进 placeholder', () => {
+  // 本用例断言的是取值口径（draftInput vs 建议问题），不是转义；而 _renderDraftNodeHtml
   // 走全局 escapeHtml，沙箱 loose document 下产物退化，字面中文断言不出来——
   // 按套件惯例（2226/2543/3354 行同款）断言文案前换恒等，测完恢复。
   const realEsc = sandbox.escapeHtml;
@@ -19,16 +19,26 @@ check('追问草稿卡渲染取值（T152）：draftInput 优先、空串不回�
       portMeta: { branchType: 'followup', question: '端口预填问题' },
       ...extra,
     }) + ')';
+    const emptyTail = 'oninput="draftInputChanged(\'draft-smk\', this.value)"></textarea>';
     const typed = vm.runInContext(mk({ draftInput: '我自己打的字' }), sandbox);
-    if (!typed.includes('我自己打的字')) throw new Error('重渲后没取节点对象上的 draftInput，字会丢');
-    if (typed.includes('端口预填问题')) throw new Error('draftInput 存在时不应回落端口预填');
+    if (!typed.includes('>我自己打的字</textarea>')) throw new Error('重渲后没取节点对象上的 draftInput，字会丢');
+    if (!typed.includes('placeholder="端口预填问题"')) throw new Error('建议问题应作 placeholder 灰色提示');
     if (!typed.includes('oninput="draftInputChanged(\'draft-smk\', this.value)"')) throw new Error('textarea 未挂 oninput 回写');
     const cleared = vm.runInContext(mk({ draftInput: '' }), sandbox);
-    if (cleared.includes('端口预填问题')) throw new Error('用户主动清空后不应回落端口预填');
+    if (!cleared.includes(emptyTail)) throw new Error('用户主动清空后框内容应为空串（建议问题不再当正文塞回）');
+    if (!cleared.includes('placeholder="端口预填问题"')) throw new Error('清空后建议问题应继续作灰色提示');
     const fresh = vm.runInContext(mk({}), sandbox);
-    if (!fresh.includes('端口预填问题')) throw new Error('无 draftInput 时端口预填应保留');
+    if (!fresh.includes(emptyTail)) throw new Error('无 draftInput 时框内容应为空');
+    if (!fresh.includes('placeholder="端口预填问题"')) throw new Error('无 draftInput 时建议问题应作灰色提示');
     return true;
   } finally { sandbox.escapeHtml = realEsc; }
+});
+
+check('追问草稿空发回落：框空着点发送＝采用建议问题（占位提示口径）', () => {
+  const src = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
+  if (!src.includes("_draftSuggestionText(node).trim()")) throw new Error('submitDraftQuestion 空值时应回落建议问题（_draftSuggestionText）');
+  if (!/const text = \(input\?\.value \|\| ''\)\.trim\(\)\s*\n\s*\|\|/.test(src)) throw new Error('回落应拼在空值判断同一处，先取框内实文再回落');
+  return true;
 });
 
 check('追问草稿卡重渲回带（T152）：本会话草稿与边带回、别会话不跟、字随对象活', () => {
