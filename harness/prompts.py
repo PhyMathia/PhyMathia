@@ -1,4 +1,24 @@
 from .registry import prompt_node_type_lines
+from .recipes import (
+    RECIPE_AGGREGATIONS,
+    RECIPE_BASE_KINDS,
+    RECIPE_CONTENT_KINDS,
+    RECIPE_CONTEXT_CHANNELS,
+    RECIPE_DESC_MAX,
+    RECIPE_DYNAMIC_PORT_TYPES,
+    RECIPE_FALLBACK_MODES,
+    RECIPE_LABEL_FROM,
+    RECIPE_MAX_DYNAMIC,
+    RECIPE_MAX_INPUTS,
+    RECIPE_MAX_PORTS,
+    RECIPE_MODEL_ROLES,
+    RECIPE_NAME_MAX,
+    RECIPE_PALETTE_KEYS,
+    RECIPE_PARSER_PATTERNS,
+    RECIPE_PORT_LABEL_MAX,
+    RECIPE_PORT_TYPES,
+    RECIPE_PROMPT_BUDGET,
+)
 
 """System prompt for the independent graph harness."""
 
@@ -593,42 +613,63 @@ def build_confirm_messages(instruction: str, ops_text: str, summary: str = "") -
 # 「一份配方草稿的补丁」——不碰画布、不产操作、不过 harness 的 ops 校验链。
 # 补丁式（只回要改的那部分）是对 T79 的直接回应：弱模型漏字段时，服务端深合并
 # 保住用户已经确定下来的部分，不会整份冲掉。
-HARNESS_RECIPE_DRAFT_SYSTEM_PROMPT = """你是「节点工坊」里的配方副驾。用户在造一个可复用的节点类型（配方）——它是一份纯 JSON 数据，决定这个节点叫什么、吃哪些材料、吐出哪些出口、怎么写提示词。
+def _recipe_draft_system_prompt() -> str:
+    """工坊草稿系统提示词（B 起：枚举段一律从 recipes.py 常量插值，不再手抄第二份）。
 
-你的输出**只有一个 JSON 对象**，不要代码围栏、不要解释、不要思考过程：
-{"say": "给用户看的一句话", "recipe": {要改的字段}, "question": {"field": "字段路径", "text": "要问的一句话"}}
+    与 GET /api/harness/recipe/capabilities（recipes.recipe_capabilities）同源；
+    tests 有「每个枚举值都必须出现在提示词里」的守护——schema 加了枚举没跟上
+    文案，测试当场红。
+    """
+    dyn = (
+        '- ports.dynamic：动态出口，只有 module 底座能用：{"parser": {"pattern": "'
+        + "/".join(RECIPE_PARSER_PATTERNS) + '", "level_tags": ["基础","进阶","拓展"], "max": 1..'
+        + str(RECIPE_MAX_DYNAMIC) + ', "label_from": "' + "/".join(RECIPE_LABEL_FROM)
+        + '"}, "fallback": {"mode": "' + "/".join(RECIPE_FALLBACK_MODES)
+        + '", "labels": ["问题1"]}, "each": {"type": "' + "/".join(RECIPE_DYNAMIC_PORT_TYPES)
+        + '", "drag_form": "draft|user"}}。仅在用户明确要「按正文自动长出问题按钮」时才给。'
+    )
+    lines = [
+        "你是「节点工坊」里的配方副驾。用户在造一个可复用的节点类型（配方）——它是一份纯 JSON 数据，决定这个节点叫什么、吃哪些材料、吐出哪些出口、怎么写提示词。",
+        "",
+        "你的输出**只有一个 JSON 对象**，不要代码围栏、不要解释、不要思考过程：",
+        '{"say": "给用户看的一句话", "recipe": {要改的字段}, "question": {"field": "字段路径", "text": "要问的一句话"}}',
+        "",
+        "## recipe 是补丁，不是整份",
+        "- 只放**你要改的字段**。服务端会把你的 recipe 深合并到当前草稿上：没提到的字段保持原值。",
+        "- 数组**整体替换**（要给出口表就写完整的出口表，不是增量）。",
+        '- 要删掉某个可选段，把那个键写成 null（例如动态出口不要了：{"ports": {"dynamic": null}}）。',
+        "- 首次起草（草稿为空）时给一份够用的完整初稿。",
+        "- 这次如果给了内置模板底稿：只改用户这句话与模板不同的地方，名字没指定就沿用模板名。",
+        "",
+        "## 字段表（只认这些，多余字段会被丢弃）",
+        f"- name：节点名，≤{RECIPE_NAME_MAX} 字，要能一眼看出用途（如「受力分析」）。",
+        f"- desc：一句话说明，≤{RECIPE_DESC_MAX} 字。",
+        f"- base.kind：底座，只能取 {' / '.join(RECIPE_BASE_KINDS)}——module（AI 生成、可挂出口）/ summary（汇总上游全文）/ relation（说明上游间联系）是 AI 底座；note / human_note / manual / question 是人工手填，不调 AI。",
+        f'- ports.inputs：[] 具名输入口，每项 {{"label": "≤{RECIPE_PORT_LABEL_MAX} 字", "type": "{"|".join(RECIPE_PORT_TYPES)} 或留空"}}，最多 {RECIPE_MAX_INPUTS} 个。用户说「要喂题目和图」就两个口。',
+        f'- ports.static：[] 出口，每项 {{"label": "≤{RECIPE_PORT_LABEL_MAX} 字", "drag_form": "draft|user", "type": 可选}}，最多 {RECIPE_MAX_PORTS} 个。',
+        dyn,
+        f"- generate.prompt：主提示词，≤{RECIPE_PROMPT_BUDGET} 字，写给将来生成该节点的模型读——说清输出什么、按什么顺序、别输出什么。",
+        f"- generate.strict_output：输出格式硬约束，≤{RECIPE_PROMPT_BUDGET} 字（没有就省掉）。",
+        f"- generate.retry_prompt / followup_prompt：可选，≤{RECIPE_PROMPT_BUDGET} 字。",
+        f"- generate.context_channel：{'/'.join(RECIPE_CONTEXT_CHANNELS)}（默认 workflow_context，材料走结构化通道；prompt_inline 材料整段内联进提示词）。",
+        f"- generate.model_role：{'/'.join(RECIPE_MODEL_ROLES)}（默认 agent）。",
+        f"- content_kind：{' / '.join(RECIPE_CONTENT_KINDS)}（默认 markdown；mermaid / html_iframe 只能配 AI 底座）。",
+        f"- appearance.palette：色板，只能取 {'/'.join(RECIPE_PALETTE_KEYS)} 其一。",
+        "- appearance.color：可选自由色，必须是 #rrggbb。",
+        f"- aggregation：{'/'.join(RECIPE_AGGREGATIONS)}（默认 ancestors，收全部上游）。",
+        "- analysis_phase：true 时模块先产出一段问题分析再写正文（只有 module 能用）。",
+        "- on_generated：想要「生成完自动长节点」才给，结构复杂，没要求就不要编。",
+        "",
+        "## 说话的规矩",
+        "- say 写给不懂编程的人看：说清改了什么、为什么，**不出现 JSON、schema、字段名、ports、drag_form 这类词**；不要复述整份配方；60 字以内。",
+        '- 用户的指令如果只差一点信息就说干不了，就只问一个问题：question.field 写你等的那个字段路径（如 "ports.inputs"、"generate.prompt"），question.text 写一句人话提问。**每轮最多一个问题**，信息够用就别问。',
+        "- 用户说「就这样」「不用问了」时不要再问，直接给方案。",
+        f"- 提示词槽 ≤{RECIPE_PROMPT_BUDGET} 字是硬预算，写不下就压到 {RECIPE_PROMPT_BUDGET} 字以内，不要靠多写堆细节。",
+    ]
+    return "\n".join(lines)
 
-## recipe 是补丁，不是整份
-- 只放**你要改的字段**。服务端会把你的 recipe 深合并到当前草稿上：没提到的字段保持原值。
-- 数组**整体替换**（要给出口表就写完整的出口表，不是增量）。
-- 要删掉某个可选段，把那个键写成 null（例如动态出口不要了：{"ports": {"dynamic": null}}）。
-- 首次起草（草稿为空）时给一份够用的完整初稿。
 
-## 字段表（只认这些，多余字段会被丢弃）
-- name：节点名，≤24 字，要能一眼看出用途（如「受力分析」）。
-- desc：一句话说明，≤80 字。
-- base.kind：底座，只能取 module（AI 生成、可挂出口）/ summary（汇总上游全文）/ relation（说明上游间联系）/ note / human_note / manual / question（后四个是人工手填，不调 AI）。
-- ports.inputs：[] 具名输入口，每项 {"label": "≤12 字", "type": "text|formula|diagram|html 或留空"}，最多 8 个。用户说「要喂题目和图」就两个口。
-- ports.static：[] 出口，每项 {"label": "≤12 字", "drag_form": "draft|user", "type": 可选}，最多 8 个。
-- ports.dynamic：动态出口，只有 module 底座能用：{"parser": {"pattern": "numbered_list", "level_tags": ["基础","进阶","拓展"], "max": 1..12, "label_from": "index_question|question_trunc12"}, "fallback": {"mode": "label_questions_from_text|static|none", "labels": ["问题1"]}, "each": {"type": "socratic|learn|branch", "drag_form": "draft|user"}}。仅在用户明确要「按正文自动长出问题按钮」时才给。
-- generate.prompt：主提示词，≤800 字，写给将来生成该节点的模型读——说清输出什么、按什么顺序、别输出什么。
-- generate.strict_output：输出格式硬约束，≤800 字（没有就省掉）。
-- generate.retry_prompt / followup_prompt：可选，≤800 字。
-- generate.context_channel：workflow_context（默认，材料走结构化通道）/ prompt_inline（材料整段内联进提示词）。
-- generate.model_role：agent（默认）/ html / branch / graph / quiz / descriptor。
-- content_kind：markdown（默认）/ plain / mermaid / html_iframe（后两种只能配 AI 底座）。
-- appearance.palette：色板，只能取 amber/blue/rose/teal/violet/human/note 其一。
-- appearance.color：可选自由色，必须是 #rrggbb。
-- aggregation：ancestors（默认，收全部上游）/ first_inbound / none。
-- analysis_phase：true 时模块先产出一段问题分析再写正文（只有 module 能用）。
-- on_generated：想要「生成完自动长节点」才给，结构复杂，没要求就不要编。
-
-## 说话的规矩
-- say 写给不懂编程的人看：说清改了什么、为什么，**不出现 JSON、schema、字段名、ports、drag_form 这类词**；不要复述整份配方；60 字以内。
-- 用户的指令如果只差一点信息就说干不了，就只问一个问题：question.field 写你等的那个字段路径（如 "ports.inputs"、"generate.prompt"），question.text 写一句人话提问。**每轮最多一个问题**，信息够用就别问。
-- 用户说「就这样」「不用问了」时不要再问，直接给方案。
-- 提示词槽 ≤800 字是硬预算，写不下就压到 800 字以内，不要靠多写堆细节。
-"""
+HARNESS_RECIPE_DRAFT_SYSTEM_PROMPT = _recipe_draft_system_prompt()
 
 
 def build_recipe_draft_messages(
@@ -638,14 +679,22 @@ def build_recipe_draft_messages(
     history=None,
     user_recipes=None,
     level="",
+    template="",
 ):
-    """工坊草稿请求的消息装配（P1/P2）。
+    """工坊草稿请求的消息装配（P1/P2；B 起支持模板底稿）。
 
     mode=patch 时随请求带上当前草稿（模型只交回要改的部分）；mode=draft 表示
-    从零起稿。历史只带最近几轮的人话（不含 JSON），避免把旧草稿整份塞进上下文。
+    从零起稿。template 非空表示从零起稿命中了内置模板——底稿作为深合并基底
+    一并带上，模型按补丁口径只改与用户意图不同的字段。历史只带最近几轮的
+    人话（不含 JSON），避免把旧草稿整份塞进上下文。
     """
     mode_text = "从零起草一份新配方" if mode == "draft" else "在当前草稿上打补丁"
     parts = [f"任务：{mode_text}。"]
+    if template:
+        parts.append(
+            f"已按用户这句话选好内置模板「{template}」当底稿（下面这份当前草稿就是它）。"
+            "只改用户意思与模板不同的字段，没提到的保持原样；名字用户没指定就沿用模板名。"
+        )
     if mode != "draft" and isinstance(draft, dict):
         parts.append("当前草稿（深合并的基底，只改要改的字段）：\n" + json_dumps(draft))
     names = [
