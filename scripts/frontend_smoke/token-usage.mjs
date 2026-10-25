@@ -611,8 +611,9 @@ export async function run() {
       if (!panels.includes('.token-donut-seg')) throw new Error('圆环逐扇区样式缺失');
       if (!panels.includes('transform-box: view-box')) throw new Error('扇区缩放原点应为整环中心（transform-box: view-box）');
       if (!panels.includes('.token-usage-pie')) throw new Error('圆环包装层样式缺失');
-      // 失败/耗时记账链（2026-10-08）：后端有 record_failure 与新聚合键，四个调用
-      // 文件都接线；前端明细表有耗时列
+      // 失败/耗时记账链（2026-10-08）：后端有 record_failure 与新聚合键；前端明细表有耗时列。
+      // T222 出网收口后 knowledge/documents 改走 post_chat_completion，失败记账随
+      // 收口挪进 http_client（一处记账）；直连调用方仍各自 record_failure（T403）
       const usageStatsSrc = fs.readFileSync('src/server/usage_stats.py', 'utf8');
       if (!usageStatsSrc.includes('def record_failure')) throw new Error('后端缺 record_failure');
       if (!usageStatsSrc.includes('errorRequests') || !usageStatsSrc.includes('avgDurationMs')) {
@@ -626,9 +627,11 @@ export async function run() {
       if (!usageStatsSrc.includes('wfRuns')) throw new Error('summarize 缺 wfRuns 轮次聚合（T327）');
       const contextSrc = fs.readFileSync('src/server/context.py', 'utf8');
       if (!contextSrc.includes('def normalize_workflow_context')) throw new Error('workflow_context 入口规范化缺失（T327）');
-      for (const py of ['src/server/models_routes.py', 'src/server/knowledge.py',
-        'src/server/documents.py', 'harness/review.py']) {
+      for (const py of ['src/server/models_routes.py', 'src/server/http_client.py', 'harness/review.py']) {
         if (!fs.readFileSync(py, 'utf8').includes('record_failure')) throw new Error(py + ' 未接失败记账');
+      }
+      for (const py of ['src/server/knowledge.py', 'src/server/documents.py']) {
+        if (!fs.readFileSync(py, 'utf8').includes('post_chat_completion')) throw new Error(py + ' 未走 post_chat_completion 出网收口（T222）');
       }
       const html = fs.readFileSync('src/static/index.html', 'utf8');
       for (const needle of ['id="tokenDialog"', 'id="tokenUsageBody"', 'id="tokenUsageRange"', 'id="tokenRangeMenu"',
