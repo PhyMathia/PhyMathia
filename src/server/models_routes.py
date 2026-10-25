@@ -490,6 +490,21 @@ async def api_models_chat(request: Request):
                                        session_id or session_bucket, f"连接失败: {e}",
                                        usage_stats.elapsed_ms(call_t0), wf=wf_stats)
             raise HTTPException(status_code=502, detail=f"上游连接失败: {e}")
+    if resp.status_code == 400 and body.get("reasoning_effort") == "max":
+        # 降级前置级：「最高」档发 reasoning_effort max，DeepSeek/智谱 5.x 等真支持；
+        # 不认识的端点（OpenAI 系官方只有 low/medium/high）先降 high 重发——最高档
+        # 在不支持的模型上退化为「高」，而不是被下一级整包剥掉退化成模型默认（更低）
+        await resp.aclose()
+        body["reasoning_effort"] = "high"
+        logger.warning("AI proxy: upstream rejected reasoning_effort=max, retried as high")
+        try:
+            resp = await _send_upstream()
+        except httpx.HTTPError as e:
+            logger.error(f"AI proxy connect error: {e}")
+            usage_stats.record_failure(provider, model_name, "chat" if prompt else "legacy",
+                                       session_id or session_bucket, f"连接失败: {e}",
+                                       usage_stats.elapsed_ms(call_t0), wf=wf_stats)
+            raise HTTPException(status_code=502, detail=f"上游连接失败: {e}")
     if resp.status_code == 400 and thinking_params:
         # 降级安全网：该供应商不认识思考参数（整请求 400）时剥掉重发一次——
         # 配错了供应商只会「设置不生效」，绝不能把聊天本身弄坏
@@ -1058,6 +1073,12 @@ async def api_fix_formula(request: Request):
 
     try:
         resp = await _send_fix()
+        if resp.status_code == 400 and body.get("reasoning_effort") == "max":
+            # 降级前置级：max 不被认识先降 high（同主聊天的降级链口径）
+            await resp.aclose()
+            body["reasoning_effort"] = "high"
+            logger.warning("AI fix-formula: upstream rejected reasoning_effort=max, retried as high")
+            resp = await _send_fix()
         if resp.status_code == 400 and thinking_params:
             await resp.aclose()
             for key in thinking_params:

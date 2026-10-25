@@ -109,13 +109,13 @@ class ThinkingRequestParamsSharedTest(unittest.TestCase):
     """映射函数唯一实现在 llm_common（main.py 只留同名薄包装）。"""
 
     def test_reasoning_effort_levels(self):
-        # 2026-10-25 起 low/medium/high 一一同名直发（滑块档＝真实 API 值）；
-        # max 是历史遗留档＝最高可用档 high
+        # 2026-10-25 起 off/low/medium/high/max 同名直发（滑块档＝真实 API 值）；
+        # 不认 max 的端点由 400 降级链先降 high 再剥参
         f = llm_common.thinking_request_params
         self.assertEqual(f("openai", "low"), {"reasoning_effort": "low"})
         self.assertEqual(f("openai", "medium"), {"reasoning_effort": "medium"})
         self.assertEqual(f("openai", "high"), {"reasoning_effort": "high"})
-        self.assertEqual(f("deepseek", "max"), {"reasoning_effort": "high"})
+        self.assertEqual(f("deepseek", "max"), {"reasoning_effort": "max"})
         self.assertEqual(f("custom-gw", "high"), {"reasoning_effort": "high"})
 
     def test_boolean_switch_on_off(self):
