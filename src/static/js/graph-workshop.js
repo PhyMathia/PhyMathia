@@ -1757,6 +1757,7 @@ function rwQuickFix(key) {
 // 体检（2026-10-25）：不花模型调用，纯结构判定——试跑一结束就知道哪里不对。
 // 只认能从正文里数出来的东西：步骤、公式是否被 $ 包住、长度、是否复述输入、动态出口。
 // 宁可漏判也不误判：三处以上裸 LaTeX 才算「没包」。
+// 同日修 T404/T405：步骤正则容行首 markdown 装饰；动态出口判定问解析器、不数兜底出口。
 const RECIPE_WORKSHOP_JUDGE_MIN_CHARS = 120;
 
 function _rwJudgeOutput(text, recipe) {
@@ -1765,12 +1766,18 @@ function _rwJudgeOutput(text, recipe) {
   const body = raw.replace(/```[\s\S]*?```/g, '');   // 代码块里的编号不算正文步骤
   const flat = raw.replace(/\s+/g, '');
   const chars = flat.length;
-  const steps = (body.match(/(^|\n)\s*(?:第[一二三四五六七八九十百]+步|\d+[.、)）]\s?)/g) || []).length;
+  // 行首可叠 markdown 装饰（#标题/列表符/加粗），编号含全角括号与「步骤X」——这批写法冒烟钉死
+  const steps = (body.match(/(^|\n)[ \t]*(?:#{1,6}[ \t]*|[-*+•>]+[ \t]*)*(?:第[ \t]*[一二三四五六七八九十百\d]+[ \t]*步|步骤[ \t]*[一二三四五六七八九十百\d]+|[（(]?\d+[）).、．])/g) || []).length;
   const tex = (body.match(/\$\$[\s\S]+?\$\$|\$[^$\n]{1,160}\$/g) || []).length;
   const bareTex = (body.match(/\\[a-zA-Z]{2,}/g) || []).length;
   const staticPorts = (recipe && recipe.ports && recipe.ports.static) || [];
   const ports = (state.outputPorts || []).length;
-  const dynamicOn = !!(recipe && recipe.ports && recipe.ports.dynamic && recipe.ports.dynamic.enabled);
+  // 动态出口的真实开关是 parser 键（rwToggleDynamic 只产 parser/fallback/each，没有 enabled）；
+  // 解析成败要直接问解析器——兜底会塞占位出口，数 outputPorts 永远看不出「没解析出来」。
+  const dyn = recipe && recipe.ports && recipe.ports.dynamic;
+  const dynamicOn = !!(dyn && dyn.parser);
+  const dynamicParsed = (dynamicOn && typeof _recipeParseNumberedList === 'function')
+    ? _recipeParseNumberedList(raw, dyn.parser).length : -1;
   const materials = Object.keys(state.materials || {})
     .map(function (key) { return String((state.materials || {})[key] || '').replace(/\s+/g, ''); })
     .filter(Boolean);
@@ -1789,12 +1796,12 @@ function _rwJudgeOutput(text, recipe) {
   if (echo) {
     flags.push({ key: 'echo', label: '复述输入', detail: '正文开头和材料几乎一样' });
   }
-  if (dynamicOn && ports === 0) {
-    flags.push({ key: 'ports', label: '出口没解析出来', detail: '声明了动态出口，正文里没找到可解析的编号' });
+  if (dynamicOn && dynamicParsed === 0) {
+    flags.push({ key: 'ports', label: '出口没解析出来', detail: '声明了动态出口，正文里没有它能认的编号行（现在显示的是兜底出口）' });
   }
   return {
     flags: flags,
-    metrics: { chars: chars, steps: steps, tex: tex, ports: ports },
+    metrics: { chars: chars, steps: steps, tex: tex, ports: ports, dynamicPorts: dynamicParsed },
     pass: flags.length === 0,
     at: Date.now(),
   };

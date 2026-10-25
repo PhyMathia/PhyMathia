@@ -80,6 +80,70 @@ export async function run() {
     return true;
   });
 
+  check('节点工坊：体检认得加粗/标题/全角括号/列表这些常见步骤写法（T404）', () => {
+    resetWorkshop(true);
+    sandbox.openRecipeWorkshop({
+      recipe: {
+        name: '步骤写法样例', base: { kind: 'module' },
+        generate: { prompt: '你在做受力分析。' },
+        ports: { static: [{ label: '步骤', drag_form: 'draft' }, { label: '检查', drag_form: 'draft' }], inputs: [] },
+        appearance: { palette: 'amber' }, content_kind: 'markdown',
+      },
+    });
+    const state_ = state();
+    const fill = '取物块为研究对象，沿斜面方向建系，垂直斜面方向合力为零，沿斜面列方程后代入数值，最后做量纲与边界检查。';
+    const variants = {
+      '加粗': '**第一步** 研究对象\n' + fill + '\n**第二步** 列方程\n' + fill,
+      '标题': '### 第一步 研究对象\n' + fill + '\n### 第二步 列方程\n' + fill,
+      '全角括号': '（1）研究对象：' + fill + '\n（2）列方程：' + fill,
+      '列表接步骤': '- 第一步 研究对象\n' + fill + '\n- 第二步 列方程\n' + fill,
+    };
+    Object.keys(variants).forEach(name => {
+      const judge = sandbox._rwJudgeOutput(variants[name], state_.recipe);
+      if (judge.metrics.steps < 2) throw new Error(name + ' 写法没数到步骤（实际 ' + judge.metrics.steps + '），会被误判「没分步骤」');
+      if (judge.flags.some(flag => flag.key === 'steps')) throw new Error(name + ' 写法不该亮「没分步骤」');
+    });
+    // 反向：加粗但不是步骤开头，不该被装饰骗到
+    const noStep = sandbox._rwJudgeOutput('**注意**：解题前先统一单位。\n' + fill, state_.recipe);
+    if (noStep.metrics.steps !== 0) throw new Error('普通加粗段首被误数成步骤（实际 ' + noStep.metrics.steps + '）');
+    resetWorkshop(true);
+    return true;
+  });
+
+  check('节点工坊：动态出口体检解析失败会亮、成功不亮（T405）', () => {
+    resetWorkshop(true);
+    sandbox.openRecipeWorkshop({
+      recipe: {
+        name: '苏格拉底式', base: { kind: 'module' },
+        generate: { prompt: '你在出追问。' },
+        ports: {
+          static: [{ label: '追问', drag_form: 'draft' }],
+          dynamic: {
+            parser: { pattern: 'numbered_list', level_tags: ['基础', '进阶'], max: 6, label_from: 'index_question' },
+            fallback: { mode: 'label_questions_from_text', labels: [] },
+            each: { type: 'socratic', branch_type: 'socratic', drag_form: 'draft' },
+          },
+        },
+        appearance: { palette: 'amber' }, content_kind: 'markdown',
+      },
+    });
+    const state_ = state();
+    const parsedText = '围绕这道斜面题，先看清对象再问条件，别急着代公式。\n1. [基础] 为什么物块会加速？\n2. [进阶] 如果斜面有摩擦，加速度怎么变？';
+    const goodJudge = sandbox._rwJudgeOutput(parsedText, state_.recipe);
+    if (goodJudge.flags.some(flag => flag.key === 'ports')) throw new Error('解析出两条编号行，不该亮「出口没解析出来」');
+    if (goodJudge.metrics.dynamicPorts !== 2) throw new Error('metrics.dynamicPorts 应记 2，实际 ' + JSON.stringify(goodJudge.metrics));
+    const fellBackText = '围绕这道斜面题说了很长的一段话，把对象和条件都描述了一遍，但是全文没有一行编号，动态出口解析不到任何问题，兜底出口顶上来充数，这种输出应该被亮出来提醒模型补编号。';
+    const badJudge = sandbox._rwJudgeOutput(fellBackText, state_.recipe);
+    if (!badJudge.flags.some(flag => flag.key === 'ports')) throw new Error('没有编号行应亮「出口没解析出来」（修前读不存在的 enabled 键，这项永不触发）');
+    if (badJudge.metrics.dynamicPorts !== 0) throw new Error('解析失败应记 0，实际 ' + badJudge.metrics.dynamicPorts);
+    // 没开动态出口的配方：不亮 ports、记 -1（口径钉死，C 的判决函数直接读这个数）
+    const plainJudge = sandbox._rwJudgeOutput('正文随便写点什么，没有动态出口。', { name: 'x', base: { kind: 'module' }, ports: { static: [] }, content_kind: 'markdown' });
+    if (plainJudge.flags.some(flag => flag.key === 'ports')) throw new Error('没开动态出口不该亮 ports');
+    if (plainJudge.metrics.dynamicPorts !== -1) throw new Error('没开动态出口应记 -1，实际 ' + plainJudge.metrics.dynamicPorts);
+    resetWorkshop(true);
+    return true;
+  });
+
   resetWorkshop(true);
   sandbox.openRecipeWorkshop({});
 
