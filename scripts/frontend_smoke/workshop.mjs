@@ -267,6 +267,14 @@ export async function run() {
     return true;
   });
 
+  check('节点工坊：一句话档带试跑入口，没试跑过的默认路径不再直通画布', () => {
+    const src = fs.readFileSync('src/static/js/graph-workshop.js', 'utf8');
+    if (!/onclick="rwSmartTrial\(\)"/.test(src)) throw new Error('一句话档结果卡上没有「试跑一下」按钮');
+    if (!/window\.rwSmartTrial = rwSmartTrial/.test(src)) throw new Error('rwSmartTrial 没导出到 window');
+    if (!/recipeId: String\(recipe\.id \|\| ''\)/.test(src)) throw new Error('试跑记录没盖配方 id 章（放到画布软闸会认不出试跑过）');
+    return true;
+  });
+
   // ---- 串行段：补丁往返 → 撤回 → 入册（同一份草稿状态，必须按序）----
   const originalFetch = sandbox.fetch;
   const originalModel = sandbox.getActiveModelForRole;
@@ -494,6 +502,76 @@ export async function run() {
         sandbox.fetch = prev.fetch;
         sandbox.confirm = prev.confirm;
         sandbox.renderMarkdown = prev.markdown;
+        resetWorkshop(true);
+      }
+    }],
+    ['一句话档：试跑入口切手动档——材料空只引导不空跑，材料齐走同一条试跑链', async () => {
+      resetWorkshop(false);
+      sandbox.openRecipeWorkshop({
+        recipe: {
+          name: '智能档试跑节点', base: { kind: 'module' },
+          generate: { prompt: '你在做受力分析：分步输出。' },
+          ports: { static: [{ label: '换个条件', drag_form: 'draft' }], inputs: [] },
+          appearance: { palette: 'amber' }, content_kind: 'markdown',
+        },
+        mode: 'smart',
+      });
+      const st = state();
+      st.smartDone = true;
+      await sandbox.rwSmartTrial();
+      if (st.mode !== 'manual') throw new Error('试跑入口应切到手动档（材料与输出都住在那侧），实际 ' + st.mode);
+      if (st.running || (st.runs || []).length) throw new Error('材料还空着不该发起生成（空跑）');
+      const prev = { proxy: sandbox.proxyChatWithModel, sse: sandbox._sseContentFrames, markdown: sandbox.renderMarkdown };
+      try {
+        sandbox.renderMarkdown = () => '<p>（渲染省略）</p>';
+        sandbox.proxyChatWithModel = async () => ({ ok: true, status: 200, body: {} });
+        sandbox._sseContentFrames = async function* () {
+          yield '第一步 研究对象\n取物块为研究对象，沿斜面方向建系。\n';
+          yield '第二步 列方程\n沿斜面 $mg\\sin\\theta = ma$，所以 $a = g\\sin\\theta$。\n';
+          yield '第三步 检查\n当 θ=90° 时 $a=g$，与自由落体一致。';
+        };
+        st.materials = { general: '一个质量 m 的物块放在倾角 θ 的斜面上，求加速度。' };
+        await sandbox.rwSmartTrial();
+        if ((st.runs || []).length !== 1) throw new Error('材料齐了应真跑一次，实际 ' + (st.runs || []).length + ' 次');
+        if (st.runs[0].recipeId !== String(st.recipe.id || '')) throw new Error('试跑记录没盖配方 id 章，放到画布软闸会认不出试跑过');
+        if (!st.judge) throw new Error('试跑结束应留下体检结果');
+      } finally {
+        sandbox.proxyChatWithModel = prev.proxy;
+        sandbox._sseContentFrames = prev.sse;
+        sandbox.renderMarkdown = prev.markdown;
+        resetWorkshop(true);
+      }
+    }],
+    ['一句话档：没试跑过放画布被软闸拦一次，试跑过就放行不再问', async () => {
+      resetWorkshop(true);
+      sandbox.openRecipeWorkshop({
+        recipe: {
+          name: '软闸测试节点' + (Date.now() % 100000), base: { kind: 'module' },
+          generate: { prompt: '你在做受力分析：分步输出。' },
+          ports: { static: [{ label: '换个条件', drag_form: 'draft' }], inputs: [] },
+          appearance: { palette: 'amber' }, content_kind: 'markdown',
+        },
+        mode: 'smart',
+      });
+      const st = state();
+      st.smartDone = true;
+      const prev = { confirm: sandbox.confirm, place: sandbox.rwPlaceOnCanvas };
+      let confirms = 0;
+      let placed = 0;
+      try {
+        sandbox.confirm = () => { confirms += 1; return false; };
+        sandbox.rwPlaceOnCanvas = () => { placed += 1; };
+        sandbox.rwSmartPlace();
+        if (confirms !== 1) throw new Error('没试跑过应先问一次（可以坚持放），实际问 ' + confirms + ' 次');
+        if (placed) throw new Error('取消后不该放到画布');
+        // 盖一个「这份配方跑过」的章（试跑链上一条用例已真验过，这里只验软闸认章放行）
+        st.runs = [{ at: Date.now(), recipeId: String(st.recipe.id || '') }];
+        sandbox.rwSmartPlace();
+        if (confirms !== 1) throw new Error('试跑过之后不该再拦（软闸只问一次），实际问 ' + confirms + ' 次');
+        if (placed !== 1) throw new Error('试跑过之后应直接放行');
+      } finally {
+        sandbox.confirm = prev.confirm;
+        sandbox.rwPlaceOnCanvas = prev.place;
         resetWorkshop(true);
       }
     }],

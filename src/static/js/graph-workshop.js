@@ -355,7 +355,7 @@ function _rwEnsureShell() {
     + '<div class="rw-smart-hero">'
     + '<div class="rw-smart-kicker">✦ 一句话创造</div>'
     + '<h2 class="rw-smart-title">想要一个什么节点？说一句就行</h2>'
-    + '<p class="rw-smart-sub">不用填表：说清「喂什么 · 要它干什么 · 吐什么」，Φ 会把名字、材料口、出口、颜色和生成要求一起配好。先给你看结果，满意再放到画布；想逐项改就切右上角「手动调」。</p>'
+    + '<p class="rw-smart-sub">不用填表：说清「喂什么 · 要它干什么 · 吐什么」，Φ 会把名字、材料口、出口、颜色和生成要求一起配好。先给你看配方，试跑满意再放到画布；想逐项改就切右上角「手动调」。</p>'
     + '</div>'
     + '<div class="rw-smart-box">'
     + '<textarea id="rwSmartInput" rows="3" placeholder="比如：做一个受力分析节点，喂一道题和受力图，输出研究对象、受力、方程，出口给「换个条件」和「解释假设」" oninput="rwSmartInputChanged(this.value)" onkeydown="rwSmartKey(event)"></textarea>'
@@ -1702,6 +1702,7 @@ async function _rwRunTrialOnce() {
     state.outputPorts = _rwComputeOutputPorts(recipe, acc);
     const run = {
       at: Date.now(),
+      recipeId: String(recipe.id || ''),   // 一句话档软闸据此认「这份配方试跑过」
       model: String(model.model || ''),
       ms: Date.now() - startedAt,
       chars: acc.length,
@@ -2037,7 +2038,7 @@ function _rwSmartResultHtml() {
   const state = recipeWorkshop;
   if (!state) return '';
   if (!state.smartDone) {
-    return '<div class="rw-smart-empty">配好之后这里会先给你看一张节点卡——不满意就再说一句改，满意就一键放到画布。'
+    return '<div class="rw-smart-empty">配好之后这里会先给你看一张节点卡——先「试跑一下」看它跑出来什么样，不满意就再说一句改，满意再放到画布。'
       + '也可以直接点上面的例子试试。</div>';
   }
   const say = String(state.smartSay || '').trim();
@@ -2047,12 +2048,13 @@ function _rwSmartResultHtml() {
   return '<div class="rw-smart-preview">' + _rwCardHtml({ fold: false }) + '</div>'
     + (say ? '<div class="rw-smart-say">Φ 说：' + _rwEsc(say) + '</div>' : '')
     + question
-    + '<div class="rw-smart-actions">'
-    + '<button type="button" class="rw-btn rw-btn-primary" onclick="rwSmartPlace()">放到画布</button>'
-    + '<button type="button" class="rw-btn" onclick="rwSmartRefine()">进工坊微调</button>'
-    + '<button type="button" class="rw-btn rw-btn-ghost" onclick="rwSmartReset()">换一个想法</button>'
-    + '</div>'
-    + '<div class="rw-smart-note">「放到画布」会先入册再放节点；之后还能在配方管理里改。</div>';
+      + '<div class="rw-smart-actions">'
+      + '<button type="button" class="rw-btn" onclick="rwSmartTrial()" title="贴一道题跑跑看——配得对不对，要看输出才知道">试跑一下</button>'
+      + '<button type="button" class="rw-btn rw-btn-primary" onclick="rwSmartPlace()">放到画布</button>'
+      + '<button type="button" class="rw-btn" onclick="rwSmartRefine()">进工坊微调</button>'
+      + '<button type="button" class="rw-btn rw-btn-ghost" onclick="rwSmartReset()">换一个想法</button>'
+      + '</div>'
+      + '<div class="rw-smart-note">建议先「试跑一下」看真实输出再放；「放到画布」会先入册再放节点，之后还能在配方管理里改。</div>';
 }
 
 async function rwSmartGenerate() {
@@ -2100,8 +2102,38 @@ async function rwSmartGenerate() {
   _rwRenderSmart();
 }
 
+// 一句话档的试跑入口（2026-10-25）：草稿卡只能看出「配了什么」，看不出「跑出来什么样」。
+// 不另写试跑链——先切到手动档（材料与输出都住在那侧），材料齐了走同一条 _rwRunTrialOnce，
+// 手动跑与这里跑出来的东西必须一模一样。
+async function rwSmartTrial() {
+  const state = recipeWorkshop;
+  if (!state || state.running || state.autotuning || recipeWorkshopBusy) return;
+  if (state.mode !== 'manual') {
+    state.mode = 'manual';
+    _rwSaveDraftNow();
+    _rwRenderAll();
+  }
+  const wf = _rwBuildWorkflowContext(_rwNormalized() || _rwCurrentRecipe());
+  if (!wf.upstream.length) {
+    // 材料还空着：不空跑，把人领到材料框前说一句人话——第一次「喂料」就发生在这里
+    const box = document.querySelector('#rwMaterials textarea');
+    if (box && typeof box.focus === 'function') box.focus();
+    if (typeof toastMsg === 'function') toastMsg('先在这里贴一道题当材料，再点「跑一次」');
+    return;
+  }
+  await _rwRunTrialOnce();
+}
+
 function rwSmartPlace() {
   if (!recipeWorkshop) return;
+  // 软闸（2026-10-25）：一句话档只看过配置、没看过输出，没试跑过就上画布＝闭着眼睛收货。
+  // 只问一次、可以坚持放；这份配方跑过一次（run 盖过 recipeId 章）就不再拦，别把熟手挡在门口。
+  const current = _rwNormalized() || _rwCurrentRecipe();
+  const trialed = (recipeWorkshop.runs || []).some(function (run) {
+    return run && run.recipeId && run.recipeId === String(current.id || '');
+  });
+  if (!trialed && typeof confirm === 'function'
+    && !confirm('这个节点还没试跑过，先看看它跑出来什么样？\n（确定＝不试了，直接放到画布；取消＝回去点「试跑一下」）')) return;
   if (!rwSaveRecipe()) {
     const errors = (recipeWorkshop.fieldErrors || [])
       .map(function (item) { return String((item && item.message) || ''); })
@@ -2398,6 +2430,7 @@ window.rwSmartKey = rwSmartKey;
 window.rwSmartUseExample = rwSmartUseExample;
 window.rwSmartGenerate = rwSmartGenerate;
 window.rwSmartPlace = rwSmartPlace;
+window.rwSmartTrial = rwSmartTrial;
 window.rwSmartRefine = rwSmartRefine;
 window.rwSmartReset = rwSmartReset;
 // 冒烟与后续会话用的内部探针（只读）
