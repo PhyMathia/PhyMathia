@@ -6064,6 +6064,17 @@
 .rw-out-ports { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .rw-quickfix { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); }
 .rw-quickfix-title { font-size: var(--fs-2xs); color: var(--text-secondary); }
+/* 体检（2026-10-25）：试跑结束后的结构判定，不花模型调用；自动调优拿它决定改什么 */
+.rw-judge { margin-top: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--r-lg); }
+.rw-judge-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.rw-judge-title { font-size: var(--fs-2xs); font-weight: 600; color: var(--text-secondary); letter-spacing: .04em; }
+.rw-judge-metric { font-size: var(--fs-2xs); color: var(--text-secondary); }
+.rw-judge-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.rw-judge-chip { font-size: var(--fs-2xs); padding: 2px 8px; border-radius: var(--r-pill); border: 1px solid var(--border); }
+.rw-judge-chip.is-ok { color: var(--accent); border-color: var(--accent); }
+.rw-judge-chip.is-warn { color: var(--warn); border-color: var(--warn-border); }
+.rw-run-tune { margin-top: 6px; }
+.rw-run-note { font-size: var(--fs-2xs); color: var(--text-secondary); line-height: 1.4; }
 
 /* ---- 一句话档（2026-10-22）----
    智能档不渲染三栏：整块面板只留「说一句 → 看结果 → 放到画布」。

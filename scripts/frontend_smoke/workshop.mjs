@@ -48,6 +48,38 @@ export async function run() {
     return true;
   });
 
+  check('节点工坊：体检能数出步骤/公式/复述/太短（纯结构判定，不调模型）', () => {
+    resetWorkshop(true);
+    sandbox.openRecipeWorkshop({
+      recipe: {
+        name: '体检样例', base: { kind: 'module' },
+        generate: { prompt: '你在做受力分析。' },
+        ports: { static: [{ label: '步骤', drag_form: 'draft' }, { label: '检查', drag_form: 'draft' }], inputs: [] },
+        appearance: { palette: 'amber' }, content_kind: 'markdown',
+      },
+    });
+    if (typeof sandbox.rwAutoTune !== 'function') throw new Error('「帮我调好」入口没导出到 window');
+    const state_ = state();
+    state_.materials = { general: '一个质量 m 的物块放在倾角 θ 的斜面上，求加速度并检查结果。' };
+    const bad = sandbox._rwJudgeOutput('好的，我来分析一下。', state_.recipe);
+    if (bad.pass) throw new Error('过短又没步骤的输出不该判通过');
+    const badKeys = bad.flags.map(flag => flag.key);
+    if (badKeys.indexOf('short') < 0) throw new Error('应判「太短」，实际：' + badKeys.join(','));
+    if (badKeys.indexOf('steps') < 0) throw new Error('两个出口却没步骤，应判「没分步骤」');
+    const goodText = '第一步 研究对象\n取物块为研究对象，沿斜面方向建系，斜面方向为 x、垂直斜面为 y。\n'
+      + '第二步 列方程\n垂直方向 $N = mg\cos\theta$，沿斜面方向 $mg\sin\theta = ma$，所以 $a = g\sin\theta$。\n'
+      + '第三步 检查\n当 θ=90° 时 $a=g$，与自由落体一致；有摩擦时把 $mg\cos\theta$ 乘摩擦因数加进方程，量纲仍是加速度。';
+    const good = sandbox._rwJudgeOutput(goodText, state_.recipe);
+    if (!good.pass) throw new Error('合格输出被误判：' + good.flags.map(flag => flag.label).join('、'));
+    if (good.metrics.steps < 3 || good.metrics.tex < 3) throw new Error('步骤/公式没数对：' + JSON.stringify(good.metrics));
+    const tex = sandbox._rwJudgeOutput('用 \\frac{1}{2}mv^2 和 \\sqrt{2gh} 还有 \\theta 就能算出结果，代进去即可得到答案，注意单位。', state_.recipe);
+    if (!tex.flags.some(flag => flag.key === 'formula')) throw new Error('三处裸 LaTeX 应判「公式没包」');
+    const echo = sandbox._rwJudgeOutput('一个质量 m 的物块放在倾角 θ 的斜面上，求加速度并检查结果。' + goodText, state_.recipe);
+    if (!echo.flags.some(flag => flag.key === 'echo')) throw new Error('开头复述材料应判「复述输入」');
+    resetWorkshop(true);
+    return true;
+  });
+
   resetWorkshop(true);
   sandbox.openRecipeWorkshop({});
 
@@ -395,6 +427,73 @@ export async function run() {
         return true;
       } finally {
         sandbox.fetch = prevFetch;
+        resetWorkshop(true);
+      }
+    }],
+    ['「帮我调好」：跑一次 → 体检 → 只改有问题的一处 → 复跑验证', async () => {
+      resetWorkshop(true);
+      sandbox.openRecipeWorkshop({
+        recipe: {
+          name: '调优样例', base: { kind: 'module' },
+          generate: { prompt: '你在做受力分析。' },
+          ports: { static: [{ label: '步骤', drag_form: 'draft' }, { label: '检查', drag_form: 'draft' }], inputs: [] },
+          appearance: { palette: 'amber' }, content_kind: 'markdown',
+        },
+      });
+      state().materials = { general: '一个质量 m 的物块放在倾角 θ 的斜面上，求加速度。' };
+      const prev = {
+        proxy: sandbox.proxyChatWithModel,
+        sse: sandbox._sseContentFrames,
+        fetch: sandbox.fetch,
+        confirm: sandbox.confirm,
+        markdown: sandbox.renderMarkdown,
+      };
+      let runs = 0;
+      let sentBody = null;
+      try {
+        sandbox.confirm = () => true;
+        // 沙箱里没有 marked（宽松 DOM 代理不跑真渲染），正文渲染用一个占位实现
+        sandbox.renderMarkdown = () => '<p>（渲染省略）</p>';
+        sandbox.proxyChatWithModel = async () => ({ ok: true, status: 200, body: {} });
+        sandbox._sseContentFrames = async function* () {
+          runs += 1;
+          if (runs === 1) {
+            yield '好的，这个题我们来看看。';
+            return;
+          }
+          yield '第一步 研究对象\n取物块为研究对象，沿斜面方向建系，斜面方向为 x、垂直斜面为 y。\n';
+          yield '第二步 列方程\n垂直方向 $N = mg\\cos\\theta$，沿斜面方向 $mg\\sin\\theta = ma$，所以 $a = g\\sin\\theta$。\n';
+          yield '第三步 检查\n当 θ=90° 时 $a=g$；有摩擦时把 $mg\\cos\\theta$ 乘摩擦因数加进方程，量纲仍是加速度。';
+        };
+        sandbox.fetch = async (url, init) => {
+          sentBody = JSON.parse(init.body);
+          const recipe = JSON.parse(JSON.stringify(state().recipe));
+          recipe.generate.prompt = String(recipe.generate.prompt || '') + '\n分步输出，公式用 $…$ 包起来。';
+          return {
+            ok: true, status: 200,
+            json: async () => ({
+              status: 'ok', say: '补了分步与公式要求', mode: 'patch', recipe: recipe,
+              changed: ['generate.prompt'], question: null, warnings: [], field_errors: [],
+            }),
+          };
+        };
+        await sandbox.rwAutoTune();
+        if (runs !== 2) throw new Error('应跑两次（先体检、改完复跑），实际 ' + runs + ' 次');
+        if (!sentBody) throw new Error('自动调优没有发起补丁请求');
+        if (sentBody.mode !== 'patch') throw new Error('自动调优必须走补丁（走 draft 会冲掉已配好的字段），实际 ' + sentBody.mode);
+        if (String(sentBody.instruction).indexOf('体检') < 0) throw new Error('补丁指令没带体检结果');
+        if (!state().judge) throw new Error('复跑后应留下体检结果');
+        if (!state().judge.pass) throw new Error('复跑的输出应判通过，实际：' + state().judge.flags.map(flag => flag.label).join('、'));
+        const chat = (state().conversation || []).map(item => String(item.text || '')).join('\n');
+        if (chat.indexOf('体检') < 0) throw new Error('左栏没把体检结果说出来');
+        if (String(state().recipe.generate.prompt).indexOf('分步输出') < 0) throw new Error('补丁没落到生成要求上');
+        return true;
+      } finally {
+        sandbox.proxyChatWithModel = prev.proxy;
+        sandbox._sseContentFrames = prev.sse;
+        sandbox.fetch = prev.fetch;
+        sandbox.confirm = prev.confirm;
+        sandbox.renderMarkdown = prev.markdown;
         resetWorkshop(true);
       }
     }],
