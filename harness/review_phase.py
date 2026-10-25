@@ -6,6 +6,12 @@
 """
 
 from .core import normalize_snapshot
+from .tools import (
+    DRY_RUN_TOOL_NAME,
+    GRAPH_QUERY_TOOL_NAMES,
+    GRAPH_STATS_TOOL_NAME,
+    KB_TOOL_NAMES,
+)
 
 # T82 收敛（后端半边）：相位识别权归 _detect_phase 一处。前端 payload 只直通
 # chat/preset/apply/expand，normal/evaluate 的本地猜测一律降级为 normal——所以
@@ -40,10 +46,15 @@ TOOLS_AUTO_HINT = (
 # ---- T93（评审路线 #8）只读查询回灌：先查图，看完了再决定改哪 ----
 # 工具表含只读查询工具时（normal/expand/apply/preset），给 user 消息补的使用说明。
 # 2026-10-09 优化新路径六第 1 档：并入 graph_stats（学习教练）。
+# 能力反射（2026-10-26 方向 2）：工具名一律从 tools.py 的分组常量插值（工坊 B
+# 范式），拼出文案与旧手写版逐字节一致——改工具名单只动 tools.py，这里自动跟。
 READONLY_TOOLS_HINT = (
-    "\n\n（你可以先调用只读查询工具（read_node / list_neighbors / search_nodes）"
-    "了解图中内容，用 search_knowledge / search_formulas 检索用户的知识库与公式速查，"
-    "用 graph_stats 做整图学习结构体检（连通分量/链深梯度/无先修知识节点/检测薄弱点覆盖）；"
+    "\n\n（你可以先调用只读查询工具（"
+    + " / ".join(GRAPH_QUERY_TOOL_NAMES) + "）"
+    "了解图中内容，用 " + " / ".join(KB_TOOL_NAMES)
+    + " 检索用户的知识库与公式速查，"
+    "用 " + GRAPH_STATS_TOOL_NAME
+    + " 做整图学习结构体检（连通分量/链深梯度/无先修知识节点/检测薄弱点覆盖）；"
     "再输出编辑操作；查询不会修改图。）"
 )
 # 试改自检（2026-10-25 方向 1，DSH 对照）：编辑相位随只读提示一起拼接。
@@ -51,18 +62,20 @@ READONLY_TOOLS_HINT = (
 # 错误喂回给模型，弱模型不再靠整批重试兜协议错误。
 DRY_RUN_HINT_PHASES = ("normal", "apply", "coach", "expand")
 DRY_RUN_TOOLS_HINT = (
-    "\n\n（提交最终方案前，建议先调用 dry_run 工具试改：把草稿操作数组（与 operations "
+    "\n\n（提交最终方案前，建议先调用 " + DRY_RUN_TOOL_NAME
+    + " 工具试改：把草稿操作数组（与 operations "
     "同形状）交给系统在图副本上校验，返回逐条错误（节点 id 不存在/字段缺失/同批冲突）、"
     "范围外剔除预演与新节点未连线警告——修正后再给最终方案。试改不落图、至多 2 轮；"
     "操作数 ≥4 条或引用多个既有节点时特别值得先试改一轮。）"
 )
 # 答疑模式（2026-10-03 智能化第二期）专用的 user 消息工具说明：chat 相位工具表
 # 是纯只读，通用 TOOLS_AUTO_HINT 的「用户要求修改图请使用工具」与答疑红线矛盾，
-# 不能照抄——chat 只讲「先查后答、绝不改图」。
+# 不能照抄——chat 只讲「先查后答、绝不改图」。工具名同样从 tools.py 反射。
 HARNESS_CHAT_TOOLS_HINT = (
-    "\n\n（你可以调用只读查询工具：read_node / list_neighbors / search_nodes 查看图，"
-    "search_knowledge / search_formulas 检索用户的知识库与公式速查，"
-    "graph_stats 查整图学习结构统计——用户问「该先学什么/学习路线合不合理」时先拉它再答；"
+    "\n\n（你可以调用只读查询工具：" + " / ".join(GRAPH_QUERY_TOOL_NAMES) + " 查看图，"
+    + " / ".join(KB_TOOL_NAMES) + " 检索用户的知识库与公式速查，"
+    + GRAPH_STATS_TOOL_NAME + " 查整图学习结构统计——"
+    "用户问「该先学什么/学习路线合不合理」时先拉它再答；"
     "先查再答，回答引用出处。当前是答疑模式：不要输出任何编辑操作，直接用文字回答。）"
 )
 UNDO_HINTS = (

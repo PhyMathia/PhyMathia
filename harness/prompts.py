@@ -1,4 +1,5 @@
 from .registry import prompt_node_type_lines
+from .tools import EDIT_TOOL_NAMES, GRAPH_STATS_TOOL_NAME, READONLY_TOOL_NAMES
 from .recipes import (
     RECIPE_AGGREGATIONS,
     RECIPE_BASE_KINDS,
@@ -56,54 +57,7 @@ __NODE_TYPE_LINES__
 {
   "summary": "以助手口吻用 2~4 句自然语言说明：你理解到的意图、本次做了什么（按类别计数，如“新增 3 张卡片、2 个视角、5 条连线”）、关键取舍理由、下一步建议。禁止出现节点 id/temp_id/edge_key 等原始标识，禁止罗列 operations。",
   "operations": [
-    {
-      "op": "create_node",
-      "temp_id": "n_lim",
-      "kind": "human_note",
-      "label": "极限",
-      "content": "...",
-      "formula": "",
-      "reason": "为什么新增"
-    },
-    {
-      "op": "create_node",
-      "temp_id": "n_physics",
-      "kind": "module",
-      "module_key": "physics",
-      "label": "物理视角",
-      "content": "用物理场景说明",
-      "reason": "用户要求补充物理视角"
-    },
-    {
-      "op": "update_node",
-      "id": "A",
-      "patch": {"label": "...", "content": "...", "formula": ""},
-      "reason": "为什么修改"
-    },
-    {
-      "op": "delete_node",
-      "id": "H",
-      "reason": "为什么删除"
-    },
-    {
-      "op": "add_edge",
-      "from": "A",
-      "to": "n_physics",
-      "relation": "物理意义",
-      "label": "从物理直觉理解导数",
-      "reason": "为什么加这条边"
-    },
-    {
-      "op": "remove_edge",
-      "edge_key": "A:out-0->B:in-0",
-      "reason": "为什么删除这条边"
-    },
-    {
-      "op": "update_edge",
-      "edge_key": "A:out-0->B:in-0",
-      "patch": {"relation": "支持", "label": "几何意义"},
-      "reason": "为什么修改这条边"
-    }
+__OPERATIONS_EXAMPLE__
   ],
   "checklist": ["（可选字段）本次要达成的目标清单，每条一句话、只写本批操作应当达成的结果，引用节点一律用「节点标题」：改字段写「「导数」的 formula 已更新为「F=ma」」、删除写「「旧笔记」已删除」、连线写「「A」与「B」已连线」、新建写「「新概念」已创建」。系统执行后会逐条核对，未达成会要求你补齐；简单答复、无修改或琐碎小改时不需要带"]
 }
@@ -139,9 +93,79 @@ __NODE_TYPE_LINES__
 - 做成批修改（含创建/删除/改字段/连线）时建议附带 "checklist" 目标清单（可选字段，最多 8 条，写法见输出结构示例）——它是你自己声明的目标，系统会在执行后逐条核对，未达成会被要求补齐；寒暄、纯问答、琐碎小改不要带。
 """
 
+# 操作示例表（能力反射，2026-10-26 方向 2，工坊 B 范式）：键集必须恰好等于
+# tools.EDIT_TOOL_NAMES——加编辑工具不给示例、或表里残留已退役的键，
+# tests/test_harness_prompt_reflection.py 当场红。"op" 字段由键反射生成，
+# 其余字段是 (字段名, JSON 片段) 对；渲染格式与旧手写文案逐字节一致。
+_OP_EXAMPLE_FIELDS = {
+    "create_node": (
+        (
+            ("temp_id", '"n_lim"'),
+            ("kind", '"human_note"'),
+            ("label", '"极限"'),
+            ("content", '"..."'),
+            ("formula", '""'),
+            ("reason", '"为什么新增"'),
+        ),
+        (
+            ("temp_id", '"n_physics"'),
+            ("kind", '"module"'),
+            ("module_key", '"physics"'),
+            ("label", '"物理视角"'),
+            ("content", '"用物理场景说明"'),
+            ("reason", '"用户要求补充物理视角"'),
+        ),
+    ),
+    "update_node": (
+        (
+            ("id", '"A"'),
+            ("patch", '{"label": "...", "content": "...", "formula": ""}'),
+            ("reason", '"为什么修改"'),
+        ),
+    ),
+    "delete_node": (
+        (("id", '"H"'), ("reason", '"为什么删除"')),
+    ),
+    "add_edge": (
+        (
+            ("from", '"A"'),
+            ("to", '"n_physics"'),
+            ("relation", '"物理意义"'),
+            ("label", '"从物理直觉理解导数"'),
+            ("reason", '"为什么加这条边"'),
+        ),
+    ),
+    "remove_edge": (
+        (
+            ("edge_key", '"A:out-0->B:in-0"'),
+            ("reason", '"为什么删除这条边"'),
+        ),
+    ),
+    "update_edge": (
+        (
+            ("edge_key", '"A:out-0->B:in-0"'),
+            ("patch", '{"relation": "支持", "label": "几何意义"}'),
+            ("reason", '"为什么修改这条边"'),
+        ),
+    ),
+}
+
+
+def _render_op_examples() -> str:
+    blocks = []
+    for op in EDIT_TOOL_NAMES:
+        for fields in _OP_EXAMPLE_FIELDS.get(op, ()):
+            body = [f'"op": "{op}"'] + [f'"{key}": {value}' for key, value in fields]
+            blocks.append("    {\n      " + ",\n      ".join(body) + "\n    }")
+    return ",\n".join(blocks)
+
+
 # 节点类型表占位符替换：行文本的唯一来源是 harness/registry.py（PROMPT_TYPE_LINES），
 # 与前端 src/static/js/graph-recipes.js 由 tests/test_registry_consistency.py 对拍。
+# 操作示例占位符同款范式（2026-10-26）：来源是 tools.EDIT_TOOL_NAMES 反射的示例表。
 HARNESS_SYSTEM_PROMPT = HARNESS_SYSTEM_PROMPT.replace(
+    "__OPERATIONS_EXAMPLE__", _render_op_examples()
+).replace(
     "__NODE_TYPE_LINES__", "\n".join(prompt_node_type_lines())
 )
 
@@ -303,9 +327,13 @@ def build_review_messages(
     return _apply_level_suffix(messages, level)
 
 
-HARNESS_CHAT_REDLINE = """
+# 工具名单从 tools.py 反射（能力反射 2026-10-26 方向 2），拼出文案与旧手写版
+# 逐字节一致——改名单只动 tools.py，这里自动跟（tests/test_harness_prompt_reflection.py 钉）。
+_EDIT_TOOLS_SLASH = "/".join(EDIT_TOOL_NAMES)
+_READONLY_TOOLS_SLASH = " / ".join(READONLY_TOOL_NAMES)
+HARNESS_CHAT_REDLINE = f"""
 
-【答疑模式红线（最高优先级）】当前处于答疑模式：只允许用文字回答——回答问题、讨论、点评图里的内容与结构都可以，但绝对不能改动图。编辑类工具（create_node/update_node/delete_node/add_edge/remove_edge/update_edge）一律不要调用，operations 必须是空数组；即使用户要求修改/新增/删除节点，也只用文字说明你建议怎么改，并提醒用户切回「编辑」模式再执行。只读查询工具（read_node / list_neighbors / search_nodes / search_knowledge / search_formulas / graph_stats）可以自由使用，而且鼓励使用：先查图里相关节点的全文、检索用户的知识库与公式速查，再给出有依据的回答；引用时注明出处（如“你知识库里『梯度』这条笔记”）。用户问“该先学什么/这张图作为学习路线合不合格/哪里薄弱”时，先调 graph_stats 拿整图统计（连通分量、链深梯度、检测薄弱点覆盖），回答必须引用其中的具体数字与节点，不要泛泛而谈。"""
+【答疑模式红线（最高优先级）】当前处于答疑模式：只允许用文字回答——回答问题、讨论、点评图里的内容与结构都可以，但绝对不能改动图。编辑类工具（{_EDIT_TOOLS_SLASH}）一律不要调用，operations 必须是空数组；即使用户要求修改/新增/删除节点，也只用文字说明你建议怎么改，并提醒用户切回「编辑」模式再执行。只读查询工具（{_READONLY_TOOLS_SLASH}）可以自由使用，而且鼓励使用：先查图里相关节点的全文、检索用户的知识库与公式速查，再给出有依据的回答；引用时注明出处（如“你知识库里『梯度』这条笔记”）。用户问“该先学什么/这张图作为学习路线合不合格/哪里薄弱”时，先调 {GRAPH_STATS_TOOL_NAME} 拿整图统计（连通分量、链深梯度、检测薄弱点覆盖），回答必须引用其中的具体数字与节点，不要泛泛而谈。"""
 
 # ---- 路径六第 2 档（2026-10-09）：课程表体检报告模板 ----
 # 报告机件＝「确定性指标块（build_coach_stats_block，拼 user 消息尾部）＋模板
@@ -470,12 +498,22 @@ HARNESS_EXPAND_SYSTEM_PROMPT = """你是知识网络进阶拓展 harness。用�
 - summary 必填，用助手口吻 2~3 句说明为哪些知识点（用节点名）生成了进阶链、各自方向；不要出现节点 id 等原始标识，不要罗列 operations。
 - 每个目标知识点都必须生成完整链条，不要合并、不要只生成一个。
 - 只创建新的 answer/learn 节点，不要修改已有节点。
+- 本相位工具表也提供 __EXPAND_DORMANT_OPS__ 与只读查询工具；默认动作只有上面链条的 create_node 与 add_edge，不要用其余操作改动已有节点。
 - 新节点只使用 temp_id，最终 ID 由 harness 分配；add_edge 可以直接引用同批 temp_id。
 - 每个操作必须有 reason。
 - 只引用快照中真实存在的目标节点 ID。
 - 新节点 content 只写一句话占位（≤50 字）或留空，正文由内容生成流程填充；不要生成大段进阶正文。
 - 不要输出坐标、颜色等 UI 状态。
 """
+
+# 能力反射（2026-10-26 方向 2）：expand 工具表含全部编辑工具，但模板旧版只教
+# 链条两步、休眠四件（update_node/delete_node/remove_edge/update_edge）通篇未提
+# ——钉测试（每相位每个工具名必须进该相位文案）要求名单在场；休眠名单从
+# EDIT_TOOL_NAMES 反射，加编辑工具这里自动跟上。
+HARNESS_EXPAND_SYSTEM_PROMPT = HARNESS_EXPAND_SYSTEM_PROMPT.replace(
+    "__EXPAND_DORMANT_OPS__",
+    " / ".join(name for name in EDIT_TOOL_NAMES if name not in ("create_node", "add_edge")),
+)
 
 
 def build_expand_messages(
