@@ -332,15 +332,18 @@ class HarnessToolsTest(unittest.TestCase):
         edit_tools = {"create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge"}
         # T93＋2026-10-03 智能化第二期＋2026-10-09 优化新路径六：normal/expand/
         # apply/preset 追加六只读工具（图查询三件套＋知识检索两件套＋graph_stats
-        # 学习体检，先查再改）；coach（路径六第 2 档课程表体检）与 normal 同表
-        self.assertEqual(set(PHASE_TOOLS["normal"]), edit_tools | set(READONLY_TOOL_NAMES))
+        # 学习体检，先查再改）；coach（路径六第 2 档课程表体检）与 normal 同表；
+        # 2026-10-25 方向 1（DSH 对照）：编辑相位再加 dry_run 试改自检
+        from harness.tools import DRY_RUN_TOOL_NAME
+        self.assertEqual(set(PHASE_TOOLS["normal"]), edit_tools | {DRY_RUN_TOOL_NAME} | set(READONLY_TOOL_NAMES))
         self.assertEqual(set(PHASE_TOOLS["coach"]), set(PHASE_TOOLS["normal"]))
         self.assertEqual(PHASE_TOOLS["evaluate"], ["create_eval_node"])
         self.assertNotIn("create_node", PHASE_TOOLS["apply"])
-        self.assertEqual(len(build_tools("normal")), 12)
-        self.assertEqual(len(build_tools("coach")), 12)
+        self.assertIn(DRY_RUN_TOOL_NAME, PHASE_TOOLS["apply"])
+        self.assertEqual(len(build_tools("normal")), 13)
+        self.assertEqual(len(build_tools("coach")), 13)
         self.assertEqual(len(build_tools("evaluate")), 1)
-        self.assertEqual(len(build_tools("apply")), 11)
+        self.assertEqual(len(build_tools("apply")), 12)
         self.assertEqual(build_tools("resolve"), [])
 
     def test_parse_tool_calls_basic(self):
