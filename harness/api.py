@@ -675,3 +675,39 @@ async def recipe_draft(request: Request):
         err = {"status": "error", "errors": [{"reason": f"harness 内部错误: {exc}"}], "say": f"harness 内部错误: {exc}"}
         _log_usage(_usage_entry(payload, err, t0, "recipe_draft"))
         return JSONResponse(status_code=500, content=err)
+
+
+# ===== 工坊 C1（2026-10-25）：Φ 自助调优的工具循环——服务端只代理模型调用 =====
+# 前端每步把「对话＋工具回灌」发上来，这里剔掉客户端 system、换上服务端固定的
+# 工坊系统提示词，带六个工具（workshop_tools.build_workshop_tools）非流式调一次
+# 模型，把 {content, tool_calls} 原样还回去。**工具在浏览器执行**（配方库在
+# localStorage、画布在内存），本路由不执行任何工具——见 harness/workshop_agent.py。
+@router.post("/workshop/step")
+async def workshop_step(request: Request):
+    t0 = time.time()
+    payload = {}
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        return JSONResponse(status_code=400, content={"status": "error", "errors": [{"reason": f"请求不是合法 JSON: {exc}"}]})
+    try:
+        from .workshop_agent import workshop_step_call
+
+        with harness_session_bucket(_payload_session(payload)):
+            result = await workshop_step_call(
+                messages=payload.get("messages"),
+                model=payload.get("model"),
+                thinking=str(payload.get("thinking") or ""),
+                max_tokens=payload.get("max_tokens"),
+            )
+        _log_usage(_usage_entry(payload, result, t0, "workshop_agent"))
+        return result
+    except HarnessError as exc:
+        err = {"status": "error", "errors": [{"reason": str(exc)}], "say": str(exc)}
+        _log_usage(_usage_entry(payload, err, t0, "workshop_agent"))
+        return JSONResponse(status_code=502, content=err)
+    except Exception as exc:
+        logger.exception("harness internal error (workshop step)")
+        err = {"status": "error", "errors": [{"reason": f"harness 内部错误: {exc}"}], "say": f"harness 内部错误: {exc}"}
+        _log_usage(_usage_entry(payload, err, t0, "workshop_agent"))
+        return JSONResponse(status_code=500, content=err)

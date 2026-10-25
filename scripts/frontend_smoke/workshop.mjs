@@ -339,9 +339,9 @@ export async function run() {
     // T410：软闸只盖一句话档不够——手动档保存栏也必须走闸
     if (!/onclick="rwPlaceOnCanvasGated\(\)"/.test(src)) throw new Error('手动档保存栏的「放到画布」没走软闸（rwPlaceOnCanvasGated）');
     if (!/window\.rwPlaceOnCanvasGated = rwPlaceOnCanvasGated/.test(src)) throw new Error('rwPlaceOnCanvasGated 没导出到 window');
-    // T409：空输出也要挂体检条；调优期间的并发闸都得在
+    // T409：空输出也要挂体检条；调优期间的并发闸都得在（C1 起闸还拦 Φ 自助调优）
     if (!/state\.judge \? _rwJudgeHtml\(\) : ''/.test(src)) throw new Error('空输出的占位分支没挂体检条（T409）');
-    if (!/if \(state\.autotuning && !internal\) return/.test(src)) throw new Error('试跑单链没挡自动调优期间的并发插队（T409）');
+    if (!/if \(\(state\.autotuning \|\| state\.agentBusy\) && !internal\) return/.test(src)) throw new Error('试跑单链没挡调优/自助调优期间的并发插队（T409＋C1）');
     if (!/_rwRunTrialOnce\(true\)/.test(src)) throw new Error('自动调优的两次试跑没带 internal 放行标记（T409）');
     return true;
   });
@@ -779,6 +779,284 @@ export async function run() {
       } finally {
         sandbox.confirm = prev.confirm;
         sandbox.rwPlaceOnCanvas = prev.place;
+        resetWorkshop(true);
+      }
+    }],
+    // ---- C1（2026-10-25）：Φ 自助调优循环——工具在本页执行、服务端只代理模型调用 ----
+    ['C1 主流程：查能力 → 试跑(坏) → 改配方 → 复跑(好) → 收尾说人话，全程不入册不放画布', async () => {
+      resetWorkshop(true);
+      sandbox.openRecipeWorkshop({
+        recipe: {
+          name: '自助调优节点' + (Date.now() % 100000), base: { kind: 'module' },
+          generate: { prompt: '你在做受力分析。' },
+          ports: { static: [{ label: '步骤', drag_form: 'draft' }, { label: '检查', drag_form: 'draft' }], inputs: [] },
+          appearance: { palette: 'amber' }, content_kind: 'markdown',
+        },
+        mode: 'smart',
+      });
+      const st = state();
+      st.smartDone = true;
+      st.materials = { general: '一个质量 m 的物块放在倾角 θ 的斜面上，求加速度。' };
+      const prev = {
+        proxy: sandbox.proxyChatWithModel, sse: sandbox._sseContentFrames,
+        fetch: sandbox.fetch, confirm: sandbox.confirm, markdown: sandbox.renderMarkdown,
+        save: sandbox.rwSaveRecipe, place: sandbox.rwPlaceOnCanvas,
+      };
+      const stepBodies = [];
+      const draftBodies = [];
+      let capsCalls = 0;
+      let saveCalls = 0;
+      let placeCalls = 0;
+      let trials = 0;
+      const tc = (name, args) => ({ id: 'c-' + name + '-' + Math.random().toString(36).slice(2, 6), type: 'function', function: { name, arguments: JSON.stringify(args || {}) } });
+      // /workshop/step 剧本：五步——查能力、试跑、补丁、复跑、收尾（无 tool_calls 即终局）
+      const script = [
+        { content: '我先查能力', tool_calls: [tc('workshop_capabilities')] },
+        { content: '我先试跑一次看看', tool_calls: [tc('workshop_run_trial')] },
+        { content: '体检没过，我只改生成要求', tool_calls: [tc('workshop_patch_recipe', { instruction: '按体检结果改：分步输出、公式包 $…$（改完别动别的字段）' })] },
+        { content: '改完了，复跑验证', tool_calls: [tc('workshop_run_trial')] },
+        { content: '调好了：分步、公式包好了，体检通过。', tool_calls: [] },
+      ];
+      try {
+        sandbox.confirm = () => true;
+        sandbox.renderMarkdown = () => '<p>（渲染省略）</p>';
+        sandbox.rwSaveRecipe = () => { saveCalls += 1; return true; };
+        sandbox.rwPlaceOnCanvas = () => { placeCalls += 1; };
+        sandbox.proxyChatWithModel = async () => ({ ok: true, status: 200, body: {} });
+        sandbox._sseContentFrames = async function* () {
+          trials += 1;
+          if (trials === 1) {
+            yield '好的，这个题我们来看看。';   // 坏输出：太短＋没分步骤
+            return;
+          }
+          yield '第一步 研究对象\n取物块为研究对象，沿斜面方向建系，斜面方向为 x、垂直斜面为 y。\n';
+          yield '第二步 列方程\n垂直方向 $N = mg\\cos\\theta$，沿斜面方向 $mg\\sin\\theta = ma$，所以 $a = g\\sin\\theta$。\n';
+          yield '第三步 检查\n当 θ=90° 时 $a=g$；有摩擦时把 $mg\\cos\\theta$ 乘摩擦因数加进方程，量纲仍是加速度。';
+        };
+        sandbox.fetch = async (url, init) => {
+          const target = String(url);
+          if (target.indexOf('/recipe/capabilities') >= 0) {
+            capsCalls += 1;
+            return {
+              ok: true, status: 200,
+              json: async () => ({
+                status: 'ok',
+                capabilities: { base_kinds: { all: ['module', 'summary', 'relation', 'note'] }, limits: { name: 24 } },
+                templates: [{ key: 'a' }, { key: 'b' }],
+              }),
+            };
+          }
+          if (target.indexOf('/workshop/step') >= 0) {
+            const body = JSON.parse(init.body);
+            stepBodies.push(body);
+            const reply = script[Math.min(stepBodies.length - 1, script.length - 1)];
+            return { ok: true, status: 200, json: async () => ({ status: 'ok', content: reply.content, tool_calls: reply.tool_calls }) };
+          }
+          if (target.indexOf('/recipe/draft') >= 0) {
+            const body = JSON.parse(init.body);
+            draftBodies.push(body);
+            const recipe = JSON.parse(JSON.stringify(state().recipe));
+            recipe.generate.prompt = String(recipe.generate.prompt || '') + '\n分步输出，公式用 $…$ 包起来。';
+            return {
+              ok: true, status: 200,
+              json: async () => ({
+                status: 'ok', say: '按体检补了分步与公式要求', mode: 'patch', recipe,
+                changed: ['generate.prompt'], question: null, warnings: [], field_errors: [],
+              }),
+            };
+          }
+          throw new Error('C1 主流程不该打到别的接口：' + target);
+        };
+        await sandbox.rwSmartAgentRun();
+        // 步数与工具顺序：五个 /workshop/step，工具执行序＝查能力→试跑→补丁→复跑
+        // （消息表逐 step 累积——按「比上一步多出来的 tool 回灌」取增量才是执行序）
+        if (stepBodies.length !== 5) throw new Error('应恰好 5 步模型调用，实际 ' + stepBodies.length);
+        const toolOrder = [];
+        let seenTools = 0;
+        stepBodies.forEach(body => {
+          const tools = (body.messages || []).filter(msg => msg.role === 'tool');
+          tools.slice(seenTools).forEach(msg => toolOrder.push(msg.name));
+          seenTools = tools.length;
+        });
+        if (JSON.stringify(toolOrder) !== JSON.stringify(['workshop_capabilities', 'workshop_run_trial', 'workshop_patch_recipe', 'workshop_run_trial'])) {
+          throw new Error('工具执行顺序不对：' + JSON.stringify(toolOrder));
+        }
+        // 首条 user 消息带配方快照与材料摘要
+        const first = (stepBodies[0].messages || [])[0];
+        if (!first || first.role !== 'user') throw new Error('首条消息应是 user');
+        if (String(first.content).indexOf('自助调优节点') < 0 || String(first.content).indexOf('物块') < 0) {
+          throw new Error('首条 user 消息没带配方快照＋材料摘要');
+        }
+        // 试跑两次（坏→好），走的是同一条试跑链
+        if (trials !== 2) throw new Error('应真跑两次（坏→好），实际 ' + trials + ' 次');
+        if ((st.runs || []).length !== 2) throw new Error('两次试跑都该记进试跑记录（软闸认章）');
+        // 补丁强制 patch 且指令带体检结果
+        if (draftBodies.length !== 1) throw new Error('应恰好一次补丁，实际 ' + draftBodies.length);
+        if (draftBodies[0].mode !== 'patch') throw new Error('Φ 改配方必须走 patch，实际 ' + draftBodies[0].mode);
+        if (String(draftBodies[0].instruction).indexOf('体检') < 0) throw new Error('补丁指令没带体检结果');
+        // 收尾说人话：指标＋「结构通过≠内容正确」，不许许愿内容一定对
+        if (st.agentBusy) throw new Error('循环结束 agentBusy 应复位');
+        const summary = String(st.agentSummary || '');
+        if (summary.indexOf('体检通过') < 0) throw new Error('成了要说「体检通过」，实际：' + summary);
+        if (summary.indexOf('字') < 0 || summary.indexOf('步') < 0 || summary.indexOf('公式') < 0 || summary.indexOf('出口') < 0) {
+          throw new Error('收尾要报四项指标（字/步/公式/出口），实际：' + summary);
+        }
+        if (summary.indexOf('结构通过≠内容正确') < 0) throw new Error('收尾必须附「结构通过≠内容正确」');
+        if (summary.indexOf('一定对') >= 0) throw new Error('不许出现「一定对」这类许愿');
+        // C1 无副作用：不入册、不放画布、能力清单只查一次
+        if (saveCalls || placeCalls) throw new Error('C1 不许入册/放画布（save=' + saveCalls + ' place=' + placeCalls + '）');
+        if (capsCalls !== 1) throw new Error('查能力应恰好一次，实际 ' + capsCalls);
+        // 左栏有过程记录（查能力/试跑/改配方逐行说话）
+        const chat = (st.conversation || []).map(item => String(item.text || '')).join('\n');
+        if (chat.indexOf('查了能力清单') < 0 || chat.indexOf('次试跑') < 0 || chat.indexOf('改了') < 0) {
+          throw new Error('左栏没把过程逐行说出来');
+        }
+        return true;
+      } finally {
+        sandbox.proxyChatWithModel = prev.proxy;
+        sandbox._sseContentFrames = prev.sse;
+        sandbox.fetch = prev.fetch;
+        sandbox.confirm = prev.confirm;
+        sandbox.renderMarkdown = prev.markdown;
+        sandbox.rwSaveRecipe = prev.save;
+        sandbox.rwPlaceOnCanvas = prev.place;
+        resetWorkshop(true);
+      }
+    }],
+    ['C1 硬上限：模型一直要工具时 8 步就停，试跑不超 2 次', async () => {
+      resetWorkshop(true);
+      sandbox.openRecipeWorkshop({
+        recipe: {
+          name: '八步上限节点' + (Date.now() % 100000), base: { kind: 'module' },
+          generate: { prompt: '你在做受力分析。' },
+          ports: { static: [{ label: '步骤', drag_form: 'draft' }], inputs: [] },
+          appearance: { palette: 'amber' }, content_kind: 'markdown',
+        },
+        mode: 'smart',
+      });
+      const st = state();
+      st.smartDone = true;
+      st.materials = { general: '一个质量 m 的物块放在倾角 θ 的斜面上，求加速度。' };
+      const prev = { fetch: sandbox.fetch, confirm: sandbox.confirm };
+      let stepCalls = 0;
+      try {
+        sandbox.confirm = () => true;
+        sandbox.fetch = async (url, init) => {
+          const target = String(url);
+          if (target.indexOf('/workshop/step') >= 0) {
+            stepCalls += 1;
+            return {
+              ok: true, status: 200,
+              json: async () => ({
+                status: 'ok', content: '我再看一眼配方',
+                tool_calls: [{ id: 'c-' + stepCalls, type: 'function', function: { name: 'workshop_get_recipe', arguments: '{}' } }],
+              }),
+            };
+          }
+          throw new Error('八步上限用例不该打别的接口：' + target);
+        };
+        await sandbox.rwSmartAgentRun();
+        if (stepCalls !== 8) throw new Error('硬上限应是 8 步模型调用，实际 ' + stepCalls);
+        if (st.agentBusy) throw new Error('到顶后 agentBusy 应复位');
+        if (String(st.agentSummary || '').indexOf('8 步') < 0) throw new Error('收尾该说明走满 8 步先停，实际：' + st.agentSummary);
+        if ((st.runs || []).length) throw new Error('这个剧本不该发生试跑');
+      } finally {
+        sandbox.fetch = prev.fetch;
+        sandbox.confirm = prev.confirm;
+        resetWorkshop(true);
+      }
+    }],
+    ['C1 无进展闸：连续两轮空补丁就停，不白烧调用', async () => {
+      resetWorkshop(true);
+      sandbox.openRecipeWorkshop({
+        recipe: {
+          name: '空补丁节点' + (Date.now() % 100000), base: { kind: 'module' },
+          generate: { prompt: '你在做受力分析。' },
+          ports: { static: [{ label: '步骤', drag_form: 'draft' }], inputs: [] },
+          appearance: { palette: 'amber' }, content_kind: 'markdown',
+        },
+        mode: 'smart',
+      });
+      const st = state();
+      st.smartDone = true;
+      st.materials = { general: '一个质量 m 的物块放在倾角 θ 的斜面上，求加速度。' };
+      const prev = { fetch: sandbox.fetch, confirm: sandbox.confirm };
+      let stepCalls = 0;
+      let draftCalls = 0;
+      const tc = name => ({ id: 'c-' + name + '-' + Math.random().toString(36).slice(2, 6), type: 'function', function: { name, arguments: '{}' } });
+      try {
+        sandbox.confirm = () => true;
+        sandbox.fetch = async (url, init) => {
+          const target = String(url);
+          if (target.indexOf('/workshop/step') >= 0) {
+            stepCalls += 1;
+            return {
+              ok: true, status: 200,
+              json: async () => ({ status: 'ok', content: '我再改一次', tool_calls: [tc('workshop_patch_recipe')] }),
+            };
+          }
+          if (target.indexOf('/recipe/draft') >= 0) {
+            draftCalls += 1;
+            const body = JSON.parse(init.body);
+            return {
+              ok: true, status: 200,
+              json: async () => ({
+                status: 'ok', say: '我觉得现在就行', mode: body.mode,
+                recipe: JSON.parse(JSON.stringify(state().recipe)),
+                changed: [], question: null, warnings: [], field_errors: [],
+              }),
+            };
+          }
+          throw new Error('无进展用例不该打别的接口：' + target);
+        };
+        await sandbox.rwSmartAgentRun();
+        if (draftCalls !== 2) throw new Error('连续两轮空补丁后应停（第 2 轮触闸），实际补丁 ' + draftCalls + ' 次');
+        if (stepCalls !== 2) throw new Error('触闸后不再发起第 3 步模型调用，实际 ' + stepCalls + ' 步');
+        if (String(st.agentSummary || '').indexOf('再跑也是原样') < 0) throw new Error('收尾该说清为什么停，实际：' + st.agentSummary);
+      } finally {
+        sandbox.fetch = prev.fetch;
+        sandbox.confirm = prev.confirm;
+        resetWorkshop(true);
+      }
+    }],
+    ['C1 取消：中止在途步骤，收尾明说已取消', async () => {
+      resetWorkshop(true);
+      sandbox.openRecipeWorkshop({
+        recipe: {
+          name: '取消样例节点' + (Date.now() % 100000), base: { kind: 'module' },
+          generate: { prompt: '你在做受力分析。' },
+          ports: { static: [{ label: '步骤', drag_form: 'draft' }], inputs: [] },
+          appearance: { palette: 'amber' }, content_kind: 'markdown',
+        },
+        mode: 'smart',
+      });
+      const st = state();
+      st.smartDone = true;
+      st.materials = { general: '一个质量 m 的物块放在倾角 θ 的斜面上，求加速度。' };
+      const prev = { fetch: sandbox.fetch, confirm: sandbox.confirm };
+      let stepCalls = 0;
+      const tc = name => ({ id: 'c-' + name + '-' + Math.random().toString(36).slice(2, 6), type: 'function', function: { name, arguments: '{}' } });
+      try {
+        sandbox.confirm = () => true;
+        sandbox.fetch = async (url) => {
+          if (String(url).indexOf('/workshop/step') < 0) throw new Error('取消用例不该打别的接口：' + url);
+          stepCalls += 1;
+          if (stepCalls === 2) {
+            // 第 2 步的回包在途中被用户点了取消——回包到达时 seq 已失配
+            sandbox.rwSmartAgentCancel();
+          }
+          return {
+            ok: true, status: 200,
+            json: async () => ({ status: 'ok', content: '继续', tool_calls: [tc('workshop_get_recipe')] }),
+          };
+        };
+        await sandbox.rwSmartAgentRun();
+        if (stepCalls !== 2) throw new Error('取消应停在 2 步，实际 ' + stepCalls);
+        if (st.agentBusy) throw new Error('取消后 agentBusy 应复位');
+        if (String(st.agentSummary || '').indexOf('已取消') < 0) throw new Error('收尾应明说已取消，实际：' + st.agentSummary);
+      } finally {
+        sandbox.fetch = prev.fetch;
+        sandbox.confirm = prev.confirm;
         resetWorkshop(true);
       }
     }],
