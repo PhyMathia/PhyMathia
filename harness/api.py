@@ -677,9 +677,9 @@ async def recipe_draft(request: Request):
         return JSONResponse(status_code=500, content=err)
 
 
-# ===== 工坊 C1（2026-10-25）：Φ 自助调优的工具循环——服务端只代理模型调用 =====
+# ===== 工坊 C1/C2（2026-10-25）：Φ 自助调优的工具循环——服务端只代理模型调用 =====
 # 前端每步把「对话＋工具回灌」发上来，这里剔掉客户端 system、换上服务端固定的
-# 工坊系统提示词，带六个工具（workshop_tools.build_workshop_tools）非流式调一次
+# 工坊系统提示词，带九个工具（workshop_tools.build_workshop_tools）非流式调一次
 # 模型，把 {content, tool_calls} 原样还回去。**工具在浏览器执行**（配方库在
 # localStorage、画布在内存），本路由不执行任何工具——见 harness/workshop_agent.py。
 @router.post("/workshop/step")

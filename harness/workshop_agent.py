@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # 单步输出上限：工具循环每步只要「下一步动作＋一句话」，2000 封顶防客户端灌大预算
 WORKSHOP_STEP_MAX_TOKENS = 1500
 WORKSHOP_STEP_TOKENS_CEILING = 2000
-# 消息条数上限：8 步 ×（1 assistant＋若干 tool 回灌）远用不到 60，超了＝客户端异常
+# 消息条数上限：10 步 ×（1 assistant＋若干 tool 回灌）远用不到 60，超了＝客户端异常
 WORKSHOP_STEP_MAX_MESSAGES = 60
 # 单条 content 上限（字符）：工具回灌里最大的是配方快照/输出节选（<8KB），留足余量
 WORKSHOP_STEP_CONTENT_MAX_CHARS = 20000

@@ -25,7 +25,9 @@ const RECIPE_WORKSHOP_FLASH_MS = 2000;
 // 与 harness/workshop_tools.py 同口径，别只改一边。
 const RECIPE_WORKSHOP_STEP_API = '/api/harness/workshop/step';
 const RECIPE_WORKSHOP_CAPABILITIES_API = '/api/harness/recipe/capabilities';
-const RECIPE_WORKSHOP_AGENT_MAX_STEPS = 8;
+// C2 起 10 步：8 步调优预算＋「入册 → 查上游 → 落图」副作用尾巴（与服务端
+// WORKSHOP_AGENT_MAX_STEPS 同口径，改就两侧一起改）
+const RECIPE_WORKSHOP_AGENT_MAX_STEPS = 10;
 const RECIPE_WORKSHOP_AGENT_MAX_TRIALS = 2;
 
 let recipeWorkshop = null;          // 当前草稿状态（null＝没开过）
@@ -2085,7 +2087,7 @@ function _rwSmartResultHtml() {
   const hasModel = !!_rwModel();
   const agentTitle = !hasModel
     ? '还没配主模型——先到「模型设置」里选一个'
-    : (!materialsReady ? '先贴一道题当材料，Φ 才能自己试跑和调' : '让 Φ 自己走：查能力 → 看配方 → 试跑 → 读体检 → 只改有问题处 → 复跑 → 下结论（最多 8 步、2 次试跑，可取消）');
+    : (!materialsReady ? '先贴一道题当材料，Φ 才能自己试跑和调' : '让 Φ 自己走：查能力 → 看配方 → 试跑 → 读体检 → 只改有问题处 → 复跑；体检过了可入册、放画布（会再问你一次）（最多 ' + RECIPE_WORKSHOP_AGENT_MAX_STEPS + ' 步、' + RECIPE_WORKSHOP_AGENT_MAX_TRIALS + ' 次试跑，可取消）');
   const agentBtn = '<button type="button" class="rw-btn" id="rwAgentBtn" onclick="rwSmartAgentRun()" title="' + _rwEsc(agentTitle) + '"'
     + ((busyLock || !hasModel || !materialsReady) ? ' disabled' : '') + '>让 Φ 自己配好</button>';
   const lockAttr = busyLock ? ' disabled' : '';
@@ -2241,13 +2243,16 @@ function rwSmartReset() {
   _rwRenderAll();
 }
 
-// ---- Φ 自助调优循环（C1，2026-10-25）----
-// 让 Φ 自己走「查能力 → 看当前配方 → 试跑 → 读体检 → 只改有问题处 → 复跑 → 下结论」。
+// ---- Φ 自助调优循环（C1/C2，2026-10-25）----
+// 让 Φ 自己走「查能力 → 看当前配方 → 试跑 → 读体检 → 只改有问题处 → 复跑 → 下结论」，
+// C2 起体检通过后还能替用户走「入册 → 挑上游 → 放到画布」——副作用动作每个执行前
+// confirm 问用户一次，被拒不重试、把 refused 回灌给模型收尾说明。
 // 架构基线：配方库在 localStorage、画布在内存，**工具在本页执行**；服务端只代理带
-// 工具表的模型调用（/workshop/step）。复用三件既有单链，绝不另写第二套：
-//   试跑 _rwRunTrialOnce(true) / 体检 _rwJudgeOutput 的结果（state.judge）/ 补丁 _rwRequestDraft(mode:'patch')
-// 无副作用边界：不入册、不放画布、不写配方库（C2 再做）。硬上限 8 步模型调用＋2 次试跑；
-// 无进展闸：连续两轮空补丁或两轮体检旗一模一样就停，不白烧调用。
+// 工具表的模型调用（/workshop/step）。复用既有单链，绝不另写第二套：
+//   试跑 _rwRunTrialOnce(true) / 体检 _rwJudgeOutput 的结果（state.judge）/ 补丁
+//   _rwRequestDraft(mode:'patch') / 入册 rwSaveRecipe / 落图 rwPlaceOnCanvas({keepOpen:true})
+//   / 上游候选 _rwUpstreamCandidates。硬上限 10 步模型调用＋2 次试跑；
+//   无进展闸：连续两轮空补丁或两轮体检旗一模一样就停，不白烧调用。
 function _rwAgentLogLine(text, kind) {
   if (!recipeWorkshop) return;
   recipeWorkshop.agentLog.push({ text: String(text || ''), kind: String(kind || ''), at: Date.now() });
@@ -2401,8 +2406,72 @@ async function _rwAgentExecTool(ctx, name, args) {
         _rwAgentLogLine('查了名字「' + name.slice(0, 24) + '」' + (taken ? '——和已有配方重名' : '——没撞名'));
         return { result: { name: name, taken: !!taken }, meta: {} };
       }
+      // ---- C2 副作用三件：入册 / 查上游（只读）/ 落图＋连线 ----
+      // 每个副作用执行前 confirm 问一次；被拒不重试（结果 refused 回灌，提示词也钉了）。
+      case 'workshop_save_recipe': {
+        const name = String((_rwNormalized() || _rwCurrentRecipe()).name || '').trim() || '（还没起名）';
+        if (typeof confirm === 'function'
+          && !confirm('把这份节点配方入册（存进你的配方库，以后随时能用）？\n名字：「' + name + '」')) {
+          _rwAgentLogLine('用户没同意入册，这轮就不存了', 'warn');
+          return { result: { ok: false, refused: true }, meta: {} };
+        }
+        // 复用手动档「入册」同一条链（含校验与字段错误渲染）
+        if (!rwSaveRecipe()) {
+          const errs = (state.fieldErrors || []).map(function (item) { return String((item && item.message) || ''); })
+            .filter(Boolean).slice(0, 3);
+          return { result: { ok: false, error: '入册没成功：' + (errs.join('；') || '原因见工坊字段提示') }, meta: {} };
+        }
+        _rwAgentLogLine('已入册「' + name + '」——配方库里能找到了');
+        return { result: { ok: true, saved: true, name: name }, meta: {} };
+      }
+      case 'workshop_list_upstream': {
+        const candidates = _rwUpstreamCandidates();
+        _rwAgentLogLine(candidates.length
+          ? '画布上可接的上游有 ' + candidates.length + ' 个：' + candidates.map(function (item) { return '「' + item.title + '」'; }).join('、')
+          : '画布上现在没有能接的上游节点', candidates.length ? '' : 'warn');
+        return { result: { candidates: candidates }, meta: {} };
+      }
+      case 'workshop_place_on_canvas': {
+        if (ctx.placed) {
+          return { result: { error: '这轮已经放到画布了——放完就收尾，别重复放' }, meta: {} };
+        }
+        // 软闸同款判定：只认 run 的 recipeId 章（这份配方跑过才许放），别绕试跑
+        const recipe = _rwNormalized() || _rwCurrentRecipe();
+        const trialed = (state.runs || []).some(function (run) {
+          return run && run.recipeId && run.recipeId === String(recipe.id || '');
+        });
+        if (!trialed) {
+          return { result: { ok: false, error: '这份配方还没试跑过——先 workshop_run_trial 拿到真实输出再放，别绕过试跑' }, meta: {} };
+        }
+        // 连线只认候选名单里的 id（名单外的一律丢弃并在结果里说清）
+        const candidates = _rwUpstreamCandidates();
+        const wanted = (Array.isArray(args.upstream_ids) ? args.upstream_ids : []).map(String);
+        const valid = wanted.filter(function (id) {
+          return candidates.some(function (item) { return item.id === id; });
+        });
+        const dropped = wanted.length - valid.length;
+        const confirmText = '把「' + String(recipe.name || '这个节点') + '」放到画布，'
+          + (valid.length ? '并接上 ' + valid.length + ' 个上游节点？' : '（不接上游）？');
+        if (typeof confirm === 'function' && !confirm(confirmText)) {
+          _rwAgentLogLine('用户没同意放到画布——配方还在，下次想放随时可以', 'warn');
+          return { result: { ok: false, refused: true }, meta: {} };
+        }
+        // 上游选择写进 wires，落图走本体（keepOpen：循环还要说总结，说完再关工坊）
+        const wires = {};
+        valid.forEach(function (id) { wires[id] = true; });
+        state.wires = wires;
+        if (!rwPlaceOnCanvas({ keepOpen: true })) {
+          return { result: { ok: false, error: '放到画布失败（入册或建点没成功），原因看工坊里的提示' }, meta: {} };
+        }
+        ctx.placed = true;
+        _rwAgentLogLine('已放到画布：「' + String(recipe.name || '节点') + '」' + (valid.length ? '，接了 ' + valid.length + ' 个上游' : ''));
+        return {
+          result: { ok: true, placed: true, wired: valid.length, dropped_unknown_ids: dropped },
+          meta: {},
+        };
+      }
       default:
-        return { result: { error: '不认识的工具：' + name + '（只有查能力/看配方/试跑/读体检/改配方/查名六个）' }, meta: {} };
+        return { result: { error: '不认识的工具：' + name + '（只有查能力/看配方/试跑/读体检/改配方/查名/入册/查上游/落图九个）' }, meta: {} };
     }
   } catch (err) {
     return { result: { error: '工具执行出错：' + String((err && err.message) || err).slice(0, 160) }, meta: {} };
@@ -2446,7 +2515,7 @@ async function rwSmartAgentRun() {
   state.agentLog = [];
   _rwRenderSmart();
   _rwRenderRun();
-  const ctx = { state: state, seq: seq, trials: 0, order: [] };
+  const ctx = { state: state, seq: seq, trials: 0, order: [], placed: false };
   const materialsBrief = wf.upstream.map(function (item) {
     return '【' + item.label + '】' + String(item.content || '').replace(/\s+/g, ' ').slice(0, 400);
   }).join('\n');
@@ -2457,7 +2526,9 @@ async function rwSmartAgentRun() {
       '任务：把下面这份节点配方调到「体检通过」。用户当初的需求是：「' + (wish || '（没留原话）') + '」',
       '当前配方快照：\n' + JSON.stringify(recipeNow),
       '试跑材料（用户已贴，原样喂给试跑）：\n' + (materialsBrief || '（空）'),
-      '先把该看的看了（workshop_capabilities / workshop_get_recipe），再试跑拿真输出，按体检结果只改有问题处，复跑验证后收尾。最多 '
+      '先把该看的看了（workshop_capabilities / workshop_get_recipe），再试跑拿真输出，按体检结果只改有问题处，复跑验证。'
+        + '体检通过后可以替用户落地：要接上游先 workshop_list_upstream 看候选，然后 workshop_place_on_canvas'
+        + '（也可先 workshop_save_recipe 入册）——这些是副作用动作，执行前会问用户一次，被拒不重试、直接收尾说明。最多 '
         + RECIPE_WORKSHOP_AGENT_MAX_STEPS + ' 步、' + RECIPE_WORKSHOP_AGENT_MAX_TRIALS + ' 次试跑。',
     ].join('\n\n'),
   }];
@@ -2538,10 +2609,17 @@ async function rwSmartAgentRun() {
   }
   // 收尾只说结构，不替内容背书——体检是纯形式判定（A/B 检验的已知盲区）
   summary += '结构通过≠内容正确——体检只看形式（分步/公式/出口/长度），内容对不对请你自己读一遍输出。';
+  if (ctx.placed) {
+    const wired = Object.keys(state.wires || {}).filter(function (key) { return (state.wires || {})[key]; }).length;
+    summary = '节点已放到画布' + (wired ? '（接了 ' + wired + ' 个上游）。' : '。') + summary;
+  }
   state.agentSummary = summary;
   _rwPushChat('phi', summary);
   _rwRenderSmart();
   _rwRenderRun();
+  // Φ 落图走的是 keepOpen（放完不自动关），总结说完这里补上关工坊——与手动档
+  // 「放到画布即关」同一语义，只是把「说总结」排在关之前。
+  if (ctx.placed) closeRecipeWorkshop({ discard: true });
 }
 
 
@@ -2652,13 +2730,17 @@ function _rwFreePoint() {
   return { x: Math.round(maxX + 280), y: Math.round(count ? sumY / count : 0) };
 }
 
-function rwPlaceOnCanvas() {
-  if (!recipeWorkshop) return;
-  if (!recipeWorkshop.savedName && !rwSaveRecipe()) return;
+// 放到画布：没入册先自动入册，再建点＋按 wires 接上游连线。
+// opts.keepOpen（C2，Φ 工具路径专用）：放完不关工坊——循环还要说总结，说完由
+// 调用方自己 closeRecipeWorkshop({discard:true})。默认不传＝放完即关（手动档
+// 行为零变化，冒烟钉死）。成功返回 true、失败返回 false（Φ 据此回灌工具结果）。
+function rwPlaceOnCanvas(opts) {
+  if (!recipeWorkshop) return false;
+  if (!recipeWorkshop.savedName && !rwSaveRecipe()) return false;
   const recipe = _rwNormalized() || recipeWorkshop.recipe;
   if (typeof createRecipeNode !== 'function') {
     if (typeof toastMsg === 'function') toastMsg('画布还没准备好，先刷新一次');
-    return;
+    return false;
   }
   const point = _rwFreePoint();
   try {
@@ -2670,7 +2752,7 @@ function rwPlaceOnCanvas() {
   const nodeId = createRecipeNode(recipe.id, recipe);
   if (!nodeId) {
     if (typeof toastMsg === 'function') toastMsg('放到画布失败');
-    return;
+    return false;
   }
   const wires = recipeWorkshop.wires || {};
   const sources = Object.keys(wires).filter(function (key) { return wires[key]; });
@@ -2697,10 +2779,11 @@ function rwPlaceOnCanvas() {
       if (typeof console !== 'undefined') console.warn('workshop wire failed', e);
     }
   }
-  closeRecipeWorkshop({ discard: true });
+  if (!(opts && opts.keepOpen)) closeRecipeWorkshop({ discard: true });
   if (typeof toastMsg === 'function') {
     toastMsg('「' + String(recipe.name || '节点') + '」已放到画布' + (wired ? '，并接上了 ' + wired + ' 个上游' : ''));
   }
+  return true;
 }
 
 function rwDiscardDraft() {

@@ -1,8 +1,8 @@
-"""节点工坊 C1（2026-10-25）：/workshop/step 薄路由＋固定工具表＋系统提示词回归。
+"""节点工坊 C1/C2（2026-10-25）：/workshop/step 薄路由＋固定工具表＋系统提示词回归。
 
 架构基线：工具在浏览器执行（配方库在 localStorage、画布在内存），服务端只代理
 「带 tools 的模型调用」——本文件钉死四件事：
-- 工具表六个、名字与前端执行器一一对应，patch/check_name 带必填参数；
+- 工具表九个（C1 六个＋C2 副作用三件）、名字与前端执行器一一对应，patch/check_name 带必填参数；
 - 客户端 system 消息被剔除、服务端系统提示词顶前（人格不归客户端管）；
 - tools/tool_choice=auto 真透传给 _call_model，max_tokens 有上限；
 - 错误协议沿用 /recipe/draft（400 坏 JSON / 502 上游 HarnessError），usage 落
@@ -32,9 +32,9 @@ MODEL = {"provider": "opencode", "model": "m", "base_url": "https://opencode.ai/
 
 
 class WorkshopToolsTest(unittest.TestCase):
-    """工具表形状：六个、名字定死、参数必填项与前端执行器对得上。"""
+    """工具表形状：九个（C1 六个＋C2 副作用三个）、名字定死、参数必填项与前端执行器对得上。"""
 
-    def test_six_tools_with_expected_names(self):
+    def test_nine_tools_with_expected_names(self):
         tools = tools_mod.build_workshop_tools()
         names = [item["function"]["name"] for item in tools]
         self.assertEqual(names, list(tools_mod.WORKSHOP_TOOL_NAMES))
@@ -46,9 +46,16 @@ class WorkshopToolsTest(unittest.TestCase):
         by_name = {item["function"]["name"]: item for item in tools_mod.build_workshop_tools()}
         self.assertEqual(by_name["workshop_patch_recipe"]["function"]["parameters"]["required"], ["instruction"])
         self.assertEqual(by_name["workshop_check_name"]["function"]["parameters"]["required"], ["name"])
-        # 四个只读工具零参数——模型传多余参数也不该在 schema 层拦（tools.py 先例）
-        for name in ("workshop_capabilities", "workshop_get_recipe", "workshop_run_trial", "workshop_read_judge"):
+        # 其余七个工具零必填参数（落图的 upstream_ids 可选：不传＝不接上游）
+        for name in (
+            "workshop_capabilities", "workshop_get_recipe", "workshop_run_trial", "workshop_read_judge",
+            "workshop_save_recipe", "workshop_list_upstream", "workshop_place_on_canvas",
+        ):
             self.assertEqual(by_name[name]["function"]["parameters"]["required"], [])
+        # 落图的 upstream_ids 是字符串数组（前端按名单过滤候选）
+        ids_prop = by_name["workshop_place_on_canvas"]["function"]["parameters"]["properties"]["upstream_ids"]
+        self.assertEqual(ids_prop["type"], "array")
+        self.assertEqual(ids_prop["items"]["type"], "string")
 
 
 class WorkshopAgentSystemPromptTest(unittest.TestCase):
@@ -79,11 +86,19 @@ class WorkshopAgentSystemPromptTest(unittest.TestCase):
             "只改有问题的地方",         # patch 的纪律
             "结构通过≠内容正确",        # 收尾不许许愿内容一定对
             "先贴一道题",               # 没材料先要材料
-            "没有保存、放到画布、连线、删配方这类工具",  # C1 无副作用边界写明
-            str(tools_mod.WORKSHOP_AGENT_MAX_STEPS),    # 步数预算
+            "落图前必须试跑过",         # C2：落图认试跑章，别绕软闸
+            "被拒不重试",               # C2：副作用被用户拒绝后不轰炸重试
+            "失败照实报告",             # C2：入册/落图失败不许假装成功
+            "没有删配方这类破坏性工具",  # C2：破坏性动作仍不做
+            str(tools_mod.WORKSHOP_AGENT_MAX_STEPS),    # 步数预算（C2 起 10）
             str(tools_mod.WORKSHOP_AGENT_MAX_TRIALS),   # 试跑预算
         ):
             self.assertIn(phrase, prompt, f"提示词缺红线「{phrase}」")
+
+    def test_steps_budget_is_ten(self):
+        # C2 拍板：8→10（多出的步数给入册/查上游/落图尾巴）；前后端同口径由冒烟盯前端常量
+        self.assertEqual(tools_mod.WORKSHOP_AGENT_MAX_STEPS, 10)
+        self.assertEqual(tools_mod.WORKSHOP_AGENT_MAX_TRIALS, 2)
 
 
 class SanitizeMessagesTest(unittest.TestCase):
@@ -166,7 +181,7 @@ class WorkshopStepCallTest(unittest.TestCase):
         self.assertEqual(roles, ["system", "user"])
         self.assertEqual(capture["messages"][0]["content"], prompts_mod.HARNESS_WORKSHOP_AGENT_SYSTEM_PROMPT)
         self.assertNotIn("客户端想冒充系统提示词", str(capture["messages"]))
-        # 工具表：六个名字、auto、非流式
+        # 工具表：九个名字、auto、非流式
         names = [item["function"]["name"] for item in capture["tools"]]
         self.assertEqual(names, list(tools_mod.WORKSHOP_TOOL_NAMES))
         self.assertEqual(capture["tool_choice"], "auto")
