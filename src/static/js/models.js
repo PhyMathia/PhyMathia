@@ -391,7 +391,8 @@ window.THINKING_LEVELS = THINKING_LEVELS;
 window.THINKING_BOOLEAN_PROVIDERS = THINKING_BOOLEAN_PROVIDERS;
 
 // 槽位思考档位选项（纯函数，冒烟直测）：按供应商族给「真实存在」的档——
-// 布尔族 关/开 两档；effort 族 关/低/中/高 四档；智谱 5.x（model 匹配 glm-5+）
+// 布尔族 关/开 两档；effort 族 关/低/中/高/最高 五档（off/low/medium/high/max 同名
+// 直发，不认 max 的端点由后端 400 降级链降 high）；智谱 5.x（model 匹配 glm-5+）
 // 低/高/最高 三档（关不掉思考，不给「关」假档）。role==='graph'（Φ 槽）首项是
 // 「自动」('')：不发思考参数＝交给 Φ 面板按钮/后端相位默认，这是唯一保留 '' 档的角色
 function _thinkingOptionsFor(provider, role, model) {
@@ -404,7 +405,7 @@ function _thinkingOptionsFor(provider, role, model) {
   } else if (THINKING_BOOLEAN_PROVIDERS.includes(p)) {
     opts.push({ value: 'off', label: '思考：关' }, { value: 'on', label: '思考：开' });
   } else {
-    opts.push({ value: 'off', label: '思考：关' }, { value: 'low', label: '思考：低' }, { value: 'medium', label: '思考：中' }, { value: 'high', label: '思考：高' });
+    opts.push({ value: 'off', label: '思考：关' }, { value: 'low', label: '思考：低' }, { value: 'medium', label: '思考：中' }, { value: 'high', label: '思考：高' }, { value: 'max', label: '思考：最高' });
   }
   return opts;
 }

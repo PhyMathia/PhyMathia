@@ -6264,14 +6264,18 @@
 .model-thinking-caption .ts-value { color: var(--text-primary); font-weight: 600; font-size: var(--fs-sm); }
 .model-thinking-caption .ts-value:empty { display: none; }
 
-/* ===== 思考强度滑块（2026-10-25 重做） =====
+/* ===== 思考强度滑块（2026-10-25 重做，同日深夜二改） =====
    规格照搬 ZCode composer-thought-slider（本机 app.asar 提取的几何与动效）：
-   32px 命中区＞22px 可见轨道（前景色 10% 底）＞填充层（常态纯绿，ts-at-max 淡入
-   绿→accent 渐变＋白色气泡横漂）＞均分档点（左右留拇指半径 justify-between）＞
-   28px 白拇指（填充伸到拇指圆心）。几何常量（拇指 28/半径 14）在 thinking-slider.js
-   保持同步。设计拍板：本块允许三个字面值——滑块专属色 --ts-green（ZCode 的
-   success 绿，主题里没有对应变量）、白拇指/白档点（渐变上必须中性亮色）、
-   拇指阴影 rgba 黑（阴影惯例，styles.css 同先例）；其余色值全走既有变量。 */
+   32px 命中区＞22px 可见轨道（前景色 10% 底）＞填充层（绿→accent 渐变**常驻**——
+   用户拍板：最高档才显渐变是突变，日常也要有；ts-at-max 只加白气泡横漂）＞
+   均分档点（左右各缩进拇指半径 justify-between）＞28px 白拇指。
+   **居中不变量**：thumb 定位父级是 22px 轨道（不是 32px 外壳），top:-3px＝
+   (22−28)/2，圆心恰在轨道中线——改轨道高度必须同步改这个数（2026-10-25 实踩：
+   写成 +2px 整体偏下 5px，用户肉眼抓出）。
+   几何常量（拇指 28/半径 14）在 thinking-slider.js 保持同步。设计拍板：本块允许
+   三个字面值——滑块专属色 --ts-green（ZCode 的 success 绿，主题里没有对应变量）、
+   白拇指/白档点（渐变上必须中性亮色）、拇指阴影 rgba 黑（阴影惯例，styles.css
+   同先例）；其余色值全走既有变量。 */
 .thinking-slider-mount { margin-top: 6px; }
 .thinking-slider {
   --ts-green: #22c55e;
@@ -6281,10 +6285,8 @@
 .thinking-slider.ts-disabled { opacity: 0.55; cursor: not-allowed; }
 .thinking-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-pill); }
 .thinking-slider-track { position: absolute; left: 0; right: 0; top: 5px; height: 22px; border-radius: var(--r-pill); background: color-mix(in srgb, var(--text-primary) 10%, transparent); }
-.thinking-slider-fill { position: absolute; top: 0; bottom: 0; left: 0; width: 0; border-radius: var(--r-pill); overflow: hidden; background: var(--ts-green); transition: width 0.14s var(--ease-out); }
-.thinking-slider-fill::before { content: ''; position: absolute; inset: 0; border-radius: inherit; opacity: 0; background: linear-gradient(90deg, var(--ts-green), var(--accent)); transition: opacity 0.2s var(--ease-out); }
-.thinking-slider.ts-at-max .thinking-slider-fill::before { opacity: 1; }
-.thinking-slider-thumb { position: absolute; top: 2px; left: 0; width: 28px; height: 28px; border-radius: var(--r-pill); background: var(--ts-white); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28); transition: left 0.14s var(--ease-out), transform 0.14s var(--ease-out); z-index: 2; }
+.thinking-slider-fill { position: absolute; top: 0; bottom: 0; left: 0; width: 0; border-radius: var(--r-pill); overflow: hidden; background: linear-gradient(90deg, var(--ts-green), var(--accent)); transition: width 0.14s var(--ease-out); }
+.thinking-slider-thumb { position: absolute; top: -3px; left: 0; width: 28px; height: 28px; border-radius: var(--r-pill); background: var(--ts-white); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28); transition: left 0.14s var(--ease-out), transform 0.14s var(--ease-out); z-index: 2; }
 .thinking-slider:not(.ts-disabled):active .thinking-slider-thumb { transform: scale(1.08); }
 .thinking-slider-ticks { position: absolute; top: 5px; bottom: 5px; left: 14px; right: 14px; display: flex; align-items: center; justify-content: space-between; pointer-events: none; }
 .thinking-slider-dot { width: 4px; height: 4px; flex: none; border-radius: var(--r-pill); background: color-mix(in srgb, var(--text-primary) 38%, transparent); transition: background var(--dur-fast) var(--ease-out), scale var(--dur-fast) var(--ease-out); }
@@ -6304,6 +6306,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .thinking-slider-bubble { display: none; }
-  .thinking-slider-fill, .thinking-slider-fill::before, .thinking-slider-thumb, .thinking-slider-dot { transition: none; }
+  .thinking-slider-fill, .thinking-slider-thumb, .thinking-slider-dot { transition: none; }
 }
 

@@ -45,8 +45,8 @@ export function run() {
 
   check('model-mode：滑块档位序——effort 关→低→中→高；布尔 关→开；智谱5.x 低→高→最高（无关）；graph 首档「自动」', () => {
     const e = sandbox._thinkingSliderEntries(sandbox._thinkingOptionsFor('deepseek', 'agent'));
-    if (e.map(o => o.value).join(',') !== 'off,low,medium,high') throw new Error('effort 序错：' + e.map(o => o.value).join(','));
-    if (e.map(o => o.short).join(',') !== '关,低,中,高') throw new Error('effort 短标签错：' + e.map(o => o.short).join(','));
+    if (e.map(o => o.value).join(',') !== 'off,low,medium,high,max') throw new Error('effort 序错：' + e.map(o => o.value).join(','));
+    if (e.map(o => o.short).join(',') !== '关,低,中,高,最高') throw new Error('effort 短标签错：' + e.map(o => o.short).join(','));
     const b = sandbox._thinkingSliderEntries(sandbox._thinkingOptionsFor('mimo', 'agent'));
     if (b.map(o => o.value).join(',') !== 'off,on') throw new Error('布尔序错：' + b.map(o => o.value).join(','));
     if (b.map(o => o.short).join(',') !== '关,开') throw new Error('布尔短标签错：' + b.map(o => o.short).join(','));
@@ -70,7 +70,7 @@ export function run() {
     if (D('', bool) !== 'on') throw new Error('布尔空值应显示开（GLM 默认开）');
     if (D('', z5) !== 'max') throw new Error('智谱5.x 空值应显示最高（官方默认 max）');
     if (D('', graph) !== '') throw new Error('graph 空值＝自动，应原样保留');
-    if (D('max', effort) !== 'high') throw new Error('旧 max 档在 effort 族应就近到高');
+    if (D('max', effort) !== 'max') throw new Error('max 是 effort 族正式档，应原样返回');
     if (D('low', bool) !== 'on') throw new Error('旧 low 档在布尔族应归一为开');
     if (D('high', bool) !== 'on') throw new Error('旧 high 档在布尔族应归一为开');
     if (D('on', z5) !== 'max') throw new Error('旧 on 档在智谱5.x 应归一为最高');
@@ -144,7 +144,7 @@ export function run() {
     if (!sandbox.getActiveModelForRole('branch') || sandbox.getActiveModelForRole('branch').id !== m2) {
       throw new Error('详细模式应还原统一前的各槽模型（branch=m2）');
     }
-    if (sandbox.getSlotThinkingForRole('agent') !== 'high') throw new Error('agent 思考应还原为 max（旧 max 档刷新时语义就近归一为 high）');
+    if (sandbox.getSlotThinkingForRole('agent') !== 'max') throw new Error('agent 思考应还原为 max');
     if (sandbox.getSlotThinkingForRole('html') !== 'off') throw new Error('html 思考应还原为 off');
     if (sandbox.getSlotThinkingForRole('branch') !== 'high') throw new Error('branch 思考应还原为 high');
     if (sandbox.localStorage.getItem('phymathia_model_detail_snapshot') !== null) {
@@ -217,8 +217,16 @@ export function run() {
     ]) {
       if (!cssPanels.includes(cls)) throw new Error('缺样式：' + cls);
     }
-    for (const dead of ['.thinking-slider-label', '.thinking-slider-ring', '.thinking-slider-spark', 'ts-celebrate', 'ts-breathe']) {
-      if (cssPanels.includes(dead)) throw new Error('旧彩蛋/标签行样式残留：' + dead);
+    for (const dead of ['.thinking-slider-label', '.thinking-slider-ring', '.thinking-slider-spark', 'ts-celebrate', 'ts-breathe', '.thinking-slider-fill::before']) {
+      if (cssPanels.includes(dead)) throw new Error('旧彩蛋/标签行/切换式渐变样式残留：' + dead);
+    }
+    if (!cssPanels.includes('linear-gradient(90deg, var(--ts-green), var(--accent))')) {
+      throw new Error('填充渐变应常驻（用户拍板：最高档才显渐变是突变）');
+    }
+    // 居中不变量：thumb 定位父级是 22px 轨道，top 必须是 (22−28)/2 = -3px
+    const thumbRule = cssPanels.match(/\.thinking-slider-thumb \{[^}]*\}/);
+    if (!thumbRule || !/top: -3px/.test(thumbRule[0])) {
+      throw new Error('拇指 top 应为 -3px（相对 22px 轨道居中；实踩 +2px 偏下 5px）');
     }
     return true;
   });

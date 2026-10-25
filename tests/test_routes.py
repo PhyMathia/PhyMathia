@@ -304,14 +304,14 @@ class ThinkingRequestParamsUnitTest(unittest.TestCase):
             self.assertEqual(main_mod._thinking_request_params(provider, "off"), {"reasoning_effort": "none"})
 
     def test_reasoning_effort_levels_identity(self):
-        # 2026-10-25 起 low/medium/high 一一同名直发（滑块档＝真实 API 值）；
-        # max 是历史遗留档＝最高可用档 high
+        # 2026-10-25 起 off/low/medium/high/max 同名直发（滑块档＝真实 API 值）；
+        # 不认 max 的端点由 400 降级链先降 high 再剥参
         f = main_mod._thinking_request_params
         self.assertEqual(f("openai", "low"), {"reasoning_effort": "low"})
         self.assertEqual(f("openai", "medium"), {"reasoning_effort": "medium"})
         self.assertEqual(f("openai", "high"), {"reasoning_effort": "high"})
         self.assertEqual(f("deepseek", "low"), {"reasoning_effort": "low"})
-        self.assertEqual(f("custom-gw", "max"), {"reasoning_effort": "high"})
+        self.assertEqual(f("custom-gw", "max"), {"reasoning_effort": "max"})
 
     def test_boolean_switch_on_off(self):
         # 布尔开关族只有开/关：on/off 是正式取值（配置界面两档），low/high/max 兼容旧档位＝开
@@ -365,7 +365,7 @@ class ThinkingEffortProxyTest(RouteTestBase):
         resp, captured = self._post_chat("max")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(len(captured), 1)
-        self.assertEqual(captured[0].get("reasoning_effort"), "high")  # max → 拉伸映射最高档
+        self.assertEqual(captured[0].get("reasoning_effort"), "max")  # max 同名直发（2026-10-25 深夜起）
 
     def test_empty_thinking_sends_no_extra_param(self):
         resp, captured = self._post_chat("")

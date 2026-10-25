@@ -180,12 +180,12 @@ def thinking_request_params(provider: str, level: str, model: str = "") -> dict:
     智谱/MiMo 用 thinking.type，Ollama 用 think。
 
     2026-10-25 起档位语义按「滑块档＝真实 API 值」对齐（滑块去掉「跟随默认」档，
-    见 models-api.md 当日节）：effort 族 off/low/medium/high 分别发
-    reasoning_effort none/low/medium/high（low/medium/high 是 OpenAI 官方三档，
-    一一对应；旧档位 max 是历史遗留，仍按最高可用档发 high——新界面不再提供
-    max 档）。布尔开关族（qwen/zhipu 旧代/ollama/mimo）on/off 直发
-    enabled/disabled，旧档位 low/high/max 仍按「开」兼容，''（default）依旧
-    不发参数——存储里的 '' 语义没动，只是界面不再展示。
+    见 models-api.md 当日节）：effort 族 off/low/medium/high/max **全部同名直发**
+    （low/medium/high 是 OpenAI 官方三档；max 用户实证 DeepSeek 等支持——不认 max
+    的端点由调用方 400 降级链先降 high 重发，再不行剥参退化，见 models_routes
+    降级注释；off＝none OpenAI gpt-5.1+）。布尔开关族（qwen/zhipu 旧代/ollama/
+    mimo）on/off 直发 enabled/disabled，旧档位 low/high/max 仍按「开」兼容，
+    ''（default）依旧不发参数——存储里的 '' 语义没动，只是界面不再展示。
 
     智谱特例（model 参数识别）：glm-5.x 起思考恒开、thinking.type 仅支持
     enabled，强度改走 reasoning_effort low/high/max（官方默认 max，与用户档位
@@ -233,9 +233,9 @@ def thinking_request_params(provider: str, level: str, model: str = "") -> dict:
         # 不支持的模型/网关整请求 400 → 调用方剥参重发，退化＝跟随模型默认
         return {"reasoning_effort": "none"}
     if level in ("low", "medium", "high", "max"):
-        # max＝历史遗留档（旧「最深」）：OpenAI 系最高可用档是 high（xhigh 仅
-        # 个别新模型支持，发不出去会被剥参退化成默认，比 high 更差——不冒险）
-        return {"reasoning_effort": "high" if level == "max" else level}
+        # 全部同名直发（2026-10-25 深夜：max 恢复为正式档——DeepSeek 等真支持；
+        # 不支持的端点由 400 降级链降 high，不在映射层自作主张降档）
+        return {"reasoning_effort": level}
     return {}
 
 

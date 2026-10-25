@@ -1818,7 +1818,7 @@ try {
   await sandbox.fetchModels(); // 迁移：条目档位播种到槽位＋条目字段剥除
   if (sandbox.getModelById(agentEntry.id).thinking !== undefined) throw new Error('迁移后条目不应再带 thinking 字段');
   const slotCfg = JSON.parse(sandbox.localStorage.getItem('phymathia_active_models'));
-  if (slotCfg.agent_thinking !== 'high') throw new Error('agent 槽应从条目播种 max（刷新时旧 max 档语义就近归一为 high），实际 ' + JSON.stringify(slotCfg.agent_thinking));
+  if (slotCfg.agent_thinking !== 'max') throw new Error('agent 槽应从条目播种 max，实际 ' + JSON.stringify(slotCfg.agent_thinking));
   if (slotCfg.branch_thinking !== 'off') throw new Error('branch 槽应从条目播种 off，实际 ' + JSON.stringify(slotCfg.branch_thinking));
   if (slotCfg.descriptor_thinking !== 'on') throw new Error('布尔族旧档位 high 应归一为 on，实际 ' + JSON.stringify(slotCfg.descriptor_thinking));
   const bodies = [];
@@ -1833,7 +1833,7 @@ try {
   } finally {
     sandbox.fetch = origFetch;
   }
-  if (bodies[0].thinking !== 'high') throw new Error('主聊天应携带 agent 槽位档位（播种 max 后刷新归一为 high），实际 ' + JSON.stringify(bodies[0].thinking));
+  if (bodies[0].thinking !== 'max') throw new Error('主聊天应携带 agent 槽位档位 max，实际 ' + JSON.stringify(bodies[0].thinking));
   if (bodies[1].thinking !== 'off') throw new Error('苏格拉底应携带 branch 槽位档位 off，实际 ' + JSON.stringify(bodies[1].thinking));
   // hub 回退：直接调 proxyChatWithModel 且调用方没传槽位档位时，条目遗留字段仍生效（迁移前备份）
   sandbox.updateUserModel(agentEntry.id, { thinking: 'low' });
@@ -1847,8 +1847,8 @@ try {
   if (bodies[2].thinking !== 'low') throw new Error('条目遗留字段应作为 hub 回退生效，实际 ' + JSON.stringify(bodies[2].thinking));
   await sandbox.fetchModels(); // 再迁移：剥掉刚写回的遗留字段，且不覆盖已配置的槽位档位
   if (sandbox.getModelById(agentEntry.id).thinking !== undefined) throw new Error('二次迁移应剥除条目遗留 thinking');
-  if (JSON.parse(sandbox.localStorage.getItem('phymathia_active_models')).agent_thinking !== 'high') {
-    throw new Error('二次迁移不应覆盖已配置的槽位档位（归一后的 high）');
+  if (JSON.parse(sandbox.localStorage.getItem('phymathia_active_models')).agent_thinking !== 'max') {
+    throw new Error('二次迁移不应覆盖已配置的槽位档位');
   }
   console.log('✓ model-thinking：思考档位迁移到槽位（条目播种/布尔族归一/hub 回退/二次迁移不回写）');
 } catch (e) {

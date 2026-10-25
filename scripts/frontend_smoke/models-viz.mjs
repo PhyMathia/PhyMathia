@@ -198,8 +198,8 @@ check('model-add：预设标签一律光模型名＋槽位思考选项（布尔�
     throw new Error('布尔族（mimo）槽位思考选项应为 关/开 两档');
   }
   const effortOpts = sandbox._thinkingOptionsFor('deepseek');
-  if (effortOpts.length !== 4 || effortOpts[0].value !== 'off' || effortOpts[3].value !== 'high') {
-    throw new Error('effort 族槽位思考选项应为 关/低/中/高 四档');
+  if (effortOpts.length !== 5 || effortOpts[0].value !== 'off' || effortOpts[4].value !== 'max') {
+    throw new Error('effort 族槽位思考选项应为 关/低/中/高/最高 五档');
   }
   const z5Opts = sandbox._thinkingOptionsFor('zhipu', 'agent', 'glm-5.3-flash');
   if (z5Opts.length !== 3 || z5Opts[0].value !== 'low' || z5Opts[2].value !== 'max') {
