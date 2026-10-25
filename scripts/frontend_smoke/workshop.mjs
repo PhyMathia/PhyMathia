@@ -336,6 +336,13 @@ export async function run() {
     if (!/onclick="rwSmartTrial\(\)"/.test(src)) throw new Error('一句话档结果卡上没有「试跑一下」按钮');
     if (!/window\.rwSmartTrial = rwSmartTrial/.test(src)) throw new Error('rwSmartTrial 没导出到 window');
     if (!/recipeId: String\(recipe\.id \|\| ''\)/.test(src)) throw new Error('试跑记录没盖配方 id 章（放到画布软闸会认不出试跑过）');
+    // T410：软闸只盖一句话档不够——手动档保存栏也必须走闸
+    if (!/onclick="rwPlaceOnCanvasGated\(\)"/.test(src)) throw new Error('手动档保存栏的「放到画布」没走软闸（rwPlaceOnCanvasGated）');
+    if (!/window\.rwPlaceOnCanvasGated = rwPlaceOnCanvasGated/.test(src)) throw new Error('rwPlaceOnCanvasGated 没导出到 window');
+    // T409：空输出也要挂体检条；调优期间的并发闸都得在
+    if (!/state\.judge \? _rwJudgeHtml\(\) : ''/.test(src)) throw new Error('空输出的占位分支没挂体检条（T409）');
+    if (!/if \(state\.autotuning && !internal\) return/.test(src)) throw new Error('试跑单链没挡自动调优期间的并发插队（T409）');
+    if (!/_rwRunTrialOnce\(true\)/.test(src)) throw new Error('自动调优的两次试跑没带 internal 放行标记（T409）');
     return true;
   });
 
@@ -569,6 +576,111 @@ export async function run() {
         resetWorkshop(true);
       }
     }],
+    // T409 三条：空输出挂体检条 / 补丁空改动不复跑 / 调优期间手动跑被拒
+    ['试跑吐空也有体检条：空输出仍判「太短」，占位分支照挂判决', async () => {
+      resetWorkshop(true);
+      sandbox.openRecipeWorkshop({
+        recipe: {
+          name: '空输出样例', base: { kind: 'module' },
+          generate: { prompt: '你在做受力分析。' },
+          ports: { static: [{ label: '步骤', drag_form: 'draft' }], inputs: [] },
+          appearance: { palette: 'amber' }, content_kind: 'markdown',
+        },
+      });
+      const st = state();
+      st.materials = { general: '一个质量 m 的物块放在倾角 θ 的斜面上，求加速度。' };
+      const prev = { proxy: sandbox.proxyChatWithModel, sse: sandbox._sseContentFrames, markdown: sandbox.renderMarkdown };
+      try {
+        sandbox.renderMarkdown = () => '<p>（渲染省略）</p>';
+        sandbox.proxyChatWithModel = async () => ({ ok: true, status: 200, body: {} });
+        sandbox._sseContentFrames = async function* () { /* 一段字都不吐 */ };
+        const run = await sandbox._rwRunTrialOnce();
+        if (!run.ok) throw new Error('空流也算跑完一次：' + run.error);
+        if (st.output) throw new Error('本用例的输出就该是空的');
+        if (!st.judge) throw new Error('空输出也要留下体检结果');
+        if (st.judge.pass) throw new Error('空输出不该判通过');
+        if (!st.judge.flags.some(flag => flag.key === 'short')) throw new Error('空输出应判「太短」');
+        if (!st.runs.length) throw new Error('空输出也算一次试跑记录（软闸认章）');
+      } finally {
+        sandbox.proxyChatWithModel = prev.proxy;
+        sandbox._sseContentFrames = prev.sse;
+        sandbox.renderMarkdown = prev.markdown;
+        resetWorkshop(true);
+      }
+    }],
+    ['「帮我调好」：补丁一个字段都没动就不再复跑（白烧一次模型）', async () => {
+      resetWorkshop(true);
+      sandbox.openRecipeWorkshop({
+        recipe: {
+          name: '空补丁样例', base: { kind: 'module' },
+          generate: { prompt: '你在做受力分析。' },
+          ports: { static: [{ label: '步骤', drag_form: 'draft' }, { label: '检查', drag_form: 'draft' }], inputs: [] },
+          appearance: { palette: 'amber' }, content_kind: 'markdown',
+        },
+      });
+      state().materials = { general: '一个质量 m 的物块放在倾角 θ 的斜面上，求加速度。' };
+      const prev = {
+        proxy: sandbox.proxyChatWithModel, sse: sandbox._sseContentFrames,
+        fetch: sandbox.fetch, confirm: sandbox.confirm, markdown: sandbox.renderMarkdown,
+      };
+      let runs = 0;
+      try {
+        sandbox.confirm = () => true;
+        sandbox.renderMarkdown = () => '<p>（渲染省略）</p>';
+        sandbox.proxyChatWithModel = async () => ({ ok: true, status: 200, body: {} });
+        sandbox._sseContentFrames = async function* () {
+          runs += 1;
+          yield '好的，这个题我们来看看。';   // 体检不过的短输出
+        };
+        // 补丁回应 changed=[]：配方原样、一个字段没动
+        sandbox.fetch = async () => ({
+          ok: true, status: 200,
+          json: async () => ({
+            status: 'ok', say: '我觉得现在的配方就行', mode: 'patch',
+            recipe: JSON.parse(JSON.stringify(state().recipe)),
+            changed: [], question: null, warnings: [], field_errors: [],
+          }),
+        });
+        await sandbox.rwAutoTune();
+        if (runs !== 1) throw new Error('空补丁不该复跑第二次（配方没变，跑也是原样），实际跑了 ' + runs + ' 次');
+        const chat = (state().conversation || []).map(item => String(item.text || '')).join('\n');
+        if (chat.indexOf('没改成') < 0) throw new Error('左栏该说清「一个字段都没改成」，让用户知道为什么没复跑');
+      } finally {
+        sandbox.proxyChatWithModel = prev.proxy;
+        sandbox._sseContentFrames = prev.sse;
+        sandbox.fetch = prev.fetch;
+        sandbox.confirm = prev.confirm;
+        sandbox.renderMarkdown = prev.markdown;
+        resetWorkshop(true);
+      }
+    }],
+    ['自动调优等补丁的空窗里，手动「跑一次」不再能插队', async () => {
+      resetWorkshop(true);
+      sandbox.openRecipeWorkshop({
+        recipe: {
+          name: '并发闸样例', base: { kind: 'module' },
+          generate: { prompt: '你在做受力分析。' },
+          ports: { static: [{ label: '步骤', drag_form: 'draft' }], inputs: [] },
+          appearance: { palette: 'amber' }, content_kind: 'markdown',
+        },
+      });
+      const st = state();
+      st.materials = { general: '一个质量 m 的物块放在倾角 θ 的斜面上，求加速度。' };
+      st.autotuning = true;   // 模拟「跑一次 → 等补丁」的空窗（此刻 running=false）
+      const prev = { proxy: sandbox.proxyChatWithModel };
+      let called = 0;
+      try {
+        sandbox.proxyChatWithModel = async () => { called += 1; return { ok: true, status: 200, body: {} }; };
+        const ret = await sandbox.rwRunTrial();
+        if (ret && ret.ok) throw new Error('调优期间手动跑不该发起');
+        if (called) throw new Error('插队跑真的打了模型（并发踩同一份输出状态）');
+        if ((st.runs || []).length) throw new Error('插队跑不该记进试跑记录');
+      } finally {
+        sandbox.proxyChatWithModel = prev.proxy;
+        st.autotuning = false;
+        resetWorkshop(true);
+      }
+    }],
     ['一句话档：试跑入口切手动档——材料空只引导不空跑，材料齐走同一条试跑链', async () => {
       resetWorkshop(false);
       sandbox.openRecipeWorkshop({
@@ -632,6 +744,37 @@ export async function run() {
         st.runs = [{ at: Date.now(), recipeId: String(st.recipe.id || '') }];
         sandbox.rwSmartPlace();
         if (confirms !== 1) throw new Error('试跑过之后不该再拦（软闸只问一次），实际问 ' + confirms + ' 次');
+        if (placed !== 1) throw new Error('试跑过之后应直接放行');
+      } finally {
+        sandbox.confirm = prev.confirm;
+        sandbox.rwPlaceOnCanvas = prev.place;
+        resetWorkshop(true);
+      }
+    }],
+    // T410：软闸两档同一支——手动档保存栏没试跑过也拦一次、认章放行
+    ['手动档保存栏「放到画布」：没试跑过先问一次，试跑过就放行不再问', async () => {
+      resetWorkshop(true);
+      sandbox.openRecipeWorkshop({
+        recipe: {
+          name: '手动档软闸节点' + (Date.now() % 100000), base: { kind: 'module' },
+          generate: { prompt: '你在做受力分析：分步输出。' },
+          ports: { static: [{ label: '换个条件', drag_form: 'draft' }], inputs: [] },
+          appearance: { palette: 'amber' }, content_kind: 'markdown',
+        },
+      });
+      const st = state();
+      const prev = { confirm: sandbox.confirm, place: sandbox.rwPlaceOnCanvas };
+      let confirms = 0;
+      let placed = 0;
+      try {
+        sandbox.confirm = () => { confirms += 1; return false; };
+        sandbox.rwPlaceOnCanvas = () => { placed += 1; };
+        sandbox.rwPlaceOnCanvasGated();
+        if (confirms !== 1) throw new Error('手动档没试跑过也应先问一次（可以坚持放），实际问 ' + confirms + ' 次');
+        if (placed) throw new Error('取消后不该放到画布');
+        st.runs = [{ at: Date.now(), recipeId: String(st.recipe.id || '') }];
+        sandbox.rwPlaceOnCanvasGated();
+        if (confirms !== 1) throw new Error('试跑过之后不该再拦，实际问 ' + confirms + ' 次');
         if (placed !== 1) throw new Error('试跑过之后应直接放行');
       } finally {
         sandbox.confirm = prev.confirm;

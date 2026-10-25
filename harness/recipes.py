@@ -40,6 +40,14 @@ RECIPE_PARSER_PATTERNS = ("numbered_list",)
 RECIPE_LABEL_FROM = ("index_question", "question_trunc12")
 RECIPE_FALLBACK_MODES = ("static", "label_questions_from_text", "none")
 RECIPE_DYNAMIC_PORT_TYPES = ("socratic", "learn", "branch")
+# 动出口只许挂的底座（与 validate_recipe 的判定同源；能力清单从这里反射，不手抄）
+RECIPE_DYNAMIC_BASE_KINDS = ("module",)
+# 归一化缺省值：normalize_recipe_input 与 recipe_capabilities.defaults 共用，
+# 改默认只动这里（T408 前两处是散落的字面量，清单一改就各说各话）
+RECIPE_DEFAULT_PALETTE = "amber"
+RECIPE_DEFAULT_CONTENT_KIND = "markdown"
+RECIPE_DEFAULT_CONTEXT_CHANNEL = "workflow_context"
+RECIPE_DEFAULT_MODEL_ROLE = "agent"
 RECIPE_AGGREGATIONS = ("ancestors", "first_inbound", "none")
 RECIPE_ON_GENERATED_KINDS = ("answer", "module", "blank", "user", "note", "human_note")
 RECIPE_ON_GENERATED_CONTENT_FROM = ("", "self_content", "self_directions")
@@ -180,7 +188,7 @@ def normalize_recipe_input(raw: Any) -> Optional[Dict[str, Any]]:
     if not name or base_kind not in RECIPE_BASE_KINDS:
         return None
     appearance = raw.get("appearance") if isinstance(raw.get("appearance"), dict) else {}
-    palette = _text(appearance.get("palette")) or "amber"
+    palette = _text(appearance.get("palette")) or RECIPE_DEFAULT_PALETTE
     custom_color = _normalize_color(appearance.get("color"))
     # 形状不是配方参数（2026-10-09 用户拍板）：按底座推导，输入里的 shape 一律忽略
     shape = _default_shape(base_kind)
@@ -215,7 +223,7 @@ def normalize_recipe_input(raw: Any) -> Optional[Dict[str, Any]]:
             "type": port.get("type") if port.get("type") in RECIPE_PORT_TYPES else "",
         })
     channel = _text(g.get("context_channel"))
-    model_role = g.get("model_role") if g.get("model_role") in RECIPE_MODEL_ROLES else "agent"
+    model_role = g.get("model_role") if g.get("model_role") in RECIPE_MODEL_ROLES else RECIPE_DEFAULT_MODEL_ROLE
     on_incomplete_raw = g.get("on_incomplete") if isinstance(g.get("on_incomplete"), dict) else {}
     try:
         max_retries = max(0, min(2, int(on_incomplete_raw.get("max_retries", 1))))
@@ -223,7 +231,7 @@ def normalize_recipe_input(raw: Any) -> Optional[Dict[str, Any]]:
         max_retries = 1
     dynamic = _normalize_dynamic(ports.get("dynamic"))
     on_generated = _normalize_on_generated(raw.get("on_generated"))
-    content_kind = raw.get("content_kind") if raw.get("content_kind") in RECIPE_CONTENT_KINDS else "markdown"
+    content_kind = raw.get("content_kind") if raw.get("content_kind") in RECIPE_CONTENT_KINDS else RECIPE_DEFAULT_CONTENT_KIND
     now = int(time.time() * 1000)
 
     def _num(value: Any) -> int:
@@ -250,7 +258,7 @@ def normalize_recipe_input(raw: Any) -> Optional[Dict[str, Any]]:
             "strict_output": _text(g.get("strict_output"))[: RECIPE_PROMPT_BUDGET * 2],
             "followup_prompt": _text(g.get("followup_prompt"))[: RECIPE_PROMPT_BUDGET * 2],
             "retry_prompt": _text(g.get("retry_prompt"))[: RECIPE_PROMPT_BUDGET * 2],
-            "context_channel": channel if channel in RECIPE_CONTEXT_CHANNELS else "workflow_context",
+            "context_channel": channel if channel in RECIPE_CONTEXT_CHANNELS else RECIPE_DEFAULT_CONTEXT_CHANNEL,
             "model_role": model_role,
             "on_incomplete": {"max_retries": max_retries},
         },
@@ -352,7 +360,7 @@ def validate_recipe(recipe: Any, existing: Optional[List[Any]] = None) -> Dict[s
             errors.append(f"输入端口「{label}」的类型不合法（text/formula/diagram/html 或留空）")
     dynamic = ports.get("dynamic") if isinstance(ports.get("dynamic"), dict) else None
     if dynamic is not None:
-        if base_kind != "module":
+        if base_kind not in RECIPE_DYNAMIC_BASE_KINDS:
             errors.append("动态出口只支持视角模块底座")
         parser = dynamic.get("parser") if isinstance(dynamic.get("parser"), dict) else {}
         if parser.get("pattern") not in RECIPE_PARSER_PATTERNS:
@@ -423,13 +431,14 @@ def recipe_capabilities() -> Dict[str, Any]:
     return {
         "base_kinds": {"all": list(RECIPE_BASE_KINDS), "ai": list(RECIPE_AI_BASE_KINDS)},
         "palettes": list(RECIPE_PALETTE_KEYS),
+        "shapes": list(RECIPE_SHAPES),
         "content_kinds": list(RECIPE_CONTENT_KINDS),
         "port_types": list(RECIPE_PORT_TYPES),
         "model_roles": list(RECIPE_MODEL_ROLES),
         "context_channels": list(RECIPE_CONTEXT_CHANNELS),
         "aggregations": list(RECIPE_AGGREGATIONS),
         "dynamic": {
-            "base_kinds": ["module"],
+            "base_kinds": list(RECIPE_DYNAMIC_BASE_KINDS),
             "patterns": list(RECIPE_PARSER_PATTERNS),
             "label_from": list(RECIPE_LABEL_FROM),
             "fallback_modes": list(RECIPE_FALLBACK_MODES),
@@ -449,11 +458,16 @@ def recipe_capabilities() -> Dict[str, Any]:
             "inputs": RECIPE_MAX_INPUTS,
             "port_label": RECIPE_PORT_LABEL_MAX,
         },
+        # 缺省值从归一化真正用的常量/函数取（T408 前是手抄字面量）：
+        # 改默认只动上面的 RECIPE_DEFAULT_*，清单自动跟上
         "defaults": {
-            "palette": "amber",
-            "content_kind": "markdown",
-            "context_channel": "workflow_context",
-            "model_role": "agent",
-            "aggregation": {"ai_base": "ancestors", "manual_base": "none"},
+            "palette": RECIPE_DEFAULT_PALETTE,
+            "content_kind": RECIPE_DEFAULT_CONTENT_KIND,
+            "context_channel": RECIPE_DEFAULT_CONTEXT_CHANNEL,
+            "model_role": RECIPE_DEFAULT_MODEL_ROLE,
+            "aggregation": {
+                "ai_base": _aggregation_for_base("module"),
+                "manual_base": _aggregation_for_base("note"),
+            },
         },
     }

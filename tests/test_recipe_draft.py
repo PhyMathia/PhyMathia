@@ -205,14 +205,30 @@ class CapabilitiesReflectionTest(unittest.TestCase):
         self.assertEqual(caps["base_kinds"]["all"], list(recipes_mod.RECIPE_BASE_KINDS))
         self.assertEqual(caps["base_kinds"]["ai"], list(recipes_mod.RECIPE_AI_BASE_KINDS))
         self.assertEqual(caps["palettes"], list(recipes_mod.RECIPE_PALETTE_KEYS))
+        self.assertEqual(caps["shapes"], list(recipes_mod.RECIPE_SHAPES), "T408：能力清单缺 shapes")
         self.assertEqual(caps["port_types"], list(recipes_mod.RECIPE_PORT_TYPES))
         self.assertEqual(caps["content_kinds"], list(recipes_mod.RECIPE_CONTENT_KINDS))
+        self.assertEqual(caps["dynamic"]["base_kinds"], list(recipes_mod.RECIPE_DYNAMIC_BASE_KINDS),
+                         "T408：动态出口底座必须是反射，不许手抄 [\"module\"]")
         self.assertEqual(caps["dynamic"]["patterns"], list(recipes_mod.RECIPE_PARSER_PATTERNS))
         self.assertEqual(caps["dynamic"]["port_types"], list(recipes_mod.RECIPE_DYNAMIC_PORT_TYPES))
         self.assertEqual(caps["on_generated"]["kinds"], list(recipes_mod.RECIPE_ON_GENERATED_KINDS))
         self.assertEqual(caps["limits"]["prompt"], recipes_mod.RECIPE_PROMPT_BUDGET)
         self.assertEqual(caps["limits"]["name"], recipes_mod.RECIPE_NAME_MAX)
         self.assertEqual(caps["limits"]["ports"], recipes_mod.RECIPE_MAX_PORTS)
+        # T408：缺省值从归一化真正用的常量/函数取，不许字面量各说各话
+        self.assertEqual(caps["defaults"]["palette"], recipes_mod.RECIPE_DEFAULT_PALETTE)
+        self.assertEqual(caps["defaults"]["content_kind"], recipes_mod.RECIPE_DEFAULT_CONTENT_KIND)
+        self.assertEqual(caps["defaults"]["context_channel"], recipes_mod.RECIPE_DEFAULT_CONTEXT_CHANNEL)
+        self.assertEqual(caps["defaults"]["model_role"], recipes_mod.RECIPE_DEFAULT_MODEL_ROLE)
+        self.assertEqual(caps["defaults"]["aggregation"],
+                         {"ai_base": "ancestors", "manual_base": "none"})
+        normalized = normalize_recipe_input({"name": "甲", "base": {"kind": "module"}})
+        self.assertEqual(normalized["appearance"]["palette"], caps["defaults"]["palette"],
+                         "清单报的默认色板必须就是归一化落库的那个")
+        self.assertEqual(normalized["content_kind"], caps["defaults"]["content_kind"])
+        self.assertEqual(normalized["generate"]["model_role"], caps["defaults"]["model_role"])
+        self.assertEqual(normalized["generate"]["context_channel"], caps["defaults"]["context_channel"])
 
     def test_draft_prompt_carries_every_enum(self):
         # 提示词是插值生成的，但守护仍要钉死：schema 加了枚举值没跟文案，当场红
@@ -224,6 +240,8 @@ class CapabilitiesReflectionTest(unittest.TestCase):
             + recipes_mod.RECIPE_CONTEXT_CHANNELS + recipes_mod.RECIPE_AGGREGATIONS
             + recipes_mod.RECIPE_PARSER_PATTERNS + recipes_mod.RECIPE_LABEL_FROM
             + recipes_mod.RECIPE_FALLBACK_MODES + recipes_mod.RECIPE_DYNAMIC_PORT_TYPES
+            + recipes_mod.RECIPE_SHAPES + recipes_mod.RECIPE_ON_GENERATED_KINDS
+            + tuple(v for v in recipes_mod.RECIPE_ON_GENERATED_CONTENT_FROM if v)
         )
         for value in values:
             self.assertIn(value, prompt, f"枚举「{value}」没进草稿提示词——加枚举忘了跟文案")
@@ -254,6 +272,7 @@ class TemplateLibraryTest(unittest.TestCase):
             self.assertTrue(verdict["ok"], f"模板 {item['key']} 校验失败：{verdict['errors']}")
             self.assertNotIn("id", item["recipe"], "模板不许带固定 id（每次起稿生成新 id，草稿互不串）")
             self.assertTrue(item.get("keywords"), f"模板 {item['key']} 没配检索关键词")
+            self.assertTrue(item.get("strong"), f"模板 {item['key']} 没配强关键词（单强关键词放行靠它，T407）")
 
     def test_pick_template_hits(self):
         cases = [
@@ -262,6 +281,14 @@ class TemplateLibraryTest(unittest.TestCase):
             ("来一个考我的苏格拉底追问节点", "socratic_ask"),
             ("做一个可视化的流程图节点", "viz_diagram"),
             ("帮我做个分步解题的助手", "step_by_step"),
+            # T407：口语单关键词——强关键词单独出现也要够门槛
+            ("做个错题节点", "mistake_review"),
+            ("画个流程图", "viz_diagram"),
+            ("背公式", "formula_cards"),
+            ("考考我", "socratic_ask"),
+            ("检查单位", "dimension_check"),
+            ("这道题我不会，能解题就行", "step_by_step"),
+            ("动能和动量分不清", "concept_contrast"),
         ]
         for text, key in cases:
             picked = pick_template(text)
@@ -269,8 +296,8 @@ class TemplateLibraryTest(unittest.TestCase):
             self.assertEqual(picked["key"], key, f"「{text}」应命中 {key}，实际 {picked['key']}")
 
     def test_pick_template_threshold_and_empty(self):
-        # 只中一个弱关键词：宁可从零起草也不错配底稿
-        self.assertIsNone(pick_template("帮我看看这道受力题"))
+        # 只中一个弱关键词：宁可从零起草也不错配底稿（强关键词单独出现才放行）
+        self.assertIsNone(pick_template("这道题有点马虎"))
         self.assertIsNone(pick_template("随便来一个节点"))
         self.assertIsNone(pick_template(""))
 
@@ -292,6 +319,40 @@ class TemplateLibraryTest(unittest.TestCase):
         self.assertNotIn("从零起草", user_text)
         # changed 只报模型改的字段，模板基底自身不算改动
         self.assertEqual(out["changed"], ["name"])
+
+    def test_draft_mode_dedupes_name_against_existing(self):
+        # T406：弱模型沿用模板名撞用户已有配方——服务端加序号兜底，不再落「已有同名配方」红灯
+        payload = {"recipe": {"desc": "喂做错的题，拆错因"}, "say": "按模板起了底稿"}
+        out = _run(payload, mode="draft",
+                   instruction="做一个错题复盘节点，喂我做错的题",
+                   user_recipes=[{"id": "r1", "name": "错题复盘"}])
+        self.assertEqual(out["status"], "ok")
+        self.assertEqual(out["recipe"]["name"], "错题复盘2")
+        self.assertEqual(out["field_errors"], [])
+        self.assertTrue(any("错题复盘2" in w for w in out["warnings"]), out["warnings"])
+        self.assertIn("name", out["changed"], "自动改名要算进 changed，前端高亮名字")
+        # 序号顺延：2 也被占了就取 3
+        out2 = _run(payload, mode="draft",
+                    instruction="做一个错题复盘节点，喂我做错的题",
+                    user_recipes=[{"id": "r1", "name": "错题复盘"}, {"id": "r2", "name": "错题复盘2"}])
+        self.assertEqual(out2["recipe"]["name"], "错题复盘3")
+
+    def test_draft_from_zero_also_dedupes(self):
+        # T406 不只保模板起稿：从零起稿撞名同样兜底
+        payload = {"recipe": {"name": "便签整理", "base": {"kind": "note"}}, "say": "手填底稿来了"}
+        out = _run(payload, mode="draft", instruction="造一个整理课堂便签的节点",
+                   user_recipes=[{"id": "r1", "name": "便签整理"}])
+        self.assertEqual(out["status"], "ok")
+        self.assertEqual(out["recipe"]["name"], "便签整理2")
+
+    def test_patch_mode_keeps_duplicate_error(self):
+        # 补丁模式是用户自己的草稿：重名照实报 field_error，不许服务端擅改名（T406 边界）
+        patch = {"recipe": {"desc": "拆对象、列方程"}, "say": "改了描述"}
+        out = _run(patch, draft=dict(BASE),
+                   user_recipes=[{"id": "other", "name": "受力分析"}])
+        self.assertEqual(out["recipe"]["name"], "受力分析")
+        fields = [item["field"] for item in out["field_errors"]]
+        self.assertIn("name", fields)
 
     def test_draft_mode_without_match_stays_from_zero(self):
         seen = []
