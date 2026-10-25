@@ -6172,6 +6172,23 @@
 .rw-smart-actions .rw-btn { padding: 8px 16px; font-size: var(--fs-sm); }
 .rw-smart-note { color: var(--text-secondary); font-size: var(--fs-2xs); }
 
+/* Φ 自助调优循环（C1）：进度逐行滚动，收尾一段人话总结；取消钮在头部右侧 */
+.rw-agent {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-lg);
+  background: var(--panel-bg, transparent);
+}
+.rw-agent-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: var(--fs-2xs); color: var(--text-secondary); letter-spacing: .04em; }
+.rw-agent-lines { display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow-y: auto; }
+.rw-agent-line { font-size: var(--fs-xs); line-height: 1.6; color: var(--text-primary); }
+.rw-agent-line.is-warn { color: var(--warn); }
+.rw-agent-summary { font-size: var(--fs-sm); line-height: 1.7; color: var(--text-primary); border-top: 1px dashed var(--border); padding-top: 8px; }
+.rw-agent-error { font-size: var(--fs-xs); line-height: 1.6; color: var(--danger-fg); }
+
 /* ---- 通用按钮 ---- */
 .rw-btn {
   padding: 6px 12px;

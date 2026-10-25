@@ -216,6 +216,20 @@ function replyOf(body) {
       }],
     };
   }
+  // —— C1 Φ 自助调优剧本（2026-10-25）：tools 含 workshop_* 是 /workshop/step 独有锚 ——
+  // 必须排在⑥草稿剧本之前：C1 系统提示词同样含「节点工坊」，但⑥不带 tools、C1 必带。
+  // 第一次（messages 里还没有 role:"tool"）回 workshop_get_recipe 查询；浏览器执行器
+  // 以 role:"tool" 回灌后的第二次直接收尾（无 tool_calls）——真发脚本据此核对格式。
+  if (j.tools.includes('workshop_capabilities')) {
+    const fed = Array.isArray(body.messages) && body.messages.some(m => m.role === 'tool');
+    if (!fed) {
+      return {
+        content: '我先看一眼当前配方。',
+        tool_calls: [{ id: 'call_ws_' + nextId(), type: 'function', function: { name: 'workshop_get_recipe', arguments: '{}' } }],
+      };
+    }
+    return text('C1 真机剧本收尾：工具结果已回灌，这一步不再调工具。' + sfx);
+  }
   // —— 节点工坊草稿剧本（verify_send_channels ⑧⑩，T370 2026-10-23）——
   // 工坊走 POST /api/harness/recipe/draft（harness _call_model json_mode，**不带
   // tools**），系统提示词含「节点工坊」是该链路独有锚。回包是 content 里的纯 JSON

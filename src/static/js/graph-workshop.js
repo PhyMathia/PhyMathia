@@ -20,6 +20,13 @@ const RECIPE_WORKSHOP_API = '/api/harness/recipe/draft';
 const RECIPE_WORKSHOP_HISTORY_LIMIT = 12;
 const RECIPE_WORKSHOP_UNDO_LIMIT = 5;
 const RECIPE_WORKSHOP_FLASH_MS = 2000;
+// C1（2026-10-25）：Φ 自助调优循环——服务端只代理带工具表的模型调用（/workshop/step），
+// 工具在本页执行（配方库在 localStorage、画布在内存，服务端看不到）。步数/试跑上限
+// 与 harness/workshop_tools.py 同口径，别只改一边。
+const RECIPE_WORKSHOP_STEP_API = '/api/harness/workshop/step';
+const RECIPE_WORKSHOP_CAPABILITIES_API = '/api/harness/recipe/capabilities';
+const RECIPE_WORKSHOP_AGENT_MAX_STEPS = 8;
+const RECIPE_WORKSHOP_AGENT_MAX_TRIALS = 2;
 
 let recipeWorkshop = null;          // 当前草稿状态（null＝没开过）
 let recipeWorkshopOverlay = null;   // 全屏壳（只建一次）
@@ -446,6 +453,13 @@ function openRecipeWorkshop(opts) {
     smartQuestion: null,
     smartError: '',
     smartInstruction: '',
+    // C1：Φ 自助调优循环的状态（agentSeq 用于取消——递增让在途步骤作废）
+    agentBusy: false,
+    agentSeq: 0,
+    agentAbort: null,
+    agentLog: [],
+    agentSummary: '',
+    agentError: '',
   };
   _rwSyncRowsFromRecipe();
   _rwEnsureShell();
@@ -1197,7 +1211,7 @@ function _rwRenderChat() {
 function _rwRenderAskState() {
   const btn = document.getElementById('rwAskBtn');
   if (!btn) return;
-  const busy = recipeWorkshopBusy;
+  const busy = recipeWorkshopBusy || !!(recipeWorkshop && recipeWorkshop.agentBusy);
   if ('disabled' in btn) btn.disabled = busy;
   btn.textContent = busy ? '想想…' : '发送';
 }
@@ -1233,7 +1247,7 @@ function _rwShouldDraft() {
 }
 
 async function rwAsk() {
-  if (!recipeWorkshop || recipeWorkshopBusy) return;
+  if (!recipeWorkshop || recipeWorkshopBusy || recipeWorkshop.agentBusy) return;
   const input = document.getElementById('rwChatInput');
   const text = String((input && input.value) || '').trim();
   if (!text) return;
@@ -1610,13 +1624,13 @@ function _rwRenderRun() {
     }).join('');
     actions.innerHTML = '<div class="rw-run-row">'
       + '<button type="button" class="rw-btn rw-btn-primary" id="rwRunBtn" onclick="rwRunTrial()"'
-      + (recipeWorkshop.running || recipeWorkshop.autotuning || !model ? ' disabled' : '') + '>'
+      + (recipeWorkshop.running || recipeWorkshop.autotuning || recipeWorkshop.agentBusy || !model ? ' disabled' : '') + '>'
       + (recipeWorkshop.running ? '生成中…' : ((recipeWorkshop.runs || []).length ? '再跑一次' : '跑一次')) + '</button>'
       + '<select class="rw-select" onchange="rwTrialModelChanged(this.value)" title="试跑用哪个模型">' + options + '</select>'
       + '</div>'
       + '<div class="rw-run-row rw-run-tune">'
       + '<button type="button" class="rw-btn" onclick="rwAutoTune()" title="跑一次看体检结果，只改有问题的地方，再跑一次验证"'
-      + (recipeWorkshop.running || recipeWorkshop.autotuning || !model ? ' disabled' : '') + '>'
+      + (recipeWorkshop.running || recipeWorkshop.autotuning || recipeWorkshop.agentBusy || !model ? ' disabled' : '') + '>'
       + (recipeWorkshop.autotuning ? '正在调…' : '帮我调好') + '</button>'
       + '<span class="rw-run-note">跑一次 → 看体检 → 只改有问题的地方 → 再跑验证</span>'
       + '</div>'
@@ -1642,8 +1656,9 @@ async function _rwRunTrialOnce(internal) {
   if (!state) return { ok: false, error: '工坊没开' };
   if (state.running) return { ok: false, error: '正在跑，先等这一次结束' };
   // 自动调优等补丁的空窗里 running=false，手动「跑一次」此时插队会跟验证跑互相踩
-  // 同一份输出状态（T409）——调优链自己传 internal=true 放行，单链不变
-  if (state.autotuning && !internal) return { ok: false, error: '正在帮我调，先等这一轮结束' };
+  // 同一份输出状态（T409）——调优链自己传 internal=true 放行，单链不变。
+  // C1 起 Φ 自助调优（agentBusy）与「帮我调好」共守这道闸，同一份输出状态不并发。
+  if ((state.autotuning || state.agentBusy) && !internal) return { ok: false, error: '正在帮我调，先等这一轮结束' };
   const recipe = _rwNormalized() || _rwCurrentRecipe();
   const model = _rwTrialModel();
   if (!model) {
@@ -1854,7 +1869,7 @@ function _rwTuneInstruction(judge, output) {
 // 而是拿真输出当证据改一处。最多两次试跑＋一次补丁，约 2–3 次模型调用。
 async function rwAutoTune() {
   const state = recipeWorkshop;
-  if (!state || state.running || state.autotuning || recipeWorkshopBusy) return;
+  if (!state || state.running || state.autotuning || state.agentBusy || recipeWorkshopBusy) return;
   if (!String((state.recipe && state.recipe.name) || '').trim()) {
     state.runError = '先给它起个名字，再让我调。';
     _rwRenderRun();
@@ -2030,7 +2045,7 @@ function _rwRenderSmart() {
   if (hint) hint.textContent = _rwSmartModelLabel();
   const go = document.getElementById('rwSmartGo');
   if (go) {
-    const busy = !!(state && (state.smartBusy || (recipeWorkshopBusy && mode === 'smart')));
+    const busy = !!(state && (state.smartBusy || state.agentBusy || (recipeWorkshopBusy && mode === 'smart')));
     if ('disabled' in go) go.disabled = busy;
     go.textContent = busy ? '正在配…' : (state && state.smartDone ? '再改一句' : '生成节点');
   }
@@ -2063,20 +2078,36 @@ function _rwSmartResultHtml() {
   const question = state.smartQuestion && state.smartQuestion.text
     ? '<div class="rw-smart-question">Φ 还想确认一句：' + _rwEsc(String(state.smartQuestion.text)) + '</div>'
     : '';
+  // C1：Φ 自助调优的入口与进度区。材料空/没模型时按钮禁用（空材料跑了也是白跑，
+  // 体检只能判「太短」）；进行中整排动作锁死，只留「取消」。
+  const busyLock = !!(state.agentBusy || state.smartBusy || state.running || state.autotuning || recipeWorkshopBusy);
+  const materialsReady = _rwBuildWorkflowContext(_rwNormalized() || _rwCurrentRecipe()).upstream.length > 0;
+  const hasModel = !!_rwModel();
+  const agentTitle = !hasModel
+    ? '还没配主模型——先到「模型设置」里选一个'
+    : (!materialsReady ? '先贴一道题当材料，Φ 才能自己试跑和调' : '让 Φ 自己走：查能力 → 看配方 → 试跑 → 读体检 → 只改有问题处 → 复跑 → 下结论（最多 8 步、2 次试跑，可取消）');
+  const agentBtn = '<button type="button" class="rw-btn" id="rwAgentBtn" onclick="rwSmartAgentRun()" title="' + _rwEsc(agentTitle) + '"'
+    + ((busyLock || !hasModel || !materialsReady) ? ' disabled' : '') + '>让 Φ 自己配好</button>';
+  const lockAttr = busyLock ? ' disabled' : '';
   return '<div class="rw-smart-preview">' + _rwCardHtml({ fold: false }) + '</div>'
     + (say ? '<div class="rw-smart-say">Φ 说：' + _rwEsc(say) + '</div>' : '')
     + question
-      + '<div class="rw-smart-actions">'
-      + '<button type="button" class="rw-btn" onclick="rwSmartTrial()" title="贴一道题跑跑看——配得对不对，要看输出才知道">试跑一下</button>'
-      + '<button type="button" class="rw-btn rw-btn-primary" onclick="rwSmartPlace()">放到画布</button>'
-      + '<button type="button" class="rw-btn" onclick="rwSmartRefine()">进工坊微调</button>'
-      + '<button type="button" class="rw-btn rw-btn-ghost" onclick="rwSmartReset()">换一个想法</button>'
-      + '</div>'
-      + '<div class="rw-smart-note">建议先「试跑一下」看真实输出再放；「放到画布」会先入册再放节点，之后还能在配方管理里改。</div>';
+    + _rwAgentBoxHtml()
+    + '<div class="rw-smart-actions">'
+    + '<button type="button" class="rw-btn" onclick="rwSmartTrial()" title="贴一道题跑跑看——配得对不对，要看输出才知道"' + lockAttr + '>试跑一下</button>'
+    + agentBtn
+    + '<button type="button" class="rw-btn rw-btn-primary" onclick="rwSmartPlace()"' + lockAttr + '>放到画布</button>'
+    + '<button type="button" class="rw-btn" onclick="rwSmartRefine()"' + lockAttr + '>进工坊微调</button>'
+    + '<button type="button" class="rw-btn rw-btn-ghost" onclick="rwSmartReset()"' + lockAttr + '>换一个想法</button>'
+    + '</div>'
+    + (!materialsReady && !state.agentBusy
+      ? '<div class="rw-smart-note">要让 Φ 自己调，得先喂一道题当材料——<button type="button" class="rw-btn rw-btn-ghost rw-btn-mini" onclick="rwSmartTrial()">去贴材料</button>，贴完回来点「让 Φ 自己配好」。</div>'
+      : '')
+    + '<div class="rw-smart-note">建议先「试跑一下」看真实输出再放；「放到画布」会先入册再放节点，之后还能在配方管理里改。</div>';
 }
 
 async function rwSmartGenerate() {
-  if (!recipeWorkshop || recipeWorkshop.smartBusy || recipeWorkshopBusy) return;
+  if (!recipeWorkshop || recipeWorkshop.smartBusy || recipeWorkshopBusy || recipeWorkshop.agentBusy) return;
   const input = document.getElementById('rwSmartInput');
   const typed = (input && typeof input.value === 'string') ? input.value : '';
   const text = String(typed || recipeWorkshop.smartInstruction || '').trim();
@@ -2125,7 +2156,7 @@ async function rwSmartGenerate() {
 // 手动跑与这里跑出来的东西必须一模一样。
 async function rwSmartTrial() {
   const state = recipeWorkshop;
-  if (!state || state.running || state.autotuning || recipeWorkshopBusy) return;
+  if (!state || state.running || state.autotuning || state.agentBusy || recipeWorkshopBusy) return;
   if (state.mode !== 'manual') {
     state.mode = 'manual';
     _rwSaveDraftNow();
@@ -2158,13 +2189,13 @@ function _rwPlaceGatePassed() {
 
 // 手动档保存栏的「放到画布」：先过软闸（没试跑过问一次），再走原入口
 function rwPlaceOnCanvasGated() {
-  if (!recipeWorkshop) return;
+  if (!recipeWorkshop || recipeWorkshop.agentBusy) return;
   if (!_rwPlaceGatePassed()) return;
   rwPlaceOnCanvas();
 }
 
 function rwSmartPlace() {
-  if (!recipeWorkshop) return;
+  if (!recipeWorkshop || recipeWorkshop.agentBusy) return;
   // 软闸共用一支（见 _rwPlaceGatePassed）；一句话档只看过配置、没看过输出
   if (!_rwPlaceGatePassed()) return;
   if (!rwSaveRecipe()) {
@@ -2209,6 +2240,310 @@ function rwSmartReset() {
   _rwSaveDraftNow();
   _rwRenderAll();
 }
+
+// ---- Φ 自助调优循环（C1，2026-10-25）----
+// 让 Φ 自己走「查能力 → 看当前配方 → 试跑 → 读体检 → 只改有问题处 → 复跑 → 下结论」。
+// 架构基线：配方库在 localStorage、画布在内存，**工具在本页执行**；服务端只代理带
+// 工具表的模型调用（/workshop/step）。复用三件既有单链，绝不另写第二套：
+//   试跑 _rwRunTrialOnce(true) / 体检 _rwJudgeOutput 的结果（state.judge）/ 补丁 _rwRequestDraft(mode:'patch')
+// 无副作用边界：不入册、不放画布、不写配方库（C2 再做）。硬上限 8 步模型调用＋2 次试跑；
+// 无进展闸：连续两轮空补丁或两轮体检旗一模一样就停，不白烧调用。
+function _rwAgentLogLine(text, kind) {
+  if (!recipeWorkshop) return;
+  recipeWorkshop.agentLog.push({ text: String(text || ''), kind: String(kind || ''), at: Date.now() });
+  if (recipeWorkshop.agentLog.length > 40) recipeWorkshop.agentLog = recipeWorkshop.agentLog.slice(-40);
+  // 同步落一份到左栏对话：切手动档能翻到这轮过程，草稿落盘也带着
+  _rwPushChat('phi', text, { silent: true, kind: kind || '' });
+  _rwRenderSmart();
+}
+
+function _rwAgentBoxHtml() {
+  const state = recipeWorkshop;
+  if (!state) return '';
+  const lines = state.agentLog || [];
+  if (!state.agentBusy && !lines.length && !state.agentSummary && !state.agentError) return '';
+  const rows = lines.slice(-14).map(function (item) {
+    return '<div class="rw-agent-line' + (item.kind === 'warn' ? ' is-warn' : '') + '">' + _rwEsc(item.text) + '</div>';
+  }).join('');
+  const head = state.agentBusy
+    ? '<div class="rw-agent-head"><span>Φ 正在自己调（最多 ' + RECIPE_WORKSHOP_AGENT_MAX_STEPS + ' 步、' + RECIPE_WORKSHOP_AGENT_MAX_TRIALS + ' 次试跑）</span>'
+      + '<button type="button" class="rw-btn rw-btn-ghost rw-btn-mini" onclick="rwSmartAgentCancel()">取消</button></div>'
+    : '<div class="rw-agent-head"><span>Φ 自己调的一轮记录</span></div>';
+  const summary = state.agentSummary ? '<div class="rw-agent-summary">' + _rwEsc(state.agentSummary) + '</div>' : '';
+  const error = (state.agentError && !state.agentBusy) ? '<div class="rw-agent-error">' + _rwEsc(state.agentError) + '</div>' : '';
+  return '<div class="rw-agent">' + head + '<div class="rw-agent-lines">' + rows + '</div>' + summary + error + '</div>';
+}
+
+// 一步模型调用：POST /workshop/step，服务端剔 system、带固定工具表非流式调一次
+async function _rwAgentStepFetch(model, messages, seq) {
+  const state = recipeWorkshop;
+  if (!state) return null;
+  let signal = null;
+  if (typeof AbortController === 'function') {
+    const ctl = new AbortController();
+    state.agentAbort = ctl;
+    signal = ctl.signal;
+  }
+  try {
+    const resp = await fetch(RECIPE_WORKSHOP_STEP_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: _rwModelPayload(model),
+        messages: messages,
+        level: _rwLevel(),
+        thinking: '',
+        session_id: _rwSessionId(),
+      }),
+      signal: signal,
+    });
+    const data = (resp && typeof resp.json === 'function')
+      ? await resp.json().catch(function () { return null; }) : null;
+    if (!resp || !resp.ok || !data || data.status !== 'ok') {
+      const reason = (data && ((data.errors && data.errors[0] && data.errors[0].reason) || data.say)) || ('HTTP ' + (resp && resp.status));
+      state.agentError = '这一步没接上模型：' + String(reason).slice(0, 160);
+      return null;
+    }
+    return data;
+  } catch (err) {
+    // 取消引发的 AbortError 不算故障——seq 校验会在循环里认领
+    if (state.agentSeq !== seq) return null;
+    state.agentError = '这一步没接上模型：' + String((err && err.message) || err).slice(0, 160);
+    return null;
+  } finally {
+    if (state) state.agentAbort = null;
+  }
+}
+
+// 工具执行器（只在浏览器跑）。ctx：{state, seq, trials, order}；返回 {result, meta}：
+// meta.patchChanged＝这轮补丁改了哪些字段（null＝补丁没成功）、meta.flagKey＝这轮体检旗
+async function _rwAgentExecTool(ctx, name, args) {
+  const state = ctx.state;
+  args = args || {};
+  ctx.order.push(String(name || ''));
+  try {
+    switch (String(name || '')) {
+      case 'workshop_capabilities': {
+        const resp = await fetch(RECIPE_WORKSHOP_CAPABILITIES_API, { method: 'GET' });
+        const data = (resp && typeof resp.json === 'function')
+          ? await resp.json().catch(function () { return null; }) : null;
+        if (!resp || !resp.ok || !data) {
+          return { result: { error: '能力清单拉取失败（HTTP ' + (resp && resp.status) + '）' }, meta: {} };
+        }
+        const caps = data.capabilities || {};
+        const baseCount = ((caps.base_kinds && caps.base_kinds.all) || []).length;
+        _rwAgentLogLine('查了能力清单：底座 ' + baseCount + ' 种、内置模板 '
+          + (Array.isArray(data.templates) ? data.templates.length : 0) + ' 个');
+        return { result: { capabilities: caps, templates: data.templates || [] }, meta: {} };
+      }
+      case 'workshop_get_recipe': {
+        const recipe = _rwNormalized() || _rwCurrentRecipe();
+        _rwAgentLogLine('看了当前配方「' + String(recipe.name || '还没起名') + '」');
+        return { result: { recipe: recipe }, meta: {} };
+      }
+      case 'workshop_run_trial': {
+        if (ctx.trials >= RECIPE_WORKSHOP_AGENT_MAX_TRIALS) {
+          return { result: { error: '试跑已达上限（' + RECIPE_WORKSHOP_AGENT_MAX_TRIALS + ' 次）——基于已有体检结果收尾，别再跑' }, meta: {} };
+        }
+        // internal=true：与手动「跑一次」同一条链、放行并发闸（跑出来的东西必须一模一样）
+        const run = await _rwRunTrialOnce(true);
+        if (!run || !run.ok) {
+          return { result: { ok: false, error: String((run && run.error) || '试跑失败') }, meta: {} };
+        }
+        ctx.trials += 1;
+        const judge = state.judge || { flags: [], metrics: {}, pass: false };
+        const m = judge.metrics || {};
+        const labels = (judge.flags || []).map(function (flag) { return flag.label; }).join('、');
+        _rwAgentLogLine('第 ' + ctx.trials + ' 次试跑：' + (m.chars || 0) + ' 字、' + (m.steps || 0) + ' 步、'
+          + (m.tex || 0) + ' 处公式、' + (m.ports || 0) + ' 个出口' + (judge.pass ? '——体检通过' : '——体检没过：' + (labels || '无旗')),
+          judge.pass ? '' : 'warn');
+        return {
+          result: {
+            ok: true,
+            passed: !!judge.pass,
+            metrics: m,
+            flags: judge.flags || [],
+            excerpt: String(state.output || '').replace(/\s+/g, ' ').slice(0, 600),
+          },
+          meta: { flagKey: judge.pass ? '' : (judge.flags || []).map(function (flag) { return flag.key; }).sort().join(',') },
+        };
+      }
+      case 'workshop_read_judge': {
+        if (!state.judge) {
+          return { result: { error: '还没试跑过——先 workshop_run_trial 拿真体检，不许凭空编' }, meta: {} };
+        }
+        _rwAgentLogLine('读了体检结果');
+        return { result: { judge: state.judge }, meta: {} };
+      }
+      case 'workshop_patch_recipe': {
+        const judge = state.judge;
+        let instruction = String(args.instruction || '').trim() || '按体检结果只改有问题的字段';
+        // 复用 rwAutoTune 的同一个翻译器：体检旗＋输出节选拼进补丁指令，两链口径一致
+        if (judge && !judge.pass) instruction += '\n' + _rwTuneInstruction(judge, state.output);
+        _rwAgentLogLine('改配方：' + instruction.split('\n')[0].slice(0, 80));
+        const data = await _rwRequestDraft(instruction, { mode: 'patch' });
+        if (!data) {
+          return { result: { ok: false, error: '补丁没成功（模型没接上或格式不对）' }, meta: { patchChanged: null } };
+        }
+        const changed = Array.isArray(data.changed) ? data.changed : [];
+        if (changed.length) _rwAgentLogLine('改了 ' + changed.length + ' 处：' + chopsHuman(changed.slice(0, 6)));
+        else _rwAgentLogLine('这轮一个字段都没动', 'warn');
+        return {
+          result: { ok: data.status === 'ok', changed: changed, field_errors: data.field_errors || [], warnings: data.warnings || [] },
+          meta: { patchChanged: changed },
+        };
+      }
+      case 'workshop_check_name': {
+        const name = String(args.name || '').trim();
+        const taken = (typeof getUserRecipes === 'function' ? getUserRecipes() : []).some(function (item) {
+          return item && String(item.name || '') === name && name;
+        });
+        _rwAgentLogLine('查了名字「' + name.slice(0, 24) + '」' + (taken ? '——和已有配方重名' : '——没撞名'));
+        return { result: { name: name, taken: !!taken }, meta: {} };
+      }
+      default:
+        return { result: { error: '不认识的工具：' + name + '（只有查能力/看配方/试跑/读体检/改配方/查名六个）' }, meta: {} };
+    }
+  } catch (err) {
+    return { result: { error: '工具执行出错：' + String((err && err.message) || err).slice(0, 160) }, meta: {} };
+  }
+}
+
+// 取消：递增 agentSeq 让在途步骤作废＋中止在途 fetch；试跑的流式回调按全局序号丢弃
+function rwSmartAgentCancel() {
+  const state = recipeWorkshop;
+  if (!state || !state.agentBusy) return;
+  state.agentSeq += 1;
+  recipeWorkshopRunSeq += 1;
+  if (state.agentAbort) { try { state.agentAbort.abort(); } catch (e) { /* 没有 AbortController 的环境靠 seq */ } }
+  if (typeof toastMsg === 'function') toastMsg('好，停下这一轮');
+}
+
+async function rwSmartAgentRun() {
+  const state = recipeWorkshop;
+  if (!state || state.agentBusy || state.smartBusy || state.running || state.autotuning || recipeWorkshopBusy) return;
+  const model = _rwModel();
+  if (!model) {
+    state.smartError = '这台机器还没配主模型：关掉工坊，到右上角「模型设置」里选一个，再回来试。';
+    _rwRenderSmart();
+    return;
+  }
+  const recipeNow = _rwNormalized() || _rwCurrentRecipe();
+  const wf = _rwBuildWorkflowContext(recipeNow);
+  if (!wf.upstream.length) {
+    // 按钮本身已禁用，这是双保险：把人领到材料框前，别让「自己调」空转
+    await rwSmartTrial();
+    return;
+  }
+  if (typeof fetch !== 'function') return;
+  if (typeof confirm === 'function'
+    && !confirm('让 Φ 自己走一遍：查能力 → 看当前配方 → 试跑 → 读体检 → 只改有问题的地方 → 复跑验证。\n最多 '
+      + RECIPE_WORKSHOP_AGENT_MAX_STEPS + ' 步模型调用＋' + RECIPE_WORKSHOP_AGENT_MAX_TRIALS + ' 次试跑，中途可取消。继续？')) return;
+  const seq = ++state.agentSeq;
+  state.agentBusy = true;
+  state.agentError = '';
+  state.agentSummary = '';
+  state.agentLog = [];
+  _rwRenderSmart();
+  _rwRenderRun();
+  const ctx = { state: state, seq: seq, trials: 0, order: [] };
+  const materialsBrief = wf.upstream.map(function (item) {
+    return '【' + item.label + '】' + String(item.content || '').replace(/\s+/g, ' ').slice(0, 400);
+  }).join('\n');
+  const wish = String(state.smartInstruction || recipeNow.desc || recipeNow.name || '').trim();
+  const messages = [{
+    role: 'user',
+    content: [
+      '任务：把下面这份节点配方调到「体检通过」。用户当初的需求是：「' + (wish || '（没留原话）') + '」',
+      '当前配方快照：\n' + JSON.stringify(recipeNow),
+      '试跑材料（用户已贴，原样喂给试跑）：\n' + (materialsBrief || '（空）'),
+      '先把该看的看了（workshop_capabilities / workshop_get_recipe），再试跑拿真输出，按体检结果只改有问题处，复跑验证后收尾。最多 '
+        + RECIPE_WORKSHOP_AGENT_MAX_STEPS + ' 步、' + RECIPE_WORKSHOP_AGENT_MAX_TRIALS + ' 次试跑。',
+    ].join('\n\n'),
+  }];
+  _rwAgentLogLine('开工：先查能力和配方，再试跑拿真输出。');
+  let stopReason = '';       // ''＝自然收尾｜cancel｜net｜steps｜noprog-empty｜noprog-flags
+  let finalText = '';
+  let stepsUsed = 0;
+  let emptyPatches = 0;      // 连续「补丁一个字段没动」的轮数
+  let lastFlagKey = null;    // 上一轮试跑的体检旗（没过时）
+  try {
+    outer:
+    for (let step = 1; step <= RECIPE_WORKSHOP_AGENT_MAX_STEPS; step += 1) {
+      stepsUsed = step;
+      if (state.agentSeq !== seq) { stopReason = 'cancel'; break; }
+      const reply = await _rwAgentStepFetch(model, messages, seq);
+      if (state.agentSeq !== seq) { stopReason = 'cancel'; break; }
+      if (!reply) { stopReason = 'net'; break; }
+      const toolCalls = Array.isArray(reply.tool_calls) ? reply.tool_calls : [];
+      if (!toolCalls.length) { finalText = String(reply.content || '').trim(); break; }
+      messages.push({ role: 'assistant', content: String(reply.content || ''), tool_calls: toolCalls });
+      for (let i = 0; i < toolCalls.length; i += 1) {
+        if (state.agentSeq !== seq) { stopReason = 'cancel'; break outer; }
+        const call = toolCalls[i] || {};
+        const callId = String(call.id || ('step-' + step + '-' + i));
+        const fnName = String((call.function && call.function.name) || '');
+        let args = {};
+        try { args = JSON.parse((call.function && call.function.arguments) || '{}') || {}; } catch (e) { args = {}; }
+        const outcome = await _rwAgentExecTool(ctx, fnName, args);
+        if (state.agentSeq !== seq) { stopReason = 'cancel'; break outer; }
+        messages.push({
+          role: 'tool',
+          tool_call_id: callId,
+          name: fnName,
+          content: JSON.stringify(outcome.result),
+        });
+        // 无进展闸一：连续两轮空补丁——配方没变，再跑也是原样
+        if (outcome.meta.patchChanged) {
+          emptyPatches = (Array.isArray(outcome.meta.patchChanged) && !outcome.meta.patchChanged.length)
+            ? emptyPatches + 1 : 0;
+          if (emptyPatches >= 2) { stopReason = 'noprog-empty'; break outer; }
+        }
+        // 无进展闸二：两轮试跑体检旗一模一样——这条改法没起作用
+        if (typeof outcome.meta.flagKey === 'string') {
+          const key = outcome.meta.flagKey;
+          if (key && key === lastFlagKey) { stopReason = 'noprog-flags'; break outer; }
+          lastFlagKey = key;
+        }
+      }
+    }
+    if (!stopReason && !finalText) stopReason = 'steps';   // 8 步走满还没收尾
+  } finally {
+    state.agentBusy = false;
+    state.agentAbort = null;
+  }
+  if (!recipeWorkshop) return;   // 中途草稿被丢弃（工坊关了）：不再渲染
+  if (finalText) _rwAgentLogLine('Φ 说：' + finalText.replace(/\s+/g, ' ').slice(0, 280));
+  const judge = state.judge;
+  const restLabels = (judge && !judge.pass)
+    ? (judge.flags || []).map(function (flag) { return flag.label; }).join('、') : '';
+  let summary = '';
+  if (stopReason === 'cancel') {
+    summary = '已取消，停在 ' + stepsUsed + ' 步' + (restLabels ? '；还剩：' + restLabels : '') + '。';
+  } else if (stopReason === 'net') {
+    summary = '中途没接上模型，先停：' + String(state.agentError || '').slice(0, 120);
+  } else if (stopReason === 'noprog-empty') {
+    summary = '连续两轮补丁都没改动配方——再跑也是原样，先停。'
+      + (restLabels ? '还剩：' + restLabels + '。' : '') + '可以手动改「生成要求」后再点一次。';
+  } else if (stopReason === 'noprog-flags') {
+    summary = '两轮试跑的体检问题一模一样（' + (restLabels || '同样的旗') + '）——这条改法没起作用，先停。换个说法再点一次，或手动改对应字段。';
+  } else if (stopReason === 'steps') {
+    summary = '走满 ' + RECIPE_WORKSHOP_AGENT_MAX_STEPS + ' 步先停。'
+      + (judge && judge.pass ? '最后一次体检已通过。' : (restLabels ? '还剩：' + restLabels + '。' : ''))
+      + '可以再点一次接着调。';
+  } else if (judge && judge.pass) {
+    summary = '体检通过（' + _rwJudgeSummary(judge) + '），共 ' + stepsUsed + ' 步、' + ctx.trials + ' 次试跑。';
+  } else {
+    summary = '没调到通过，还剩：' + (restLabels || '没拿到可判的输出') + '。可以再点一次，或手动改对应字段。';
+  }
+  // 收尾只说结构，不替内容背书——体检是纯形式判定（A/B 检验的已知盲区）
+  summary += '结构通过≠内容正确——体检只看形式（分步/公式/出口/长度），内容对不对请你自己读一遍输出。';
+  state.agentSummary = summary;
+  _rwPushChat('phi', summary);
+  _rwRenderSmart();
+  _rwRenderRun();
+}
+
 
 // ---- 入册与落地（P4）----
 function _rwUpstreamCandidates() {
@@ -2467,6 +2802,9 @@ window.rwSmartPlace = rwSmartPlace;
 window.rwSmartTrial = rwSmartTrial;
 window.rwSmartRefine = rwSmartRefine;
 window.rwSmartReset = rwSmartReset;
+// C1：Φ 自助调优循环
+window.rwSmartAgentRun = rwSmartAgentRun;
+window.rwSmartAgentCancel = rwSmartAgentCancel;
 // 冒烟与后续会话用的内部探针（只读）
 function _recipeWorkshopState() { return recipeWorkshop; }
 window._recipeWorkshopState = _recipeWorkshopState;
