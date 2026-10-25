@@ -216,6 +216,34 @@ function replyOf(body) {
       }],
     };
   }
+  // —— C2 Φ 落图剧本（2026-10-25）：tools 含 workshop_place_on_canvas 是九工具表独有锚 ——
+  // 必须排在 C1 剧本（键 workshop_capabilities，六工具表也含）之前：C2 走「试跑→patch→
+  // 复跑→查上游→落图」整链，按已回灌 tool 消息的条数与最后一条的名字推进；落图结果
+  // （含 refused 被拒）回灌后直接收尾。真机脚本据此核对整链 tools 透传与回灌形状。
+  if (j.tools.includes('workshop_place_on_canvas')) {
+    const toolMsgs = (Array.isArray(body.messages) ? body.messages : []).filter(m => m && m.role === 'tool');
+    const last = toolMsgs[toolMsgs.length - 1];
+    const lastName = last ? String(last.name || '') : '';
+    const wsCall = (name, args) => ({
+      content: '',
+      tool_calls: [{ id: 'call_ws2_' + nextId(), type: 'function', function: { name, arguments: JSON.stringify(args || {}) } }],
+    });
+    if (!lastName) return wsCall('workshop_run_trial', {});
+    if (toolMsgs.length === 1 && lastName === 'workshop_run_trial') {
+      return wsCall('workshop_patch_recipe', { instruction: '分步输出，公式用 $…$ 包起来（只改生成要求）' });
+    }
+    if (lastName === 'workshop_patch_recipe') return wsCall('workshop_run_trial', {});
+    if (lastName === 'workshop_run_trial') return wsCall('workshop_list_upstream', {});
+    if (lastName === 'workshop_list_upstream') {
+      let ids = [];
+      try {
+        const parsed = JSON.parse(String(last.content || '{}'));
+        ids = (Array.isArray(parsed.candidates) ? parsed.candidates : []).slice(0, 1).map(c => c && c.id).filter(Boolean);
+      } catch (e) { /* 坏 JSON 就不接上游 */ }
+      return wsCall('workshop_place_on_canvas', ids.length ? { upstream_ids: ids } : {});
+    }
+    return text('C2 真机剧本收尾：落图这一步已经办完（或用户没同意），这轮到此为止。' + sfx);
+  }
   // —— C1 Φ 自助调优剧本（2026-10-25）：tools 含 workshop_* 是 /workshop/step 独有锚 ——
   // 必须排在⑥草稿剧本之前：C1 系统提示词同样含「节点工坊」，但⑥不带 tools、C1 必带。
   // 第一次（messages 里还没有 role:"tool"）回 workshop_get_recipe 查询；浏览器执行器

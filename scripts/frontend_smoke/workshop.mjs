@@ -6,7 +6,8 @@
 // 覆盖：空草稿骨架 / 字段路径人话 / 五步进度 / 改名与空名报错 / 输入口缓冲语义 /
 // 提示词预算 / 换色清自由色 / 换底座收模块专属段 / 试跑上下文按输入口分栏 /
 // 动态出口预览 / 草稿落盘与恢复 / 补丁往返（只改一处、其余不动）＋撤回 /
-// 入册（含重名拦）＋源码契约（构建登记与「创造」入口改道）。
+// 入册（含重名拦）＋源码契约（构建登记与「创造」入口改道）/ C1 Φ 自助调优四条 /
+// C2 副作用三条（Φ 自己落图整链·用户拒绝不重试·keepOpen 默认即关）。
 import { check, drain, addFailed, vm, sandbox, localStorage, fs } from './_runner.mjs';
 
 const draftKey = 'phymathia_recipe_draft';
@@ -923,11 +924,11 @@ export async function run() {
         resetWorkshop(true);
       }
     }],
-    ['C1 硬上限：模型一直要工具时 8 步就停，试跑不超 2 次', async () => {
+    ['C1/C2 硬上限：模型一直要工具时 10 步就停，试跑不超 2 次', async () => {
       resetWorkshop(true);
       sandbox.openRecipeWorkshop({
         recipe: {
-          name: '八步上限节点' + (Date.now() % 100000), base: { kind: 'module' },
+          name: '十步上限节点' + (Date.now() % 100000), base: { kind: 'module' },
           generate: { prompt: '你在做受力分析。' },
           ports: { static: [{ label: '步骤', drag_form: 'draft' }], inputs: [] },
           appearance: { palette: 'amber' }, content_kind: 'markdown',
@@ -953,12 +954,12 @@ export async function run() {
               }),
             };
           }
-          throw new Error('八步上限用例不该打别的接口：' + target);
+          throw new Error('十步上限用例不该打别的接口：' + target);
         };
         await sandbox.rwSmartAgentRun();
-        if (stepCalls !== 8) throw new Error('硬上限应是 8 步模型调用，实际 ' + stepCalls);
+        if (stepCalls !== 10) throw new Error('硬上限应是 10 步模型调用（C2 起 8→10），实际 ' + stepCalls);
         if (st.agentBusy) throw new Error('到顶后 agentBusy 应复位');
-        if (String(st.agentSummary || '').indexOf('8 步') < 0) throw new Error('收尾该说明走满 8 步先停，实际：' + st.agentSummary);
+        if (String(st.agentSummary || '').indexOf('10 步') < 0) throw new Error('收尾该说明走满 10 步先停，实际：' + st.agentSummary);
         if ((st.runs || []).length) throw new Error('这个剧本不该发生试跑');
       } finally {
         sandbox.fetch = prev.fetch;
@@ -1057,6 +1058,277 @@ export async function run() {
       } finally {
         sandbox.fetch = prev.fetch;
         sandbox.confirm = prev.confirm;
+        resetWorkshop(true);
+      }
+    }],
+    // ---- C2（2026-10-25）：Φ 工具循环补副作用——入册/查上游/落图连线，人确认 ----
+    ['C2 主流程：Φ 调完自己落图——试跑坏 → 改配方 → 试跑好 → 查上游 → 放画布（confirm 一次）→ 说完总结再关工坊', async () => {
+      resetWorkshop(true);
+      const nodeName = '自助落图节点' + (Date.now() % 100000);
+      sandbox.openRecipeWorkshop({
+        recipe: {
+          name: nodeName, base: { kind: 'module' },
+          generate: { prompt: '你在做受力分析。' },
+          ports: { static: [{ label: '步骤', drag_form: 'draft' }, { label: '检查', drag_form: 'draft' }], inputs: [] },
+          appearance: { palette: 'amber' }, content_kind: 'markdown',
+        },
+        mode: 'smart',
+      });
+      const st = state();
+      st.smartDone = true;
+      st.materials = { general: '一个质量 m 的物块放在倾角 θ 的斜面上，求加速度。' };
+      const prev = {
+        proxy: sandbox.proxyChatWithModel, sse: sandbox._sseContentFrames,
+        fetch: sandbox.fetch, confirm: sandbox.confirm, markdown: sandbox.renderMarkdown,
+        close: sandbox.closeRecipeWorkshop, nodes: sandbox.getGraphViewNodes,
+        saveGraph: sandbox._saveGraphState,
+        winGet: sandbox.window.getGraphState, winSave: sandbox.window.saveGraphState, winSid: sandbox.window.getCurrentSessionId,
+      };
+      // 沙箱里 window.* 全走宽松代理，画布状态读不回真数据——连线断言靠桩住
+      // _saveGraphState 捕获落图时存的状态（其 connections 由落图代码自己设成真数组）。
+      // window.getGraphState 也必须桩成真对象：前面的域可能把它换成 loose 代理，
+      // 落图链里 _pushGraphUndo 会对 state 做 JSON.parse(JSON.stringify(…))，
+      // stringify(函数代理)＝undefined 会当场炸（recipes/phi/quiz 等域同款自保桩）。
+      const savedGraphStates = [];
+      const memGraph = { customNodes: [], connections: [], collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, groups: [], portCounts: {}, inputPortCounts: {}, removedEdges: [], harnessDeleted: {}, pan: { x: 80, y: 80 }, zoom: 0.9, layoutVersion: 1, harnessCheckpoint: null };
+      let trials = 0;
+      let placeConfirms = 0;
+      const placeConfirmTexts = [];
+      const stepBodies = [];
+      let closedInfo = null;
+      // 画布上摆两个可接上游（_rwUpstreamCandidates 只收不带 recipeId 的节点）
+      const fakeNodes = [
+        { id: 'up-a', kind: 'module', label: '题目原文', x: 10, y: 10 },
+        { id: 'up-b', kind: 'note', label: '随手笔记', x: 30, y: 30 },
+      ];
+      const tc = (name, args) => ({ id: 'c-' + name + '-' + Math.random().toString(36).slice(2, 6), type: 'function', function: { name, arguments: JSON.stringify(args || {}) } });
+      const script = [
+        { content: '先试跑拿真输出', tool_calls: [tc('workshop_run_trial')] },
+        { content: '体检没过，只改生成要求', tool_calls: [tc('workshop_patch_recipe', { instruction: '分步输出、公式包 $…$（别动别的字段）' })] },
+        { content: '复跑验证', tool_calls: [tc('workshop_run_trial')] },
+        { content: '看下画布上能接谁', tool_calls: [tc('workshop_list_upstream')] },
+        { content: '接上「题目原文」放到画布', tool_calls: [tc('workshop_place_on_canvas', { upstream_ids: ['up-a'] })] },
+        { content: '办好了：体检通过，已放到画布并接上 1 个上游。', tool_calls: [] },
+      ];
+      try {
+        sandbox.confirm = (msg) => {
+          const text = String(msg);
+          if (text.indexOf('放到画布') >= 0) { placeConfirms += 1; placeConfirmTexts.push(text); }
+          return true;   // 开场 confirm 与落图 confirm 都放行
+        };
+        sandbox.renderMarkdown = () => '<p>（渲染省略）</p>';
+        sandbox.getGraphViewNodes = () => fakeNodes;
+        sandbox.closeRecipeWorkshop = (opts) => {
+          closedInfo = { discard: !!(opts && opts.discard), summary: String(st.agentSummary || '') };
+          return prev.close(opts);
+        };
+        sandbox._saveGraphState = (gs) => { savedGraphStates.push(gs); };
+        sandbox.window.getGraphState = () => memGraph;
+        sandbox.window.saveGraphState = () => {};
+        sandbox.window.getCurrentSessionId = () => 'sess_ws_c2';
+        sandbox.proxyChatWithModel = async () => ({ ok: true, status: 200, body: {} });
+        sandbox._sseContentFrames = async function* () {
+          trials += 1;
+          if (trials === 1) {
+            yield '好的，这个题我们来看看。';   // 坏输出：太短＋没分步骤
+            return;
+          }
+          yield '第一步 研究对象\n取物块为研究对象，沿斜面方向建系，斜面方向为 x、垂直斜面 y。\n';
+          yield '第二步 列方程\n垂直方向 $N = mg\\cos\\theta$，沿斜面 $mg\\sin\\theta = ma$，所以 $a = g\\sin\\theta$。\n';
+          yield '第三步 检查\n当 θ=90° 时 $a=g$；有摩擦时把 $mg\\cos\\theta$ 乘摩擦因数加进方程，量纲仍是加速度。';
+        };
+        sandbox.fetch = async (url, init) => {
+          const target = String(url);
+          if (target.indexOf('/workshop/step') >= 0) {
+            const body = JSON.parse(init.body);
+            stepBodies.push(body);
+            const reply = script[Math.min(stepBodies.length - 1, script.length - 1)];
+            return { ok: true, status: 200, json: async () => ({ status: 'ok', content: reply.content, tool_calls: reply.tool_calls }) };
+          }
+          if (target.indexOf('/recipe/draft') >= 0) {
+            const recipe = JSON.parse(JSON.stringify(state().recipe));
+            recipe.generate.prompt = String(recipe.generate.prompt || '') + '\n分步输出，公式用 $…$ 包起来。';
+            return {
+              ok: true, status: 200,
+              json: async () => ({
+                status: 'ok', say: '按体检补了分步与公式要求', mode: 'patch', recipe,
+                changed: ['generate.prompt'], question: null, warnings: [], field_errors: [],
+              }),
+            };
+          }
+          throw new Error('C2 落图用例不该打别的接口：' + target);
+        };
+        await sandbox.rwSmartAgentRun();
+        // 六步剧本走完：试跑坏 → 补丁 → 复跑好 → 查上游 → 落图 → 收尾
+        if (stepBodies.length !== 6) throw new Error('应恰好 6 步模型调用，实际 ' + stepBodies.length);
+        if (trials !== 2 || (st.runs || []).length !== 2) throw new Error('应真跑两次（坏→好）');
+        // 落图 confirm 恰好一次，文案带节点名＋要接几个上游
+        if (placeConfirms !== 1) throw new Error('落图 confirm 应恰好一次，实际 ' + placeConfirms);
+        if (placeConfirmTexts.length && (placeConfirmTexts[0].indexOf(nodeName) < 0 || placeConfirmTexts[0].indexOf('1 个上游') < 0)) {
+          throw new Error('落图 confirm 要带名字＋上游数：' + placeConfirmTexts[0]);
+        }
+        // 落图工具结果回灌：ok/placed/wired（只认名单里的 up-a）
+        const placeMsg = stepBodies[5].messages.filter(m => m.role === 'tool' && m.name === 'workshop_place_on_canvas')[0];
+        const placeResult = placeMsg ? JSON.parse(placeMsg.content) : null;
+        if (!placeResult || placeResult.ok !== true || placeResult.placed !== true || placeResult.wired !== 1) {
+          throw new Error('落图结果应回灌 {ok:true, placed:true, wired:1}，实际：' + placeMsg.content);
+        }
+        // 真落了图：配方自动入册、落图存盘的状态里多了一条 from up-a 的连线
+        if (!sandbox.getUserRecipes().some(item => item.name === nodeName)) throw new Error('落图应先自动入册');
+        const wiredOk = savedGraphStates.some(gs => Array.isArray(gs && gs.connections)
+          && gs.connections.some(c => c && c.from === 'up-a' && c.toPort === 'in-0'));
+        if (!wiredOk) throw new Error('落图存盘的画布状态里没找到接上 up-a 的连线（ captured ' + savedGraphStates.length + ' 次）');
+        // 总结在关闭前说出、放完后工坊关闭（keepOpen 语义）
+        if (!closedInfo || closedInfo.discard !== true) throw new Error('放完说完总结后应关工坊（discard）');
+        if (closedInfo.summary.indexOf('体检通过') < 0 || closedInfo.summary.indexOf('放到画布') < 0) {
+          throw new Error('关闭时刻总结应已说出（体检通过＋放到画布），实际：' + closedInfo.summary);
+        }
+        if (sandbox._recipeWorkshopState()) throw new Error('放完后工坊应已关闭');
+        // 左栏逐行说话（C1 格式延续）：查上游/已放到画布都在
+        const chat = (st.conversation || []).map(item => String(item.text || '')).join('\n');
+        if (chat.indexOf('可接的上游') < 0 || chat.indexOf('已放到画布') < 0) throw new Error('左栏没把副作用过程说出来');
+        return true;
+      } finally {
+        sandbox.proxyChatWithModel = prev.proxy;
+        sandbox._sseContentFrames = prev.sse;
+        sandbox.fetch = prev.fetch;
+        sandbox.confirm = prev.confirm;
+        sandbox.renderMarkdown = prev.markdown;
+        sandbox.closeRecipeWorkshop = prev.close;
+        sandbox.getGraphViewNodes = prev.nodes;
+        sandbox._saveGraphState = prev.saveGraph;
+        sandbox.window.getGraphState = prev.winGet;
+        sandbox.window.saveGraphState = prev.winSave;
+        sandbox.window.getCurrentSessionId = prev.winSid;
+        resetWorkshop(true);
+      }
+    }],
+    ['C2 拒绝落图：confirm 回 false——零落图、被拒不重试、模型收尾说「下次再放」', async () => {
+      resetWorkshop(true);
+      sandbox.openRecipeWorkshop({
+        recipe: {
+          name: '拒绝落图节点' + (Date.now() % 100000), base: { kind: 'module' },
+          generate: { prompt: '你在做受力分析。' },
+          ports: { static: [{ label: '步骤', drag_form: 'draft' }, { label: '检查', drag_form: 'draft' }], inputs: [] },
+          appearance: { palette: 'amber' }, content_kind: 'markdown',
+        },
+        mode: 'smart',
+      });
+      const st = state();
+      st.smartDone = true;
+      st.materials = { general: '一个质量 m 的物块放在倾角 θ 的斜面上，求加速度。' };
+      // 先钉住工具层的硬闸：没试跑过（没盖 recipeId 章）的落图请求直接拒，连 confirm 都不问
+      const guard = await sandbox._rwAgentExecTool({ state: st, seq: 0, trials: 0, order: [], placed: false }, 'workshop_place_on_canvas', {});
+      if (!guard.result.error || String(guard.result.error).indexOf('试跑') < 0) {
+        throw new Error('没试跑过的落图该被硬拒（认 run 的 recipeId 章），实际：' + JSON.stringify(guard.result));
+      }
+      const prev = {
+        proxy: sandbox.proxyChatWithModel, sse: sandbox._sseContentFrames,
+        fetch: sandbox.fetch, confirm: sandbox.confirm, markdown: sandbox.renderMarkdown,
+        place: sandbox.rwPlaceOnCanvas,
+      };
+      let placeConfirms = 0;
+      let placeCalls = 0;
+      const stepBodies = [];
+      const tc = (name, args) => ({ id: 'c-' + name + '-' + Math.random().toString(36).slice(2, 6), type: 'function', function: { name, arguments: JSON.stringify(args || {}) } });
+      const script = [
+        { content: '先试跑验证', tool_calls: [tc('workshop_run_trial')] },
+        { content: '体检过了，放到画布', tool_calls: [tc('workshop_place_on_canvas', {})] },
+        { content: '这次用户没同意放到画布——配方还在工坊里，下次想放随时可以。', tool_calls: [] },
+      ];
+      try {
+        sandbox.renderMarkdown = () => '<p>（渲染省略）</p>';
+        // 只有落图那条 confirm 回 false（开场 confirm 放行）
+        sandbox.confirm = (msg) => {
+          if (String(msg).indexOf('放到画布') >= 0) { placeConfirms += 1; return false; }
+          return true;
+        };
+        sandbox.rwPlaceOnCanvas = () => { placeCalls += 1; return true; };
+        sandbox.proxyChatWithModel = async () => ({ ok: true, status: 200, body: {} });
+        sandbox._sseContentFrames = async function* () {
+          yield '第一步 研究对象\n取物块为研究对象，沿斜面方向建系。\n';
+          yield '第二步 列方程\n沿斜面 $mg\\sin\\theta = ma$，所以 $a = g\\sin\\theta$。\n';
+          yield '第三步 检查\n当 θ=90° 时 $a=g$，与自由落体一致。';
+        };
+        sandbox.fetch = async (url, init) => {
+          const target = String(url);
+          if (target.indexOf('/workshop/step') >= 0) {
+            const body = JSON.parse(init.body);
+            stepBodies.push(body);
+            const reply = script[Math.min(stepBodies.length - 1, script.length - 1)];
+            return { ok: true, status: 200, json: async () => ({ status: 'ok', content: reply.content, tool_calls: reply.tool_calls }) };
+          }
+          throw new Error('拒绝落图用例不该打别的接口：' + target);
+        };
+        await sandbox.rwSmartAgentRun();
+        // 拒绝语义：confirm 问了一次、零落图、refused 回灌给模型
+        if (placeConfirms !== 1) throw new Error('落图 confirm 应恰好一次，实际 ' + placeConfirms);
+        if (placeCalls) throw new Error('被拒不许真落图，实际调了 ' + placeCalls + ' 次');
+        const placeMsg = stepBodies[2].messages.filter(m => m.role === 'tool' && m.name === 'workshop_place_on_canvas')[0];
+        const placeResult = placeMsg ? JSON.parse(placeMsg.content) : null;
+        if (!placeResult || placeResult.ok !== false || placeResult.refused !== true) {
+          throw new Error('被拒应回灌 {ok:false, refused:true}，实际：' + (placeMsg && placeMsg.content));
+        }
+        // 无重试：拒绝后下一步就是收尾（剧本共 3 步，没有第 4 次模型调用）
+        if (stepBodies.length !== 3) throw new Error('被拒不重试——应 3 步收场（试跑/落图/收尾），实际 ' + stepBodies.length);
+        const chat = (st.conversation || []).map(item => String(item.text || '')).join('\n');
+        if (chat.indexOf('没同意') < 0) throw new Error('左栏该说清用户没同意');
+        if (chat.indexOf('下次想放') < 0) throw new Error('模型收尾该带「下次再放」类话术');
+        // 没放成：工坊还开着、忙闸复位
+        if (!sandbox._recipeWorkshopState()) throw new Error('没落图不该关工坊');
+        if (st.agentBusy) throw new Error('结束后 agentBusy 应复位');
+        return true;
+      } finally {
+        sandbox.proxyChatWithModel = prev.proxy;
+        sandbox._sseContentFrames = prev.sse;
+        sandbox.fetch = prev.fetch;
+        sandbox.confirm = prev.confirm;
+        sandbox.renderMarkdown = prev.markdown;
+        sandbox.rwPlaceOnCanvas = prev.place;
+        resetWorkshop(true);
+      }
+    }],
+    ['C2 keepOpen 默认行为：rwPlaceOnCanvas 不带参数仍放完即关（手动档零回归）', async () => {
+      resetWorkshop(true);
+      const nodeName = '手动落图节点' + (Date.now() % 100000);
+      sandbox.openRecipeWorkshop({
+        recipe: {
+          name: nodeName, base: { kind: 'module' },
+          generate: { prompt: '你在做受力分析：分步输出。' },
+          ports: { static: [{ label: '步骤', drag_form: 'draft' }], inputs: [] },
+          appearance: { palette: 'amber' }, content_kind: 'markdown',
+        },
+      });
+      const st = state();
+      // 同 C2 主流程：window.getGraphState 必须桩成真对象（前面的域可能留下 loose 代理，
+      // 落图链的 _pushGraphUndo 会对它 stringify 出 undefined 当场炸）
+      const memGraph = { customNodes: [], connections: [], collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, groups: [], portCounts: {}, inputPortCounts: {}, removedEdges: [], harnessDeleted: {}, pan: { x: 80, y: 80 }, zoom: 0.9, layoutVersion: 1, harnessCheckpoint: null };
+      const prev = {
+        nodes: sandbox.getGraphViewNodes, close: sandbox.closeRecipeWorkshop, confirm: sandbox.confirm, markdown: sandbox.renderMarkdown,
+        winGet: sandbox.window.getGraphState, winSave: sandbox.window.saveGraphState, winSid: sandbox.window.getCurrentSessionId,
+      };
+      let closed = 0;
+      try {
+        sandbox.renderMarkdown = () => '<p>（渲染省略）</p>';
+        sandbox.getGraphViewNodes = () => [];
+        sandbox.confirm = () => true;
+        sandbox.window.getGraphState = () => memGraph;
+        sandbox.window.saveGraphState = () => {};
+        sandbox.window.getCurrentSessionId = () => 'sess_ws_c2_keepopen';
+        sandbox.closeRecipeWorkshop = (opts) => { closed += 1; return prev.close(opts); };
+        const ok = sandbox.rwPlaceOnCanvas();   // 不带参数＝默认路径
+        if (ok !== true) throw new Error('放到画布本体应返回成功（true）');
+        if (closed !== 1) throw new Error('默认路径放完应立即关工坊恰好一次，实际 ' + closed + ' 次');
+        if (sandbox._recipeWorkshopState()) throw new Error('默认路径放完工坊应已关闭');
+        if (!sandbox.getUserRecipes().some(item => item.name === nodeName)) throw new Error('落图前应自动入册');
+      } finally {
+        sandbox.getGraphViewNodes = prev.nodes;
+        sandbox.closeRecipeWorkshop = prev.close;
+        sandbox.confirm = prev.confirm;
+        sandbox.renderMarkdown = prev.markdown;
+        sandbox.window.getGraphState = prev.winGet;
+        sandbox.window.saveGraphState = prev.winSave;
+        sandbox.window.getCurrentSessionId = prev.winSid;
         resetWorkshop(true);
       }
     }],
