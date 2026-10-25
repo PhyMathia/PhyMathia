@@ -404,6 +404,22 @@ function _thinkingOptionsFor(provider, role) {
   ];
 }
 
+// 滑块档位（纯函数，冒烟直测）：下拉选项转「按思考强度升序」的滑块档，附短标签与悬浮
+// 说明。effort 族序：关 → 默认 → 浅(low) → 深(high) → 最深(max)；布尔族：关 → 默认 → 开。
+// graph 槽「默认」叫「自动」（Φ 按钮可覆盖），与 _thinkingOptionsFor 口径一致。
+function _thinkingSliderEntries(options, role) {
+  const isBoolean = (options || []).some(o => o.value === 'on');
+  const order = isBoolean ? { off: 0, '': 1, on: 2 } : { off: 0, '': 1, low: 2, high: 3, max: 4 };
+  const short = isBoolean ? { off: '关', '': '默认', on: '开' }
+    : { off: '关', '': (role === 'graph' ? '自动' : '默认'), low: '浅', high: '深', max: '最深' };
+  const autoTitle = role === 'graph' ? '自动＝由 Φ 面板深度思考按钮/相位默认决定' : '跟随模型默认＝不发思考参数';
+  const titles = isBoolean ? { off: '强制关闭思考', '': autoTitle, on: '开启思考' }
+    : { off: '强制关闭思考', '': autoTitle, low: '低强度思考', high: '高强度思考', max: '最高强度思考' };
+  return (options || []).slice()
+    .sort((a, b) => (order[a.value] !== undefined ? order[a.value] : 9) - (order[b.value] !== undefined ? order[b.value] : 9))
+    .map(o => ({ value: o.value, short: short[o.value] || o.value || '默认', title: titles[o.value] || '' }));
+}
+
 function loadUserModels() {
   try {
     const raw = localStorage.getItem(MODELS_STORAGE_KEY);
@@ -805,6 +821,32 @@ function renderModelSelects() {
   updateModelMeta('quiz');
   updateModelMeta('graph');
   updateModelMeta('branch');
+  // 简略模式统一控件（2026-10-25）：值恒取主槽（agent）现值，仅展示不落盘；
+  // 滑块档位组随主模型供应商族渲染（六槽刷新已先把无效存量档位归一）
+  const unifiedSelect = document.getElementById('unifiedModelSelect');
+  if (unifiedSelect) {
+    unifiedSelect.innerHTML = emptyOpt + opts;
+    unifiedSelect.value = activeModels.agent_model || '';
+    updateUnifiedModelMeta();
+    _refreshUnifiedThinkingSlider();
+  }
+}
+
+// 槽位/统一模型的描述行与徽标（isMain＝主槽口径：空值提示「未配置」而非「可选」）
+function _fillModelMeta(selectValue, descEl, tagsEl, isMain) {
+  const model = getModelById(selectValue);
+  if (model) {
+    const preset = MODEL_PRESETS[model.provider];
+    descEl.textContent = (preset?.name || model.provider) + ' · ' + (model.label || model.model);
+      tagsEl.innerHTML = `<span class="model-tag">${model.provider}</span><span class="model-tag">${model.apiKey ? UI_ICON_SVG.check + ' 已配置密钥' : UI_ICON_SVG.key + ' 密钥可留空'}</span>`;
+  } else if (isMain) {
+    descEl.textContent = selectValue ? '' : '未配置模型。请在下方「管理自定义模型」里添加';
+    tagsEl.innerHTML = selectValue ? '' : '<span class="model-tag">未配置</span>';
+  } else {
+    // 其余角色统一口径：留空即与主模型相同，仅描述回退行为，不再各写一份角色说明
+    descEl.textContent = selectValue ? '' : '默认与主模型相同，无需单独配置';
+    tagsEl.innerHTML = selectValue ? '' : '<span class="model-tag">可选</span>';
+  }
 }
 
 function updateModelMeta(type) {
@@ -816,21 +858,16 @@ function updateModelMeta(type) {
   const descEl = document.getElementById(descMap[type]);
   const tagsEl = document.getElementById(tagsMap[type]);
   if (!select || !descEl || !tagsEl) return;
-  const model = getModelById(select.value);
-  if (model) {
-    const preset = MODEL_PRESETS[model.provider];
-    descEl.textContent = (preset?.name || model.provider) + ' · ' + (model.label || model.model);
-      tagsEl.innerHTML = `<span class="model-tag">${model.provider}</span><span class="model-tag">${model.apiKey ? UI_ICON_SVG.check + ' 已配置密钥' : UI_ICON_SVG.key + ' 密钥可留空'}</span>`;
-  } else {
-    if (type === 'agent') {
-      descEl.textContent = select.value ? '' : '未配置模型。请在下方「管理自定义模型」里添加';
-      tagsEl.innerHTML = select.value ? '' : '<span class="model-tag">未配置</span>';
-    } else {
-      // 其余角色统一口径：留空即与主模型相同，仅描述回退行为，不再各写一份角色说明
-      descEl.textContent = select.value ? '' : '默认与主模型相同，无需单独配置';
-      tagsEl.innerHTML = select.value ? '' : '<span class="model-tag">可选</span>';
-    }
-  }
+  _fillModelMeta(select.value, descEl, tagsEl, type === 'agent');
+}
+
+// 简略模式统一模型的 meta（恒按主槽口径展示）
+function updateUnifiedModelMeta() {
+  const select = document.getElementById('unifiedModelSelect');
+  const descEl = document.getElementById('unifiedModelDesc');
+  const tagsEl = document.getElementById('unifiedModelTags');
+  if (!select || !descEl || !tagsEl) return;
+  _fillModelMeta(select.value, descEl, tagsEl, true);
 }
 
 async function onModelChange(type) {
@@ -849,23 +886,37 @@ async function onModelChange(type) {
 }
 
 // ====== 槽位思考档位（2026-10-11 从模型条目迁来，见 fetchModels 迁移注释）======
+// 2026-10-25 起界面从下拉换思考强度滑块（createThinkingSlider，见 thinking-slider.js）：
+// 档位序/短标签走 _thinkingSliderEntries，存储键与取值语义不变（仍是 <role>_thinking）。
 
-// 单个槽位思考下拉：选项按实际会被调用的模型的供应商族渲染；存量档位在新族下
-// 无效（如 on 只在布尔族有效）时回「跟随默认」并落盘
+// 挂载点惰性建滑块（每挂载点只建一次，onChange 闭包捕获角色/统一路径）
+function _ensureThinkingSliderOn(mount, onChangeCb) {
+  if (!mount) return null;
+  if (mount._ts) return mount._ts;
+  try {
+    mount._ts = window.createThinkingSlider(mount, { options: [], value: '', onChange: onChangeCb });
+  } catch (e) {
+    mount._ts = null;
+  }
+  return mount._ts;
+}
+
+// 单个槽位思考滑块：档位按实际会被调用的模型的供应商族渲染；存量档位在新族下
+// 无效（如 on 只在布尔族有效）时回「跟随默认」并落盘（原下拉同语义）
 function _refreshSlotThinkingSelect(role) {
-  const select = document.getElementById(role + 'ModelThinking');
-  if (!select) return;
-  const options = _thinkingOptionsFor(_slotThinkingProvider(role), role);
-  select.innerHTML = options.map(o => `<option value="${o.value}">${escapeHtml(o.label)}</option>`).join('');
+  const mount = document.getElementById(role + 'ModelThinking');
+  if (!mount) return;
+  const slider = _ensureThinkingSliderOn(mount, v => onSlotThinkingChange(role, v));
+  const entries = _thinkingSliderEntries(_thinkingOptionsFor(_slotThinkingProvider(role), role), role);
   const current = activeModels[role + '_thinking'] || '';
-  if (options.some(o => o.value === current)) {
-    select.value = current;
-  } else {
-    if (current) {
-      activeModels[role + '_thinking'] = '';
-      persistActiveModels();
-    }
-    select.value = '';
+  const valid = entries.some(e => e.value === current);
+  if (slider) {
+    slider.setOptions(entries);
+    slider.setValue(valid ? current : '');
+  }
+  if (!valid && current) {
+    activeModels[role + '_thinking'] = '';
+    persistActiveModels();
   }
 }
 
@@ -873,11 +924,123 @@ function _refreshSlotThinkingSelects() {
   for (const role of Object.keys(SLOT_MODEL_KEYS)) _refreshSlotThinkingSelect(role);
 }
 
-function onSlotThinkingChange(role) {
-  const select = document.getElementById(role + 'ModelThinking');
-  if (!select) return;
-  activeModels[role + '_thinking'] = select.value || '';
+function onSlotThinkingChange(role, value) {
+  let v = value;
+  if (typeof v !== 'string') {   // 兼容无第二参调用：从挂载点滑块读当前值
+    const mount = document.getElementById(role + 'ModelThinking');
+    v = (mount && mount._ts && typeof mount._ts.getValue === 'function') ? mount._ts.getValue() : '';
+  }
+  if (typeof v !== 'string') v = '';
+  activeModels[role + '_thinking'] = v || '';
   persistActiveModels();
+}
+
+// ====== 模型面板 简略/详细模式（2026-10-25） ======
+// 简略＝一个模型＋一个思考滑块统一六槽：改模型写 6 个 *_model 键，改思考档写 6 个
+// *_thinking 键；首次改动前把当时的详细配置快照进 localStorage，切回详细模式自动还原
+// 并清快照——老配置不丢。简略模式展示恒取主槽（agent）现值，仅展示不落盘。
+const MODEL_PANEL_MODE_KEY = 'phymathia_model_config_mode';
+const MODEL_DETAIL_SNAPSHOT_KEY = 'phymathia_model_detail_snapshot';
+
+function getModelPanelMode() {
+  try { return localStorage.getItem(MODEL_PANEL_MODE_KEY) === 'detail' ? 'detail' : 'simple'; } catch (e) { return 'simple'; }
+}
+
+function setModelPanelMode(mode) { applyModelPanelMode(mode); }
+
+function applyModelPanelMode(mode) {
+  if (mode !== 'detail') mode = 'simple';
+  try { localStorage.setItem(MODEL_PANEL_MODE_KEY, mode); } catch (e) {}
+  const panel = document.getElementById('modelPanel');
+  if (panel && panel.classList) {
+    panel.classList.toggle('mode-simple', mode === 'simple');
+    panel.classList.toggle('mode-detail', mode === 'detail');
+  }
+  const btnSimple = document.getElementById('modelModeBtnSimple');
+  const btnDetail = document.getElementById('modelModeBtnDetail');
+  if (btnSimple && btnSimple.classList) btnSimple.classList.toggle('current', mode === 'simple');
+  if (btnDetail && btnDetail.classList) btnDetail.classList.toggle('current', mode === 'detail');
+  if (mode === 'detail') _restoreDetailSnapshot();
+  renderModelSelects();
+}
+
+function _hasDetailSnapshot() {
+  try { return !!localStorage.getItem(MODEL_DETAIL_SNAPSHOT_KEY); } catch (e) { return false; }
+}
+
+function _takeDetailSnapshot() {
+  const models = {}, thinking = {};
+  for (const role of Object.keys(SLOT_MODEL_KEYS)) {
+    models[SLOT_MODEL_KEYS[role]] = activeModels[SLOT_MODEL_KEYS[role]] || '';
+    thinking[role + '_thinking'] = activeModels[role + '_thinking'] || '';
+  }
+  try {
+    localStorage.setItem(MODEL_DETAIL_SNAPSHOT_KEY, JSON.stringify({ models, thinking, savedAt: Date.now() }));
+  } catch (e) {
+    return false;
+  }
+  // 写后复核：setItem 静默失败（配额/隐私模式等）就绝不能继续销毁原配置
+  return _hasDetailSnapshot();
+}
+
+function _restoreDetailSnapshot() {
+  let snap = null;
+  try { snap = JSON.parse(localStorage.getItem(MODEL_DETAIL_SNAPSHOT_KEY) || 'null'); } catch (e) {}
+  if (!snap || !snap.models) return false;
+  for (const role of Object.keys(SLOT_MODEL_KEYS)) {
+    activeModels[SLOT_MODEL_KEYS[role]] = snap.models[SLOT_MODEL_KEYS[role]] || '';
+    activeModels[role + '_thinking'] = (snap.thinking || {})[role + '_thinking'] || '';
+  }
+  try { localStorage.removeItem(MODEL_DETAIL_SNAPSHOT_KEY); } catch (e) {}
+  persistActiveModels();
+  return true;
+}
+
+// 简略模式统一写入：模型键必写（六槽同值）；thinkingLevel 传字符串才写思考键——
+// 只换模型不动思考。与现状全等时不写不快照。返回是否真写了。
+function applyUnifiedConfig(modelId, thinkingLevel) {
+  const model = modelId || '';
+  const hasLevel = typeof thinkingLevel === 'string';
+  const level = hasLevel ? thinkingLevel : '';
+  const roles = Object.keys(SLOT_MODEL_KEYS);
+  const modelChanged = roles.some(role => (activeModels[SLOT_MODEL_KEYS[role]] || '') !== model);
+  const thinkChanged = hasLevel && roles.some(role => (activeModels[role + '_thinking'] || '') !== level);
+  if (!modelChanged && !thinkChanged) return false;
+  if (!_hasDetailSnapshot() && !_takeDetailSnapshot()) return false; // 快照落不了盘→拒绝统一（fail-safe，见 _takeDetailSnapshot）
+  for (const role of roles) activeModels[SLOT_MODEL_KEYS[role]] = model;
+  if (hasLevel) for (const role of roles) activeModels[role + '_thinking'] = level;
+  persistActiveModels();
+  renderModelSelects();
+  return true;
+}
+
+// 简略模式统一下拉：只换模型，思考档保持各自现值（快照语义见上）
+function onUnifiedModelChange(modelId) {
+  applyUnifiedConfig(modelId || '');
+}
+
+// 简略模式统一滑块：六槽思考档同写
+function onUnifiedThinkingChange(level) {
+  const sel = document.getElementById('unifiedModelSelect');
+  applyUnifiedConfig(sel ? sel.value : (activeModels.agent_model || ''), level || '');
+}
+
+// 简略模式统一滑块刷新：档位组随主模型供应商族渲染；展示值取主槽（无效存量档回默认）
+function _refreshUnifiedThinkingSlider() {
+  const mount = document.getElementById('unifiedThinkingSlider');
+  if (!mount) return;
+  const slider = _ensureThinkingSliderOn(mount, v => onUnifiedThinkingChange(v));
+  const entries = _thinkingSliderEntries(_thinkingOptionsFor(_slotThinkingProvider('agent'), 'agent'), 'agent');
+  const current = activeModels.agent_thinking || '';
+  const valid = entries.some(e => e.value === current);
+  if (slider) {
+    slider.setOptions(entries);
+    slider.setValue(valid ? current : '');
+  }
+  if (!valid && current) {
+    activeModels.agent_thinking = '';
+    persistActiveModels();
+  }
 }
 
 function _positionPanelBelowBtn(panel, btn) {
@@ -1580,3 +1743,6 @@ async function proxyChat(prompt, level, sessionId, stream = true, signal, branch
 }
 
 loadUserModels();
+// 模型面板简略/详细模式（默认简略）：boot 即套用，面板首开即所见即所得；
+// 顺带把七个思考滑块建好（renderModelSelects → updateModelMeta → _refreshSlotThinkingSelect）
+applyModelPanelMode(getModelPanelMode());
