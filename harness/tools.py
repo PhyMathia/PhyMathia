@@ -47,6 +47,12 @@ TOOL_TO_OP: Dict[str, str] = {
     "ask_user": "ask_user",
 }
 
+# 图结构编辑工具（能力反射 2026-10-26 方向 2）：normal/expand/coach 的编辑全集
+# （apply 是它去掉 create_node——建议批次相位不新建）。prompts 的操作示例表、
+# 答疑红线的「编辑类工具」名单与 expand 模板的休眠名单都按它反射，
+# tests/test_harness_prompt_reflection.py 对拍——加编辑工具忘了跟文案当场红。
+EDIT_TOOL_NAMES = ("create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge")
+
 # T93（评审路线 #8）只读查询工具：模型可以先看图中内容再决定改哪。
 # 它们不产出任何图操作，也绝不进 TOOL_TO_OP——若混进最终编辑批次，
 # parse_tool_calls 会按既有「不支持的工具」错误软重试兜底。
@@ -56,14 +62,18 @@ TOOL_TO_OP: Dict[str, str] = {
 # 工具表层面的保证（编辑工具根本不在表里，服务端 ops 保险丝保留兜底）。
 # 2026-10-09 优化新路径六第 1 档：新增 graph_stats 整图学习结构体检工具
 # （学习教练）：把整张图当课程表看的统计入口，chat 答疑相位立即可用。
-READONLY_TOOL_NAMES = ("read_node", "list_neighbors", "search_nodes", "search_knowledge", "search_formulas", "graph_stats")
-# 试改自检工具名（2026-10-25 方向 1）：不在 READONLY_TOOL_NAMES 里（执行路径
-# 不同），但进查询回灌环——review.py 的循环与 review_ops 的批次判定按名放行。
-DRY_RUN_TOOL_NAME = "dry_run"
-
+# 能力反射（2026-10-26 方向 2）：只读名单由三组合成——图查询三件套 / 知识检索
+# 两件套 / 整图统计单件。提示文案（review_phase 的工具提示、prompts 的答疑
+# 红线）按这三组插值生成，改名单只动这里，别在文案里手抄第二份。
+GRAPH_QUERY_TOOL_NAMES = ("read_node", "list_neighbors", "search_nodes")
 # 知识检索类工具（READONLY 的子集）：执行时需要调用方额外注入用户
 # 知识库/公式速查数据（kb 参数），图查询三件套用不到。
 KB_TOOL_NAMES = ("search_knowledge", "search_formulas")
+GRAPH_STATS_TOOL_NAME = "graph_stats"
+READONLY_TOOL_NAMES = GRAPH_QUERY_TOOL_NAMES + KB_TOOL_NAMES + (GRAPH_STATS_TOOL_NAME,)
+# 试改自检工具名（2026-10-25 方向 1）：不在 READONLY_TOOL_NAMES 里（执行路径
+# 不同），但进查询回灌环——review.py 的循环与 review_ops 的批次判定按名放行。
+DRY_RUN_TOOL_NAME = "dry_run"
 
 # 查询结果上限：邻接 40 条、搜索 10 条、摘录 80 字（回灌上下文预算）
 _READONLY_NEIGHBOR_LIMIT = 40
@@ -401,10 +411,8 @@ _TOOL_DEFS = _tool_definitions()
 # ② 其余工具相位（normal/expand/apply/preset）随 READONLY_TOOL_NAMES 扩容
 #   自动获得知识检索能力。
 PHASE_TOOLS: Dict[str, List[str]] = {
-    "normal": ["create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge", DRY_RUN_TOOL_NAME]
-    + list(READONLY_TOOL_NAMES),
-    "expand": ["create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge", DRY_RUN_TOOL_NAME]
-    + list(READONLY_TOOL_NAMES),
+    "normal": list(EDIT_TOOL_NAMES) + [DRY_RUN_TOOL_NAME] + list(READONLY_TOOL_NAMES),
+    "expand": list(EDIT_TOOL_NAMES) + [DRY_RUN_TOOL_NAME] + list(READONLY_TOOL_NAMES),
     "evaluate": ["create_eval_node"],
     "apply": ["update_node", "delete_node", "add_edge", "remove_edge", "update_edge", DRY_RUN_TOOL_NAME]
     + list(READONLY_TOOL_NAMES),
@@ -418,8 +426,7 @@ PHASE_TOOLS: Dict[str, List[str]] = {
     # 课程表体检（路径六第 2 档，2026-10-09）：与 normal 同表——报告里的建议
     # 批次是普通编辑操作，统计已由服务端预计算注入（graph_stats 仍在表里供
     # 模型复查个别节点时用，提示词已注明不必重复拉整图统计）
-    "coach": ["create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge", DRY_RUN_TOOL_NAME]
-    + list(READONLY_TOOL_NAMES),
+    "coach": list(EDIT_TOOL_NAMES) + [DRY_RUN_TOOL_NAME] + list(READONLY_TOOL_NAMES),
 }
 
 
