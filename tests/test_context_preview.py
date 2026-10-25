@@ -98,8 +98,9 @@ class GateIsomorphismTest(unittest.TestCase):
     def test_chat_endpoint_agrees_on_every_case(self):
         """**同一条输入，两个端点必须给出同一个判决。**
 
-        这是本文件最要紧的一条：门禁在两边各写一份，改一边忘了另一边就会出现
-        「预览说能发、真实发不出去」。逐条对拍，任何一边单独漂移都会红。
+        2026-10-25 T35 起门禁收编进 request_ctx（has_canvas_anchor +
+        enforce_retired_linear_chat_gate），两边同源；本对拍从「防两边各写一份
+        漂移」降级为端到端行为守护——调用点接线或参数映射改坏仍会红。
         """
         cases = [
             {"prompt": "你好", "quick": 1, "branch_id": "br_1"},          # quick+锚 → 拒

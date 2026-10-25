@@ -41,7 +41,13 @@ from .context import (
 )
 from .llm_common import resolve_api_key
 from .prompts import BRANCH_SYSTEM_PROMPT, FIX_FORMULA_PROMPT, MODULE_SYSTEM_PROMPT, ROLLING_SUMMARY_PROMPT
-from .request_ctx import _account_id, _account_paths, _parse_json_object
+from .request_ctx import (
+    _account_id,
+    _account_paths,
+    _parse_json_object,
+    enforce_retired_linear_chat_gate,
+    has_canvas_anchor,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -169,24 +175,14 @@ async def api_models_chat(request: Request):
     # 线性主聊天退役硬门禁（2026-09-25，见 docs/dev/linear-chat-retired.md）：
     # prompt 新格式必须带画布锚——分支/苏格拉底（branch_id / graph_path）或
     # 工作流（workflow_context）；quick 寒暄同属线性语义，即便带锚也拒绝
-    # （前端寒暄通道已随线性退役，此处只防外部直调）。messages 直传不受影响。
+    # （前端寒暄通道已随线性退役，此处只防外部直调）。messages 直传不受影响
+    # （整个门禁包在 prompt 判断内）。2026-10-25 T35 起判据与文案收编进
+    # request_ctx、与 /api/context/preview 同源——加第三种锚只改 _CANVAS_ANCHOR_KEYS。
     if payload.get("prompt"):
-        has_anchor = bool(
-            payload.get("branch_id") or payload.get("branchId")
-            or payload.get("graph_path") or payload.get("graphPath")
-            or payload.get("workflow_context") or payload.get("workflowContext")
+        enforce_retired_linear_chat_gate(
+            quick=bool(payload.get("quick")),
+            unanchored_prompt=not has_canvas_anchor(payload),
         )
-        if payload.get("quick"):
-            raise HTTPException(
-                status_code=410,
-                detail="quick 寒暄通道已随线性主聊天退役（2026-09-25），不再受理",
-            )
-        if not has_anchor:
-            raise HTTPException(
-                status_code=410,
-                detail="无锚普通 prompt 已随线性主聊天退役（2026-09-25）："
-                       "分支/苏格拉底请带 branch_id 或 graph_path，工作流请带 workflow_context",
-            )
 
 
     provider = payload.get("provider", "")

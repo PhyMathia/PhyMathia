@@ -941,5 +941,8 @@ window.undoLastHarnessEdit = undoLastHarnessEdit;
   window.syncHarnessFormulas = _syncHarnessFormulas;
   // smoke 专用出口（P3）：配方三件套 op 的应用路径——配方分支不碰图状态，传空即可
   window._applyHarnessOpsForTest = ops => (ops || []).forEach(op => _applyOneHarnessOp(op, null, new Map()));
+  // smoke 专用出口（T74 2026-10-25）：Φ 建点内容回填链——battery 只测后端 op 层，
+  // 前端这半的 kind 路由（哪些节点送回工作流）靠冒烟在沙箱里真跑守护
+  window._generateHarnessCreatedContentForTest = ops => _generateHarnessCreatedContent(ops);
   window.buildHarnessSnapshot = buildHarnessSnapshot;
   window._harnessContinentShared = _harnessContinentShared; // 大陆 v3：跨画布共享点口径（smoke 断言用）

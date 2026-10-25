@@ -4,13 +4,14 @@
 """
 import json
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from . import concept as concept_mod
 from . import context as context_mod
 from . import profile as profile_mod
 from .config import LEVEL_PROMPTS
 from .prompts import BRANCH_SYSTEM_PROMPT, MODULE_SYSTEM_PROMPT
+from .request_ctx import enforce_retired_linear_chat_gate, has_canvas_anchor
 
 router = APIRouter(prefix="/api/context", tags=["context-preview"])
 
@@ -34,17 +35,20 @@ async def preview_context(
         graph_path_list = json.loads(graph_path) if graph_path else []
     except Exception:
         graph_path_list = []
-    # 与 /api/models/chat 退役门禁同构（2026-09-25）：quick 一律 410；
-    # prompt 无锚（branch_id / graph_path / workflow 均空）同样 410，
-    # 保证「预览里能看到」与「真实请求能发出」是同一套边界。
-    if quick:
-        raise HTTPException(status_code=410, detail="quick 寒暄通道已随线性主聊天退役（2026-09-25），不再受理")
-    if prompt and not (branch_id or graph_path_list or workflow):
-        raise HTTPException(
-            status_code=410,
-            detail="无锚普通 prompt 已随线性主聊天退役（2026-09-25）："
-                   "分支/苏格拉底请带 branch_id 或 graph_path，工作流请带 workflow",
-        )
+    # 线性主聊天退役门禁（2026-09-25）与 /api/models/chat 同源——2026-10-25 T35
+    # 起两端口共用 request_ctx 的同一份实现：quick 一律 410；prompt 无锚
+    # （branch_id / graph_path / workflow 均空）同样 410，保证「预览里能看到」
+    # 与「真实请求能发出」是同一套边界。query 参数名在此映射成规范锚键
+    # （workflow → workflow_context）；quick 的判定不随 prompt 走（直调即拒）。
+    enforce_retired_linear_chat_gate(
+        quick=bool(quick),
+        unanchored_prompt=bool(prompt) and not has_canvas_anchor({
+            "branch_id": branch_id,
+            "graph_path": graph_path_list,
+            "workflow_context": workflow,
+        }),
+        workflow_field="workflow",
+    )
     if workflow:
         system_content = MODULE_SYSTEM_PROMPT
     else:

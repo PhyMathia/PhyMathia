@@ -2576,4 +2576,68 @@ check('节点全屏阅读（2026-10-10 ⑦）：内容节点头部纯图标双�
   }
   return true;
 });
+
+// ===== T74（2026-10-25）：Φ 建点内容回填链的守护断言 =====
+// 回填链路＝apply 成功 → _generateHarnessCreatedContent → runWorkflowNodes：此前
+// battery 只测后端 op 层，前端这半无人守护（2026-09-29 曾因此把「回填不存在」
+// 误报成 bug）。行为半在沙箱真跑 kind 路由（走 harness-apply 的冒烟出口），
+// 静态半锁住接线不许被删。P2 配方侧 on_generated 的同口径回填已有行为断言
+// （上文「配方 on_generated 编排」用例的 out.generated）。
+check('Φ 建点内容回填（T74）：AI 底座批量送工作流、relation 走 fromPhi 直通、人工节点不生成', () => {
+  const nodes = [
+    { id: 'bf-m', kind: 'module' },
+    { id: 'bf-b', kind: 'blank' },
+    { id: 'bf-s', kind: 'summary' },
+    { id: 'bf-a', kind: 'answer', manual: false },
+    { id: 'bf-i', kind: 'blank' },   // 经 op.id 取到
+    { id: 'bf-t', kind: 'module' },  // 经 op.temp_id 取到
+    { id: 'bf-am', kind: 'answer', manual: true },  // 手写回答：不回填
+    { id: 'bf-n', kind: 'note' },                     // 人工节点族：不生成
+    { id: 'bf-h', kind: 'human_note' },
+    { id: 'bf-u', kind: 'user' },
+    { id: 'bf-r', kind: 'relation' },                 // 联系节点：另一条直通
+  ];
+  const prevNodes = sandbox.window.getGraphViewNodes;
+  const prevRun = sandbox.window.runWorkflowNodes;
+  const prevRel = sandbox.window.generateRelationNode;
+  const batches = [];
+  const relCalls = [];
+  sandbox.window.getGraphViewNodes = () => nodes;
+  sandbox.window.runWorkflowNodes = ids => { batches.push(ids); };
+  sandbox.window.generateRelationNode = (id, opt) => { relCalls.push({ id, opt }); };
+  try {
+    const ops = [
+      ...nodes.filter(n => n !== nodes[4] && n !== nodes[5]).map(n => ({ op: 'create_node', assigned_id: n.id })),
+      { op: 'create_node', id: 'bf-i' },
+      { op: 'create_node', temp_id: 'bf-t' },
+      { op: 'create_node', assigned_id: 'bf-ghost' },  // 画布上不存在：安全跳过
+      { op: 'update_node', id: 'bf-m', patch: {} },    // 非 create op 不参与
+    ];
+    // 不 await：async 函数的同步前缀已完成全部路由调用（stub 返回 undefined，
+    // await 之后无代码），同步 check 即可取证——避开异步用例与同步用例的混排坑
+    sandbox.window._generateHarnessCreatedContentForTest(ops);
+    if (batches.length !== 1) throw new Error('应恰好批量送一次工作流，实际 ' + batches.length);
+    const sent = JSON.stringify(batches[0] || []);
+    if (sent !== JSON.stringify(['bf-m', 'bf-b', 'bf-s', 'bf-a', 'bf-i', 'bf-t'])) {
+      throw new Error('回填应只含 module/blank/summary/answer(!manual)（id/temp_id 同认），实际 ' + sent);
+    }
+    if (relCalls.length !== 1 || relCalls[0].id !== 'bf-r'
+        || !relCalls[0].opt || relCalls[0].opt.fromPhi !== true) {
+      throw new Error('relation 应走 generateRelationNode(id,{fromPhi:true})（T280 直通），实际 ' + JSON.stringify(relCalls));
+    }
+  } finally {
+    if (prevNodes === undefined) delete sandbox.window.getGraphViewNodes; else sandbox.window.getGraphViewNodes = prevNodes;
+    if (prevRun === undefined) delete sandbox.window.runWorkflowNodes; else sandbox.window.runWorkflowNodes = prevRun;
+    if (prevRel === undefined) delete sandbox.window.generateRelationNode; else sandbox.window.generateRelationNode = prevRel;
+  }
+  // 静态半：应用成功后的回填接线不许被删——删了它 Φ 建的 AI 底座节点将永远空着
+  const asrc = fs.readFileSync('src/static/js/harness-apply.js', 'utf8');
+  if (!asrc.includes('Promise.resolve(_generateHarnessCreatedContent(ops))')) {
+    throw new Error('应用成功后的回填接线（_generateHarnessCreatedContent）被删');
+  }
+  if (!asrc.includes('runWorkflowNodes(workflowIds)')) {
+    throw new Error('回填未走批量通道 runWorkflowNodes');
+  }
+  return true;
+});
 }
