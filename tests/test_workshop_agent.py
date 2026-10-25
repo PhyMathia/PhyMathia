@@ -95,9 +95,10 @@ class WorkshopAgentSystemPromptTest(unittest.TestCase):
         ):
             self.assertIn(phrase, prompt, f"提示词缺红线「{phrase}」")
 
-    def test_steps_budget_is_ten(self):
-        # C2 拍板：8→10（多出的步数给入册/查上游/落图尾巴）；前后端同口径由冒烟盯前端常量
-        self.assertEqual(tools_mod.WORKSHOP_AGENT_MAX_STEPS, 10)
+    def test_steps_budget_is_twelve(self):
+        # C2 拍板 8→10（副作用尾巴）；C3 拍板 10→12（初筛走 /workshop/critic 不占
+        # 步数，余量给循环＋尾巴）。前后端同口径由冒烟盯前端常量
+        self.assertEqual(tools_mod.WORKSHOP_AGENT_MAX_STEPS, 12)
         self.assertEqual(tools_mod.WORKSHOP_AGENT_MAX_TRIALS, 2)
 
 

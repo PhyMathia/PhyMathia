@@ -35,9 +35,10 @@ WORKSHOP_TOOL_NAMES = (
     "workshop_place_on_canvas",
 )
 
-# 步数/试跑上限与提示词/前端三处同口径（C2 拍板：10 步模型调用、2 次试跑——
-# 多出的两步给「入册 → 查上游 → 落图」这条副作用尾巴）
-WORKSHOP_AGENT_MAX_STEPS = 10
+# 步数/试跑上限与提示词/前端三处同口径（C2 起 10 步、C3 起 12 步，试跑恒 2——
+# 多出的步数给「入册 → 查上游 → 落图」副作用尾巴；C3 的内容初筛走
+# /workshop/critic 不占这里的步数，12 是给循环＋尾巴的余量拍板）
+WORKSHOP_AGENT_MAX_STEPS = 12
 WORKSHOP_AGENT_MAX_TRIALS = 2
 
 

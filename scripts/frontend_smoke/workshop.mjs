@@ -7,7 +7,8 @@
 // 提示词预算 / 换色清自由色 / 换底座收模块专属段 / 试跑上下文按输入口分栏 /
 // 动态出口预览 / 草稿落盘与恢复 / 补丁往返（只改一处、其余不动）＋撤回 /
 // 入册（含重名拦）＋源码契约（构建登记与「创造」入口改道）/ C1 Φ 自助调优四条 /
-// C2 副作用三条（Φ 自己落图整链·用户拒绝不重试·keepOpen 默认即关）。
+// C2 副作用三条（Φ 自己落图整链·用户拒绝不重试·keepOpen 默认即关）/
+// C3 内容初筛三条（pass 恰一次·fail 一轮补丁＋复跑·降级不断链）。
 import { check, drain, addFailed, vm, sandbox, localStorage, fs } from './_runner.mjs';
 
 const draftKey = 'phymathia_recipe_draft';
@@ -805,6 +806,7 @@ export async function run() {
       };
       const stepBodies = [];
       const draftBodies = [];
+      const criticBodies = [];
       let capsCalls = 0;
       let saveCalls = 0;
       let placeCalls = 0;
@@ -853,6 +855,14 @@ export async function run() {
             const reply = script[Math.min(stepBodies.length - 1, script.length - 1)];
             return { ok: true, status: 200, json: async () => ({ status: 'ok', content: reply.content, tool_calls: reply.tool_calls }) };
           }
+          if (target.indexOf('/workshop/critic') >= 0) {
+            // C3 内容初筛：体检过了自动评一次（本用例回 pass，不触发初筛补丁）
+            criticBodies.push(JSON.parse(init.body));
+            return {
+              ok: true, status: 200,
+              json: async () => ({ status: 'ok', verdict: 'pass', score: 9, issues: [], say: '内容初筛：未发现问题' }),
+            };
+          }
           if (target.indexOf('/recipe/draft') >= 0) {
             const body = JSON.parse(init.body);
             draftBodies.push(body);
@@ -895,15 +905,22 @@ export async function run() {
         if (draftBodies.length !== 1) throw new Error('应恰好一次补丁，实际 ' + draftBodies.length);
         if (draftBodies[0].mode !== 'patch') throw new Error('Φ 改配方必须走 patch，实际 ' + draftBodies[0].mode);
         if (String(draftBodies[0].instruction).indexOf('体检') < 0) throw new Error('补丁指令没带体检结果');
-        // 收尾说人话：指标＋「结构通过≠内容正确」，不许许愿内容一定对
+        // 收尾说人话：指标＋C3 内容初筛结果＋「初筛≠终审」提醒，不许许愿内容一定对
         if (st.agentBusy) throw new Error('循环结束 agentBusy 应复位');
         const summary = String(st.agentSummary || '');
         if (summary.indexOf('体检通过') < 0) throw new Error('成了要说「体检通过」，实际：' + summary);
         if (summary.indexOf('字') < 0 || summary.indexOf('步') < 0 || summary.indexOf('公式') < 0 || summary.indexOf('出口') < 0) {
           throw new Error('收尾要报四项指标（字/步/公式/出口），实际：' + summary);
         }
-        if (summary.indexOf('结构通过≠内容正确') < 0) throw new Error('收尾必须附「结构通过≠内容正确」');
+        if (summary.indexOf('内容初筛：未发现问题') < 0) throw new Error('C3 起收尾要报内容初筛结果');
+        if (summary.indexOf('初筛≠终审') < 0) throw new Error('收尾必须保留「初筛≠终审」提醒');
         if (summary.indexOf('一定对') >= 0) throw new Error('不许出现「一定对」这类许愿');
+        // C3：critic 恰好一次、带输出全文与材料摘要；pass 不触发初筛补丁
+        if (criticBodies.length !== 1) throw new Error('内容初筛应恰好一次，实际 ' + criticBodies.length + ' 次');
+        if (String((criticBodies[0] || {}).output || '').indexOf('取物块为研究对象') < 0
+          || String((criticBodies[0] || {}).materials_summary || '').indexOf('物块') < 0) {
+          throw new Error('critic 请求没带输出全文＋材料摘要');
+        }
         // C1 无副作用：不入册、不放画布、能力清单只查一次
         if (saveCalls || placeCalls) throw new Error('C1 不许入册/放画布（save=' + saveCalls + ' place=' + placeCalls + '）');
         if (capsCalls !== 1) throw new Error('查能力应恰好一次，实际 ' + capsCalls);
@@ -924,7 +941,7 @@ export async function run() {
         resetWorkshop(true);
       }
     }],
-    ['C1/C2 硬上限：模型一直要工具时 10 步就停，试跑不超 2 次', async () => {
+    ['C1/C2 硬上限：模型一直要工具时 12 步就停，试跑不超 2 次', async () => {
       resetWorkshop(true);
       sandbox.openRecipeWorkshop({
         recipe: {
@@ -957,9 +974,9 @@ export async function run() {
           throw new Error('十步上限用例不该打别的接口：' + target);
         };
         await sandbox.rwSmartAgentRun();
-        if (stepCalls !== 10) throw new Error('硬上限应是 10 步模型调用（C2 起 8→10），实际 ' + stepCalls);
+        if (stepCalls !== 12) throw new Error('硬上限应是 12 步模型调用（C2 起 8→10、C3 起 10→12），实际 ' + stepCalls);
         if (st.agentBusy) throw new Error('到顶后 agentBusy 应复位');
-        if (String(st.agentSummary || '').indexOf('10 步') < 0) throw new Error('收尾该说明走满 10 步先停，实际：' + st.agentSummary);
+        if (String(st.agentSummary || '').indexOf('12 步') < 0) throw new Error('收尾该说明走满 12 步先停，实际：' + st.agentSummary);
         if ((st.runs || []).length) throw new Error('这个剧本不该发生试跑');
       } finally {
         sandbox.fetch = prev.fetch;
@@ -1095,6 +1112,7 @@ export async function run() {
       let placeConfirms = 0;
       const placeConfirmTexts = [];
       const stepBodies = [];
+      let criticCalls = 0;
       let closedInfo = null;
       // 画布上摆两个可接上游（_rwUpstreamCandidates 只收不带 recipeId 的节点）
       const fakeNodes = [
@@ -1145,6 +1163,14 @@ export async function run() {
             const reply = script[Math.min(stepBodies.length - 1, script.length - 1)];
             return { ok: true, status: 200, json: async () => ({ status: 'ok', content: reply.content, tool_calls: reply.tool_calls }) };
           }
+          if (target.indexOf('/workshop/critic') >= 0) {
+            // C3 内容初筛：复跑过了体检，自动评一次（pass 不触发初筛补丁）
+            criticCalls += 1;
+            return {
+              ok: true, status: 200,
+              json: async () => ({ status: 'ok', verdict: 'pass', score: 9, issues: [], say: '内容初筛：未发现问题' }),
+            };
+          }
           if (target.indexOf('/recipe/draft') >= 0) {
             const recipe = JSON.parse(JSON.stringify(state().recipe));
             recipe.generate.prompt = String(recipe.generate.prompt || '') + '\n分步输出，公式用 $…$ 包起来。';
@@ -1159,9 +1185,10 @@ export async function run() {
           throw new Error('C2 落图用例不该打别的接口：' + target);
         };
         await sandbox.rwSmartAgentRun();
-        // 六步剧本走完：试跑坏 → 补丁 → 复跑好 → 查上游 → 落图 → 收尾
+        // 六步剧本走完：试跑坏 → 补丁 → 复跑好 → 查上游 → 落图 → 收尾（critic 不占步数，恰一次）
         if (stepBodies.length !== 6) throw new Error('应恰好 6 步模型调用，实际 ' + stepBodies.length);
         if (trials !== 2 || (st.runs || []).length !== 2) throw new Error('应真跑两次（坏→好）');
+        if (criticCalls !== 1) throw new Error('内容初筛应恰好一次（复跑过了体检后），实际 ' + criticCalls + ' 次');
         // 落图 confirm 恰好一次，文案带节点名＋要接几个上游
         if (placeConfirms !== 1) throw new Error('落图 confirm 应恰好一次，实际 ' + placeConfirms);
         if (placeConfirmTexts.length && (placeConfirmTexts[0].indexOf(nodeName) < 0 || placeConfirmTexts[0].indexOf('1 个上游') < 0)) {
@@ -1258,6 +1285,13 @@ export async function run() {
             const reply = script[Math.min(stepBodies.length - 1, script.length - 1)];
             return { ok: true, status: 200, json: async () => ({ status: 'ok', content: reply.content, tool_calls: reply.tool_calls }) };
           }
+          if (target.indexOf('/workshop/critic') >= 0) {
+            // C3：试跑过了体检，收尾后自动评一次（pass，不触发初筛补丁）
+            return {
+              ok: true, status: 200,
+              json: async () => ({ status: 'ok', verdict: 'pass', score: 9, issues: [], say: '内容初筛：未发现问题' }),
+            };
+          }
           throw new Error('拒绝落图用例不该打别的接口：' + target);
         };
         await sandbox.rwSmartAgentRun();
@@ -1329,6 +1363,260 @@ export async function run() {
         sandbox.window.getGraphState = prev.winGet;
         sandbox.window.saveGraphState = prev.winSave;
         sandbox.window.getCurrentSessionId = prev.winSid;
+        resetWorkshop(true);
+      }
+    }],
+    // ---- C3（2026-10-25）：内容初筛——结构体检过了评一次内容，补「结构≠内容」盲区 ----
+    ['C3 初筛通过：首跑过体检 → 收尾 → critic pass（恰一次）→ 报初筛结果＋终审提醒', async () => {
+      resetWorkshop(true);
+      sandbox.openRecipeWorkshop({
+        recipe: {
+          name: '初筛通过节点' + (Date.now() % 100000), base: { kind: 'module' },
+          generate: { prompt: '你在做受力分析。' },
+          ports: { static: [{ label: '步骤', drag_form: 'draft' }, { label: '检查', drag_form: 'draft' }], inputs: [] },
+          appearance: { palette: 'amber' }, content_kind: 'markdown',
+        },
+        mode: 'smart',
+      });
+      const st = state();
+      st.smartDone = true;
+      st.materials = { general: '一个质量 m 的物块放在倾角 θ 的斜面上，求加速度。' };
+      const prev = {
+        proxy: sandbox.proxyChatWithModel, sse: sandbox._sseContentFrames,
+        fetch: sandbox.fetch, confirm: sandbox.confirm, markdown: sandbox.renderMarkdown,
+      };
+      let stepCalls = 0;
+      let criticCalls = 0;
+      let draftCalls = 0;
+      const tc = (name, args) => ({ id: 'c-' + name + '-' + Math.random().toString(36).slice(2, 6), type: 'function', function: { name, arguments: JSON.stringify(args || {}) } });
+      const script = [
+        { content: '我先试跑一次看看', tool_calls: [tc('workshop_run_trial')] },
+        { content: '体检通过了，收尾。', tool_calls: [] },
+      ];
+      try {
+        sandbox.confirm = () => true;
+        sandbox.renderMarkdown = () => '<p>（渲染省略）</p>';
+        sandbox.proxyChatWithModel = async () => ({ ok: true, status: 200, body: {} });
+        sandbox._sseContentFrames = async function* () {
+          yield '第一步 研究对象\n取物块为研究对象，沿斜面方向建系，斜面方向为 x、垂直斜面为 y。\n';
+          yield '第二步 列方程\n垂直方向 $N = mg\\cos\\theta$，沿斜面方向 $mg\\sin\\theta = ma$，所以 $a = g\\sin\\theta$。\n';
+          yield '第三步 检查\n当 θ=90° 时 $a=g$；有摩擦时把 $mg\\cos\\theta$ 乘摩擦因数加进方程，量纲仍是加速度。';
+        };
+        sandbox.fetch = async (url, init) => {
+          const target = String(url);
+          if (target.indexOf('/workshop/step') >= 0) {
+            stepCalls += 1;
+            const reply = script[Math.min(stepCalls - 1, script.length - 1)];
+            return { ok: true, status: 200, json: async () => ({ status: 'ok', content: reply.content, tool_calls: reply.tool_calls }) };
+          }
+          if (target.indexOf('/workshop/critic') >= 0) {
+            criticCalls += 1;
+            return {
+              ok: true, status: 200,
+              json: async () => ({ status: 'ok', verdict: 'pass', score: 9, issues: [], say: '内容初筛：未发现问题' }),
+            };
+          }
+          if (target.indexOf('/recipe/draft') >= 0) {
+            draftCalls += 1;
+            return { ok: true, status: 200, json: async () => ({ status: 'ok', changed: [] }) };
+          }
+          throw new Error('C3 初筛通过用例不该打别的接口：' + target);
+        };
+        await sandbox.rwSmartAgentRun();
+        // 循环本身两步；critic 不占步数、恰一次；pass 不触发初筛补丁
+        if (stepCalls !== 2) throw new Error('应恰好 2 步模型调用，实际 ' + stepCalls);
+        if (criticCalls !== 1) throw new Error('内容初筛应恰好一次，实际 ' + criticCalls);
+        if (draftCalls) throw new Error('初筛 pass 不该再改配方，实际补丁 ' + draftCalls + ' 次');
+        if ((st.runs || []).length !== 1) throw new Error('应只试跑一次（无复跑），实际 ' + (st.runs || []).length);
+        const summary = String(st.agentSummary || '');
+        if (summary.indexOf('内容初筛：未发现问题') < 0) throw new Error('收尾要报初筛结果，实际：' + summary);
+        if (summary.indexOf('初筛≠终审') < 0) throw new Error('收尾必须留「初筛≠终审」提醒');
+        if (summary.indexOf('一定对') >= 0) throw new Error('不许出现「一定对」这类许愿');
+        if (st.agentBusy) throw new Error('结束后 agentBusy 应复位');
+        return true;
+      } finally {
+        sandbox.proxyChatWithModel = prev.proxy;
+        sandbox._sseContentFrames = prev.sse;
+        sandbox.fetch = prev.fetch;
+        sandbox.confirm = prev.confirm;
+        sandbox.renderMarkdown = prev.markdown;
+        resetWorkshop(true);
+      }
+    }],
+    ['C3 初筛发现问题：critic fail → 一轮补丁（指令带「内容初筛」）→ 复跑一次，无第三轮、无二次评分', async () => {
+      resetWorkshop(true);
+      sandbox.openRecipeWorkshop({
+        recipe: {
+          name: '初筛修复节点' + (Date.now() % 100000), base: { kind: 'module' },
+          generate: { prompt: '你在做受力分析。' },
+          ports: { static: [{ label: '步骤', drag_form: 'draft' }, { label: '检查', drag_form: 'draft' }], inputs: [] },
+          appearance: { palette: 'amber' }, content_kind: 'markdown',
+        },
+        mode: 'smart',
+      });
+      const st = state();
+      st.smartDone = true;
+      st.materials = { general: '一个质量 m 的物块放在倾角 θ 的斜面上，求加速度。有摩擦时怎么办？' };
+      const prev = {
+        proxy: sandbox.proxyChatWithModel, sse: sandbox._sseContentFrames,
+        fetch: sandbox.fetch, confirm: sandbox.confirm, markdown: sandbox.renderMarkdown,
+      };
+      let stepCalls = 0;
+      let criticCalls = 0;
+      let draftCalls = 0;
+      const draftBodies = [];
+      const tc = (name, args) => ({ id: 'c-' + name + '-' + Math.random().toString(36).slice(2, 6), type: 'function', function: { name, arguments: JSON.stringify(args || {}) } });
+      const script = [
+        { content: '试跑拿真输出', tool_calls: [tc('workshop_run_trial')] },
+        { content: '体检过了，收尾。', tool_calls: [] },
+      ];
+      try {
+        sandbox.confirm = () => true;
+        sandbox.renderMarkdown = () => '<p>（渲染省略）</p>';
+        sandbox.proxyChatWithModel = async () => ({ ok: true, status: 200, body: {} });
+        sandbox._sseContentFrames = async function* () {
+          yield '第一步 研究对象\n取物块为研究对象，沿斜面方向建系，斜面方向为 x、垂直斜面为 y。\n';
+          yield '第二步 列方程\n垂直方向 $N = mg\\cos\\theta$，沿斜面方向 $mg\\sin\\theta = ma$，所以 $a = g\\sin\\theta$。\n';
+          yield '第三步 检查\n当 θ=90° 时 $a=g$；有摩擦时把 $mg\\cos\\theta$ 乘摩擦因数加进方程，量纲仍是加速度。';
+        };
+        sandbox.fetch = async (url, init) => {
+          const target = String(url);
+          if (target.indexOf('/workshop/step') >= 0) {
+            stepCalls += 1;
+            const reply = script[Math.min(stepCalls - 1, script.length - 1)];
+            return { ok: true, status: 200, json: async () => ({ status: 'ok', content: reply.content, tool_calls: reply.tool_calls }) };
+          }
+          if (target.indexOf('/workshop/critic') >= 0) {
+            criticCalls += 1;
+            return {
+              ok: true, status: 200,
+              json: async () => ({
+                status: 'ok', verdict: 'fail', score: 3,
+                issues: [
+                  { kind: '硬伤', detail: '第二步公式记错了：$a=g\\sin\\theta$ 写成了 $a=g\\cos\\theta$' },
+                  { kind: '漏答', detail: '没回答材料里「有摩擦时怎么办」的追问' },
+                ],
+                say: '内容初筛：发现 2 处问题',
+              }),
+            };
+          }
+          if (target.indexOf('/recipe/draft') >= 0) {
+            draftCalls += 1;
+            draftBodies.push(JSON.parse(init.body));
+            const recipe = JSON.parse(JSON.stringify(state().recipe));
+            recipe.generate.prompt = String(recipe.generate.prompt || '') + '\n修正第二步公式，并回答有摩擦的情形。';
+            return {
+              ok: true, status: 200,
+              json: async () => ({
+                status: 'ok', say: '按初筛意见修了', mode: 'patch', recipe,
+                changed: ['generate.prompt'], question: null, warnings: [], field_errors: [],
+              }),
+            };
+          }
+          throw new Error('C3 修复用例不该打别的接口：' + target);
+        };
+        await sandbox.rwSmartAgentRun();
+        // 初筛 fail：恰一次评分、恰一轮补丁（指令注明内容初筛＋只改对应处）、复跑一次
+        if (criticCalls !== 1) throw new Error('初筛只评一次（复跑后不再评），实际 ' + criticCalls + ' 次');
+        if (draftCalls !== 1) throw new Error('发现问题是至多一轮补丁，实际 ' + draftCalls + ' 次');
+        if (String((draftBodies[0] || {}).mode) !== 'patch') throw new Error('初筛修复必须走 patch，实际 ' + (draftBodies[0] || {}).mode);
+        const instr = String((draftBodies[0] || {}).instruction || '');
+        if (instr.indexOf('内容初筛') < 0) throw new Error('补丁指令没注明「内容初筛发现」：' + instr.slice(0, 80));
+        if (instr.indexOf('第二步公式记错') < 0) throw new Error('补丁指令该带上初筛的 issues 明细');
+        if (instr.indexOf('只改') < 0) throw new Error('补丁指令该说清只改对应处');
+        // 试跑总闸仍 2：首跑＋复跑恰好两次，无第三轮
+        if ((st.runs || []).length !== 2) throw new Error('应首跑＋复跑共 2 次（总闸 2），实际 ' + (st.runs || []).length);
+        if (stepCalls !== 2) throw new Error('初筛补丁/复跑不占 /workshop/step 步数，应仍 2 步，实际 ' + stepCalls);
+        const summary = String(st.agentSummary || '');
+        if (summary.indexOf('已按初筛意见改了一轮') < 0) throw new Error('收尾要说清按初筛改了一轮，实际：' + summary);
+        if (summary.indexOf('初筛≠终审') < 0) throw new Error('收尾必须留「初筛≠终审」提醒');
+        // 左栏把初筛过程说出来：发现问题＋按意见改＋复跑验证
+        const chat = (st.conversation || []).map(item => String(item.text || '')).join('\n');
+        if (chat.indexOf('内容初筛：发现 2 处') < 0 || chat.indexOf('按初筛意见改了') < 0 || chat.indexOf('复跑验证') < 0) {
+          throw new Error('左栏没把初筛→改→复跑逐行说出来');
+        }
+        return true;
+      } finally {
+        sandbox.proxyChatWithModel = prev.proxy;
+        sandbox._sseContentFrames = prev.sse;
+        sandbox.fetch = prev.fetch;
+        sandbox.confirm = prev.confirm;
+        sandbox.renderMarkdown = prev.markdown;
+        resetWorkshop(true);
+      }
+    }],
+    ['C3 初筛降级：critic 回坏 JSON（服务端降级形状）——主流程不断、话术明说没评上、零补丁零复跑', async () => {
+      resetWorkshop(true);
+      sandbox.openRecipeWorkshop({
+        recipe: {
+          name: '初筛降级节点' + (Date.now() % 100000), base: { kind: 'module' },
+          generate: { prompt: '你在做受力分析。' },
+          ports: { static: [{ label: '步骤', drag_form: 'draft' }, { label: '检查', drag_form: 'draft' }], inputs: [] },
+          appearance: { palette: 'amber' }, content_kind: 'markdown',
+        },
+        mode: 'smart',
+      });
+      const st = state();
+      st.smartDone = true;
+      st.materials = { general: '一个质量 m 的物块放在倾角 θ 的斜面上，求加速度。' };
+      const prev = {
+        proxy: sandbox.proxyChatWithModel, sse: sandbox._sseContentFrames,
+        fetch: sandbox.fetch, confirm: sandbox.confirm, markdown: sandbox.renderMarkdown,
+      };
+      let stepCalls = 0;
+      let criticCalls = 0;
+      let draftCalls = 0;
+      const tc = (name, args) => ({ id: 'c-' + name + '-' + Math.random().toString(36).slice(2, 6), type: 'function', function: { name, arguments: JSON.stringify(args || {}) } });
+      const script = [
+        { content: '试跑一次', tool_calls: [tc('workshop_run_trial')] },
+        { content: '体检过了，收尾。', tool_calls: [] },
+      ];
+      try {
+        sandbox.confirm = () => true;
+        sandbox.renderMarkdown = () => '<p>（渲染省略）</p>';
+        sandbox.proxyChatWithModel = async () => ({ ok: true, status: 200, body: {} });
+        sandbox._sseContentFrames = async function* () {
+          yield '第一步 研究对象\n取物块为研究对象，沿斜面方向建系，斜面方向为 x、垂直斜面为 y。\n';
+          yield '第二步 列方程\n垂直方向 $N = mg\\cos\\theta$，沿斜面方向 $mg\\sin\\theta = ma$，所以 $a = g\\sin\\theta$。\n';
+          yield '第三步 检查\n当 θ=90° 时 $a=g$；有摩擦时把 $mg\\cos\\theta$ 乘摩擦因数加进方程，量纲仍是加速度。';
+        };
+        sandbox.fetch = async (url, init) => {
+          const target = String(url);
+          if (target.indexOf('/workshop/step') >= 0) {
+            stepCalls += 1;
+            const reply = script[Math.min(stepCalls - 1, script.length - 1)];
+            return { ok: true, status: 200, json: async () => ({ status: 'ok', content: reply.content, tool_calls: reply.tool_calls }) };
+          }
+          if (target.indexOf('/workshop/critic') >= 0) {
+            // 模型回包坏 → 服务端降级形状（warn＋score:-1）：不是报错，主流程不断
+            criticCalls += 1;
+            return {
+              ok: true, status: 200,
+              json: async () => ({ status: 'ok', verdict: 'warn', score: -1, issues: [], say: '这次评分没拿到，跳过' }),
+            };
+          }
+          if (target.indexOf('/recipe/draft') >= 0) {
+            draftCalls += 1;
+            return { ok: true, status: 200, json: async () => ({ status: 'ok', changed: [] }) };
+          }
+          throw new Error('C3 降级用例不该打别的接口：' + target);
+        };
+        await sandbox.rwSmartAgentRun();
+        if (criticCalls !== 1) throw new Error('降级也算评过一次（下次再点才再评），实际 ' + criticCalls);
+        if (draftCalls) throw new Error('没拿到评分就不该瞎改，实际补丁 ' + draftCalls + ' 次');
+        if ((st.runs || []).length !== 1) throw new Error('降级不该触发复跑，实际试跑 ' + (st.runs || []).length + ' 次');
+        if (stepCalls !== 2) throw new Error('主流程照常两步收场，实际 ' + stepCalls);
+        const summary = String(st.agentSummary || '');
+        if (summary.indexOf('没评上') < 0) throw new Error('收尾要明说这次没评上，实际：' + summary);
+        if (summary.indexOf('初筛≠终审') < 0) throw new Error('收尾必须留「初筛≠终审」提醒');
+        if (st.agentBusy) throw new Error('结束后 agentBusy 应复位');
+        return true;
+      } finally {
+        sandbox.proxyChatWithModel = prev.proxy;
+        sandbox._sseContentFrames = prev.sse;
+        sandbox.fetch = prev.fetch;
+        sandbox.confirm = prev.confirm;
+        sandbox.renderMarkdown = prev.markdown;
         resetWorkshop(true);
       }
     }],

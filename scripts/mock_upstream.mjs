@@ -258,6 +258,26 @@ function replyOf(body) {
     }
     return text('C1 真机剧本收尾：工具结果已回灌，这一步不再调工具。' + sfx);
   }
+  // —— C3 内容初筛剧本（2026-10-25）：无 tools＋系统提示词含「内容初筛」是
+  // /workshop/critic 独有锚——必须排在⑥草稿剧本（键「节点工坊」）之前：C3 评分
+  // 提示词同样含「节点工坊」，但不带 tools。回固定 JSON；请求里带标记词「判失败」
+  // 时回 fail 态（issues 两条），否则回 pass 态——真机脚本据此核对服务端清洗后的
+  // 回包形状（score 钳制/截断等清洗细节由 pytest 覆盖）。
+  if (!j.tools.length && j.systemText.includes('内容初筛')) {
+    if (j.allText.includes('判失败')) {
+      return text(JSON.stringify({
+        verdict: 'fail', score: 3,
+        issues: [
+          { kind: '硬伤', detail: '第二步公式记错了：$a=g\\sin\\theta$ 写成了 $a=g\\cos\\theta$' },
+          { kind: '漏答', detail: '没回答材料里「有摩擦时怎么办」的追问' },
+        ],
+        say: '内容初筛：发现 2 处问题（判失败样例）',
+      }));
+    }
+    return text(JSON.stringify({
+      verdict: 'pass', score: 9, issues: [], say: '内容初筛：未发现问题（mock 剧本⑬）',
+    }));
+  }
   // —— 节点工坊草稿剧本（verify_send_channels ⑧⑩，T370 2026-10-23）——
   // 工坊走 POST /api/harness/recipe/draft（harness _call_model json_mode，**不带
   // tools**），系统提示词含「节点工坊」是该链路独有锚。回包是 content 里的纯 JSON
