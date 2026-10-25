@@ -6271,19 +6271,25 @@
    几何仍照搬 ZCode composer-thought-slider（本机 app.asar 提取）：32px 命中区＞
    22px 可见轨道（前景色 10% 底）＞填充层＞均分档点（左右各缩进拇指半径
    justify-between）＞28px 白拇指。
-   配色（2026-10-25 两轮用户拍板）：ZCode 绿 #22c55e 全族退役后，accent 单色系
-   亮度渐变被用户判「单调」——填充改**极光三色渐变**（青→蓝→紫，右端紫尖＝最
-   强），色相锚 .aurora-glass 深色色斑 --aurora-3/1/2 的满饱和版；浅色主题在
+   配色（2026-10-25 两轮用户拍板；同日五改家族适配）：ZCode 绿 #22c55e 全族退役后，
+   accent 单色系亮度渐变被用户判「单调」——填充改**极光三色渐变**（青→蓝→紫，右端
+   紫尖＝最强），色相锚 .aurora-glass 深色色斑 --aurora-3/1/2 的满饱和版；浅色主题在
    html[data-theme='light'] 整组换暖调（terracotta→amber→peach，锚浅色色斑、
    面板口径禁蓝绿）。
+   **五改（用户报糖果粉、霓虹浅色等与家族色不搭）：上面两套只属 aurora 默认家族**
+   （aurora 不挂 data-panel-skin＝零 CSS 差异，见 styles.css 风格家族节），其余四族各配
+   深浅一对（下方家族块）：色相锚各家族 styles.css 色斑/网格线/accent 的满饱和版，
+   hue-2 尽量落 accent、hue-3＝家族招牌色（burst 光环/粒子辉光同取）。选择器显式
+   双属性 html[data-theme=…][data-panel-skin=…]——dark 对与浅色基础块同权 (0,3,1)，
+   不靠源序定胜负；冒烟已按四族×深浅对账。
    **居中不变量**：thumb 定位父级是 22px 轨道（不是 32px 外壳），top:-3px＝
    (22−28)/2，圆心恰在轨道中线——改轨道高度必须同步改这个数（2026-10-25 实踩：
    写成 +2px 整体偏下 5px，用户肉眼抓出）。
    几何常量（拇指 28/半径 14）在 thinking-slider.js 保持同步。设计拍板：本块允许
-   的字面值——极光三色对×2 主题（--ts-hue-1/2/3，色相锚 aurora 色斑、alpha 无法
-   用 color-mix 提升故落字面值）、白 --ts-white（拇指/档点/流光/气泡/粒子：渐变
-   上必须中性亮色）、拇指阴影 rgba 黑（阴影惯例，styles.css 同先例）；其余色值
-   全走既有变量。
+   的字面值——三色对×10（aurora×2＋四家族深浅各一，--ts-hue-1/2/3，色相锚各家族
+   色斑/accent、alpha 无法用 color-mix 提升故落字面值）、白 --ts-white（拇指/档点/
+   流光/气泡/粒子：渐变上必须中性亮色）、拇指阴影 rgba 黑（阴影惯例，styles.css
+   同先例）；其余色值全走既有变量。
    最大档（全 CSS keyframes，类名挂/摘见 thinking-slider.js，零 JS 计时器）：
    · ts-at-max 常驻——填充流光横扫（fill::after）＋白气泡横漂（fill 内 5 颗，
      深夜四改用户拍板回归）；
@@ -6302,6 +6308,51 @@ html[data-theme='light'] .thinking-slider {
   --ts-hue-1: #d69460;
   --ts-hue-2: #fbbf24;
   --ts-hue-3: #f9a884;
+}
+/* 家族适配（2026-10-25 五改，锚 styles.css 各家族块色斑/网格线/accent 满饱和版）：
+   blueprint 蓝图＝青→蓝图→靛（浅色收进 accent 深蓝＝墨色落纸）；inkstone 砚石＝
+   低饱和石青→石蓝（哑光家族整套压暗，渐变也最收敛）；neon 霓虹＝青→紫→品红
+   （经典霓虹管双色，近黑玻璃上最跳）；candy 糖果＝樱粉→accent 玫粉→香芋紫
+   （暗面柔紫玻璃收紫尖）。hue-2 落 accent、hue-3＝招牌色。 */
+html[data-theme="dark"][data-panel-skin="blueprint"] .thinking-slider {
+  --ts-hue-1: #38c5e8;
+  --ts-hue-2: #4a8fe0;
+  --ts-hue-3: #7c66f0;
+}
+html[data-theme="light"][data-panel-skin="blueprint"] .thinking-slider {
+  --ts-hue-1: #4fb9d6;
+  --ts-hue-2: #3d78cc;
+  --ts-hue-3: #2f5fae;
+}
+html[data-theme="dark"][data-panel-skin="inkstone"] .thinking-slider {
+  --ts-hue-1: #8bd0c2;
+  --ts-hue-2: #55b3a8;
+  --ts-hue-3: #4a86a4;
+}
+html[data-theme="light"][data-panel-skin="inkstone"] .thinking-slider {
+  --ts-hue-1: #7ab3a4;
+  --ts-hue-2: #4d9187;
+  --ts-hue-3: #3d7a8c;
+}
+html[data-theme="dark"][data-panel-skin="neon"] .thinking-slider {
+  --ts-hue-1: #22d3ee;
+  --ts-hue-2: #9945ea;
+  --ts-hue-3: #e156f0;
+}
+html[data-theme="light"][data-panel-skin="neon"] .thinking-slider {
+  --ts-hue-1: #45b7d8;
+  --ts-hue-2: #8e40d9;
+  --ts-hue-3: #c44fd8;
+}
+html[data-theme="dark"][data-panel-skin="candy"] .thinking-slider {
+  --ts-hue-1: #ffb3cd;
+  --ts-hue-2: #f08fb4;
+  --ts-hue-3: #d57ae2;
+}
+html[data-theme="light"][data-panel-skin="candy"] .thinking-slider {
+  --ts-hue-1: #f2a4c2;
+  --ts-hue-2: #d3709c;
+  --ts-hue-3: #a98ae6;
 }
 .thinking-slider.ts-disabled { opacity: 0.55; cursor: not-allowed; }
 .thinking-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-pill); }

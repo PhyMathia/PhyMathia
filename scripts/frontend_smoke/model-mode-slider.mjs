@@ -227,6 +227,14 @@ export function run() {
     for (const dead of ['--ts-green', 'ts-orb-pulse', '.thinking-slider-thumb::after', '.thinking-slider-label', '.thinking-slider-ring', 'ts-celebrate', 'ts-breathe', '.thinking-slider-fill::before']) {
       if (cssPanels.includes(dead)) throw new Error('旧样式/旧彩蛋残留：' + dead);
     }
+    // 家族适配（2026-10-25 五改）：aurora 两套之外，四家族深浅各一对三色（双属性
+    // 显式选择器，锚各家族色斑/accent）——防「只配默认两套、糖果/霓虹不搭」回潮
+    for (const fam of ['blueprint', 'inkstone', 'neon', 'candy']) {
+      for (const mode of ['dark', 'light']) {
+        const sel = `html[data-theme="${mode}"][data-panel-skin="${fam}"] .thinking-slider`;
+        if (!cssPanels.includes(sel)) throw new Error('缺家族滑块配色：' + sel);
+      }
+    }
     if (!cssPanels.includes('linear-gradient(90deg, var(--ts-hue-1), var(--ts-hue-2) 52%, var(--ts-hue-3))')) {
       throw new Error('填充渐变应为极光三色（青→蓝→紫，深夜四改拍板：单色系被判单调）');
     }
