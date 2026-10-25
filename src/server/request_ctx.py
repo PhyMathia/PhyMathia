@@ -3,8 +3,9 @@
 全部账号化路由的单一咽喉（_account_id 的 404 语义＝T186 幽灵闸门）与
 只读查阅态判据（T187）都住这里；路由模块经 from .request_ctx import 取用，
 闸门中间件（_readonly_browse_gate，留在 main）不经过这里——它只认路径与
-方法白名单。命名空间里不持任何路径常量：账号域路径一律调用期经
-accounts.resolve_paths 解析（tests 的批量路径重定向夹具因此对路由模块免补丁）。
+方法白名单。2026-10-25 T35 起线性主聊天退役门禁（chat 与 context/preview
+共用）也住这里（文件尾）。命名空间里不持任何路径常量：账号域路径一律
+调用期经 accounts.resolve_paths 解析（tests 的批量路径重定向夹具因此对路由模块免补丁）。
 """
 
 import asyncio
@@ -96,3 +97,41 @@ def _account_id_raw(request: Request = None, payload: dict = None) -> str:
 def _account_paths(request: Request = None, payload: dict = None):
     """账号域解析 + 目录确保（ensure_account 幂等，热路径有 _ENSURED 缓存）。"""
     return accounts.ensure_account(_account_id(request, payload))
+
+
+# ====== 线性主聊天退役门禁（2026-09-25 拍板；2026-10-25 T35 自 chat/preview 两份实现收编） ======
+# 见 docs/dev/linear-chat-retired.md。原本 /api/models/chat 与 /api/context/preview
+# 各写一份、tests 只对拍非同源，加第三种锚要记得改两处；现在锚键与 410 文案只在
+# 这里定义一处——preview 的 query 参数名（workflow）在调用点映射成本表的规范锚键。
+
+# prompt 新格式请求的画布锚键（snake/camel 双写）：分支 / 树路径 / 工作流。
+_CANVAS_ANCHOR_KEYS = (
+    "branch_id", "branchId",
+    "graph_path", "graphPath",
+    "workflow_context", "workflowContext",
+)
+
+
+def has_canvas_anchor(payload: dict) -> bool:
+    """prompt 新格式请求是否带画布锚——两端口共用的同源判据。"""
+    return any(payload.get(key) for key in _CANVAS_ANCHOR_KEYS)
+
+
+def enforce_retired_linear_chat_gate(*, quick: bool, unanchored_prompt: bool,
+                                     workflow_field: str = "workflow_context") -> None:
+    """quick 寒暄一律 410（线性语义，带锚也拒，只防外部直调）；带 prompt 无锚
+    同样 410——保证「预览里能看到」与「真实请求能发出」是同一套边界。
+    workflow_field 只进提示文案：chat 请求体叫 workflow_context、preview 的
+    query 参数叫 workflow，两端口原文案逐字保留（T35 合并时零变化）。
+    """
+    if quick:
+        raise HTTPException(
+            status_code=410,
+            detail="quick 寒暄通道已随线性主聊天退役（2026-09-25），不再受理",
+        )
+    if unanchored_prompt:
+        raise HTTPException(
+            status_code=410,
+            detail="无锚普通 prompt 已随线性主聊天退役（2026-09-25）："
+                   f"分支/苏格拉底请带 branch_id 或 graph_path，工作流请带 {workflow_field}",
+        )
