@@ -434,6 +434,8 @@ function openRecipeWorkshop(opts) {
     outputPorts: [],
     runError: '',
     lastRun: null,
+    judge: null,          // 试跑后的结构体检（纯前端判定，不花模型调用）
+    autotuning: false,    // 「帮我调好」进行中：跑 → 体检 → 改 → 再跑
     outputRows: [],
     inputRows: [],
     mode: mode,                          // smart（一句话）/ manual（手动调）
@@ -1241,7 +1243,10 @@ async function rwAsk() {
 }
 
 // 一次草稿往返：只回它想改的那部分，服务端合并＋归一化＋校验
-async function _rwRequestDraft(instruction) {
+// opts.mode='patch' 强制补丁（自动调优用）：不许再从零起草，否则会把已配好的字段冲掉
+async function _rwRequestDraft(instruction, opts) {
+  opts = opts || {};
+  const forced = (opts.mode === 'draft' || opts.mode === 'patch') ? opts.mode : '';
   if (!recipeWorkshop) return null;
   const model = _rwModel();
   if (!model) {
@@ -1253,14 +1258,15 @@ async function _rwRequestDraft(instruction) {
   recipeWorkshopBusy = true;
   _rwRenderAskState();
   const snapshot = JSON.parse(JSON.stringify(recipeWorkshop.recipe || {}));
+  const useDraft = forced ? (forced === 'draft') : _rwShouldDraft();
   try {
     const resp = await fetch(RECIPE_WORKSHOP_API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         instruction: instruction,
-        draft: _rwShouldDraft() ? null : snapshot,
-        mode: _rwShouldDraft() ? 'draft' : 'patch',
+        draft: useDraft ? null : snapshot,
+        mode: useDraft ? 'draft' : 'patch',
         history: recipeWorkshop.conversation.slice(-6).map(function (item) {
           return { role: item.role === 'me' ? 'me' : 'phi', text: item.text };
         }),
@@ -1543,6 +1549,7 @@ function _rwOutputHtml() {
     : '<pre>' + _rwEsc(state.output) + '</pre>';
   return '<div class="rw-out-body">' + body + '</div>'
     + (ports ? '<div class="rw-out-ports">' + ports + '</div>' : '')
+    + _rwJudgeHtml()
     + '<div class="rw-quickfix"><span class="rw-quickfix-title">哪里不对？</span>'
     + '<button type="button" class="rw-btn rw-btn-ghost rw-btn-mini" onclick="rwQuickFix(\'vague\')">太空泛</button>'
     + '<button type="button" class="rw-btn rw-btn-ghost rw-btn-mini" onclick="rwQuickFix(\'steps\')">没分步骤</button>'
@@ -1604,6 +1611,12 @@ function _rwRenderRun() {
       + (recipeWorkshop.running ? '生成中…' : ((recipeWorkshop.runs || []).length ? '再跑一次' : '跑一次')) + '</button>'
       + '<select class="rw-select" onchange="rwTrialModelChanged(this.value)" title="试跑用哪个模型">' + options + '</select>'
       + '</div>'
+      + '<div class="rw-run-row rw-run-tune">'
+      + '<button type="button" class="rw-btn" onclick="rwAutoTune()" title="跑一次看体检结果，只改有问题的地方，再跑一次验证"'
+      + (recipeWorkshop.running || recipeWorkshop.autotuning || !model ? ' disabled' : '') + '>'
+      + (recipeWorkshop.autotuning ? '正在调…' : '帮我调好') + '</button>'
+      + '<span class="rw-run-note">跑一次 → 看体检 → 只改有问题的地方 → 再跑验证</span>'
+      + '</div>'
       + (model ? '' : '<div class="rw-out-error">先到「模型配置」里选一个主模型，这里才能真正跑。</div>');
   }
   _rwPaintOutput();
@@ -1619,33 +1632,37 @@ function _rwScheduleOutputRender() {
   }, 120);
 }
 
-async function rwRunTrial() {
-  if (!recipeWorkshop || recipeWorkshop.running) return;
+// 单次试跑：流式收进草稿状态，返回 { ok, output, error } 给调用方判断。
+// 手动按钮与「帮我调好」共用这一支——两条路跑出来的东西必须一模一样。
+async function _rwRunTrialOnce() {
   const state = recipeWorkshop;
+  if (!state) return { ok: false, error: '工坊没开' };
+  if (state.running) return { ok: false, error: '正在跑，先等这一次结束' };
   const recipe = _rwNormalized() || _rwCurrentRecipe();
   const model = _rwTrialModel();
   if (!model) {
     state.runError = '先到「模型配置」里选一个主模型';
     _rwRenderRun();
-    return;
+    return { ok: false, error: state.runError };
   }
   const wf = _rwBuildWorkflowContext(recipe);
   if (!wf.upstream.length) {
     state.runError = '先贴一点材料——什么都不给，试跑看不出这个节点的真实水平。';
     _rwRenderRun();
-    return;
+    return { ok: false, error: state.runError };
   }
   _rwEnsurePrompt();     // 试跑与入册用同一份提示词，别让「能跑」和「能存」两套
   if (typeof proxyChatWithModel !== 'function') {
     state.runError = '生成通道不可用（页面还没准备好），刷新一次再试。';
     _rwRenderRun();
-    return;
+    return { ok: false, error: state.runError };
   }
   const seq = ++recipeWorkshopRunSeq;
   state.running = true;
   state.runError = '';
   state.output = '';
   state.outputPorts = [];
+  state.judge = null;
   state.lastPrompt = (typeof _recipeWorkflowPrompt === 'function')
     ? _recipeWorkflowPrompt(_rwPseudoNode(recipe), recipe, wf, String(recipe.name || '配方'))
     : String((recipe.generate || {}).prompt || '');
@@ -1675,13 +1692,13 @@ async function rwRunTrial() {
     }
     let acc = '';
     for await (const piece of _sseContentFrames(resp)) {
-      if (!recipeWorkshop || recipeWorkshopRunSeq !== seq) return;
+      if (!recipeWorkshop || recipeWorkshopRunSeq !== seq) return { ok: false, error: '已取消' };
       acc += piece;
       state.output = acc;
       _rwScheduleOutputRender();
     }
-    if (!recipeWorkshop || recipeWorkshopRunSeq !== seq) return;
-    state.output = acc.trim() ? acc : acc;
+    if (!recipeWorkshop || recipeWorkshopRunSeq !== seq) return { ok: false, error: '已取消' };
+    state.output = acc;
     state.outputPorts = _rwComputeOutputPorts(recipe, acc);
     const run = {
       at: Date.now(),
@@ -1693,10 +1710,14 @@ async function rwRunTrial() {
     state.runs.push(run);
     if (state.runs.length > 8) state.runs = state.runs.slice(-8);
     state.lastRun = run;
+    // 体检不花模型调用：试跑一结束就知道「哪里不对」，自动调优据此决定改什么
+    state.judge = _rwJudgeOutput(acc, recipe);
     _rwSaveDraftNow();
+    return { ok: true, output: acc };
   } catch (err) {
-    if (!recipeWorkshop || recipeWorkshopRunSeq !== seq) return;
+    if (!recipeWorkshop || recipeWorkshopRunSeq !== seq) return { ok: false, error: '已取消' };
     state.runError = '试跑失败：' + String((err && err.message) || err).slice(0, 200);
+    return { ok: false, error: state.runError };
   } finally {
     if (recipeWorkshop && recipeWorkshopRunSeq === seq) {
       state.running = false;
@@ -1704,6 +1725,10 @@ async function rwRunTrial() {
       _rwRenderSteps();
     }
   }
+}
+
+async function rwRunTrial() {
+  await _rwRunTrialOnce();
 }
 
 const RECIPE_WORKSHOP_QUICK_FIXES = {
@@ -1726,6 +1751,159 @@ function rwQuickFix(key) {
   _rwTouch({ structural: true });
   _rwPushChat('phi', '生成要求里补了一条：' + line + ' 点「再跑一次」看效果。');
   _rwRenderChat();
+}
+
+// 体检（2026-10-25）：不花模型调用，纯结构判定——试跑一结束就知道哪里不对。
+// 只认能从正文里数出来的东西：步骤、公式是否被 $ 包住、长度、是否复述输入、动态出口。
+// 宁可漏判也不误判：三处以上裸 LaTeX 才算「没包」。
+const RECIPE_WORKSHOP_JUDGE_MIN_CHARS = 120;
+
+function _rwJudgeOutput(text, recipe) {
+  const state = recipeWorkshop || {};
+  const raw = String(text || '');
+  const body = raw.replace(/```[\s\S]*?```/g, '');   // 代码块里的编号不算正文步骤
+  const flat = raw.replace(/\s+/g, '');
+  const chars = flat.length;
+  const steps = (body.match(/(^|\n)\s*(?:第[一二三四五六七八九十百]+步|\d+[.、)）]\s?)/g) || []).length;
+  const tex = (body.match(/\$\$[\s\S]+?\$\$|\$[^$\n]{1,160}\$/g) || []).length;
+  const bareTex = (body.match(/\\[a-zA-Z]{2,}/g) || []).length;
+  const staticPorts = (recipe && recipe.ports && recipe.ports.static) || [];
+  const ports = (state.outputPorts || []).length;
+  const dynamicOn = !!(recipe && recipe.ports && recipe.ports.dynamic && recipe.ports.dynamic.enabled);
+  const materials = Object.keys(state.materials || {})
+    .map(function (key) { return String((state.materials || {})[key] || '').replace(/\s+/g, ''); })
+    .filter(Boolean);
+  const echoLen = materials.length ? Math.min(30, materials[0].length) : 0;
+  const echo = echoLen >= 20 && flat.slice(0, echoLen) === materials[0].slice(0, echoLen);
+  const flags = [];
+  if (chars < RECIPE_WORKSHOP_JUDGE_MIN_CHARS) {
+    flags.push({ key: 'short', label: '太短', detail: '正文只有 ' + chars + ' 字，多半没展开' });
+  }
+  if (staticPorts.length >= 2 && steps === 0) {
+    flags.push({ key: 'steps', label: '没分步骤', detail: '设置了 ' + staticPorts.length + ' 个出口，正文却没有步骤结构' });
+  }
+  if (bareTex >= 3 && tex === 0) {
+    flags.push({ key: 'formula', label: '公式没包', detail: '有 ' + bareTex + ' 处裸 LaTeX，没用 $…$ 包起来' });
+  }
+  if (echo) {
+    flags.push({ key: 'echo', label: '复述输入', detail: '正文开头和材料几乎一样' });
+  }
+  if (dynamicOn && ports === 0) {
+    flags.push({ key: 'ports', label: '出口没解析出来', detail: '声明了动态出口，正文里没找到可解析的编号' });
+  }
+  return {
+    flags: flags,
+    metrics: { chars: chars, steps: steps, tex: tex, ports: ports },
+    pass: flags.length === 0,
+    at: Date.now(),
+  };
+}
+
+function _rwJudgeSummary(judge) {
+  const m = (judge && judge.metrics) || {};
+  return '正文 ' + (m.chars || 0) + ' 字、' + (m.steps || 0) + ' 个步骤、' + (m.tex || 0) + ' 处公式、' + (m.ports || 0) + ' 个出口';
+}
+
+function _rwJudgeHtml() {
+  const judge = recipeWorkshop && recipeWorkshop.judge;
+  if (!judge) return '';
+  const m = judge.metrics || {};
+  const chips = judge.pass
+    ? '<span class="rw-judge-chip is-ok">结构正常</span>'
+    : (judge.flags || []).map(function (flag) {
+        return '<span class="rw-judge-chip is-warn" title="' + _rwEsc(flag.detail) + '">' + _rwEsc(flag.label) + '</span>';
+      }).join('');
+  return '<div class="rw-judge">'
+    + '<div class="rw-judge-head"><span class="rw-judge-title">体检</span>'
+    + '<span class="rw-judge-metric">' + (m.chars || 0) + ' 字</span>'
+    + '<span class="rw-judge-metric">' + (m.steps || 0) + ' 步</span>'
+    + '<span class="rw-judge-metric">' + (m.tex || 0) + ' 公式</span>'
+    + '<span class="rw-judge-metric">' + (m.ports || 0) + ' 出口</span></div>'
+    + '<div class="rw-judge-chips">' + chips + '</div>'
+    + '</div>';
+}
+
+// 把体检结果翻成一句模型能执行的修改要求：只说哪不对、只让它改必要的字段。
+function _rwTuneInstruction(judge, output) {
+  const lines = ['刚才试跑的输出体检没通过：'];
+  ((judge && judge.flags) || []).forEach(function (flag) {
+    lines.push('- ' + flag.label + '：' + flag.detail);
+  });
+  lines.push('输出节选：');
+  lines.push(String(output || '').replace(/\s+/g, ' ').slice(0, 600));
+  lines.push('请只改有问题的字段（优先「生成要求」），不要重写整份配方，也别动已经正确的部分。');
+  return lines.join('\n');
+}
+
+// 「帮我调好」（2026-10-25）：跑一次 → 体检 → 只改有问题的 → 再跑验证。
+// 模仿 DSH 创造模式的「先交付、看结果字段、在同一件东西上修」——不是让模型重写，
+// 而是拿真输出当证据改一处。最多两次试跑＋一次补丁，约 2–3 次模型调用。
+async function rwAutoTune() {
+  const state = recipeWorkshop;
+  if (!state || state.running || state.autotuning || recipeWorkshopBusy) return;
+  if (!String((state.recipe && state.recipe.name) || '').trim()) {
+    state.runError = '先给它起个名字，再让我调。';
+    _rwRenderRun();
+    return;
+  }
+  const model = _rwTrialModel();
+  if (!model) {
+    state.runError = '先到「模型配置」里选一个主模型';
+    _rwRenderRun();
+    return;
+  }
+  const wf = _rwBuildWorkflowContext(_rwNormalized() || _rwCurrentRecipe());
+  if (!wf.upstream.length) {
+    state.runError = '先贴一点材料——不喂材料，体检也看不出问题。';
+    _rwRenderRun();
+    return;
+  }
+  if (typeof confirm === 'function'
+    && !confirm('会跑两次、改一次：先跑一次看体检结果，只改有问题的地方，再跑一次验证。大约 2–3 次模型调用，继续？')) return;
+  state.autotuning = true;
+  state.runError = '';
+  _rwPushChat('phi', '我先跑一次，按体检结果决定改哪里。');
+  _rwRenderChat();
+  _rwRenderRun();
+  try {
+    let run = await _rwRunTrialOnce();
+    if (!run.ok) {
+      _rwPushChat('phi', '第一次就没跑通：' + String(run.error || '未知原因'), { kind: 'warn' });
+      return;
+    }
+    let judge = state.judge;
+    if (judge && judge.pass) {
+      _rwPushChat('phi', '体检过了（' + _rwJudgeSummary(judge) + '），不用改。');
+      return;
+    }
+    const labels = judge ? judge.flags.map(function (flag) { return flag.label; }).join('、') : '输出可能不合格';
+    _rwPushChat('phi', '体检发现：' + labels + '。我只改这几处。');
+    _rwRenderChat();
+    const data = await _rwRequestDraft(_rwTuneInstruction(judge, state.output), { mode: 'patch' });
+    if (!data) {
+      _rwPushChat('phi', '这次没改成功，可以先手动改一下再跑。', { kind: 'warn' });
+      return;
+    }
+    _rwPushChat('phi', '改完了，再跑一次验证。');
+    _rwRenderChat();
+    run = await _rwRunTrialOnce();
+    if (!run.ok) {
+      _rwPushChat('phi', '复跑没通过：' + String(run.error || '未知原因'), { kind: 'warn' });
+      return;
+    }
+    judge = state.judge;
+    if (judge && judge.pass) {
+      _rwPushChat('phi', '这一版体检通过（' + _rwJudgeSummary(judge) + '）。');
+    } else {
+      const rest = judge ? judge.flags.map(function (flag) { return flag.label; }).join('、') : '仍不合格';
+      _rwPushChat('phi', '还剩：' + rest + '。可以再点一次「帮我调好」，或者直接改对应字段。', { kind: 'warn' });
+    }
+  } finally {
+    if (recipeWorkshop) {
+      recipeWorkshop.autotuning = false;
+      _rwRenderRun();
+    }
+  }
 }
 
 
@@ -2243,6 +2421,9 @@ window._rwSyncRowsFromRecipe = _rwSyncRowsFromRecipe;
 window._rwSaveDraftNow = _rwSaveDraftNow;
 window._rwReadDraft = _rwReadDraft;
 window._rwRequestDraft = _rwRequestDraft;
+window.rwAutoTune = rwAutoTune;
+window._rwJudgeOutput = _rwJudgeOutput;
+window._rwJudgeHtml = _rwJudgeHtml;
 window._rwRenderSmart = _rwRenderSmart;
 window._rwSmartResultHtml = _rwSmartResultHtml;
 window._rwChangedHuman = chopsHuman;
