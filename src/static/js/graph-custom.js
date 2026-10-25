@@ -711,11 +711,14 @@ async function openNodeNewWindow(nodeId) {
   // 主应用执行；file:// 单文件（blob 直开，无同源 shell 中转）只留复制与复制为引用。
   // 没编进 node-fs-toolbar.js 的环境（viewer 家族）ctx 不造，页面与旧行为完全一致
   const isFile = typeof location !== 'undefined' && location.protocol === 'file:';
+  // readonly 随快照带进预览页：查阅模式下预览浮条不亮「追问」（startQuestionWorkflow
+  // 在主应用侧还会再拦一道，双保险）
+  const ro = typeof phyIsReadonly === 'function' && phyIsReadonly();
   let ctx = null;
   if (typeof _buildNodeFsPreviewScript === 'function') {
     ctx = isFile
-      ? { nodeId: String(node.id || ''), title: String(title || ''), bridge: false }
-      : { nodeId: String(node.id || ''), title: String(title || ''), bridge: true, token: _nodeFsMintPreviewToken() };
+      ? { nodeId: String(node.id || ''), title: String(title || ''), bridge: false, readonly: ro }
+      : { nodeId: String(node.id || ''), title: String(title || ''), bridge: true, token: _nodeFsMintPreviewToken(), readonly: ro };
   }
   const page = _buildContentPreviewPage(title, contentHtml, ctx);
   // file:// 单文件场景：没有同源预览页可跳，Blob URL 直开（同 openVizNewTab 先例；
