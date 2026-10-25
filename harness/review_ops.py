@@ -16,7 +16,7 @@ from .core import (
     diff_snapshots,
 )
 from .json_utils import repair_json
-from .tools import READONLY_TOOL_NAMES
+from .tools import DRY_RUN_TOOL_NAME, READONLY_TOOL_NAMES
 
 def _merge_post_ops(current: Dict[str, Any], result: Dict[str, Any], extra_ops: list,
                     diff_base: Any = None) -> Dict[str, Any]:
@@ -425,13 +425,16 @@ def _tool_call_name_args(call: Any) -> tuple:
 
 
 def _readonly_batch(tool_calls: Any) -> list:
-    """本批 tool_calls 里的只读查询调用；空列表＝无需进入查询循环。"""
+    """本批 tool_calls 里的只读查询调用；空列表＝无需进入查询循环。
+
+    dry_run（2026-10-25 方向 1）随只读调用一起进环——它同样不落图，
+    只是结果由 review.py 的试改执行器产出。"""
     if not isinstance(tool_calls, list):
         return []
     batch = []
     for call in tool_calls:
         name, _args = _tool_call_name_args(call)
-        if name in READONLY_TOOL_NAMES:
+        if name in READONLY_TOOL_NAMES or name == DRY_RUN_TOOL_NAME:
             batch.append(call)
     return batch
 
@@ -469,12 +472,16 @@ def _readonly_call_arg(name: str, args: Dict[str, Any]) -> str:
     """进度事件里的查询参数预览（read_node/list_neighbors 取节点，search* 取词）。"""
     if name == "graph_stats":
         return ""
+    if name == DRY_RUN_TOOL_NAME:
+        return f"{len(args.get('ops') or [])} 条草稿操作"
     key = "node_id" if name in ("read_node", "list_neighbors") else "keyword"
     return str(args.get(key) or args.get("id") or args.get("label") or "")[:60]
 
 
 def _readonly_tool_label(name: str) -> str:
-    """查询轮进度事件的来源标签：图查询 / 知识库 / 公式速查 / 学习体检。"""
+    """查询轮进度事件的来源标签：图查询 / 知识库 / 公式速查 / 学习体检 / 试改。"""
+    if name == DRY_RUN_TOOL_NAME:
+        return "试改"
     if name == "search_knowledge":
         return "知识库"
     if name == "search_formulas":

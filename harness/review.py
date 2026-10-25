@@ -46,6 +46,8 @@ from .review_phase import (
     TOOLS_USER_HINT,
     TOOLS_AUTO_HINT,
     READONLY_TOOLS_HINT,
+    DRY_RUN_HINT_PHASES,
+    DRY_RUN_TOOLS_HINT,
     HARNESS_CHAT_TOOLS_HINT,
     _REFUSAL_MARKERS,
     _has_edit_intent,
@@ -180,6 +182,7 @@ from .prompts import (
     build_review_messages,
 )
 from .tools import (
+    DRY_RUN_TOOL_NAME,
     KB_TOOL_NAMES,
     READONLY_TOOL_NAMES,
     _graph_stats,
@@ -193,6 +196,9 @@ logger = logging.getLogger("harness.review")
 
 # 查询循环步数上限：达到后剥掉只读工具并明示模型直接出方案，防失控。
 MAX_TOOL_STEPS = 8
+# 试改自检轮数上限（2026-10-25 方向 1，DSH 对照）：与工坊「试跑总闸 2」同一
+# 哲学——验证环免费但步数有闸，防止弱模型在试改上无限循环烧预算。
+DRY_RUN_MAX_ROUNDS = 2
 
 
 def _clarify_result_payload(
@@ -1305,11 +1311,57 @@ def _splice_attempt_messages(
             base_content += (TOOLS_AUTO_HINT if tool_choice == "auto" else TOOLS_USER_HINT)
             if readonly_enabled:
                 base_content += READONLY_TOOLS_HINT
+                if phase in DRY_RUN_HINT_PHASES:
+                    base_content += DRY_RUN_TOOLS_HINT
     history_text = _history_block(history)
     if history_text:
         base_content += history_text
     # T150：只增不改——拼进最后一条 user 的副本后整表换新
     return messages[:-1] + [{**messages[-1], "content": base_content + level_suffix}]
+
+
+def _execute_dry_run(
+    ops: Any, current: Dict[str, Any], instruction: str, focus_node_ids,
+) -> Dict[str, Any]:
+    """试改自检执行器（2026-10-25 方向 1，DSH 对照）：草稿操作在图副本上校验。
+
+    零模型调用、不碰真实快照——复用 build_next_snapshot 的逐条错误与冲突预检、
+    split_ops_by_scope 的范围闸预演（选中集在 current["scope_node_ids"]）、
+    rule_selfcheck 的规则警告与 find_isolated_created_nodes 的孤岛检查，
+    把「定稿后才知道错」前移到「定稿前就能看到逐条错误」。"""
+    if not isinstance(ops, list):
+        return {"error": "参数无效：dry_run 的 ops 必须是操作数组"}
+    if not ops:
+        return {"error": "参数无效：dry_run 的 ops 为空，没有可校验的草稿操作"}
+    kept, dropped = split_ops_by_scope(current, ops, current.get("scope_node_ids"))
+    preview = build_next_snapshot(current, kept)
+    errors = (preview.get("errors") or [])[:8]
+    warnings: list = list(preview.get("warnings") or [])[:8]
+    for item in dropped[:6]:
+        warnings.append({
+            "index": "scope",
+            "op": str((item.get("op") or {}).get("op") or ""),
+            "reason": "范围外将被剔除（触及未选中节点「%s」）" % "、".join(item.get("labels") or item.get("refs") or []),
+        })
+    rules = rule_selfcheck(current, instruction, focus_node_ids, kept)
+    for issue in (rules.get("issues") or [])[:5]:
+        warnings.append({"index": "rules", "op": "selfcheck", "reason": issue})
+    payload: Dict[str, Any] = {
+        "ok": not errors and not dropped,
+        "ops_received": len(ops),
+        "ops_valid": len(preview.get("operations") or []),
+        "errors": errors,
+        "warnings": warnings[:12],
+    }
+    if dropped:
+        payload["dropped_by_scope"] = len(dropped)
+    isolated = find_isolated_created_nodes(current, preview.get("operations") or [])
+    if isolated:
+        payload["isolated_new_nodes"] = [
+            str(item.get("label") or item.get("id") or "") for item in isolated[:6]
+        ]
+    payload["note"] = "试改不落图：修正 errors/warnings 后重新试改或直接给最终方案；同样错误在定稿后仍会被剔除/跳过。"
+    return payload
 
 
 async def _run_readonly_query_loop(
@@ -1319,6 +1371,7 @@ async def _run_readonly_query_loop(
     resolved_model: Dict[str, Any], max_tokens: int,
     last_raw: str, reasoning_only_seen: bool,
     counted_call, consume_model_output, emit,
+    instruction: str = "", focus_node_ids=None,
 ) -> tuple:
     """执行阶段：T93 只读查询回灌循环——模型先查图，看完了再决定改哪。
 
@@ -1327,6 +1380,8 @@ async def _run_readonly_query_loop(
     HarnessError 直接抛给外层换模型候选链接住。messages 原表 append（T150 只增
     不减）；返回 (raw, last_raw, reasoning_only_seen)，循环未触发时原样返回入参。"""
     tool_steps = 0
+    # 试改轮数（方向 1）：与步数上限独立计数——步数管所有查询，轮数只管 dry_run
+    dry_rounds = 0
     # 进环前先按 attempt 层口径初始化（原主链里该值来自外层作用域）；
     # 步数上限分支剥离只读工具后会重算
     current_choice = tool_choice if current_tools else None
@@ -1377,6 +1432,29 @@ async def _run_readonly_query_loop(
                 ok = not (isinstance(output, dict) and output.get("error"))
                 if len(text) > _TOOL_RESULT_CHARS:
                     text = text[:_TOOL_RESULT_CHARS] + "…（结果过长已截断）"
+            elif name == DRY_RUN_TOOL_NAME:
+                # 试改自检（方向 1）：与只读查询同环执行，结果含逐条错误/范围
+                # 预演；轮数超闸后明示收口，不再消耗步数做无效试改
+                tool_steps += 1
+                dry_rounds += 1
+                draft_ops = args.get("ops") if isinstance(args, dict) else None
+                emit({
+                    "type": "status",
+                    "stage": "tool",
+                    "message": "🧪 试改第 " + str(dry_rounds) + " 轮：校验 "
+                               + str(len(draft_ops) if isinstance(draft_ops, list) else 0) + " 条草稿操作…",
+                    "attempt": attempt,
+                    "step": tool_steps,
+                })
+                if dry_rounds > DRY_RUN_MAX_ROUNDS:
+                    output = {"error": f"试改次数已用完（上限 {DRY_RUN_MAX_ROUNDS} 轮），"
+                                        "请基于以上校验结果直接给出最终方案"}
+                else:
+                    output = _execute_dry_run(draft_ops, full_snapshot, instruction, focus_node_ids)
+                text = json.dumps(output, ensure_ascii=False)
+                ok = not (isinstance(output, dict) and output.get("error"))
+                if len(text) > _TOOL_RESULT_CHARS:
+                    text = text[:_TOOL_RESULT_CHARS] + "…（结果过长已截断）"
             else:
                 # 同批混入的编辑类调用：统一下发「已暂存」结果，绝不执行；
                 # 模型须在看完查询结果后单独重发编辑方案
@@ -1408,6 +1486,7 @@ async def _run_readonly_query_loop(
             current_tools = [
                 schema for schema in (current_tools or [])
                 if schema.get("function", {}).get("name") not in READONLY_TOOL_NAMES
+                and schema.get("function", {}).get("name") != DRY_RUN_TOOL_NAME
             ] or None
             current_choice = tool_choice if current_tools else None
             messages.append({"role": "user", "content": _TOOL_STEP_LIMIT_NOTICE})
@@ -1827,20 +1906,28 @@ async def _assemble_result_with_selfchecks(
                if checklist_state and checklist_state.get("semantic") else {}),
         )
         result["self_check"]["critic"] = critic
-        if not critic.get("ok", True) and attempt < retries:
-            critic_errors = [
-                {"index": "selfcheck", "op": "critic", "reason": reason}
-                for reason in critic.get("issues", [])
-            ] + [
-                {"index": "selfcheck", "op": "critic", "reason": "缺少：" + reason}
-                for reason in critic.get("missing", [])
-            ]
+        critic_errors = [
+            {"index": "selfcheck", "op": "critic", "reason": reason}
+            for reason in critic.get("issues", [])
+        ] + [
+            {"index": "selfcheck", "op": "critic", "reason": "缺少：" + reason}
+            for reason in critic.get("missing", [])
+        ]
+        if critic_errors and not critic.get("ok", True) and attempt < retries:
             return None, critic_errors
         if not critic.get("ok", True):
-            for reason in critic.get("issues", []):
-                result["warnings"].append({"index": "selfcheck", "op": "critic", "reason": reason})
-            for reason in critic.get("missing", []):
-                result["warnings"].append({"index": "selfcheck", "op": "critic", "reason": "缺少：" + reason})
+            for warn in critic_errors:
+                result["warnings"].append(warn)
+            if not critic_errors:
+                # 基线实锤（2026-10-25 A2/A3，case 3/4/9/15/16 全 500）：critic 判
+                # fail 却不带 issues/missing → 旧码 return None, [] → 主链当作
+                # 无错误、None 流进 finalize 崩 500。与 parse_selfcheck 的
+                # parse_error 宽容口径一致：没有具体问题的 fail 不构成可行动
+                # 反馈，降 warning 放行。
+                result["warnings"].append({
+                    "index": "selfcheck", "op": "critic",
+                    "reason": "深度自检未通过但未给出具体问题（回包缺 issues/missing），已放行，请自行复核",
+                })
 
     if result["errors"] and attempt < retries:
         return None, result["errors"]
@@ -2293,6 +2380,7 @@ async def review_graph(
                     current_tools, tool_choice, model_kwargs, attempt, journal,
                     resolved_model, max_tokens, last_raw, reasoning_only_seen,
                     _counted_call, _consume_model_output, _emit,
+                    instruction, focus_node_ids,
                 )
 
                 # ---- 执行阶段：解析模型输出（T396 拆分，见 _parse_plan_output）----
@@ -2334,6 +2422,10 @@ async def review_graph(
                 if check_errors:
                     last_errors = check_errors
                     continue
+                if result is None:
+                    # 防御（2026-10-25 基线实锤）：_assemble 的任何 (None, []) 路径
+                    # 都不得把 None 送进 finalize——critic 空 issues 事故的兜底闸
+                    result = build_next_snapshot(current, raw_ops)
 
                 # ---- 收尾阶段：补链/拆段提示/复述确认/字段装配（T396 拆分）----
                 return await _finalize_review_result(

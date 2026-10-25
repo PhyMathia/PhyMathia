@@ -57,6 +57,9 @@ TOOL_TO_OP: Dict[str, str] = {
 # 2026-10-09 优化新路径六第 1 档：新增 graph_stats 整图学习结构体检工具
 # （学习教练）：把整张图当课程表看的统计入口，chat 答疑相位立即可用。
 READONLY_TOOL_NAMES = ("read_node", "list_neighbors", "search_nodes", "search_knowledge", "search_formulas", "graph_stats")
+# 试改自检工具名（2026-10-25 方向 1）：不在 READONLY_TOOL_NAMES 里（执行路径
+# 不同），但进查询回灌环——review.py 的循环与 review_ops 的批次判定按名放行。
+DRY_RUN_TOOL_NAME = "dry_run"
 
 # 知识检索类工具（READONLY 的子集）：执行时需要调用方额外注入用户
 # 知识库/公式速查数据（kb 参数），图查询三件套用不到。
@@ -345,6 +348,25 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
         ["questions"],
     )
 
+    # 试改自检（DSH 对照·方向 1，2026-10-25 基线 A2/A3）：编辑相位专属——
+    # 把草稿操作交服务端在图副本上校验，逐条错误前移到定稿之前。chat（纯只读
+    # 红线）、preset（配方相位）、evaluate（单轮拍板）不进。
+    dry_run = _tool(
+        DRY_RUN_TOOL_NAME,
+        "试改自检：把一批草稿图操作（与最终方案的 operations 完全同形状）提交给服务端，"
+        "在图副本上校验——返回逐条错误（节点不存在/字段缺失/同批冲突）、范围外剔除预演、"
+        "新节点未连线等警告。不改动真实图、不算应用。建议在操作数较多或引用多个既有节点时"
+        "先试改一轮、修正错误后再给最终方案；至多试改 2 轮。",
+        {
+            "ops": {
+                "type": "array",
+                "items": {"type": "object"},
+                "description": "草稿操作数组（op/update_node/delete_node/add_edge/…，同最终方案 operations 形状）",
+            },
+        },
+        ["ops"],
+    )
+
     return {
         "create_node": create_node,
         "update_node": update_node,
@@ -357,6 +379,7 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
         "update_recipe": update_recipe,
         "delete_recipe": delete_recipe,
         "ask_user": ask_user,
+        "dry_run": dry_run,
         "read_node": read_node,
         "list_neighbors": list_neighbors,
         "search_nodes": search_nodes,
@@ -378,12 +401,12 @@ _TOOL_DEFS = _tool_definitions()
 # ② 其余工具相位（normal/expand/apply/preset）随 READONLY_TOOL_NAMES 扩容
 #   自动获得知识检索能力。
 PHASE_TOOLS: Dict[str, List[str]] = {
-    "normal": ["create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge"]
+    "normal": ["create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge", DRY_RUN_TOOL_NAME]
     + list(READONLY_TOOL_NAMES),
-    "expand": ["create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge"]
+    "expand": ["create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge", DRY_RUN_TOOL_NAME]
     + list(READONLY_TOOL_NAMES),
     "evaluate": ["create_eval_node"],
-    "apply": ["update_node", "delete_node", "add_edge", "remove_edge", "update_edge"]
+    "apply": ["update_node", "delete_node", "add_edge", "remove_edge", "update_edge", DRY_RUN_TOOL_NAME]
     + list(READONLY_TOOL_NAMES),
     # 创造模式（P3）：配方三件套＋ask_user（T263 访谈）＋create_node（带 recipe_id＝「在画布上放一个试试」）
     # T320 翻案（2026-10-14）：add_edge 准入但受约束——只许「画布既有节点 → 本次新放实例」，
@@ -395,7 +418,7 @@ PHASE_TOOLS: Dict[str, List[str]] = {
     # 课程表体检（路径六第 2 档，2026-10-09）：与 normal 同表——报告里的建议
     # 批次是普通编辑操作，统计已由服务端预计算注入（graph_stats 仍在表里供
     # 模型复查个别节点时用，提示词已注明不必重复拉整图统计）
-    "coach": ["create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge"]
+    "coach": ["create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge", DRY_RUN_TOOL_NAME]
     + list(READONLY_TOOL_NAMES),
 }
 
