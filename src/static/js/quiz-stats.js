@@ -357,10 +357,13 @@ function _quizStatSummary(scope) {
   const weak = dueTopics
     .filter(item => item.wrong > 0 && (item.wrong >= item.correct || item.mastery < 70))
     .sort((a, b) => (a.mastery - b.mastery) || (b.wrong - a.wrong));
-  const review = dueTopics
+  // 先排全量再切片：待复习「数量」必须读全量（reviewCount），只有列表展示才截 8 条
+  // （2026-10-24 实踩：此前把 slice(0, 8) 的结果当数量返回，待复习永远 ≤8，实测
+  // 真实 38 条却显示 8）
+  const reviewAll = dueTopics
     .filter(item => item.wrong > 0 || item.mastery < 100)
-    .sort((a, b) => ((a.dueAt || 0) - (b.dueAt || 0)) || (a.mastery - b.mastery) || (b.wrong - a.wrong))
-    .slice(0, 8);
+    .sort((a, b) => ((a.dueAt || 0) - (b.dueAt || 0)) || (a.mastery - b.mastery) || (b.wrong - a.wrong));
+  const review = reviewAll.slice(0, 8);
   const openResults = Array.isArray(stats._meta && stats._meta.openResults) ? stats._meta.openResults : [];
   const openCount = openResults.filter(item => global || _quizItemInSession(item)).length;
   return {
@@ -370,7 +373,8 @@ function _quizStatSummary(scope) {
     rate: correct + wrong ? Math.round(correct / (correct + wrong) * 100) : 0,
     weak: weak.slice(0, 5),
     review,
-    reviewCount: review.length,
+    reviewAll,
+    reviewCount: reviewAll.length,
     openCount,
     wrongCount: _readWrongQuestions(global ? 'global' : 'session').length
   };

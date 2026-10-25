@@ -456,30 +456,61 @@ function _renderQuizBank() {
     </div>`;
 }
 
+// 各画布统计分段：逐画布算「已测题数＋正确率」，对不上任何现存画布的记录汇总成末尾
+// 一段「已删除画布」。
+// 为什么必须有这一段（2026-10-24 实踩）：KPI 的「已测/正确率」读的是全量统计
+// （_quizStatSummary，与错题本、趋势同一口径——画布删了统计仍留着，和错题快照一样
+// 不被删），而这里若只列现存画布，对不上号的记录就被静默丢掉：实测 KPI 已测 51、
+// 正确率 75%，环形中心却只有 27 题、各条正确率看着全 100%（那 24 题里有 11 题是错的，
+// 全落在 6 张已删画布上）。补一段灰段让两张图与 KPI 相加自洽。
 function _quizSessionChartSegments(sessions, rawStats) {
   const colors = ['var(--node-question)', 'var(--node-physics)', 'var(--node-answer)', 'var(--node-learn)',
     'var(--chart-seg-cyan)', 'var(--node-socratic)', 'var(--node-knowledge)', 'var(--chart-seg-warm)'];
-  const segments = [];
-  sessions.forEach((session, idx) => {
+  const byVariant = new Map();   // 会话 id 变体 → 该画布的累计行（先到先得，别名撞车不重复计）
+  const rows = sessions.map((session, idx) => {
     const id = session.id || session.sessionId || '';
-    const variants = new Set(_quizSessionIdVariants(id));
-    let correct = 0;
-    let wrong = 0;
-    for (const [key, item] of Object.entries(rawStats)) {
-      if (key === '_meta' || !item || typeof item !== 'object') continue;
-      if (!variants.has(item.sessionId || '')) continue;
-      correct += item.correct || 0;
-      wrong += item.wrong || 0;
+    const row = { label: session.title || id, color: colors[idx % colors.length], correct: 0, wrong: 0 };
+    for (const variant of _quizSessionIdVariants(id)) {
+      if (!byVariant.has(variant)) byVariant.set(variant, row);
     }
-    const total = correct + wrong;
-    if (!total) return;
-    segments.push({
-      label: session.title || id,
-      value: total,
-      correctRate: Math.round(correct / total * 100),
-      color: colors[idx % colors.length]
-    });
+    return row;
   });
+  let detachedCorrect = 0;
+  let detachedWrong = 0;
+  for (const [key, item] of Object.entries(rawStats)) {
+    if (key === '_meta' || !item || typeof item !== 'object') continue;
+    const row = byVariant.get(item.sessionId || '');
+    const correct = item.correct || 0;
+    const wrong = item.wrong || 0;
+    if (row) {
+      row.correct += correct;
+      row.wrong += wrong;
+    } else {
+      detachedCorrect += correct;
+      detachedWrong += wrong;
+    }
+  }
+  const segments = [];
+  for (const row of rows) {
+    const total = row.correct + row.wrong;
+    if (!total) continue;
+    segments.push({
+      label: row.label,
+      value: total,
+      correctRate: Math.round(row.correct / total * 100),
+      color: row.color
+    });
+  }
+  const detached = detachedCorrect + detachedWrong;
+  if (detached) {
+    segments.push({
+      label: '已删除画布',
+      value: detached,
+      correctRate: Math.round(detachedCorrect / detached * 100),
+      color: 'var(--chart-axis)',
+      detached: true
+    });
+  }
   return segments;
 }
 
@@ -785,6 +816,7 @@ function _renderQuizGlobalDashboard() {
   const sessions = typeof window.getAllSessions === 'function' ? window.getAllSessions() : [];
   const rawStats = _readQuizStats();
   const chartSegments = _quizSessionChartSegments(sessions, rawStats);
+  const hasDetached = chartSegments.some(segment => segment.detached);
   const trendHistory = _quizTrendData();
   const sessionCards = sessions.map(session => {
     const id = session.id || session.sessionId || '';
@@ -824,7 +856,7 @@ function _renderQuizGlobalDashboard() {
     </div>
     <div class="quiz-charts">
       <div class="quiz-chart-card">
-        <div class="quiz-chart-title">各画布答题量占比<span class="quiz-chart-sub">环形角度=已测题数</span></div>
+        <div class="quiz-chart-title">各画布答题量占比<span class="quiz-chart-sub">环形角度=已测题数${hasDetached ? ' · 灰段＝已删除画布的答题记录' : ''}</span></div>
         ${_quizDonutHtml(chartSegments)}
       </div>
       <div class="quiz-chart-card">

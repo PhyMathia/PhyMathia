@@ -722,4 +722,68 @@ check('quiz 素材刷新（T317）：提取落库→面板素材计数刷新的�
   if ((code.match(/quizPoolEpoch/g) || []).length < 4) throw new Error('代际守卫不完整（声明/自增/快照/比对）');
   return true;
 });
+// ===== 检测总览的数字自洽（2026-10-24 真机反馈）=====
+// 症状：KPI「已测 51 / 正确率 75%」，环形中心却写 27 题、各画布正确率条条 100%。
+// 根因：总览两图只按「现存画布」聚合，画布被删后它的答题记录仍在全量统计里
+// （与错题快照同口径），对不上号的记录被静默丢弃。修法：未归属记录汇成末尾
+// 「已删除画布」灰段，两图合计 = KPI 已测。
+check('quiz 总览：未归属现存画布的答题记录汇成「已删除画布」灰段（两图合计＝KPI 已测）', () => {
+  const prevVariants = sandbox.window.getSessionIdVariants;
+  sandbox.window.getSessionIdVariants = (id) => [id, id + '_phi'];
+  try {
+    const sessions = [
+      { id: 'sess_a', title: '甲画布' },
+      { id: 'sess_b', title: '乙画布' },   // 有画布无记录 → 不出段
+    ];
+    const rawStats = {
+      _meta: { updatedAt: 1 },
+      t1: { sessionId: 'sess_a', correct: 3, wrong: 1 },
+      t2: { sessionId: 'sess_a_phi', correct: 1, wrong: 0 },   // 长短号变体应并入同一画布
+      t3: { sessionId: 'sess_gone', correct: 1, wrong: 4 },    // 已删画布
+      t4: { sessionId: 'sess_gone2', correct: 0, wrong: 1 },
+    };
+    const segs = sandbox._quizSessionChartSegments(sessions, rawStats);
+    const total = segs.reduce((sum, seg) => sum + seg.value, 0);
+    if (total !== 11) throw new Error('分段合计应等于全量已测 11，实际 ' + total);
+    if (segs.map(s => s.label).join(',') !== '甲画布,已删除画布') {
+      throw new Error('分段名单不对：' + segs.map(s => s.label).join(','));
+    }
+    if (segs[0].value !== 5 || segs[0].correctRate !== 80) throw new Error('画布变体未合并：' + JSON.stringify(segs[0]));
+    const detached = segs[1];
+    if (detached.detached !== true || detached.value !== 6 || detached.correctRate !== 17) {
+      throw new Error('灰段未汇总未归属记录：' + JSON.stringify(detached));
+    }
+    // 全是现存画布记录时不出现灰段（不给健康数据加噪音）
+    const clean = sandbox._quizSessionChartSegments([{ id: 'sess_a', title: '甲画布' }], { t1: { sessionId: 'sess_a', correct: 1, wrong: 0 } });
+    if (clean.length !== 1 || clean.some(s => s.detached)) throw new Error('无未归属记录时不应出灰段');
+  } finally {
+    sandbox.window.getSessionIdVariants = prevVariants;
+  }
+  return true;
+});
+
+// 待复习数量此前读的是 slice(0, 8) 之后的数组长度，永远 ≤8（真机 38 条显示 8）
+check('quiz 总览：待复习计数读全量（reviewAll），只有展示列表截 8 条', () => {
+  const key = 'phymathia_quiz_stats';
+  const prev = localStorage.getItem(key);
+  const now = Date.now();
+  const stats = { _meta: { version: 3, updatedAt: now, wrongQuestions: [] } };
+  for (let i = 0; i < 12; i++) {
+    stats['t' + i] = {
+      title: '主题' + i, sessionId: 'sess_a', correct: 0, wrong: 1,
+      dueAt: now - 1000 - i, history: [{ correct: false, at: now - i }],
+    };
+  }
+  localStorage.setItem(key, JSON.stringify(stats));
+  try {
+    const summary = sandbox._quizStatSummary('global');
+    if (summary.reviewCount !== 12) throw new Error('待复习数量应为 12（全量），实际 ' + summary.reviewCount);
+    if (!Array.isArray(summary.reviewAll) || summary.reviewAll.length !== 12) throw new Error('reviewAll 应保留全量清单');
+    if (summary.review.length !== 8) throw new Error('展示列表应仍截 8 条，实际 ' + summary.review.length);
+  } finally {
+    if (prev == null) localStorage.removeItem(key);
+    else localStorage.setItem(key, prev);
+  }
+  return true;
+});
 }
