@@ -76,6 +76,9 @@ const entries = [
   'graph-continent-explore.js',
   'graph-continent-regions.js',
   'graph-continent-view.js',
+  // 思考强度滑块（2026-10-25）：createThinkingSlider 组件，models.js 运行期经
+  // window.createThinkingSlider 调用（槽位思考滑块＋简略模式统一滑块共用）；无加载期副作用
+  'thinking-slider.js',
   'models.js',
   'harness.js',
   // Φ 会话管理与快照构建（2026-10-10 自 harness.js 拆出，T261 纯搬家）：sessions 件

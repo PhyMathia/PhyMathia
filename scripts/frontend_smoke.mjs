@@ -14,6 +14,7 @@
 //   knowledge-summary      知识点摘要契约＋存量摘要优化（方案 B）
 //   models-viz             M1 可视化数值实验校验＋模型分组/组级更新模型列表
 //   serial-models-sync     串行边界：模型配置服务端同步（T284；model-update 用例含 await fetchModels 自 models-viz 挪来）
+//   model-mode-slider      模型面板简略/详细模式＋思考强度滑块（统一写入/快照/档位序/DOM·CSS·构建契约）
 //   quiz                   M2 检测闭环收口（quiz-relearn）；M2 夹具在 _runner.mjs
 //   phi-tiers              Φ 第一档七件套＋第三档体验级
 //   continent-core         知识大陆主契约（六文件组拼接源）
@@ -53,6 +54,7 @@ import { run as _knowledge_summary } from './frontend_smoke/knowledge-summary.mj
 import { run as _formula_repair } from './frontend_smoke/formula-repair.mjs';
 import { run as _models_viz } from './frontend_smoke/models-viz.mjs';
 import { run as _serial_models_sync } from './frontend_smoke/serial-models-sync.mjs';
+import { run as _model_mode_slider } from './frontend_smoke/model-mode-slider.mjs';
 import { run as _quiz } from './frontend_smoke/quiz.mjs';
 import { run as _phi_tiers } from './frontend_smoke/phi-tiers.mjs';
 import { run as _continent_core } from './frontend_smoke/continent-core.mjs';
@@ -99,6 +101,7 @@ _knowledge_summary();
 _formula_repair();
 _models_viz();
 await _serial_models_sync();
+_model_mode_slider(); // 模型面板简略/详细模式＋思考滑块（2026-10-25）：纯同步，接 models 域之后
 _quiz();
 _phi_tiers();
 await _continent_core();

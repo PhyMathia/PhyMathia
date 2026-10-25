@@ -35,8 +35,8 @@
     })();
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
-  <link rel="stylesheet" href="/css/styles.min.css?v=298b7e41">
-  <link rel="stylesheet" href="/css/styles-panels.min.css?v=4109a0ba">
+  <link rel="stylesheet" href="/css/styles.min.css?v=49101f79">
+  <link rel="stylesheet" href="/css/styles-panels.min.css?v=aad4cdcf">
   <link rel="stylesheet" href="/css/graph-override.min.css?v=4595e8d4">
   <link rel="stylesheet" href="/phi/phi-pet.min.css?v=259b0ac7">
   <script defer src="/vendor/katex/katex.min.js"></script>
@@ -256,7 +256,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=ac90785b" defer></script>
+  <script src="/js/app.js?v=acbf20f1" defer></script>
   <script>
     // app.js 改 defer 后本脚本先于它执行，而 APP_VERSION 是 config.js 的顶层
     // const——内联脚本无法加 defer，只能等 DOMContentLoaded：所有 defer 脚本
@@ -451,6 +451,25 @@
   </div>
 
   <div class="model-panel aurora-glass aurora-glass--dialog" id="modelPanel">
+    <div class="model-mode-row">
+      <div class="model-mode-switch" id="modelModeSwitch">
+        <button type="button" class="model-mode-btn" id="modelModeBtnSimple" onclick="setModelPanelMode('simple')">简略</button>
+        <button type="button" class="model-mode-btn" id="modelModeBtnDetail" onclick="setModelPanelMode('detail')">详细</button>
+      </div>
+    </div>
+    <div class="model-simple-section" id="modelSimpleSection">
+      <div class="model-section">
+        <div class="model-section-title">模型</div>
+        <select class="model-select" id="unifiedModelSelect" onchange="onUnifiedModelChange(this.value)">
+          <option value="">— 请选择模型 —</option>
+        </select>
+        <div class="model-desc" id="unifiedModelDesc">未配置模型。请在下方「管理自定义模型」里添加</div>
+        <div class="model-tags" id="unifiedModelTags"><span class="model-tag">未配置</span></div>
+        <div class="model-thinking-caption" title="思考程度：所有功能统一使用该模型与档位">思考强度（应用到全部功能）</div>
+        <div class="thinking-slider-mount" id="unifiedThinkingSlider"></div>
+      </div>
+    </div>
+    <div class="model-detail-section" id="modelDetailSection">
     <div class="model-section">
       <div class="model-section-title">Agent 推理模型</div>
       <select class="model-select" id="agentModelSelect" onchange="onModelChange('agent')">
@@ -458,7 +477,8 @@
       </select>
       <div class="model-desc" id="agentModelDesc">未配置模型。请在模型设置中添加</div>
       <div class="model-tags" id="agentModelTags"><span class="model-tag">未配置</span></div>
-      <select class="model-select model-thinking-select" id="agentModelThinking" onchange="onSlotThinkingChange('agent')" title="思考程度：跟随模型默认＝不发思考参数；关＝强制关闭思考"></select>
+      <div class="model-thinking-caption" title="思考程度：跟随模型默认＝不发思考参数；关＝强制关闭思考">思考强度</div>
+      <div class="thinking-slider-mount" id="agentModelThinking" data-role="agent"></div>
     </div>
     <div class="model-section">
       <div class="model-section-title">HTML 生成模型</div>
@@ -467,7 +487,8 @@
       </select>
       <div class="model-desc" id="htmlModelDesc">默认与主模型相同，无需单独配置</div>
       <div class="model-tags" id="htmlModelTags"><span class="model-tag">可选</span></div>
-      <select class="model-select model-thinking-select" id="htmlModelThinking" onchange="onSlotThinkingChange('html')" title="思考程度：跟随模型默认＝不发思考参数；关＝强制关闭思考"></select>
+      <div class="model-thinking-caption" title="思考程度：跟随模型默认＝不发思考参数；关＝强制关闭思考">思考强度</div>
+      <div class="thinking-slider-mount" id="htmlModelThinking" data-role="html"></div>
     </div>
     <div class="model-section">
       <div class="model-section-title">Φ 助手模型</div>
@@ -476,7 +497,8 @@
       </select>
       <div class="model-desc" id="graphModelDesc">默认与主模型相同，无需单独配置</div>
       <div class="model-tags" id="graphModelTags"><span class="model-tag">可选</span></div>
-      <select class="model-select model-thinking-select" id="graphModelThinking" onchange="onSlotThinkingChange('graph')" title="思考程度：自动＝由 Φ 面板深度思考按钮/相位默认决定；关＝强制关闭思考"></select>
+      <div class="model-thinking-caption" title="思考程度：自动＝由 Φ 面板深度思考按钮/相位默认决定；关＝强制关闭思考">思考强度</div>
+      <div class="thinking-slider-mount" id="graphModelThinking" data-role="graph"></div>
     </div>
     <div class="model-section">
       <div class="model-section-title">苏格拉底 / 进阶学习模型</div>
@@ -485,7 +507,8 @@
       </select>
       <div class="model-desc" id="branchModelDesc">默认与主模型相同，无需单独配置</div>
       <div class="model-tags" id="branchModelTags"><span class="model-tag">可选</span></div>
-      <select class="model-select model-thinking-select" id="branchModelThinking" onchange="onSlotThinkingChange('branch')" title="思考程度：跟随模型默认＝不发思考参数；关＝强制关闭思考"></select>
+      <div class="model-thinking-caption" title="思考程度：跟随模型默认＝不发思考参数；关＝强制关闭思考">思考强度</div>
+      <div class="thinking-slider-mount" id="branchModelThinking" data-role="branch"></div>
     </div>
     <div class="model-section">
       <div class="model-section-title">公式描述模型</div>
@@ -494,7 +517,8 @@
       </select>
       <div class="model-desc" id="descriptorModelDesc">默认与主模型相同，无需单独配置</div>
       <div class="model-tags" id="descriptorModelTags"><span class="model-tag">可选</span></div>
-      <select class="model-select model-thinking-select" id="descriptorModelThinking" onchange="onSlotThinkingChange('descriptor')" title="思考程度：跟随模型默认＝不发思考参数；关＝强制关闭思考"></select>
+      <div class="model-thinking-caption" title="思考程度：跟随模型默认＝不发思考参数；关＝强制关闭思考">思考强度</div>
+      <div class="thinking-slider-mount" id="descriptorModelThinking" data-role="descriptor"></div>
     </div>
     <div class="model-section">
       <div class="model-section-title">出题模型</div>
@@ -503,7 +527,9 @@
       </select>
       <div class="model-desc" id="quizModelDesc">默认与主模型相同，无需单独配置</div>
       <div class="model-tags" id="quizModelTags"><span class="model-tag">可选</span></div>
-      <select class="model-select model-thinking-select" id="quizModelThinking" onchange="onSlotThinkingChange('quiz')" title="思考程度：跟随模型默认＝不发思考参数；关＝强制关闭思考"></select>
+      <div class="model-thinking-caption" title="思考程度：跟随模型默认＝不发思考参数；关＝强制关闭思考">思考强度</div>
+      <div class="thinking-slider-mount" id="quizModelThinking" data-role="quiz"></div>
+    </div>
     </div>
     <div class="model-section model-section-mgmt">
       <div class="model-section-title">管理自定义模型</div>

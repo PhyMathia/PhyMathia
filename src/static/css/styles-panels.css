@@ -6246,3 +6246,58 @@
   .rw-port-row { grid-template-columns: minmax(0, 1fr) 96px; }
   .rw-dyn-body { grid-template-columns: auto minmax(0, 1fr); }
 }
+
+/* ===== 模型面板 简略/详细模式切换（2026-10-25） =====
+   两枚胶囊钮（复用 rw-mode-switch 的输入底语言）；面板挂 mode-simple/mode-detail
+   切换显隐（models.js applyModelPanelMode）。无 mode 类＝JS 未跑时的兜底态，
+   显示详细区（信息全的那边）。 */
+.model-mode-row { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+.model-mode-switch { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: var(--r-pill); background: var(--input-bg); }
+.model-mode-btn { padding: 3px 12px; border: 1px solid transparent; border-radius: var(--r-pill); background: transparent; color: var(--text-secondary); font-family: inherit; font-size: var(--fs-xs); line-height: 1.5; white-space: nowrap; cursor: pointer; transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out); }
+.model-mode-btn:hover { color: var(--text-primary); }
+.model-mode-btn.current { background: var(--btn-active-bg); border-color: var(--btn-active-border); color: var(--text-primary); font-weight: 600; }
+.model-simple-section { display: none; }
+.model-panel.mode-simple .model-simple-section { display: block; }
+.model-panel.mode-simple .model-detail-section { display: none; }
+
+.model-thinking-caption { margin-top: 10px; font-size: var(--fs-xs); color: var(--text-secondary); }
+
+/* ===== 思考强度滑块（2026-10-25，随简略/详细模式上） =====
+   Codex 式分段滑块：胶囊轨道＋accent 已过段＋拇指＋档位点＋短标签行；拖动/吸附/
+   键盘/彩蛋交互在 thinking-slider.js。动效只调 transform/opacity，色值全走既有变量
+   （accent 派生用 color-mix），零新增色值字号。 */
+.thinking-slider-mount { margin-top: 6px; }
+.thinking-slider { position: relative; padding: 2px 0; outline: none; touch-action: none; cursor: pointer; user-select: none; -webkit-user-select: none; }
+.thinking-slider.ts-disabled { opacity: 0.55; cursor: not-allowed; }
+.thinking-slider:focus-visible .thinking-slider-thumb { outline: 2px solid var(--accent); outline-offset: 2px; }
+.thinking-slider-track { position: relative; height: 8px; border-radius: var(--r-pill); background: var(--input-bg); border: 1px solid var(--border); }
+.thinking-slider-fill { position: absolute; top: 0; bottom: 0; left: 0; width: 0; border-radius: var(--r-pill); background: var(--accent); transition: width var(--dur-slow) var(--ease-out); }
+.thinking-slider-thumb { position: absolute; top: 50%; left: 0; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: var(--r-pill); background: var(--text-primary); transition: left var(--dur-slow) var(--ease-out), transform var(--dur-base) var(--ease-out); z-index: 2; }
+.thinking-slider-thumb::after { content: ''; position: absolute; inset: -5px; border-radius: var(--r-pill); background: color-mix(in srgb, var(--accent) 30%, transparent); opacity: 0; transform: scale(0.6); pointer-events: none; }
+.thinking-slider-ticks { position: absolute; inset: 0; pointer-events: none; }
+.thinking-slider-dot { position: absolute; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: var(--r-pill); background: var(--border); transition: background var(--dur-fast) var(--ease-out); z-index: 1; }
+.thinking-slider-dot.on { background: var(--text-primary); }
+.thinking-slider-labels { position: relative; height: 15px; margin-top: 6px; pointer-events: none; }
+.thinking-slider-label { position: absolute; top: 0; transform: translateX(-50%); color: var(--text-secondary); font-size: var(--fs-xs); line-height: 15px; white-space: nowrap; transition: color var(--dur-fast) var(--ease-out); }
+.thinking-slider-label:first-child { transform: none; }
+.thinking-slider-label:last-child { transform: translateX(-100%); }
+.thinking-slider-label.on { color: var(--text-primary); font-weight: 600; }
+
+/* 拖动中：关位移过渡，位置全跟手（thinking-slider.js 挂/摘 ts-dragging） */
+.thinking-slider.ts-dragging .thinking-slider-fill,
+.thinking-slider.ts-dragging .thinking-slider-thumb { transition: none; }
+
+/* 停在最大档：拇指呼吸辉光（辉光底常驻半透） */
+.thinking-slider.ts-at-max .thinking-slider-thumb::after { opacity: 0.45; transform: scale(1); }
+.thinking-slider.ts-at-max .thinking-slider-thumb { animation: ts-breathe 2.2s var(--ease-out) infinite; }
+@keyframes ts-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.1); } }
+
+/* 彩蛋（.ts-celebrate，JS 950ms 后摘，可重复触发）：拇指光晕脉冲＋扩散光环＋粒子错峰上浮 */
+.thinking-slider.ts-celebrate .thinking-slider-thumb::after { animation: ts-thumb-glow 0.7s var(--ease-out) 1; }
+@keyframes ts-thumb-glow { 0% { opacity: 0; transform: scale(0.5); } 35% { opacity: 0.9; transform: scale(1.25); } 100% { opacity: 0; transform: scale(2); } }
+.thinking-slider-ring { position: absolute; inset: 0; border-radius: var(--r-pill); border: 2px solid var(--accent); opacity: 0; pointer-events: none; }
+.thinking-slider.ts-celebrate .thinking-slider-ring { animation: ts-ring-burst 0.75s var(--ease-out) 1; }
+@keyframes ts-ring-burst { 0% { opacity: 0.85; transform: scale(1); } 100% { opacity: 0; transform: scale(3.4); } }
+.thinking-slider-spark { position: absolute; left: calc(100% - 8px); bottom: 0; width: 5px; height: 5px; border-radius: var(--r-pill); background: var(--accent); opacity: 0; pointer-events: none; z-index: 3; }
+.thinking-slider.ts-celebrate .thinking-slider-spark { animation: ts-spark-rise 0.8s var(--ease-out) 1 both; animation-delay: var(--ts-delay, 0ms); }
+@keyframes ts-spark-rise { 0% { opacity: 0; transform: translate(0, 0) scale(0.7); } 25% { opacity: 1; } 100% { opacity: 0; transform: translate(var(--ts-drift, 0px), -26px) scale(1); } }
