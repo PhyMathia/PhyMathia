@@ -3070,6 +3070,170 @@ html[data-theme="light"] .graph-node-fs,
   pointer-events: none;
 }
 
+/* ---------- 节点全屏划词快捷工具（2026-10-25）---------- */
+/* 浮条挂在 .graph-node-fs-overlay 上（fixed 定位，不进正文排版、不遮刚读的一行）。
+   玻璃底/描边/阴影全归 aurora-glass--compact（胶囊档），这里只管布局与字色；
+   新窗口预览页里的同款浮条样式由内嵌脚本自带（深色定版），两处视觉同源。 */
+.node-fs-bar {
+  position: fixed;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: var(--r-pill);
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  max-width: calc(100vw - 16px);
+}
+
+.node-fs-bar--expanded {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--sp-2);
+  border-radius: var(--r-md);
+  padding: var(--sp-2);
+  min-width: min(420px, calc(100vw - 24px));
+}
+
+.node-fs-btn {
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: var(--r-pill);
+  font-size: 12.5px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.node-fs-btn:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-secondary) 14%, transparent);
+}
+
+/* 主色只给「追问」 */
+.node-fs-btn--primary {
+  color: #fff;
+  background: var(--accent);
+}
+
+.node-fs-btn--primary:hover {
+  color: #fff;
+  background: var(--accent);
+  filter: brightness(1.1);
+}
+
+.node-fs-btn--more {
+  padding: 0 8px;
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+
+.node-fs-more {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border-radius: var(--r-md);
+}
+
+.node-fs-menu-item {
+  justify-content: flex-start;
+}
+
+/* 追问输入行：引文 chip 可删（×），输入框留空用默认问句 */
+.node-fs-quote-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.node-fs-quote-chip {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-secondary) 14%, transparent);
+  border-radius: var(--r-pill);
+  padding: 3px 10px;
+}
+
+.node-fs-quote-del {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.node-fs-quote-del:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-secondary) 18%, transparent);
+}
+
+.node-fs-input-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.node-fs-input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 0 10px;
+  outline: none;
+}
+
+.node-fs-input:focus {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.node-fs-trunc {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* 窄屏文字收成图标（title/aria-label 兜底语义） */
+@media (max-width: 520px) {
+  .node-fs-bar .node-fs-btn-label {
+    display: none;
+  }
+
+  .node-fs-bar .node-fs-btn::before {
+    content: attr(data-icon);
+    font-size: 13px;
+  }
+
+  .node-fs-bar .node-fs-btn {
+    padding: 0 9px;
+  }
+}
+
 /* ---------- 拖线吸附高亮（2026-10-10 ② 统一吸附）---------- */
 /* 拖线悬停在「松手即可连」的节点身上时打虚线描边；与选中态（实线）区分 */
 .graph-node.graph-link-drop-target {

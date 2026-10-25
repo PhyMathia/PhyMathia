@@ -40,6 +40,50 @@ try {
 } catch (e) {
   document.getElementById('contentFrame').style.display = 'none';
 }
+// 划词快捷工具桥（2026-10-25，node-fs-toolbar.js 方案）：沙箱 iframe 里的浮条不直接
+// 干活，动作消息经本页转发给 window.opener（主应用），ack 原路带回。本页仍不执行任何
+// 业务逻辑——只做带 source 校验的信差：只认自家 contentFrame 发来的 node-fs-action，
+// 只把 opener 回的 node-fs-ack 传进 iframe；800ms 没等到 ack 就合成失败应答
+// （主应用未响应）。token / 动作白名单 / 会话归属由主应用侧校验，本页不碰。
+window.addEventListener('message', function (ev) {
+  var frame = document.getElementById('contentFrame');
+  if (!frame || ev.source !== frame.contentWindow) return;
+  var d = ev.data;
+  if (!d || d.__phymathia !== 1 || d.kind !== 'node-fs-action') return;
+  var ackIntoFrame = function (payload) {
+    try { frame.contentWindow.postMessage(payload, '*'); } catch (e2) { /* 沙箱侧无从投递 */ }
+  };
+  var fail = function (msg) {
+    ackIntoFrame({ kind: 'node-fs-ack', __phymathia: 1, token: d.token, ok: false, message: msg });
+  };
+  if (!window.opener || window.opener.closed) {
+    fail('主应用未响应，当前只能复制');
+    return;
+  }
+  var settled = false;
+  var onAck = function (aev) {
+    if (aev.source !== window.opener) return;
+    var ad = aev.data;
+    if (!ad || ad.__phymathia !== 1 || ad.kind !== 'node-fs-ack') return;
+    settled = true;
+    window.removeEventListener('message', onAck);
+    ackIntoFrame(ad);
+  };
+  window.addEventListener('message', onAck);
+  try {
+    window.opener.postMessage(d, location.origin);
+  } catch (e) {
+    settled = true;
+    window.removeEventListener('message', onAck);
+    fail('转发失败');
+    return;
+  }
+  setTimeout(function () {
+    if (settled) return;
+    window.removeEventListener('message', onAck);
+    fail('主应用未响应，当前只能复制');
+  }, 800);
+});
 </script>
 </body>
 </html>

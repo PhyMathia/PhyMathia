@@ -47,6 +47,7 @@ import { finish } from './frontend_smoke/_runner.mjs';
 import { run as _recipes } from './frontend_smoke/recipes.mjs';
 import { run as _phi } from './frontend_smoke/phi.mjs';
 import { run as _contextmenu } from './frontend_smoke/contextmenu.mjs';
+import { run as _node_fs_toolbar } from './frontend_smoke/node-fs-toolbar.mjs';
 import { run as _viewer_utopia } from './frontend_smoke/viewer-utopia.mjs';
 import { run as _knowledge_summary } from './frontend_smoke/knowledge-summary.mjs';
 import { run as _formula_repair } from './frontend_smoke/formula-repair.mjs';
@@ -92,6 +93,7 @@ import { run as _serial_source_input } from './frontend_smoke/serial-source-inpu
 _recipes();
 _phi();
 _contextmenu();
+_node_fs_toolbar(); // 划词快捷工具（2026-10-25）：按语义插在 contextmenu 之后，纯同步静态契约
 _viewer_utopia();
 _knowledge_summary();
 _formula_repair();

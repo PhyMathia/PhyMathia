@@ -634,6 +634,9 @@ function _nodeFsTogglesHtml(node, message) {
 let nodeFsOverlay = null;
 
 function closeNodeFullscreen() {
+  // 划词浮条挂在 overlay 上，随层一起移除；状态在这单点收（Esc capture 先收浮条
+  // 的路径也是走 _nodeFsHideBar，见 node-fs-toolbar.js）
+  if (typeof _nodeFsHideBar === 'function') _nodeFsHideBar();
   if (nodeFsOverlay) {
     nodeFsOverlay.remove();
     nodeFsOverlay = null;
@@ -671,9 +674,16 @@ function openNodeFullscreen(nodeId) {
     + _nodeFsRenderedHtml(text, { parentId: String((message && message.timestamp) || node.timestamp || ''), sourceModule: node.moduleKey || '' })
     + '</div></div></div>';
   overlay.addEventListener('pointerdown', ev => { if (ev.target === overlay) closeNodeFullscreen(); });
+  // 划词快捷工具（node-fs-toolbar.js）：浮条挂本层，动作落回这个节点。
+  // dataset 沙箱桩可能没有（recipes 的全屏用例），守一下
+  if (overlay.dataset) {
+    overlay.dataset.nodeFsId = String(node.id || '');
+    overlay.dataset.nodeFsTitle = _nodeFsTitle(node);
+  }
   document.body.appendChild(overlay);
   nodeFsOverlay = overlay;
   _renderNotebookRich(overlay);
+  if (typeof attachNodeFsSelectionBar === 'function') attachNodeFsSelectionBar(overlay);
 }
 
 // 新窗口全屏：主应用内先把内容渲染成静态 HTML（公式同步、mermaid 等 promise、viz iframe
@@ -697,10 +707,20 @@ async function openNodeNewWindow(nodeId) {
   if (typeof _initVizIframes === 'function') { try { _initVizIframes(holder, { force: true }); } catch (e) { /* 静态兜底 */ } }
   const contentHtml = holder.innerHTML;
   holder.remove();
-  const page = _buildContentPreviewPage(title, contentHtml);
+  // 划词工具桥（2026-10-25）：同源预览页带一次性 token，追问/收藏公式/查找过桥回
+  // 主应用执行；file:// 单文件（blob 直开，无同源 shell 中转）只留复制与复制为引用。
+  // 没编进 node-fs-toolbar.js 的环境（viewer 家族）ctx 不造，页面与旧行为完全一致
+  const isFile = typeof location !== 'undefined' && location.protocol === 'file:';
+  let ctx = null;
+  if (typeof _buildNodeFsPreviewScript === 'function') {
+    ctx = isFile
+      ? { nodeId: String(node.id || ''), title: String(title || ''), bridge: false }
+      : { nodeId: String(node.id || ''), title: String(title || ''), bridge: true, token: _nodeFsMintPreviewToken() };
+  }
+  const page = _buildContentPreviewPage(title, contentHtml, ctx);
   // file:// 单文件场景：没有同源预览页可跳，Blob URL 直开（同 openVizNewTab 先例；
   // 外链 katex css 会静默失载，数学退化为行内文本，可接受）
-  if (typeof location !== 'undefined' && location.protocol === 'file:') {
+  if (isFile) {
     try {
       const url = URL.createObjectURL(new Blob([page], { type: 'text/html' }));
       const win = window.open(url, '_blank');
@@ -717,18 +737,38 @@ async function openNodeNewWindow(nodeId) {
     if (typeof showToast === 'function') showToast('内容过大，无法在新窗口打开');
     return;
   }
+  // 先登记桥上下文再开窗（开窗成功后补 win 引用；页面脚本起跑晚于这段同步代码）
+  if (ctx && typeof _setNodeFsPreviewCtx === 'function') {
+    _setNodeFsPreviewCtx({
+      token: ctx.token,
+      nodeId: ctx.nodeId,
+      sessionId: (typeof currentSessionId !== 'undefined' && currentSessionId) || '',
+      title: ctx.title,
+      win: null,
+    });
+  }
   const win = window.open('/content-preview.html', '_blank');
   if (!win) {
+    if (typeof _setNodeFsPreviewCtx === 'function') _setNodeFsPreviewCtx(null);
     try { sessionStorage.removeItem('phymathia_content_preview'); } catch (e2) {}
     if (typeof showToast === 'function') showToast('浏览器拦截了弹出窗口，请允许弹窗后重试');
+  } else if (typeof _attachNodeFsPreviewWin === 'function') {
+    _attachNodeFsPreviewWin(win);
   }
 }
 
 // 新窗口页面文档：自带排版（深色定版，同 viz-preview 色板；2026-10-14 观感重制——
 // 纯平 #0f142d 被用户报丑，改「极光纱底＋磨砂吸顶头条」：三团固定径向色斑呼应主应用
 // 深色极光（蓝/紫/青玉低 alpha），头条 sticky+blur，长文滚动时标题常驻），katex css 走同源外链。
-// 内容是主应用渲染管线已 sanitize 的静态 HTML，页面内不再执行任何渲染脚本
-function _buildContentPreviewPage(title, contentHtml) {
+// 内容是主应用渲染管线已 sanitize 的静态 HTML，页面内不再执行任何渲染脚本。
+// 2026-10-25 加可选 ctx：划词快捷工具（node-fs-toolbar.js）——ctx 存在时塞 data-node-id
+// 与自包含浮条脚本（bridge:true 带 token 过桥回主应用）；不传 ctx 行为与旧版逐字一致
+// （viewer 家族的老调用不受影响）
+function _buildContentPreviewPage(title, contentHtml, ctx) {
+  const bodyAttr = (ctx && ctx.nodeId) ? ' data-node-id="' + escapeHtml(ctx.nodeId) + '"' : '';
+  const scriptHtml = (ctx && typeof _buildNodeFsPreviewScript === 'function')
+    ? '<script>' + _buildNodeFsPreviewScript(ctx) + '</script>'
+    : '';
   return '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">'
     + '<meta name="viewport" content="width=device-width, initial-scale=1.0">'
     + '<title>' + escapeHtml(title) + ' · PhyMathia</title>'
@@ -763,7 +803,7 @@ function _buildContentPreviewPage(title, contentHtml) {
     + '</style></head><body>'
     + '<div class="cp-head"><span class="cp-dot"></span><span class="cp-brand">PhyMathia</span>'
     + '<span class="cp-sep">·</span><span class="cp-title">' + escapeHtml(title) + '</span></div>'
-    + '<div class="cp-body">' + contentHtml + '</div></body></html>';
+    + '<div class="cp-body"' + bodyAttr + '>' + contentHtml + '</div>' + scriptHtml + '</body></html>';
 }
 
 // ===== 输入节点（素材篮，2026-10-22 重做）=====
