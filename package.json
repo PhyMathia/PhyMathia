@@ -5,7 +5,8 @@
   "scripts": {
     "build:js": "node scripts/build_frontend.mjs",
     "build:viewer": "node scripts/build_viewer.mjs",
-    "verify": "node scripts/frontend_smoke.mjs && python3 -m pytest tests/ -q"
+    "verify": "node scripts/check_context_budget.mjs && node scripts/frontend_smoke.mjs && python3 -m pytest tests/ -q",
+    "check:ctx": "node scripts/check_context_budget.mjs"
   },
   "devDependencies": {
     "esbuild": "0.25.6",
