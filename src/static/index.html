@@ -36,7 +36,7 @@
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
   <link rel="stylesheet" href="/css/styles.min.css?v=49101f79">
-  <link rel="stylesheet" href="/css/styles-panels.min.css?v=aad4cdcf">
+  <link rel="stylesheet" href="/css/styles-panels.min.css?v=4ae0325e">
   <link rel="stylesheet" href="/css/graph-override.min.css?v=4595e8d4">
   <link rel="stylesheet" href="/phi/phi-pet.min.css?v=259b0ac7">
   <script defer src="/vendor/katex/katex.min.js"></script>
@@ -256,7 +256,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=acbf20f1" defer></script>
+  <script src="/js/app.js?v=e9ea66cf" defer></script>
   <script>
     // app.js 改 defer 后本脚本先于它执行，而 APP_VERSION 是 config.js 的顶层
     // const——内联脚本无法加 defer，只能等 DOMContentLoaded：所有 defer 脚本
@@ -477,7 +477,7 @@
       </select>
       <div class="model-desc" id="agentModelDesc">未配置模型。请在模型设置中添加</div>
       <div class="model-tags" id="agentModelTags"><span class="model-tag">未配置</span></div>
-      <div class="model-thinking-caption" title="思考程度：跟随模型默认＝不发思考参数；关＝强制关闭思考">思考强度</div>
+      <div class="model-thinking-caption" title="思考强度：档位按当前模型真实支持的强度档显示，拖动或点轨道即改">思考强度</div>
       <div class="thinking-slider-mount" id="agentModelThinking" data-role="agent"></div>
     </div>
     <div class="model-section">
@@ -487,7 +487,7 @@
       </select>
       <div class="model-desc" id="htmlModelDesc">默认与主模型相同，无需单独配置</div>
       <div class="model-tags" id="htmlModelTags"><span class="model-tag">可选</span></div>
-      <div class="model-thinking-caption" title="思考程度：跟随模型默认＝不发思考参数；关＝强制关闭思考">思考强度</div>
+      <div class="model-thinking-caption" title="思考强度：档位按当前模型真实支持的强度档显示，拖动或点轨道即改">思考强度</div>
       <div class="thinking-slider-mount" id="htmlModelThinking" data-role="html"></div>
     </div>
     <div class="model-section">
@@ -497,7 +497,7 @@
       </select>
       <div class="model-desc" id="graphModelDesc">默认与主模型相同，无需单独配置</div>
       <div class="model-tags" id="graphModelTags"><span class="model-tag">可选</span></div>
-      <div class="model-thinking-caption" title="思考程度：自动＝由 Φ 面板深度思考按钮/相位默认决定；关＝强制关闭思考">思考强度</div>
+      <div class="model-thinking-caption" title="思考强度：自动＝由 Φ 面板深度思考按钮/相位默认决定；其余档位按当前模型真实支持的可调档显示">思考强度</div>
       <div class="thinking-slider-mount" id="graphModelThinking" data-role="graph"></div>
     </div>
     <div class="model-section">
@@ -507,7 +507,7 @@
       </select>
       <div class="model-desc" id="branchModelDesc">默认与主模型相同，无需单独配置</div>
       <div class="model-tags" id="branchModelTags"><span class="model-tag">可选</span></div>
-      <div class="model-thinking-caption" title="思考程度：跟随模型默认＝不发思考参数；关＝强制关闭思考">思考强度</div>
+      <div class="model-thinking-caption" title="思考强度：档位按当前模型真实支持的强度档显示，拖动或点轨道即改">思考强度</div>
       <div class="thinking-slider-mount" id="branchModelThinking" data-role="branch"></div>
     </div>
     <div class="model-section">
@@ -517,7 +517,7 @@
       </select>
       <div class="model-desc" id="descriptorModelDesc">默认与主模型相同，无需单独配置</div>
       <div class="model-tags" id="descriptorModelTags"><span class="model-tag">可选</span></div>
-      <div class="model-thinking-caption" title="思考程度：跟随模型默认＝不发思考参数；关＝强制关闭思考">思考强度</div>
+      <div class="model-thinking-caption" title="思考强度：档位按当前模型真实支持的强度档显示，拖动或点轨道即改">思考强度</div>
       <div class="thinking-slider-mount" id="descriptorModelThinking" data-role="descriptor"></div>
     </div>
     <div class="model-section">
@@ -527,7 +527,7 @@
       </select>
       <div class="model-desc" id="quizModelDesc">默认与主模型相同，无需单独配置</div>
       <div class="model-tags" id="quizModelTags"><span class="model-tag">可选</span></div>
-      <div class="model-thinking-caption" title="思考程度：跟随模型默认＝不发思考参数；关＝强制关闭思考">思考强度</div>
+      <div class="model-thinking-caption" title="思考强度：档位按当前模型真实支持的强度档显示，拖动或点轨道即改">思考强度</div>
       <div class="thinking-slider-mount" id="quizModelThinking" data-role="quiz"></div>
     </div>
     </div>

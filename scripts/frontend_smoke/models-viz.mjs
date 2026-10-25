@@ -183,7 +183,7 @@ check('model-add：双模式添加接线（预设/手动选项卡 + 勾选清单
   return true;
 });
 
-check('model-add：预设标签一律光模型名＋槽位思考选项（布尔族三档/effort 族五档/Φ 槽自动）', () => {
+check('model-add：预设标签一律光模型名＋槽位思考选项（布尔族两档/effort 族四档/智谱5.x 三档/Φ 槽自动）', () => {
   // 2026-10-11 用户拍板：模型名不挂（旗舰）（性价比）这类注解，档位/定位说明走供应商 tagline
   for (const [key, preset] of Object.entries(sandbox.window.MODEL_PRESETS)) {
     for (const m of preset.models || []) {
@@ -191,17 +191,22 @@ check('model-add：预设标签一律光模型名＋槽位思考选项（布尔�
     }
   }
   if (!sandbox.window.THINKING_BOOLEAN_PROVIDERS) throw new Error('布尔开关族清单未挂 window');
-  // 思考档位 2026-10-11 迁到槽位：布尔族 跟随默认/开/关 三档，effort 族加「关」共五档
+  // 思考档位 2026-10-25 滑块重做：档位组＝真实 API 档、无「跟随默认」——布尔族 关/开
+  // 两档，effort 族 关/低/中/高 四档，智谱 5.x（glm-5+）低/高/最高 三档（思考关不掉）
   const boolOpts = sandbox._thinkingOptionsFor('mimo');
-  if (boolOpts.length !== 3 || boolOpts[0].value !== '' || boolOpts[1].value !== 'on' || boolOpts[2].value !== 'off') {
-    throw new Error('布尔族（mimo）槽位思考选项应为 跟随默认/开/关 三档');
+  if (boolOpts.length !== 2 || boolOpts[0].value !== 'off' || boolOpts[1].value !== 'on') {
+    throw new Error('布尔族（mimo）槽位思考选项应为 关/开 两档');
   }
   const effortOpts = sandbox._thinkingOptionsFor('deepseek');
-  if (effortOpts.length !== 5 || effortOpts[0].value !== '' || effortOpts[1].value !== 'off' || effortOpts[4].value !== 'max') {
-    throw new Error('effort 族槽位思考选项应为 跟随默认/关/low/high/max 五档');
+  if (effortOpts.length !== 4 || effortOpts[0].value !== 'off' || effortOpts[3].value !== 'high') {
+    throw new Error('effort 族槽位思考选项应为 关/低/中/高 四档');
+  }
+  const z5Opts = sandbox._thinkingOptionsFor('zhipu', 'agent', 'glm-5.3-flash');
+  if (z5Opts.length !== 3 || z5Opts[0].value !== 'low' || z5Opts[2].value !== 'max') {
+    throw new Error('智谱 5.x 槽位思考选项应为 低/高/最高 三档');
   }
   const graphOpts = sandbox._thinkingOptionsFor('deepseek', 'graph');
-  if (!graphOpts[0].label.includes('自动')) throw new Error('Φ 槽「跟随默认」应标注自动（相位默认/按钮可覆盖）');
+  if (!graphOpts[0].label.includes('自动')) throw new Error('Φ 槽首档应标注自动（相位默认/按钮可覆盖）');
   return true;
 });
 

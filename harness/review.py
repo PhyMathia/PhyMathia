@@ -644,7 +644,10 @@ async def _call_model(
     thinking_keys: list = []
     level = str(model.get("thinking") or "")
     if level:
-        params = thinking_request_params(str(model.get("provider") or ""), level)
+        params = thinking_request_params(
+            str(model.get("provider") or ""), level,
+            str(model.get("model") or model.get("model_name") or ""),
+        )
         if params:
             body.update(params)
             thinking_keys = list(params.keys())

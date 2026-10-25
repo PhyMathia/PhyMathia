@@ -377,47 +377,68 @@ let activeModels = { agent_model: '', html_model: '', descriptor_model: '', quiz
 
 // 思考程度：2026-10-11 起改挂**槽位**（activeModels 的 <role>_thinking 键），不再挂模型条目
 // ——同一个模型主聊天要深思、出题/可视化不要，档位跟着用途走而不是跟着模型走。取值：
-// ''（跟随模型默认，不发思考参数）/ on / off / low / high / max，由后端按供应商族映射
-// （reasoning_effort 三档拉伸＋off→"none" / enable_thinking / thinking.type / think），
-// 上游不认识时自动剥掉重发（见 llm_common.thinking_request_params）。布尔开关族
-// （qwen/zhipu/ollama/mimo）界面用 on/off 两档；effort 族 off 发 reasoning_effort:"none"
-// （OpenAI gpt-5.1 起的正式取值），旧端点不支持就 400 剥参退化。
-const THINKING_LEVELS = ['low', 'high', 'max'];
+// 档位取值与发送语义见 llm_common.thinking_request_params（后端唯一映射表）。
+// 2026-10-25 滑块重做：档位组＝真实 API 档，不再有「跟随默认」档——'' 存储语义
+// 保留（不发思考参数），只是界面不再展示；无效存量档按语义就近改写（见
+// _thinkingDisplayValue）。布尔开关族（qwen/zhipu 旧代/ollama/mimo）只有 开/关；
+// effort 族 关/低/中/高 四档（reasoning_effort none/low/medium/high 一一对应）；
+// 智谱 5.x（glm-5.3 等，思考关不掉）低/高/最高 三档（reasoning_effort low/high/max）。
+const THINKING_LEVELS = ['low', 'high', 'max']; // 历史遗留档位（存储兼容用，界面不再提供）
 const THINKING_BOOLEAN_PROVIDERS = ['qwen', 'zhipu', 'ollama', 'mimo'];
+// 智谱 5.x：思考恒开、强度走 reasoning_effort（与后端 _ZHIPU_EFFORT_MODEL_RE 同口径）
+const THINKING_ZHIPU_EFFORT_RE = /^glm-[5-9](\.|$)/;
 window.THINKING_LEVELS = THINKING_LEVELS;
 window.THINKING_BOOLEAN_PROVIDERS = THINKING_BOOLEAN_PROVIDERS;
 
-// 槽位思考档位选项（纯函数，冒烟直测）：布尔族 跟随默认/开/关 三档，effort 族
-// 跟随默认/关/low/high/max 五档。role==='graph'（Φ 槽）的「跟随默认」含义不同：
-// 不发思考参数＝交给 Φ 面板按钮/后端相位默认，故文案改「自动」
-function _thinkingOptionsFor(provider, role) {
-  const autoLabel = role === 'graph' ? '思考：自动（Φ 按钮可覆盖）' : '思考：跟随模型默认';
-  if (THINKING_BOOLEAN_PROVIDERS.includes(provider)) {
-    return [{ value: '', label: autoLabel }, { value: 'on', label: '思考：开' }, { value: 'off', label: '思考：关' }];
+// 槽位思考档位选项（纯函数，冒烟直测）：按供应商族给「真实存在」的档——
+// 布尔族 关/开 两档；effort 族 关/低/中/高 四档；智谱 5.x（model 匹配 glm-5+）
+// 低/高/最高 三档（关不掉思考，不给「关」假档）。role==='graph'（Φ 槽）首项是
+// 「自动」('')：不发思考参数＝交给 Φ 面板按钮/后端相位默认，这是唯一保留 '' 档的角色
+function _thinkingOptionsFor(provider, role, model) {
+  const opts = [];
+  if (role === 'graph') opts.push({ value: '', label: '思考：自动（Φ 按钮可覆盖）' });
+  const p = String(provider || '').toLowerCase();
+  const m = String(model || '').toLowerCase();
+  if (p === 'zhipu' && THINKING_ZHIPU_EFFORT_RE.test(m)) {
+    opts.push({ value: 'low', label: '思考：低' }, { value: 'high', label: '思考：高' }, { value: 'max', label: '思考：最高' });
+  } else if (THINKING_BOOLEAN_PROVIDERS.includes(p)) {
+    opts.push({ value: 'off', label: '思考：关' }, { value: 'on', label: '思考：开' });
+  } else {
+    opts.push({ value: 'off', label: '思考：关' }, { value: 'low', label: '思考：低' }, { value: 'medium', label: '思考：中' }, { value: 'high', label: '思考：高' });
   }
-  return [
-    { value: '', label: autoLabel },
-    { value: 'off', label: '思考：关' },
-    { value: 'low', label: '思考：low' },
-    { value: 'high', label: '思考：high' },
-    { value: 'max', label: '思考：max' },
-  ];
+  return opts;
 }
 
-// 滑块档位（纯函数，冒烟直测）：下拉选项转「按思考强度升序」的滑块档，附短标签与悬浮
-// 说明。effort 族序：关 → 默认 → 浅(low) → 深(high) → 最深(max)；布尔族：关 → 默认 → 开。
-// graph 槽「默认」叫「自动」（Φ 按钮可覆盖），与 _thinkingOptionsFor 口径一致。
-function _thinkingSliderEntries(options, role) {
-  const isBoolean = (options || []).some(o => o.value === 'on');
-  const order = isBoolean ? { off: 0, '': 1, on: 2 } : { off: 0, '': 1, low: 2, high: 3, max: 4 };
-  const short = isBoolean ? { off: '关', '': '默认', on: '开' }
-    : { off: '关', '': (role === 'graph' ? '自动' : '默认'), low: '浅', high: '深', max: '最深' };
-  const autoTitle = role === 'graph' ? '自动＝由 Φ 面板深度思考按钮/相位默认决定' : '跟随模型默认＝不发思考参数';
-  const titles = isBoolean ? { off: '强制关闭思考', '': autoTitle, on: '开启思考' }
-    : { off: '强制关闭思考', '': autoTitle, low: '低强度思考', high: '高强度思考', max: '最高强度思考' };
-  return (options || []).slice()
-    .sort((a, b) => (order[a.value] !== undefined ? order[a.value] : 9) - (order[b.value] !== undefined ? order[b.value] : 9))
-    .map(o => ({ value: o.value, short: short[o.value] || o.value || '默认', title: titles[o.value] || '' }));
+// 滑块档位（纯函数，冒烟直测）：选项转滑块档（值已按强度升序），附短标签与悬浮说明
+function _thinkingSliderEntries(options) {
+  const short = { '': '自动', off: '关', on: '开', low: '低', medium: '中', high: '高', max: '最高' };
+  const titles = {
+    '': '自动＝由 Φ 面板深度思考按钮/相位默认决定',
+    off: '强制关闭思考', on: '开启思考',
+    low: '低强度思考', medium: '中等强度思考', high: '高强度思考', max: '最高强度思考',
+  };
+  return (options || []).map(o => ({ value: o.value, short: short[o.value] || o.value, title: titles[o.value] || o.label || '' }));
+}
+
+// 存储值 → 滑块显示档（纯函数，冒烟直测）：现值在档组里原样返回；否则按语义就近
+// ——''（不发参数）回该族「模型默认」对应的档（布尔族默认开、effort 族默认中、
+// 智谱 5.x 默认最高）；旧强度档回最近可表达档（max/on/ultra→最右，low/high→同名或
+// 最右，off→「关」或最左）。只决定显示与改写落点，不改「不发参数」的存量语义
+function _thinkingDisplayValue(current, entries) {
+  const list = entries || [];
+  if (list.some(e => e.value === current)) return current;
+  const vals = list.map(e => e.value);
+  const last = vals[vals.length - 1] || '';
+  if (current === '') {
+    if (vals.includes('medium')) return 'medium';
+    if (vals.includes('max')) return 'max';
+    if (vals.includes('on')) return 'on';
+    return last;
+  }
+  if (['max', 'on', 'ultra'].includes(current)) return last;
+  if (current === 'off') return vals.includes('off') ? 'off' : (vals[0] || '');
+  if (vals.includes(current)) return current;
+  return last;
 }
 
 function loadUserModels() {
@@ -736,6 +757,12 @@ function _slotThinkingProvider(role) {
   return model ? model.provider : '';
 }
 
+// 槽位实际会用的模型名（glm-5.3 之类的代次识别用；与 _slotThinkingProvider 同口径）
+function _slotThinkingModelName(role) {
+  const model = getActiveModelForRole(role) || (role !== 'agent' ? getActiveModelForRole('agent') : null);
+  return model ? String(model.model || model.name || '') : '';
+}
+
 async function fetchModels() {
   loadUserModels();
   try { const raw = localStorage.getItem('phymathia_active_models'); if (raw) activeModels = JSON.parse(raw); } catch {}
@@ -901,21 +928,22 @@ function _ensureThinkingSliderOn(mount, onChangeCb) {
   return mount._ts;
 }
 
-// 单个槽位思考滑块：档位按实际会被调用的模型的供应商族渲染；存量档位在新族下
-// 无效（如 on 只在布尔族有效）时回「跟随默认」并落盘（原下拉同语义）
+// 单个槽位思考滑块：档位按实际会被调用的模型的供应商族＋代次渲染；存量档位在新档组
+// 无效（如 on 遇 effort 族）时按语义就近改写并落盘，''（不发参数）保留不改只就近显示
 function _refreshSlotThinkingSelect(role) {
   const mount = document.getElementById(role + 'ModelThinking');
   if (!mount) return;
   const slider = _ensureThinkingSliderOn(mount, v => onSlotThinkingChange(role, v));
-  const entries = _thinkingSliderEntries(_thinkingOptionsFor(_slotThinkingProvider(role), role), role);
+  const entries = _thinkingSliderEntries(_thinkingOptionsFor(_slotThinkingProvider(role), role, _slotThinkingModelName(role)));
   const current = activeModels[role + '_thinking'] || '';
   const valid = entries.some(e => e.value === current);
+  const display = _thinkingDisplayValue(current, entries);
   if (slider) {
     slider.setOptions(entries);
-    slider.setValue(valid ? current : '');
+    slider.setValue(display);
   }
   if (!valid && current) {
-    activeModels[role + '_thinking'] = '';
+    activeModels[role + '_thinking'] = display;
     persistActiveModels();
   }
 }
@@ -1025,20 +1053,22 @@ function onUnifiedThinkingChange(level) {
   applyUnifiedConfig(sel ? sel.value : (activeModels.agent_model || ''), level || '');
 }
 
-// 简略模式统一滑块刷新：档位组随主模型供应商族渲染；展示值取主槽（无效存量档回默认）
+// 简略模式统一滑块刷新：档位组随主模型供应商族＋代次渲染；展示值取主槽（无效存量档
+// 就近回退，同 _refreshSlotThinkingSelect 口径）
 function _refreshUnifiedThinkingSlider() {
   const mount = document.getElementById('unifiedThinkingSlider');
   if (!mount) return;
   const slider = _ensureThinkingSliderOn(mount, v => onUnifiedThinkingChange(v));
-  const entries = _thinkingSliderEntries(_thinkingOptionsFor(_slotThinkingProvider('agent'), 'agent'), 'agent');
+  const entries = _thinkingSliderEntries(_thinkingOptionsFor(_slotThinkingProvider('agent'), 'agent', _slotThinkingModelName('agent')));
   const current = activeModels.agent_thinking || '';
   const valid = entries.some(e => e.value === current);
+  const display = _thinkingDisplayValue(current, entries);
   if (slider) {
     slider.setOptions(entries);
-    slider.setValue(valid ? current : '');
+    slider.setValue(display);
   }
   if (!valid && current) {
-    activeModels.agent_thinking = '';
+    activeModels.agent_thinking = display;
     persistActiveModels();
   }
 }

@@ -1,5 +1,6 @@
-// 模型面板 简略/详细模式＋思考强度滑块（2026-10-25）：统一写入/快照三态/档位序/
-// 滑块组件沙箱实跑/DOM·CSS·构建·源码契约。纯同步域文件（不 await）。
+// 模型面板 简略/详细模式＋思考强度滑块（2026-10-25 建，同日滑块重做同步改）：
+// 统一写入/快照三态/档位序（去「默认」档、按族给真实档）/显示回退/滑块组件沙箱实跑/
+// DOM·CSS·构建·源码契约。纯同步域文件（不 await）。
 // 排在 models-viz 与 serial-models-sync 之后（models 域既有段先跑完），自播自收、
 // 收尾清掉本轮写的 localStorage 键并把 activeModels 复位为空对象，不污染后续域。
 import fs from 'node:fs';
@@ -30,28 +31,51 @@ export function run() {
     }
     slider.setOptions([
       { value: 'off', short: '关', title: '强制关闭思考' },
-      { value: '', short: '默认', title: '跟随模型默认' },
-      { value: 'max', short: '最深', title: '最高强度思考' },
+      { value: 'low', short: '低', title: '低强度思考' },
+      { value: 'medium', short: '中', title: '中等强度思考' },
+      { value: 'high', short: '高', title: '高强度思考' },
     ]);
-    slider.setValue('max');
-    if (slider.getValue() !== 'max') throw new Error('setValue/getValue 往返失败');
-    slider.setValue('');
-    if (slider.getValue() !== '') throw new Error('回「跟随默认」失败');
+    slider.setValue('high');
+    if (slider.getValue() !== 'high') throw new Error('setValue/getValue 往返失败');
     slider.setValue('不存在的档');
-    if (slider.getValue() !== '') throw new Error('无效档位应回落「跟随默认」');
+    if (slider.getValue() !== '') throw new Error('无效档位应回落空值');
     slider.setDisabled(true);
     return true;
   });
 
-  check('model-mode：滑块档位序——effort 关→默认→浅→深→最深；布尔 关→默认→开；graph 档叫「自动」', () => {
-    const e = sandbox._thinkingSliderEntries(sandbox._thinkingOptionsFor('deepseek'), 'agent');
-    if (e.map(o => o.value).join(',') !== 'off,,low,high,max') throw new Error('effort 序错：' + e.map(o => o.value).join(','));
-    if (e.map(o => o.short).join(',') !== '关,默认,浅,深,最深') throw new Error('effort 短标签错：' + e.map(o => o.short).join(','));
-    const b = sandbox._thinkingSliderEntries(sandbox._thinkingOptionsFor('mimo'), 'agent');
-    if (b.map(o => o.value).join(',') !== 'off,,on') throw new Error('布尔序错：' + b.map(o => o.value).join(','));
-    if (b.map(o => o.short).join(',') !== '关,默认,开') throw new Error('布尔短标签错：' + b.map(o => o.short).join(','));
-    const g = sandbox._thinkingSliderEntries(sandbox._thinkingOptionsFor('deepseek', 'graph'), 'graph');
-    if (g[1].short !== '自动') throw new Error('graph 默认档短标签应为「自动」（Φ 按钮可覆盖）');
+  check('model-mode：滑块档位序——effort 关→低→中→高；布尔 关→开；智谱5.x 低→高→最高（无关）；graph 首档「自动」', () => {
+    const e = sandbox._thinkingSliderEntries(sandbox._thinkingOptionsFor('deepseek', 'agent'));
+    if (e.map(o => o.value).join(',') !== 'off,low,medium,high') throw new Error('effort 序错：' + e.map(o => o.value).join(','));
+    if (e.map(o => o.short).join(',') !== '关,低,中,高') throw new Error('effort 短标签错：' + e.map(o => o.short).join(','));
+    const b = sandbox._thinkingSliderEntries(sandbox._thinkingOptionsFor('mimo', 'agent'));
+    if (b.map(o => o.value).join(',') !== 'off,on') throw new Error('布尔序错：' + b.map(o => o.value).join(','));
+    if (b.map(o => o.short).join(',') !== '关,开') throw new Error('布尔短标签错：' + b.map(o => o.short).join(','));
+    const z5 = sandbox._thinkingSliderEntries(sandbox._thinkingOptionsFor('zhipu', 'agent', 'glm-5.3-flash'));
+    if (z5.map(o => o.value).join(',') !== 'low,high,max') throw new Error('智谱5.x 序错：' + z5.map(o => o.value).join(','));
+    if (z5.map(o => o.short).join(',') !== '低,高,最高') throw new Error('智谱5.x 短标签错：' + z5.map(o => o.short).join(','));
+    const z4 = sandbox._thinkingSliderEntries(sandbox._thinkingOptionsFor('zhipu', 'agent', 'glm-4.7'));
+    if (z4.map(o => o.value).join(',') !== 'off,on') throw new Error('智谱旧代应走布尔族：' + z4.map(o => o.value).join(','));
+    const g = sandbox._thinkingSliderEntries(sandbox._thinkingOptionsFor('deepseek', 'graph'));
+    if (g[0].value !== '' || g[0].short !== '自动') throw new Error('graph 首档应为「自动」（Φ 按钮可覆盖）');
+    return true;
+  });
+
+  check('model-mode：显示回退 _thinkingDisplayValue——空值回族默认档、旧档就近改写、有效档原样', () => {
+    const D = sandbox._thinkingDisplayValue;
+    const effort = sandbox._thinkingSliderEntries(sandbox._thinkingOptionsFor('deepseek', 'agent'));
+    const bool = sandbox._thinkingSliderEntries(sandbox._thinkingOptionsFor('mimo', 'agent'));
+    const z5 = sandbox._thinkingSliderEntries(sandbox._thinkingOptionsFor('zhipu', 'agent', 'glm-5.3'));
+    const graph = sandbox._thinkingSliderEntries(sandbox._thinkingOptionsFor('deepseek', 'graph'));
+    if (D('', effort) !== 'medium') throw new Error('effort 空值应显示中（OpenAI 默认档）');
+    if (D('', bool) !== 'on') throw new Error('布尔空值应显示开（GLM 默认开）');
+    if (D('', z5) !== 'max') throw new Error('智谱5.x 空值应显示最高（官方默认 max）');
+    if (D('', graph) !== '') throw new Error('graph 空值＝自动，应原样保留');
+    if (D('max', effort) !== 'high') throw new Error('旧 max 档在 effort 族应就近到高');
+    if (D('low', bool) !== 'on') throw new Error('旧 low 档在布尔族应归一为开');
+    if (D('high', bool) !== 'on') throw new Error('旧 high 档在布尔族应归一为开');
+    if (D('on', z5) !== 'max') throw new Error('旧 on 档在智谱5.x 应归一为最高');
+    if (D('off', z5) !== 'low') throw new Error('关不掉思考时 off 应就近到低');
+    if (D('high', effort) !== 'high') throw new Error('有效档应原样返回');
     return true;
   });
 
@@ -120,7 +144,7 @@ export function run() {
     if (!sandbox.getActiveModelForRole('branch') || sandbox.getActiveModelForRole('branch').id !== m2) {
       throw new Error('详细模式应还原统一前的各槽模型（branch=m2）');
     }
-    if (sandbox.getSlotThinkingForRole('agent') !== 'max') throw new Error('agent 思考应还原为 max');
+    if (sandbox.getSlotThinkingForRole('agent') !== 'high') throw new Error('agent 思考应还原为 max（旧 max 档刷新时语义就近归一为 high）');
     if (sandbox.getSlotThinkingForRole('html') !== 'off') throw new Error('html 思考应还原为 off');
     if (sandbox.getSlotThinkingForRole('branch') !== 'high') throw new Error('branch 思考应还原为 high');
     if (sandbox.localStorage.getItem('phymathia_model_detail_snapshot') !== null) {
@@ -129,7 +153,7 @@ export function run() {
     return true;
   });
 
-  check('model-mode：换族无效存量档回「跟随默认」并落盘（布尔族遇 effort 档 max）', () => {
+  check('model-mode：换族无效存量档语义就近改写落盘（布尔族遇旧 max 归一为 on）', () => {
     const mimoPreset = sandbox.window.MODEL_PRESETS.mimo;
     if (!mimoPreset || !mimoPreset.baseUrl) throw new Error('mimo 预设应存在');
     sandbox.addModelsForProvider('mimo', 'sk-m', mimoPreset.baseUrl, [{ model: 'MiMo-Flash', label: 'MiMo Flash' }]);
@@ -137,9 +161,28 @@ export function run() {
     sandbox.localStorage.setItem('phymathia_active_models', JSON.stringify({ agent_model: mimoId, agent_thinking: 'max' }));
     sandbox.reloadModelsFromStorage();
     sandbox._refreshSlotThinkingSelect('agent');
-    if (sandbox.getSlotThinkingForRole('agent') !== '') throw new Error('effort 档 max 在布尔族下应回「跟随默认」');
-    if (JSON.parse(sandbox.localStorage.getItem('phymathia_active_models')).agent_thinking !== '') {
+    if (sandbox.getSlotThinkingForRole('agent') !== 'on') throw new Error('旧 max 档在布尔族应语义等价改写为 on');
+    if (JSON.parse(sandbox.localStorage.getItem('phymathia_active_models')).agent_thinking !== 'on') {
       throw new Error('归一结果应落盘');
+    }
+    return true;
+  });
+
+  check('model-mode：智谱5.x 槽——on 档改写为 max、空值显示最高但不落盘（不发参数语义保留）', () => {
+    const zid = 'model-smoke-zhipu-5x';
+    sandbox.localStorage.setItem('phymathia_user_models', JSON.stringify([{
+      id: zid, provider: 'zhipu', model: 'glm-5.3', label: 'GLM-5.3', baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    }]));
+    sandbox.localStorage.setItem('phymathia_active_models', JSON.stringify({ agent_model: zid, agent_thinking: 'on' }));
+    sandbox.reloadModelsFromStorage();
+    sandbox._refreshSlotThinkingSelect('agent');
+    if (sandbox.getSlotThinkingForRole('agent') !== 'max') throw new Error('旧 on 档在智谱5.x 应语义等价改写为 max');
+    // 空值路径：显示回退到 max，但存储保持 ''（不发参数的语义不动，用户拖动才真写）
+    sandbox.localStorage.setItem('phymathia_active_models', JSON.stringify({ agent_model: zid, agent_thinking: '' }));
+    sandbox.reloadModelsFromStorage();
+    sandbox._refreshSlotThinkingSelect('agent');
+    if (JSON.parse(sandbox.localStorage.getItem('phymathia_active_models')).agent_thinking !== '') {
+      throw new Error('空值不应被显示回退改写落盘');
     }
     return true;
   });
@@ -163,17 +206,19 @@ export function run() {
     return true;
   });
 
-  check('model-mode：CSS 契约——ts-* 四 keyframes＋滑块/模式样式＋面板显隐规则', () => {
-    for (const kf of ['ts-thumb-glow', 'ts-ring-burst', 'ts-spark-rise', 'ts-breathe']) {
-      if (!cssPanels.includes('@keyframes ' + kf)) throw new Error('缺 keyframes：' + kf);
-    }
+  check('model-mode：CSS 契约——ts-bubble-flow keyframes＋滑块/模式样式＋面板显隐规则', () => {
+    if (!cssPanels.includes('@keyframes ts-bubble-flow')) throw new Error('缺 keyframes：ts-bubble-flow');
     for (const cls of [
-      '.thinking-slider-track', '.thinking-slider-fill', '.thinking-slider-thumb', '.thinking-slider-ring',
-      '.thinking-slider-dot', '.thinking-slider-label', '.thinking-slider-spark',
+      '.thinking-slider-track', '.thinking-slider-fill', '.thinking-slider-thumb',
+      '.thinking-slider-ticks', '.thinking-slider-dot', '.thinking-slider-bubble',
+      '.model-thinking-caption .ts-value',
       '.model-mode-switch', '.model-mode-btn',
       '.model-panel.mode-simple .model-simple-section', '.model-panel.mode-simple .model-detail-section',
     ]) {
       if (!cssPanels.includes(cls)) throw new Error('缺样式：' + cls);
+    }
+    for (const dead of ['.thinking-slider-label', '.thinking-slider-ring', '.thinking-slider-spark', 'ts-celebrate', 'ts-breathe']) {
+      if (cssPanels.includes(dead)) throw new Error('旧彩蛋/标签行样式残留：' + dead);
     }
     return true;
   });
@@ -197,10 +242,11 @@ export function run() {
       throw new Error('统一滑块 onChange 接线缺失');
     }
     if (modelsSrc.includes('select.innerHTML = options.map')) throw new Error('旧思考下拉选项渲染残留');
-    // 刻度重建：setOptions 必须调 _renderTicks（2026-10-25 真机首验漏渲染点/标签行教训）
+    // 刻度重建：setOptions 必须调 _renderTicks（换族重建档点；2026-10-25 真机首验教训）
     const tsSrc = fs.readFileSync('src/static/js/thinking-slider.js', 'utf8');
     if (!tsSrc.includes('function _renderTicks')) throw new Error('_renderTicks 定义缺失');
-    if (!/setOptions\(list\) \{[\s\S]*?_renderTicks\(\);/.test(tsSrc)) throw new Error('setOptions 未重建档位刻度（点/标签行）');
+    if (!/setOptions\(list\) \{[\s\S]*?_renderTicks\(\);/.test(tsSrc)) throw new Error('setOptions 未重建档位刻度');
+    if (!tsSrc.includes("contains('model-thinking-caption')")) throw new Error('档值文字应注入前置标题行');
     return true;
   });
 

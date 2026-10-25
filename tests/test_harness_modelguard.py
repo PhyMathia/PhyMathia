@@ -108,12 +108,15 @@ class ResolveApiKeyLastResortTest(unittest.TestCase):
 class ThinkingRequestParamsSharedTest(unittest.TestCase):
     """映射函数唯一实现在 llm_common（main.py 只留同名薄包装）。"""
 
-    def test_reasoning_effort_stretch(self):
+    def test_reasoning_effort_levels(self):
+        # 2026-10-25 起 low/medium/high 一一同名直发（滑块档＝真实 API 值）；
+        # max 是历史遗留档＝最高可用档 high
         f = llm_common.thinking_request_params
         self.assertEqual(f("openai", "low"), {"reasoning_effort": "low"})
-        self.assertEqual(f("openai", "high"), {"reasoning_effort": "medium"})
+        self.assertEqual(f("openai", "medium"), {"reasoning_effort": "medium"})
+        self.assertEqual(f("openai", "high"), {"reasoning_effort": "high"})
         self.assertEqual(f("deepseek", "max"), {"reasoning_effort": "high"})
-        self.assertEqual(f("custom-gw", "high"), {"reasoning_effort": "medium"})
+        self.assertEqual(f("custom-gw", "high"), {"reasoning_effort": "high"})
 
     def test_boolean_switch_on_off(self):
         # 布尔开关族：on/off 正式两档（2026-10-11 配置界面改开/关），low/high/max 兼容＝开
@@ -127,9 +130,24 @@ class ThinkingRequestParamsSharedTest(unittest.TestCase):
         self.assertEqual(f("ollama", "on"), {"think": True})
         self.assertEqual(f("ollama", "off"), {"think": False})
 
+    def test_zhipu_5x_effort_family(self):
+        # 智谱 5.x（glm-5.3 等）：思考恒开关不掉，强度走 reasoning_effort 同名三档
+        # （docs.bigmodel.cn GLM-5.3：thinking.type 仅支持 enabled，disabled 非法）
+        f = llm_common.thinking_request_params
+        self.assertEqual(f("zhipu", "low", "glm-5.3"), {"reasoning_effort": "low"})
+        self.assertEqual(f("zhipu", "high", "glm-5.3-flash"), {"reasoning_effort": "high"})
+        self.assertEqual(f("zhipu", "max", "glm-5.3"), {"reasoning_effort": "max"})
+        self.assertEqual(f("zhipu", "on", "glm-5.3-flash"), {"thinking": {"type": "enabled"}})
+        self.assertEqual(f("zhipu", "off", "glm-5.3"), {})  # 关不掉：不发自欺参数
+        self.assertEqual(f("zhipu", "", "glm-5.3"), {})
+        # 旧代智谱不受影响（不传 model / glm-4.x 都走布尔开关）
+        self.assertEqual(f("zhipu", "off", "glm-4.7"), {"thinking": {"type": "disabled"}})
+        self.assertEqual(f("zhipu", "off"), {"thinking": {"type": "disabled"}})
+        self.assertEqual(f("zhipu", "on", "GLM-5.3"), {"thinking": {"type": "enabled"}})  # 大写模型名也识别；on＝显式开
+
     def test_default_and_unknown_send_nothing(self):
         f = llm_common.thinking_request_params
-        for level in ("", "default", "medium", "turbo"):
+        for level in ("", "default", "turbo"):
             for provider in ("deepseek", "qwen", "zhipu", "ollama", "openai", ""):
                 self.assertEqual(f(provider, level), {})
         # 'off'：布尔族直发关闭参数；effort 族发 reasoning_effort none（2026-10-11 起）
@@ -204,7 +222,7 @@ def test_call_model_injects_thinking_params(monkeypatch):
     monkeypatch.setattr(review_mod, "get_http_client", lambda: fake)
     raw = asyncio.run(review_mod._call_model(
         [{"role": "user", "content": "hi"}], _openai_model("high"), 100))
-    assert fake.requests[0]["body"]["reasoning_effort"] == "medium"  # high → medium 拉伸
+    assert fake.requests[0]["body"]["reasoning_effort"] == "high"  # 档位同名直发（2026-10-25 起）
     assert raw["content"] == "ok"
 
 

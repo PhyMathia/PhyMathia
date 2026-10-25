@@ -294,8 +294,8 @@ class ThinkingRequestParamsUnitTest(unittest.TestCase):
     """思考程度 → 请求参数映射的纯函数用例（不触网）。"""
 
     def test_default_and_unknown_sends_nothing(self):
-        # ''/default = 跟随模型默认：现状行为零变化；旧值与乱值一律不发参数
-        for level in ("", "default", "medium", "turbo"):
+        # ''/default = 不发参数（滑块已去「默认」档，存储语义保留）；旧值与乱值一律不发
+        for level in ("", "default", "turbo"):
             for provider in ("deepseek", "qwen", "zhipu", "openai", ""):
                 self.assertEqual(main_mod._thinking_request_params(provider, level), {})
         # 'off'：布尔族直发关闭参数；effort 族发 reasoning_effort none（2026-10-11 起，
@@ -303,13 +303,13 @@ class ThinkingRequestParamsUnitTest(unittest.TestCase):
         for provider in ("deepseek", "openai", "custom-gw", ""):
             self.assertEqual(main_mod._thinking_request_params(provider, "off"), {"reasoning_effort": "none"})
 
-    def test_reasoning_effort_stretches_three_tiers(self):
-        # low/high/max 按序拉伸到 reasoning_effort 的 low/medium/high 三档，
-        # 每个 reasoning_effort 供应商（含自定义网关）上三档都有区分度
+    def test_reasoning_effort_levels_identity(self):
+        # 2026-10-25 起 low/medium/high 一一同名直发（滑块档＝真实 API 值）；
+        # max 是历史遗留档＝最高可用档 high
         f = main_mod._thinking_request_params
         self.assertEqual(f("openai", "low"), {"reasoning_effort": "low"})
-        self.assertEqual(f("openai", "high"), {"reasoning_effort": "medium"})
-        self.assertEqual(f("openai", "max"), {"reasoning_effort": "high"})
+        self.assertEqual(f("openai", "medium"), {"reasoning_effort": "medium"})
+        self.assertEqual(f("openai", "high"), {"reasoning_effort": "high"})
         self.assertEqual(f("deepseek", "low"), {"reasoning_effort": "low"})
         self.assertEqual(f("custom-gw", "max"), {"reasoning_effort": "high"})
 
