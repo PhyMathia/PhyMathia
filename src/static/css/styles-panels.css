@@ -6264,35 +6264,46 @@
 .model-thinking-caption .ts-value { color: var(--text-primary); font-weight: 600; font-size: var(--fs-sm); }
 .model-thinking-caption .ts-value:empty { display: none; }
 
-/* ===== 思考强度滑块（2026-10-25 重做；同日深夜三改：配色回归主题＋最大档炫酷三件套） =====
+/* ===== 思考强度滑块（2026-10-25 重做；同日深夜四改：多彩极光渐变＋气泡回归＋缩放光环退役） =====
    几何仍照搬 ZCode composer-thought-slider（本机 app.asar 提取）：32px 命中区＞
    22px 可见轨道（前景色 10% 底）＞填充层＞均分档点（左右各缩进拇指半径
    justify-between）＞28px 白拇指。
-   配色（2026-10-25 用户拍板）：ZCode 的 success 绿 #22c55e 不随主题走、与极光
-   磨砂玻璃违和，**全族退役**——填充改 accent 派生亮度渐变（左端半透明 → 实色 →
-   右端 accent-hover 亮尖，「越强越亮」），深色蓝/浅色暖金自动跟随主题。白气泡
-   横漂随绿填充一起退役，由流光横扫取代。
+   配色（2026-10-25 两轮用户拍板）：ZCode 绿 #22c55e 全族退役后，accent 单色系
+   亮度渐变被用户判「单调」——填充改**极光三色渐变**（青→蓝→紫，右端紫尖＝最
+   强），色相锚 .aurora-glass 深色色斑 --aurora-3/1/2 的满饱和版；浅色主题在
+   html[data-theme='light'] 整组换暖调（terracotta→amber→peach，锚浅色色斑、
+   面板口径禁蓝绿）。
    **居中不变量**：thumb 定位父级是 22px 轨道（不是 32px 外壳），top:-3px＝
    (22−28)/2，圆心恰在轨道中线——改轨道高度必须同步改这个数（2026-10-25 实踩：
    写成 +2px 整体偏下 5px，用户肉眼抓出）。
    几何常量（拇指 28/半径 14）在 thinking-slider.js 保持同步。设计拍板：本块允许
-   两个字面值——白 --ts-white（拇指/档点/流光/粒子：渐变与亮底上必须中性亮色）、
-   拇指阴影 rgba 黑（阴影惯例，styles.css 同先例）；其余色值全走既有变量（accent
-   派生用 color-mix，:root 先例）。
-   最大档三件套（全 CSS keyframes，类名挂/摘见 thinking-slider.js，零 JS 计时器）：
-   · ts-at-max 常驻——填充流光横扫（fill::after）＋拇指充电光环呼吸（thumb::after）；
+   的字面值——极光三色对×2 主题（--ts-hue-1/2/3，色相锚 aurora 色斑、alpha 无法
+   用 color-mix 提升故落字面值）、白 --ts-white（拇指/档点/流光/气泡/粒子：渐变
+   上必须中性亮色）、拇指阴影 rgba 黑（阴影惯例，styles.css 同先例）；其余色值
+   全走既有变量。
+   最大档（全 CSS keyframes，类名挂/摘见 thinking-slider.js，零 JS 计时器）：
+   · ts-at-max 常驻——填充流光横扫（fill::after）＋白气泡横漂（fill 内 5 颗，
+     深夜四改用户拍板回归）；
    · ts-burst 一击（吸附/键盘到最大档触发，animationend 自摘、可重复）——拇指
-     弹跳＋扩散光环（thumb::before）＋六粒子扇形上飞（thumb 内 spark）＋填充
-     亮度浪涌。 */
+     弹跳＋扩散光环（thumb::before，取右端紫尖色）＋六粒子扇形上飞（thumb 内
+     spark）＋填充亮度浪涌。 */
 .thinking-slider-mount { margin-top: 6px; }
 .thinking-slider {
   --ts-white: #ffffff;
+  --ts-hue-1: #2dd4bf;
+  --ts-hue-2: #4a9eff;
+  --ts-hue-3: #a78bfa;
   position: relative; height: 32px; outline: none; touch-action: none; cursor: pointer; user-select: none; -webkit-user-select: none;
+}
+html[data-theme='light'] .thinking-slider {
+  --ts-hue-1: #d69460;
+  --ts-hue-2: #fbbf24;
+  --ts-hue-3: #f9a884;
 }
 .thinking-slider.ts-disabled { opacity: 0.55; cursor: not-allowed; }
 .thinking-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-pill); }
 .thinking-slider-track { position: absolute; left: 0; right: 0; top: 5px; height: 22px; border-radius: var(--r-pill); background: color-mix(in srgb, var(--text-primary) 10%, transparent); }
-.thinking-slider-fill { position: absolute; top: 0; bottom: 0; left: 0; width: 0; border-radius: var(--r-pill); overflow: hidden; background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 40%, transparent), var(--accent) 55%, var(--accent-hover)); transition: width 0.14s var(--ease-out); }
+.thinking-slider-fill { position: absolute; top: 0; bottom: 0; left: 0; width: 0; border-radius: var(--r-pill); overflow: hidden; background: linear-gradient(90deg, var(--ts-hue-1), var(--ts-hue-2) 52%, var(--ts-hue-3)); transition: width 0.14s var(--ease-out); }
 .thinking-slider-thumb { position: absolute; top: -3px; left: 0; width: 28px; height: 28px; border-radius: var(--r-pill); background: var(--ts-white); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28); transition: left 0.14s var(--ease-out), transform 0.14s var(--ease-out); z-index: 2; }
 .thinking-slider:not(.ts-disabled):active .thinking-slider-thumb { transform: scale(1.08); }
 .thinking-slider-ticks { position: absolute; top: 5px; bottom: 5px; left: 14px; right: 14px; display: flex; align-items: center; justify-content: space-between; pointer-events: none; }
@@ -6306,18 +6317,24 @@
 .thinking-slider.ts-at-max .thinking-slider-fill::after { animation: ts-sheen-flow 2.8s var(--ease-out) infinite; }
 @keyframes ts-sheen-flow { 0% { opacity: 0; transform: translateX(-120%); } 14%, 46% { opacity: 1; } 60%, 100% { opacity: 0; transform: translateX(320%); } }
 
-/* 拇指充电光环（ts-at-max 常驻呼吸）：环带 gradient 内圈全透，不压白拇指本体 */
-.thinking-slider-thumb::after { content: ''; position: absolute; inset: -9px; border-radius: var(--r-pill); background: radial-gradient(circle, transparent 58%, color-mix(in srgb, var(--accent) 62%, transparent) 68%, color-mix(in srgb, var(--accent) 22%, transparent) 80%, transparent 88%); opacity: 0; pointer-events: none; }
-.thinking-slider.ts-at-max .thinking-slider-thumb::after { animation: ts-orb-pulse 1.9s ease-in-out infinite; }
-@keyframes ts-orb-pulse { 0%, 100% { opacity: 0.35; transform: scale(0.92); } 50% { opacity: 0.9; transform: scale(1.18); } }
+/* 白气泡横漂（ts-at-max 常驻，2026-10-25 深夜四改用户拍板回归）：外层横条在填充层
+   内右→左平移、内层白点随行，5 颗错峰循环（thinking-slider.js 建条）；常态停在右缘
+   外全透明，离开最大档即静默归位 */
+.thinking-slider-bubble { position: absolute; left: 0; width: 100%; height: 0; opacity: 0; transform: translateX(104%); pointer-events: none; }
+.thinking-slider-bubble > span { display: block; width: var(--tsb-size, 5px); height: var(--tsb-size, 5px); border-radius: var(--r-pill); background: var(--ts-white); }
+.thinking-slider.ts-at-max .thinking-slider-bubble { animation: ts-bubble-flow var(--tsb-dur, 3.4s) linear infinite; animation-delay: var(--tsb-delay, 0s); }
+@keyframes ts-bubble-flow { 0% { opacity: 0; transform: translateX(104%); } 15%, 80% { opacity: 0.4; } 100% { opacity: 0; transform: translateX(-4%); } }
+
+/* thumb::after 缩放呼吸光环已退役（2026-10-25 深夜四改用户拍板「缩放的圆圈去掉」，
+   冒烟死串防回潮）——拇指常驻只剩白本体 */
 
 /* 到档一击（.ts-burst，JS 挂类、animationend 自摘）：拇指弹跳＋扩散光环＋粒子＋亮度浪涌 */
 .thinking-slider.ts-burst .thinking-slider-thumb { animation: ts-thumb-pop 1.05s var(--ease-out) 1; }
 @keyframes ts-thumb-pop { 0% { transform: scale(0.92); } 16% { transform: scale(1.26); } 100% { transform: scale(1); } }
-.thinking-slider-thumb::before { content: ''; position: absolute; inset: -2px; border-radius: var(--r-pill); border: 2px solid color-mix(in srgb, var(--accent) 75%, transparent); opacity: 0; pointer-events: none; }
+.thinking-slider-thumb::before { content: ''; position: absolute; inset: -2px; border-radius: var(--r-pill); border: 2px solid color-mix(in srgb, var(--ts-hue-3) 75%, transparent); opacity: 0; pointer-events: none; }
 .thinking-slider.ts-burst .thinking-slider-thumb::before { animation: ts-ring-burst 0.9s var(--ease-out) 1; }
 @keyframes ts-ring-burst { 0% { opacity: 0.9; transform: scale(0.7); } 100% { opacity: 0; transform: scale(2.9); } }
-.thinking-slider-spark { position: absolute; left: 50%; top: 50%; width: 5px; height: 5px; margin: -2.5px 0 0 -2.5px; border-radius: var(--r-pill); background: var(--ts-white); box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 85%, transparent); opacity: 0; pointer-events: none; }
+.thinking-slider-spark { position: absolute; left: 50%; top: 50%; width: 5px; height: 5px; margin: -2.5px 0 0 -2.5px; border-radius: var(--r-pill); background: var(--ts-white); box-shadow: 0 0 6px color-mix(in srgb, var(--ts-hue-3) 85%, transparent); opacity: 0; pointer-events: none; }
 .thinking-slider.ts-burst .thinking-slider-spark { animation: ts-spark-fly 0.85s var(--ease-out) 1 both; animation-delay: var(--ts-delay, 0ms); }
 @keyframes ts-spark-fly { 0% { opacity: 0; transform: translate(0, 0) scale(0.4); } 22% { opacity: 1; } 100% { opacity: 0; transform: translate(var(--ts-tx, 0px), var(--ts-ty, -30px)) scale(1); } }
 .thinking-slider.ts-burst .thinking-slider-fill { animation: ts-fill-surge 0.9s var(--ease-out) 1; }
@@ -6328,7 +6345,7 @@
 .thinking-slider.ts-dragging .thinking-slider-thumb { transition: none; }
 
 @media (prefers-reduced-motion: reduce) {
-  .thinking-slider-fill::after, .thinking-slider-thumb::after, .thinking-slider-thumb::before, .thinking-slider-spark { display: none; }
+  .thinking-slider-fill::after, .thinking-slider-thumb::before, .thinking-slider-spark, .thinking-slider-bubble { display: none; }
   .thinking-slider.ts-burst .thinking-slider-thumb, .thinking-slider.ts-burst .thinking-slider-fill { animation: none; }
   .thinking-slider-fill, .thinking-slider-thumb, .thinking-slider-dot { transition: none; }
 }

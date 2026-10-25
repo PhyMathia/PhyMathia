@@ -206,27 +206,29 @@ export function run() {
     return true;
   });
 
-  check('model-mode：CSS 契约——最大档三件套 keyframes＋accent 派生渐变＋滑块/模式样式', () => {
-    for (const kf of ['ts-sheen-flow', 'ts-orb-pulse', 'ts-ring-burst', 'ts-spark-fly', 'ts-thumb-pop', 'ts-fill-surge']) {
+  check('model-mode：CSS 契约——最大档动效 keyframes＋极光三色渐变＋滑块/模式样式', () => {
+    for (const kf of ['ts-sheen-flow', 'ts-bubble-flow', 'ts-ring-burst', 'ts-spark-fly', 'ts-thumb-pop', 'ts-fill-surge']) {
       if (!cssPanels.includes('@keyframes ' + kf)) throw new Error('缺 keyframes：' + kf);
     }
     for (const cls of [
       '.thinking-slider-track', '.thinking-slider-fill', '.thinking-slider-thumb',
       '.thinking-slider-ticks', '.thinking-slider-dot', '.thinking-slider-spark',
-      '.thinking-slider-fill::after', '.thinking-slider-thumb::after', '.thinking-slider-thumb::before',
+      '.thinking-slider-fill::after', '.thinking-slider-thumb::before', '.thinking-slider-bubble',
+      "html[data-theme='light'] .thinking-slider",
       '.model-thinking-caption .ts-value',
       '.model-mode-switch', '.model-mode-btn',
       '.model-panel.mode-simple .model-simple-section', '.model-panel.mode-simple .model-detail-section',
     ]) {
       if (!cssPanels.includes(cls)) throw new Error('缺样式：' + cls);
     }
-    // 防回潮：ZCode 绿（#22c55e 不随主题走，2026-10-25 用户拍板换 accent 族）、白气泡
-    // 横漂、旧版标签行/旧彩蛋名、切换式渐变 ::before 一律不许再出现
-    for (const dead of ['--ts-green', 'ts-bubble-flow', '.thinking-slider-bubble', '.thinking-slider-label', '.thinking-slider-ring', 'ts-celebrate', 'ts-breathe', '.thinking-slider-fill::before']) {
+    // 防回潮：ZCode 绿（#22c55e 不随主题走）、thumb::after 缩放呼吸光环（2026-10-25
+    // 深夜四改用户拍板「缩放的圆圈去掉」）、旧版标签行/旧彩蛋名、切换式渐变 ::before
+    // 一律不许再出现
+    for (const dead of ['--ts-green', 'ts-orb-pulse', '.thinking-slider-thumb::after', '.thinking-slider-label', '.thinking-slider-ring', 'ts-celebrate', 'ts-breathe', '.thinking-slider-fill::before']) {
       if (cssPanels.includes(dead)) throw new Error('旧样式/旧彩蛋残留：' + dead);
     }
-    if (!cssPanels.includes('linear-gradient(90deg, color-mix(in srgb, var(--accent) 40%, transparent), var(--accent) 55%, var(--accent-hover))')) {
-      throw new Error('填充渐变应全 accent 族派生（用户拍板：绿不随主题走、违和）');
+    if (!cssPanels.includes('linear-gradient(90deg, var(--ts-hue-1), var(--ts-hue-2) 52%, var(--ts-hue-3))')) {
+      throw new Error('填充渐变应为极光三色（青→蓝→紫，深夜四改拍板：单色系被判单调）');
     }
     // 居中不变量：thumb 定位父级是 22px 轨道，top 必须是 (22−28)/2 = -3px
     const thumbRule = cssPanels.match(/\.thinking-slider-thumb \{[^}]*\}/);
@@ -264,6 +266,8 @@ export function run() {
     if (!tsSrc.includes("'ts-burst'")) throw new Error('ts-burst 类名接线缺失');
     if (!tsSrc.includes("animationName === 'ts-thumb-pop'")) throw new Error('一击自摘应锚定 ts-thumb-pop 的 animationend');
     if (!tsSrc.includes('thinking-slider-spark')) throw new Error('爆发粒子创建缺失');
+    // 白气泡横漂（2026-10-25 深夜四改回归）：build 必须建 5 条气泡横条
+    if (!tsSrc.includes('thinking-slider-bubble')) throw new Error('白气泡创建缺失（用户拍板回归）');
     return true;
   });
 

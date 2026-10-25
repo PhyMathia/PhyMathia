@@ -1,15 +1,16 @@
-// ====== 思考强度滑块（2026-10-25 重做；同日深夜三改：配色回归主题＋最大档炫酷三件套） ======
-// 几何照搬 ZCode composer-thought-slider（本机 app.asar 提取），配色回归主题
-// accent 族（ZCode 绿不随主题走，已退役——样式与设计拍板见 styles-panels.css 同名节）。
+// ====== 思考强度滑块（2026-10-25 重做；同日深夜四改：多彩极光渐变＋气泡回归＋缩放光环退役） ======
+// 几何照搬 ZCode composer-thought-slider（本机 app.asar 提取），配色＝极光三色渐变
+// （青→蓝→紫/浅色暖调，ZCode 绿已退役——样式与设计拍板见 styles-panels.css 同名节）。
 // 结构：32px 命中区 ＞ 22px 可见轨道（前景色 10% 底）＞ 填充层（accent 派生亮度
 // 渐变常驻）＞ 均分档点（左右留拇指半径、justify-between）＞ 28px 白拇指
 // （left = (100%−28px)×t，填充宽 = 14px + (100%−28px)×t，即填到拇指圆心）。
 // 档值短文字注入前置标题行（.model-thinking-caption 里追加 .ts-value，随拖动实时
 // 刷新；找不到标题行就在组件内自建一行）。按下即预览跟手（ts-dragging 关过渡），
 // 松手吸附最近档并提交；键盘 ←→/Home/End（role=slider）。
-// 最大档动效：ts-at-max 常驻（流光横扫＋拇指光环呼吸）；吸附/键盘到最大档触发
-// ts-burst 一击（拇指弹跳＋扩散光环＋六粒子扇形上飞＋亮度浪涌），animationend
-// 自摘、强制 reflow 可重复——节奏只活在 CSS，本文件零样式零计时器。
+// 最大档动效：ts-at-max 常驻（流光横扫＋白气泡横漂——气泡 2026-10-25 深夜四改
+// 用户拍板回归）；吸附/键盘到最大档触发 ts-burst 一击（拇指弹跳＋扩散光环＋六粒
+// 子扇形上飞＋亮度浪涌），animationend 自摘、强制 reflow 可重复——节奏只活在
+// CSS，本文件零样式零计时器。
 // 冒烟沙箱兼容：document/window 是宽松代理（Symbol.toPrimitive→0，任意属性可调），
 // 所有 DOM 调用在该环境下被吸收、几何值一律先 Number 收敛，构造与 API 调用均不抛错。
 function createThinkingSlider(mountEl, opts) {
@@ -58,6 +59,27 @@ function createThinkingSlider(mountEl, opts) {
     track.className = 'thinking-slider-track';
     fill = document.createElement('div');
     fill.className = 'thinking-slider-fill';
+    // 白气泡常驻 5 颗（最高档才动起来，2026-10-25 深夜四改用户拍板回归）：外层横条
+    // 在填充层内右→左平移，内层白点随行；高度/大小/时长/错峰各不同，起点都在填充层
+    // 右缘（overflow hidden 裁掉）
+    const BUBBLES = [
+      { top: 24, size: 5, dur: 3.2, delay: 0 },
+      { top: 62, size: 4, dur: 4.1, delay: 0.9 },
+      { top: 42, size: 6, dur: 2.7, delay: 1.7 },
+      { top: 76, size: 4, dur: 3.7, delay: 0.4 },
+      { top: 12, size: 4, dur: 4.6, delay: 2.3 },
+    ];
+    for (const b of BUBBLES) {
+      const strip = document.createElement('span');
+      strip.className = 'thinking-slider-bubble';
+      strip.style.top = b.top + '%';
+      strip.style.setProperty('--tsb-dur', b.dur + 's');
+      strip.style.setProperty('--tsb-delay', b.delay + 's');
+      strip.style.setProperty('--tsb-size', b.size + 'px');
+      const dot = document.createElement('span');
+      strip.appendChild(dot);
+      fill.appendChild(strip);
+    }
     ticksLayer = document.createElement('div');
     ticksLayer.className = 'thinking-slider-ticks';
     thumb = document.createElement('div');
