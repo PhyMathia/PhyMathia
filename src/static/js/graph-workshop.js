@@ -1539,7 +1539,10 @@ function _rwOutputHtml() {
       + '<div class="rw-out-raw">' + _rwEsc(state.output || '（等着第一段字）') + '</div></div>';
   }
   if (!state.output) {
-    return '<div class="rw-out-empty">跑出来的正文会显示在这里——那就是这个节点将来在画布上的样子。</div>';
+    // 跑完但一个字没吐（T409）：占位还占着，可体检已经判了「太短」——
+    // 体检条要照挂，别让判决和画面各说各话
+    return '<div class="rw-out-empty">跑出来的正文会显示在这里——那就是这个节点将来在画布上的样子。</div>'
+      + (state.judge ? _rwJudgeHtml() : '');
   }
   const ports = (state.outputPorts || []).map(function (port) {
     return '<span class="rw-chip rw-chip-out">出口：' + _rwEsc(port.label) + (port.dynamic ? '<em>自动</em>' : '') + '</span>';
@@ -1607,7 +1610,7 @@ function _rwRenderRun() {
     }).join('');
     actions.innerHTML = '<div class="rw-run-row">'
       + '<button type="button" class="rw-btn rw-btn-primary" id="rwRunBtn" onclick="rwRunTrial()"'
-      + (recipeWorkshop.running || !model ? ' disabled' : '') + '>'
+      + (recipeWorkshop.running || recipeWorkshop.autotuning || !model ? ' disabled' : '') + '>'
       + (recipeWorkshop.running ? '生成中…' : ((recipeWorkshop.runs || []).length ? '再跑一次' : '跑一次')) + '</button>'
       + '<select class="rw-select" onchange="rwTrialModelChanged(this.value)" title="试跑用哪个模型">' + options + '</select>'
       + '</div>'
@@ -1634,10 +1637,13 @@ function _rwScheduleOutputRender() {
 
 // 单次试跑：流式收进草稿状态，返回 { ok, output, error } 给调用方判断。
 // 手动按钮与「帮我调好」共用这一支——两条路跑出来的东西必须一模一样。
-async function _rwRunTrialOnce() {
+async function _rwRunTrialOnce(internal) {
   const state = recipeWorkshop;
   if (!state) return { ok: false, error: '工坊没开' };
   if (state.running) return { ok: false, error: '正在跑，先等这一次结束' };
+  // 自动调优等补丁的空窗里 running=false，手动「跑一次」此时插队会跟验证跑互相踩
+  // 同一份输出状态（T409）——调优链自己传 internal=true 放行，单链不变
+  if (state.autotuning && !internal) return { ok: false, error: '正在帮我调，先等这一轮结束' };
   const recipe = _rwNormalized() || _rwCurrentRecipe();
   const model = _rwTrialModel();
   if (!model) {
@@ -1874,7 +1880,7 @@ async function rwAutoTune() {
   _rwRenderChat();
   _rwRenderRun();
   try {
-    let run = await _rwRunTrialOnce();
+    let run = await _rwRunTrialOnce(true);
     if (!run.ok) {
       _rwPushChat('phi', '第一次就没跑通：' + String(run.error || '未知原因'), { kind: 'warn' });
       return;
@@ -1892,9 +1898,14 @@ async function rwAutoTune() {
       _rwPushChat('phi', '这次没改成功，可以先手动改一下再跑。', { kind: 'warn' });
       return;
     }
+    // 补丁一个字段都没动（T409）：配方原样，再跑一次结果也不会变——白烧一次模型
+    if (!Array.isArray(data.changed) || !data.changed.length) {
+      _rwPushChat('phi', '这轮一个字段都没改成，再跑也是原样——先手动改一下「生成要求」，或换个模型再点「帮我调好」。', { kind: 'warn' });
+      return;
+    }
     _rwPushChat('phi', '改完了，再跑一次验证。');
     _rwRenderChat();
-    run = await _rwRunTrialOnce();
+    run = await _rwRunTrialOnce(true);
     if (!run.ok) {
       _rwPushChat('phi', '复跑没通过：' + String(run.error || '未知原因'), { kind: 'warn' });
       return;
@@ -2131,16 +2142,31 @@ async function rwSmartTrial() {
   await _rwRunTrialOnce();
 }
 
-function rwSmartPlace() {
-  if (!recipeWorkshop) return;
-  // 软闸（2026-10-25）：一句话档只看过配置、没看过输出，没试跑过就上画布＝闭着眼睛收货。
-  // 只问一次、可以坚持放；这份配方跑过一次（run 盖过 recipeId 章）就不再拦，别把熟手挡在门口。
+// 软闸（2026-10-25）：只看过配置、没看过输出，没试跑过就上画布＝闭着眼睛收货。
+// 只问一次、可以坚持放；这份配方跑过一次（run 盖过 recipeId 章）就不再拦，别把熟手挡在门口。
+// T410 起两档的「放到画布」都走这里——手动档直通 rwPlaceOnCanvas 的旧路已收掉。
+function _rwPlaceGatePassed() {
+  if (!recipeWorkshop) return true;
   const current = _rwNormalized() || _rwCurrentRecipe();
   const trialed = (recipeWorkshop.runs || []).some(function (run) {
     return run && run.recipeId && run.recipeId === String(current.id || '');
   });
-  if (!trialed && typeof confirm === 'function'
-    && !confirm('这个节点还没试跑过，先看看它跑出来什么样？\n（确定＝不试了，直接放到画布；取消＝回去点「试跑一下」）')) return;
+  if (trialed) return true;
+  return typeof confirm !== 'function'
+    || confirm('这个节点还没试跑过，先看看它跑出来什么样？\n（确定＝不试了，直接放到画布；取消＝回去先试跑一次）');
+}
+
+// 手动档保存栏的「放到画布」：先过软闸（没试跑过问一次），再走原入口
+function rwPlaceOnCanvasGated() {
+  if (!recipeWorkshop) return;
+  if (!_rwPlaceGatePassed()) return;
+  rwPlaceOnCanvas();
+}
+
+function rwSmartPlace() {
+  if (!recipeWorkshop) return;
+  // 软闸共用一支（见 _rwPlaceGatePassed）；一句话档只看过配置、没看过输出
+  if (!_rwPlaceGatePassed()) return;
   if (!rwSaveRecipe()) {
     const errors = (recipeWorkshop.fieldErrors || [])
       .map(function (item) { return String((item && item.message) || ''); })
@@ -2224,7 +2250,7 @@ function _rwRenderSaveBar() {
   box.innerHTML = '<div class="rw-savebar-inner">'
     + '<button type="button" class="rw-btn rw-btn-primary" onclick="rwSaveRecipe()">'
     + (state.savedName ? '再存一次' : '入册') + '</button>'
-    + '<button type="button" class="rw-btn" onclick="rwPlaceOnCanvas()">放到画布</button>'
+    + '<button type="button" class="rw-btn" onclick="rwPlaceOnCanvasGated()">放到画布</button>'
     + '<span class="rw-save-status">' + (state.savedName ? ('已入册：' + _rwEsc(state.savedName)) : '还没入册') + '</span>'
     + '<details class="rw-wire-box"><summary>放到画布时接上谁</summary>' + wireList + '</details>'
     + '<button type="button" class="rw-btn rw-btn-ghost rw-discard" onclick="rwDiscardDraft()">丢弃草稿</button>'
@@ -2425,6 +2451,7 @@ window.rwRunTrial = rwRunTrial;
 window.rwQuickFix = rwQuickFix;
 window.rwSaveRecipe = rwSaveRecipe;
 window.rwPlaceOnCanvas = rwPlaceOnCanvas;
+window.rwPlaceOnCanvasGated = rwPlaceOnCanvasGated;
 window.rwDiscardDraft = rwDiscardDraft;
 window.rwToggleWire = rwToggleWire;
 window.rwStartFromCanvasNode = rwStartFromCanvasNode;

@@ -18,6 +18,10 @@ from .recipes import (
     RECIPE_PORT_LABEL_MAX,
     RECIPE_PORT_TYPES,
     RECIPE_PROMPT_BUDGET,
+    RECIPE_SHAPES,
+    RECIPE_ON_GENERATED_KINDS,
+    RECIPE_ON_GENERATED_CONTENT_FROM,
+    RECIPE_MAX_ON_GENERATED,
 )
 
 """System prompt for the independent graph harness."""
@@ -639,7 +643,7 @@ def _recipe_draft_system_prompt() -> str:
         "- 数组**整体替换**（要给出口表就写完整的出口表，不是增量）。",
         '- 要删掉某个可选段，把那个键写成 null（例如动态出口不要了：{"ports": {"dynamic": null}}）。',
         "- 首次起草（草稿为空）时给一份够用的完整初稿。",
-        "- 这次如果给了内置模板底稿：只改用户这句话与模板不同的地方，名字没指定就沿用模板名。",
+        "- 这次如果给了内置模板底稿：只改用户这句话与模板不同的地方，名字没指定就沿用模板名（撞了用户已有配方的名字时，服务端会自动加序号避开）。",
         "",
         "## 字段表（只认这些，多余字段会被丢弃）",
         f"- name：节点名，≤{RECIPE_NAME_MAX} 字，要能一眼看出用途（如「受力分析」）。",
@@ -655,10 +659,12 @@ def _recipe_draft_system_prompt() -> str:
         f"- generate.model_role：{'/'.join(RECIPE_MODEL_ROLES)}（默认 agent）。",
         f"- content_kind：{' / '.join(RECIPE_CONTENT_KINDS)}（默认 markdown；mermaid / html_iframe 只能配 AI 底座）。",
         f"- appearance.palette：色板，只能取 {'/'.join(RECIPE_PALETTE_KEYS)} 其一。",
+        f"- appearance.shape：不用写——按底座自动定（{'/'.join(RECIPE_SHAPES)} 之一），写了也会被忽略。",
         "- appearance.color：可选自由色，必须是 #rrggbb。",
         f"- aggregation：{'/'.join(RECIPE_AGGREGATIONS)}（默认 ancestors，收全部上游）。",
         "- analysis_phase：true 时模块先产出一段问题分析再写正文（只有 module 能用）。",
-        "- on_generated：想要「生成完自动长节点」才给，结构复杂，没要求就不要编。",
+        f"- on_generated：想要「生成完自动长节点」才给，最多 {RECIPE_MAX_ON_GENERATED} 个 create；"
+        f"create[].base.kind 只能取 {'/'.join(RECIPE_ON_GENERATED_KINDS)}，content_from 只能取 {'/'.join(v for v in RECIPE_ON_GENERATED_CONTENT_FROM if v)}（可留空）。结构复杂，没要求就不要编。",
         "",
         "## 说话的规矩",
         "- say 写给不懂编程的人看：说清改了什么、为什么，**不出现 JSON、schema、字段名、ports、drag_form 这类词**；不要复述整份配方；60 字以内。",

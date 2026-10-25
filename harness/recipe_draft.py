@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 from .json_utils import extract_json
 from .prompts import build_recipe_draft_messages
 from .recipe_templates import pick_template
-from .recipes import normalize_recipe_input, validate_recipe
+from .recipes import RECIPE_NAME_MAX, normalize_recipe_input, validate_recipe
 from .review import HarnessError, _apply_thinking_default, _call_model, _resolve_model
 
 logger = logging.getLogger(__name__)
@@ -80,6 +80,31 @@ def changed_fields(before: Any, after: Any) -> List[str]:
     right = flatten_recipe(after or {})
     keys = set(left) | set(right)
     return sorted(key for key in keys if left.get(key) != right.get(key))
+
+
+# T406：起稿撞名服务端兜底。模板起稿的名字沿用模板名（提示词就是这么交代的），
+# 用户库里已有同名配方时弱模型不会自改——不该让「已有同名配方」的 field_error
+# 挡住整份草稿。序号从 2 顺延、长度守 RECIPE_NAME_MAX；只在 draft 模式兜
+# （补丁模式是用户自己的草稿，改名与否是用户的决定，重名该照实报出来）。
+def _dedupe_draft_name(recipe: Dict[str, Any], user_recipes: Any) -> str:
+    """起稿名字撞已有配方时返回加序号的新名，没撞返回原名。"""
+    name = str((recipe or {}).get("name") or "")
+    if not name or not isinstance(user_recipes, list):
+        return name
+    own_id = str(recipe.get("id") or "")
+    taken = {
+        str(item.get("name") or "")
+        for item in user_recipes
+        if isinstance(item, dict) and str(item.get("id") or "") != own_id
+    }
+    if name not in taken:
+        return name
+    for index in range(2, 100):
+        suffix = str(index)
+        candidate = name[: max(1, RECIPE_NAME_MAX - len(suffix))] + suffix
+        if candidate not in taken:
+            return candidate
+    return name
 
 
 # 校验错误 → 字段路径。validate_recipe 是人话报错（前后端同构的唯一事实源），
@@ -282,6 +307,12 @@ async def draft_recipe(
             "field_errors": [{"field": field, "message": message}],
             "mode": mode,
         }
+    if mode == "draft":
+        original_name = str(normalized.get("name") or "")
+        deduped_name = _dedupe_draft_name(normalized, user_recipes)
+        if deduped_name != original_name:
+            normalized["name"] = deduped_name
+            warnings.append(f"名字「{original_name}」和已有配方重复，自动改成「{deduped_name}」")
     verdict = validate_recipe(normalized, user_recipes if isinstance(user_recipes, list) else [])
     field_errors = [
         {"field": _field_path_for_error(message, normalized), "message": str(message)}

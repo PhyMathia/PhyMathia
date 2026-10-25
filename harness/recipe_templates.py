@@ -8,8 +8,14 @@ recipe_draft 的既有管道里，本模块只负责「给基底」）。
 - 模板是纯数据：每份都必须能过 normalize_recipe_input + validate_recipe
   （tests/test_recipe_draft.py 有全量守护，schema 演进时模板不合法当场红）。
 - 模板不给 id：每次起稿 normalize 都生成新 id，草稿互不串。
-- pick_template 是确定性关键词打分（每个关键词命中 1 分、模板名整词命中 +2），
-  ≥2 分才启用；宁可从零起草也不错配底稿。不打模型调用。
+- pick_template 是确定性关键词打分（强关键词每中 2 分、弱关键词每中 1 分、模板名
+  整词命中 +2），≥2 分才启用——一个强关键词就够门槛（T407：口语常说「做个错题节点
+  ／画个流程图／背公式」，单关键词全被 ≥2 分挡在门外）。宁可从零起草也不错配底稿。
+  不打模型调用。
+
+强/弱怎么分：强关键词单独出现就足以认出这个模板（「错题」「流程图」「量纲」）；
+弱关键词只是弱信号（「复盘」「示意图」），单枪匹马不启用，须再叠一个词。给模板
+加词先问：这个词单独出现时，用户十有八九要的就是这个模板吗？不是就放弱档。
 """
 
 from __future__ import annotations
@@ -23,7 +29,8 @@ RECIPE_TEMPLATES: List[Dict[str, Any]] = [
         "key": "mistake_review",
         "label": "错题复盘",
         "brief": "喂做错的题和当时的答案，拆错因、给正确思路、点同类题眼",
-        "keywords": ["错题", "复盘", "错因", "订正", "改错", "做错", "没做对", "马虎"],
+        "strong": ["错题", "错因", "订正"],
+        "keywords": ["复盘", "改错", "做错", "没做对", "马虎"],
         "recipe": {
             "name": "错题复盘",
             "desc": "喂做错的题和当时的答案，拆错因、给正确思路、点同类题眼",
@@ -45,7 +52,8 @@ RECIPE_TEMPLATES: List[Dict[str, Any]] = [
         "key": "force_analysis",
         "label": "受力分析",
         "brief": "喂题目和受力图，拆研究对象、受力清单、方程，出口可换条件再算",
-        "keywords": ["受力", "力学", "牛顿", "斜面", "摩擦", "拉力", "平衡", "受力图"],
+        "strong": ["受力"],
+        "keywords": ["力学", "牛顿", "斜面", "摩擦", "拉力", "平衡", "受力图"],
         "recipe": {
             "name": "受力分析",
             "desc": "喂题目和受力图，拆研究对象、受力清单、方程",
@@ -68,7 +76,8 @@ RECIPE_TEMPLATES: List[Dict[str, Any]] = [
         "key": "formula_insight",
         "label": "公式理解",
         "brief": "喂一个公式，讲直觉、推导、易错点",
-        "keywords": ["公式理解", "理解公式", "公式直觉", "推导", "怎么来的", "为什么成立", "直觉解释", "公式含义"],
+        "strong": ["公式理解", "理解公式", "公式直觉"],
+        "keywords": ["推导", "怎么来的", "为什么成立", "直觉解释", "公式含义"],
         "recipe": {
             "name": "公式理解",
             "desc": "喂一个公式，讲直觉、推导、易错点",
@@ -90,7 +99,8 @@ RECIPE_TEMPLATES: List[Dict[str, Any]] = [
         "key": "proof_check",
         "label": "证明检查",
         "brief": "喂命题和证明，逐段找缺口、给修补建议、下结论",
-        "keywords": ["证明", "证伪", "严谨", "跳步", "循环论证"],
+        "strong": ["证明", "证伪"],
+        "keywords": ["严谨", "跳步", "循环论证"],
         "recipe": {
             "name": "证明检查",
             "desc": "喂命题和证明，逐段找缺口、给修补建议、下结论",
@@ -112,7 +122,8 @@ RECIPE_TEMPLATES: List[Dict[str, Any]] = [
         "key": "concept_contrast",
         "label": "概念辨析",
         "brief": "喂两个容易混的概念，对着讲区别、联系、对比例子",
-        "keywords": ["辨析", "区别", "对比", "混淆", "分不清", "两个概念", "异同"],
+        "strong": ["辨析", "分不清"],
+        "keywords": ["区别", "对比", "混淆", "两个概念", "异同"],
         "recipe": {
             "name": "概念辨析",
             "desc": "喂两个容易混的概念，对着讲区别、联系、对比例子",
@@ -134,7 +145,8 @@ RECIPE_TEMPLATES: List[Dict[str, Any]] = [
         "key": "socratic_ask",
         "label": "苏格拉底追问",
         "brief": "喂一段材料，正文自动长出分层追问按钮（基础/进阶）",
-        "keywords": ["苏格拉底", "追问", "提问", "考我", "引导", "问我"],
+        "strong": ["苏格拉底", "追问", "考我", "问我"],
+        "keywords": ["提问", "引导"],
         "recipe": {
             "name": "苏格拉底追问",
             "desc": "喂一段材料，正文自动长出分层追问按钮",
@@ -157,7 +169,8 @@ RECIPE_TEMPLATES: List[Dict[str, Any]] = [
         "key": "viz_diagram",
         "label": "可视化图解",
         "brief": "喂一个主题，产出 mermaid 关系图＋怎么读这张图",
-        "keywords": ["可视化", "图解", "流程图", "关系图", "示意图", "画图", "mermaid"],
+        "strong": ["流程图", "关系图", "图解", "mermaid"],
+        "keywords": ["可视化", "示意图", "画图"],
         "recipe": {
             "name": "可视化图解",
             "desc": "喂一个主题，产出 mermaid 关系图＋怎么读这张图",
@@ -175,7 +188,8 @@ RECIPE_TEMPLATES: List[Dict[str, Any]] = [
         "key": "dimension_check",
         "label": "量纲检查",
         "brief": "喂一个表达式，逐项查量纲、推整体、下结论",
-        "keywords": ["量纲", "单位检查", "单位对不对", "量纲分析"],
+        "strong": ["量纲", "单位检查", "检查单位", "查单位", "单位对不对"],
+        "keywords": ["量纲分析"],
         "recipe": {
             "name": "量纲检查",
             "desc": "喂一个表达式，逐项查量纲、推整体、下结论",
@@ -196,7 +210,8 @@ RECIPE_TEMPLATES: List[Dict[str, Any]] = [
         "key": "formula_cards",
         "label": "公式速记卡",
         "brief": "喂章节主题，列关键公式和记忆钩子，考前突击用",
-        "keywords": ["速记", "背公式", "默写", "公式卡", "公式清单", "考前突击", "记忆钩子"],
+        "strong": ["背公式", "速记", "默写", "公式卡", "考前突击"],
+        "keywords": ["公式清单", "记忆钩子"],
         "recipe": {
             "name": "公式速记卡",
             "desc": "喂章节主题，列关键公式和记忆钩子，考前突击用",
@@ -217,7 +232,8 @@ RECIPE_TEMPLATES: List[Dict[str, Any]] = [
         "key": "step_by_step",
         "label": "分步解题",
         "brief": "喂一道题，按步推进并在最后自检（最通用的解题底稿）",
-        "keywords": ["解题", "分步", "求解", "怎么做", "步骤", "解法", "做题"],
+        "strong": ["解题", "分步", "做题"],
+        "keywords": ["求解", "怎么做", "步骤", "解法"],
         "recipe": {
             "name": "分步解题",
             "desc": "喂一道题，按步推进并在最后自检",
@@ -240,8 +256,8 @@ RECIPE_TEMPLATES: List[Dict[str, Any]] = [
 def pick_template(instruction: str) -> Optional[Dict[str, Any]]:
     """一句话 → 最近邻模板。确定性关键词打分，不打模型。
 
-    每个关键词命中记 1 分、模板名整词出现再 +2；同分取列表里更靠前（更专一）的。
-    低于阈值返回 None——宁可从零起草，也不错配底稿。
+    强关键词每中记 2 分（单独出现即够门槛）、弱关键词 1 分、模板名整词出现再 +2；
+    同分取列表里更靠前（更专一）的。低于阈值返回 None——宁可从零起草，也不错配底稿。
     """
     text = str(instruction or "")
     if not text.strip():
@@ -250,6 +266,9 @@ def pick_template(instruction: str) -> Optional[Dict[str, Any]]:
     best_score = 0
     for item in RECIPE_TEMPLATES:
         score = 0
+        for keyword in item.get("strong") or []:
+            if keyword and keyword in text:
+                score += 2
         for keyword in item["keywords"]:
             if keyword and keyword in text:
                 score += 1
