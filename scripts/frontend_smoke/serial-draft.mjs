@@ -30,6 +30,9 @@ check('追问草稿卡渲染（T152→占位提示）：draftInput 作值、建�
     const fresh = vm.runInContext(mk({}), sandbox);
     if (!fresh.includes(emptyTail)) throw new Error('无 draftInput 时框内容应为空');
     if (!fresh.includes('placeholder="端口预填问题"')) throw new Error('无 draftInput 时建议问题应作灰色提示');
+    const blank = vm.runInContext(mk({ portMeta: { branchType: 'followup', question: '' } }), sandbox);
+    if (!blank.includes('placeholder="输入你想追问的问题…"')) throw new Error('端口没解析出问题时也应有兜底灰字提示，框不能裸空');
+    if (!blank.includes(emptyTail)) throw new Error('兜底提示只进 placeholder，框内容仍应为空');
     return true;
   } finally { sandbox.escapeHtml = realEsc; }
 });

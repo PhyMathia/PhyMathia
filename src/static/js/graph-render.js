@@ -299,7 +299,9 @@ function _renderDraftNodeHtml(node) {
     // textarea 只是视图——值恒取 draftInput（含用户主动清空的空串），不回落
     // 端口预填，否则一次全量重渲就把已打的字顶回预填。建议问题只作灰色
     // 占位提示（placeholder，点进去自动消失），空着发送时由 submitDraftQuestion 回落
-    const suggestion = _draftSuggestionText(node);
+    // 端口没解析出问题时也兜底一行灰字，框永远不裸空；兜底文案只做提示，
+    // 不进 _draftSuggestionText（空发回落仍只认真实建议问题，不会把提示语发出去）
+    const suggestion = _draftSuggestionText(node) || '输入你想追问的问题…';
     const value = typeof node.draftInput === 'string' ? node.draftInput : '';
     body = '<div class="graph-draft-body">'
       + '<textarea class="graph-draft-input" rows="3" placeholder="' + escapeHtml(suggestion) + '" oninput="draftInputChanged(\'' + node.id + '\', this.value)">' + escapeHtml(value) + '</textarea>'
