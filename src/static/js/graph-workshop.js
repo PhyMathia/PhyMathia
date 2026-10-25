@@ -24,10 +24,14 @@ const RECIPE_WORKSHOP_FLASH_MS = 2000;
 // 工具在本页执行（配方库在 localStorage、画布在内存，服务端看不到）。步数/试跑上限
 // 与 harness/workshop_tools.py 同口径，别只改一边。
 const RECIPE_WORKSHOP_STEP_API = '/api/harness/workshop/step';
+// C3（2026-10-25）：内容初筛——结构体检过了再花一次模型调用评内容（无工具表，
+// 服务端 json_mode 出评分 JSON、坏回包降级不崩）。只在 Φ 循环里跑，手动档/帮我调好不加。
+const RECIPE_WORKSHOP_CRITIC_API = '/api/harness/workshop/critic';
 const RECIPE_WORKSHOP_CAPABILITIES_API = '/api/harness/recipe/capabilities';
-// C2 起 10 步：8 步调优预算＋「入册 → 查上游 → 落图」副作用尾巴（与服务端
+// C2 起 10 步：8 步调优预算＋「入册 → 查上游 → 落图」副作用尾巴；C3 起 12 步
+// （内容初筛走 /workshop/critic 不占步数，余量给循环＋尾巴；与服务端
 // WORKSHOP_AGENT_MAX_STEPS 同口径，改就两侧一起改）
-const RECIPE_WORKSHOP_AGENT_MAX_STEPS = 10;
+const RECIPE_WORKSHOP_AGENT_MAX_STEPS = 12;
 const RECIPE_WORKSHOP_AGENT_MAX_TRIALS = 2;
 
 let recipeWorkshop = null;          // 当前草稿状态（null＝没开过）
@@ -2087,7 +2091,7 @@ function _rwSmartResultHtml() {
   const hasModel = !!_rwModel();
   const agentTitle = !hasModel
     ? '还没配主模型——先到「模型设置」里选一个'
-    : (!materialsReady ? '先贴一道题当材料，Φ 才能自己试跑和调' : '让 Φ 自己走：查能力 → 看配方 → 试跑 → 读体检 → 只改有问题处 → 复跑；体检过了可入册、放画布（会再问你一次）（最多 ' + RECIPE_WORKSHOP_AGENT_MAX_STEPS + ' 步、' + RECIPE_WORKSHOP_AGENT_MAX_TRIALS + ' 次试跑，可取消）');
+    : (!materialsReady ? '先贴一道题当材料，Φ 才能自己试跑和调' : '让 Φ 自己走：查能力 → 看配方 → 试跑 → 读体检 → 只改有问题处 → 复跑；体检过了可入册、放画布（会再问你一次）（最多 ' + RECIPE_WORKSHOP_AGENT_MAX_STEPS + ' 步、' + RECIPE_WORKSHOP_AGENT_MAX_TRIALS + ' 次试跑＋1 次内容初筛，可取消）');
   const agentBtn = '<button type="button" class="rw-btn" id="rwAgentBtn" onclick="rwSmartAgentRun()" title="' + _rwEsc(agentTitle) + '"'
     + ((busyLock || !hasModel || !materialsReady) ? ' disabled' : '') + '>让 Φ 自己配好</button>';
   const lockAttr = busyLock ? ' disabled' : '';
@@ -2271,7 +2275,7 @@ function _rwAgentBoxHtml() {
     return '<div class="rw-agent-line' + (item.kind === 'warn' ? ' is-warn' : '') + '">' + _rwEsc(item.text) + '</div>';
   }).join('');
   const head = state.agentBusy
-    ? '<div class="rw-agent-head"><span>Φ 正在自己调（最多 ' + RECIPE_WORKSHOP_AGENT_MAX_STEPS + ' 步、' + RECIPE_WORKSHOP_AGENT_MAX_TRIALS + ' 次试跑）</span>'
+    ? '<div class="rw-agent-head"><span>Φ 正在自己调（最多 ' + RECIPE_WORKSHOP_AGENT_MAX_STEPS + ' 步、' + RECIPE_WORKSHOP_AGENT_MAX_TRIALS + ' 次试跑＋1 次内容初筛）</span>'
       + '<button type="button" class="rw-btn rw-btn-ghost rw-btn-mini" onclick="rwSmartAgentCancel()">取消</button></div>'
     : '<div class="rw-agent-head"><span>Φ 自己调的一轮记录</span></div>';
   const summary = state.agentSummary ? '<div class="rw-agent-summary">' + _rwEsc(state.agentSummary) + '</div>' : '';
@@ -2314,6 +2318,43 @@ async function _rwAgentStepFetch(model, messages, seq) {
     // 取消引发的 AbortError 不算故障——seq 校验会在循环里认领
     if (state.agentSeq !== seq) return null;
     state.agentError = '这一步没接上模型：' + String((err && err.message) || err).slice(0, 160);
+    return null;
+  } finally {
+    if (state) state.agentAbort = null;
+  }
+}
+
+// C3 内容初筛：POST /workshop/critic（不带工具表，服务端 json_mode 出评分 JSON、
+// 坏回包已降级成 warn＋score:-1）。这里只兜传输/形状层：不 ok 或 verdict 不认识
+// 返回 null，调用方降级成「没评上」——主流程不因 critic 断。
+async function _rwAgentCriticFetch(model, payload, seq) {
+  const state = recipeWorkshop;
+  if (!state) return null;
+  let signal = null;
+  if (typeof AbortController === 'function') {
+    const ctl = new AbortController();
+    state.agentAbort = ctl;
+    signal = ctl.signal;
+  }
+  try {
+    const resp = await fetch(RECIPE_WORKSHOP_CRITIC_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({
+        model: _rwModelPayload(model),
+        session_id: _rwSessionId(),
+      }, payload)),
+      signal: signal,
+    });
+    const data = (resp && typeof resp.json === 'function')
+      ? await resp.json().catch(function () { return null; }) : null;
+    if (!resp || !resp.ok || !data || data.status !== 'ok'
+      || ['pass', 'warn', 'fail'].indexOf(String(data.verdict || '')) < 0) {
+      return null;
+    }
+    return data;
+  } catch (err) {
+    // 取消引发的 AbortError 也算「没评上」（seq 校验由调用方做），不当故障弹
     return null;
   } finally {
     if (state) state.agentAbort = null;
@@ -2507,7 +2548,7 @@ async function rwSmartAgentRun() {
   if (typeof fetch !== 'function') return;
   if (typeof confirm === 'function'
     && !confirm('让 Φ 自己走一遍：查能力 → 看当前配方 → 试跑 → 读体检 → 只改有问题的地方 → 复跑验证。\n最多 '
-      + RECIPE_WORKSHOP_AGENT_MAX_STEPS + ' 步模型调用＋' + RECIPE_WORKSHOP_AGENT_MAX_TRIALS + ' 次试跑，中途可取消。继续？')) return;
+      + RECIPE_WORKSHOP_AGENT_MAX_STEPS + ' 步模型调用＋' + RECIPE_WORKSHOP_AGENT_MAX_TRIALS + ' 次试跑＋1 次内容初筛，中途可取消。继续？')) return;
   const seq = ++state.agentSeq;
   state.agentBusy = true;
   state.agentError = '';
@@ -2529,7 +2570,8 @@ async function rwSmartAgentRun() {
       '先把该看的看了（workshop_capabilities / workshop_get_recipe），再试跑拿真输出，按体检结果只改有问题处，复跑验证。'
         + '体检通过后可以替用户落地：要接上游先 workshop_list_upstream 看候选，然后 workshop_place_on_canvas'
         + '（也可先 workshop_save_recipe 入册）——这些是副作用动作，执行前会问用户一次，被拒不重试、直接收尾说明。最多 '
-        + RECIPE_WORKSHOP_AGENT_MAX_STEPS + ' 步、' + RECIPE_WORKSHOP_AGENT_MAX_TRIALS + ' 次试跑。',
+        + RECIPE_WORKSHOP_AGENT_MAX_STEPS + ' 步、' + RECIPE_WORKSHOP_AGENT_MAX_TRIALS + ' 次试跑。'
+        + '体检通过后系统还会自动做一次内容初筛（评分不归你管，初筛发现问题至多再改一轮）。',
     ].join('\n\n'),
   }];
   _rwAgentLogLine('开工：先查能力和配方，再试跑拿真输出。');
@@ -2538,6 +2580,8 @@ async function rwSmartAgentRun() {
   let stepsUsed = 0;
   let emptyPatches = 0;      // 连续「补丁一个字段没动」的轮数
   let lastFlagKey = null;    // 上一轮试跑的体检旗（没过时）
+  let critic = null;         // C3 内容初筛结果（null＝这轮没评：体检没过/取消/没输出）
+  let criticAction = '';     // ''＝没改｜patched＝按初筛改了一轮｜blocked＝想改但没改成（空补丁/没跑成）
   try {
     outer:
     for (let step = 1; step <= RECIPE_WORKSHOP_AGENT_MAX_STEPS; step += 1) {
@@ -2578,7 +2622,72 @@ async function rwSmartAgentRun() {
         }
       }
     }
-    if (!stopReason && !finalText) stopReason = 'steps';   // 8 步走满还没收尾
+    if (!stopReason && !finalText) stopReason = 'steps';   // 12 步走满还没收尾
+    // ---- C3 内容初筛：结构体检过了才评一次内容（材料摘要＋输出全文都带上）----
+    // critic 也是模型、会错杀漏杀：回包坏降级「没评上」；发现问题至多一轮既有
+    // 补丁管道（instruction 注明「内容初筛发现…只改对应处」），复跑仍受 2 次
+    // 试跑总闸；改完不再二次评分——初筛只做一次，收尾永远留「初筛≠终审」。
+    const judgeAtEnd = state.judge;
+    if (state.agentSeq === seq && stopReason !== 'cancel' && stopReason !== 'net'
+      && judgeAtEnd && judgeAtEnd.pass && String(state.output || '').trim()) {
+      critic = await _rwAgentCriticFetch(model, {
+        output: String(state.output || ''),
+        recipe_name: String((_rwNormalized() || _rwCurrentRecipe()).name || ''),
+        materials_summary: materialsBrief,
+      }, seq);
+      if (state.agentSeq !== seq) {
+        critic = null;   // 评分在途中被取消：当作没评，走取消收尾
+        stopReason = 'cancel';
+      } else if (!critic) {
+        critic = { verdict: 'warn', score: -1, issues: [], say: '这次评分没拿到' };
+        _rwAgentLogLine('内容初筛：这次没评上（评分没拿到），跳过', 'warn');
+      } else if (critic.verdict === 'pass') {
+        _rwAgentLogLine('内容初筛：未发现问题'
+          + (typeof critic.score === 'number' && critic.score >= 0 ? '（' + critic.score + '/10 分）' : ''));
+      } else if ((critic.issues || []).length) {
+        const issues = critic.issues || [];
+        const issueLines = issues.map(function (it) {
+          return String((it && it.kind) || '问题') + '：' + String((it && it.detail) || '');
+        });
+        _rwAgentLogLine('内容初筛：发现 ' + issues.length + ' 处——' + issueLines.join('；'), 'warn');
+        // 至多一轮补丁：与 rwAutoTune / workshop_patch_recipe 同一条 /recipe/draft patch 管道
+        const instruction = ['内容初筛发现 ' + issues.length + ' 处内容问题（结构体检已通过，别动结构相关字段，只改对应处）：']
+          .concat(issueLines.map(function (line) { return '- ' + line; }))
+          .concat(['请只改上述问题对应的字段（优先「生成要求」），不要重写整份配方，也别动已经正确的部分。'])
+          .join('\n');
+        const data = await _rwRequestDraft(instruction, { mode: 'patch' });
+        if (state.agentSeq !== seq) {
+          critic = null;
+          stopReason = 'cancel';
+        } else if (data && Array.isArray(data.changed) && data.changed.length) {
+          criticAction = 'patched';
+          _rwAgentLogLine('按初筛意见改了 ' + data.changed.length + ' 处：' + chopsHuman(data.changed.slice(0, 6)));
+          if (ctx.trials < RECIPE_WORKSHOP_AGENT_MAX_TRIALS) {
+            const run = await _rwRunTrialOnce(true);
+            if (state.agentSeq !== seq) {
+              critic = null;
+              stopReason = 'cancel';
+            } else if (run && run.ok) {
+              ctx.trials += 1;
+              const judge2 = state.judge || {};
+              const labels2 = (judge2.flags || []).map(function (flag) { return flag.label; }).join('、');
+              _rwAgentLogLine('复跑验证：' + (judge2.pass ? '体检仍通过' : '体检亮旗：' + (labels2 || '无')),
+                judge2.pass ? '' : 'warn');
+            } else {
+              _rwAgentLogLine('复跑没跑通：' + String((run && run.error) || '未知原因'), 'warn');
+            }
+          } else {
+            _rwAgentLogLine('试跑已达上限（' + RECIPE_WORKSHOP_AGENT_MAX_TRIALS + ' 次），改完这轮不再复跑', 'warn');
+          }
+        } else {
+          criticAction = 'blocked';
+          _rwAgentLogLine('初筛补丁一个字段都没动——配方原样保留', 'warn');
+        }
+      } else {
+        // warn/fail 但没给 issues：只报判决，不瞎改
+        _rwAgentLogLine('内容初筛：' + (String(critic.say || '') || '有点拿不太准'), 'warn');
+      }
+    }
   } finally {
     state.agentBusy = false;
     state.agentAbort = null;
@@ -2607,8 +2716,24 @@ async function rwSmartAgentRun() {
   } else {
     summary = '没调到通过，还剩：' + (restLabels || '没拿到可判的输出') + '。可以再点一次，或手动改对应字段。';
   }
-  // 收尾只说结构，不替内容背书——体检是纯形式判定（A/B 检验的已知盲区）
-  summary += '结构通过≠内容正确——体检只看形式（分步/公式/出口/长度），内容对不对请你自己读一遍输出。';
+  // 收尾话术（C3 升级）：评过的报初筛结果、无论什么判决都留「初筛≠终审」；没评的
+  // （体检没过/取消）维持 C1 的结构提醒——体检只看形式（A/B 检验的已知盲区），
+  // 谁也不许说「内容一定对」。
+  if (critic && critic.score === -1) {
+    summary += '这次内容初筛没评上（评分没拿到）。初筛≠终审——内容对不对请你自己读一遍输出。';
+  } else if (critic && critic.verdict === 'pass') {
+    summary += '内容初筛：未发现问题'
+      + (typeof critic.score === 'number' ? '（' + critic.score + '/10 分）' : '')
+      + '。初筛≠终审——内容对不对建议你自己读一遍输出。';
+  } else if (critic) {
+    const found = (critic.issues || []).length;
+    const brief = (critic.issues || []).map(function (it) { return String((it && it.kind) || '问题'); }).join('、');
+    summary += '内容初筛：' + (found ? '发现 ' + found + ' 处（' + brief + '）' : String(critic.say || '有点拿不太准'))
+      + (criticAction === 'patched' ? '，已按初筛意见改了一轮' : '')
+      + '。初筛≠终审——内容对不对建议你自己读一遍输出。';
+  } else {
+    summary += '结构通过≠内容正确——体检只看形式（分步/公式/出口/长度），内容对不对请你自己读一遍输出。';
+  }
   if (ctx.placed) {
     const wired = Object.keys(state.wires || {}).filter(function (key) { return (state.wires || {})[key]; }).length;
     summary = '节点已放到画布' + (wired ? '（接了 ' + wired + ' 个上游）。' : '。') + summary;

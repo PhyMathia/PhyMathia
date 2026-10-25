@@ -711,3 +711,42 @@ async def workshop_step(request: Request):
         err = {"status": "error", "errors": [{"reason": f"harness 内部错误: {exc}"}], "say": f"harness 内部错误: {exc}"}
         _log_usage(_usage_entry(payload, err, t0, "workshop_agent"))
         return JSONResponse(status_code=500, content=err)
+
+
+# ===== 工坊 C3（2026-10-25）：内容初筛——结构体检通过后的一次评分调用 =====
+# 与 /workshop/step 分工：step 代理「带工具表」的循环调用（工具在浏览器执行）；
+# critic **不带 tools**、json_mode 出一个评分 JSON，服务端抄 recipe_draft 样板
+# 清洗（extract_json→schema 清洗→坏回包降级 warn＋score:-1，不是报错——主流程
+# 不因 critic 挂掉而断）。前端只在 Φ 循环体检通过后调一次（rwAutoTune 与手动
+# 档不加，C3 只进 Φ 循环）。
+@router.post("/workshop/critic")
+async def workshop_critic(request: Request):
+    t0 = time.time()
+    payload = {}
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        return JSONResponse(status_code=400, content={"status": "error", "errors": [{"reason": f"请求不是合法 JSON: {exc}"}]})
+    try:
+        from .workshop_critic import workshop_critic_call
+
+        with harness_session_bucket(_payload_session(payload)):
+            result = await workshop_critic_call(
+                output=payload.get("output"),
+                recipe_name=payload.get("recipe_name"),
+                materials_summary=payload.get("materials_summary"),
+                model=payload.get("model"),
+                thinking=str(payload.get("thinking") or ""),
+                max_tokens=payload.get("max_tokens"),
+            )
+        _log_usage(_usage_entry(payload, result, t0, "workshop_critic"))
+        return result
+    except HarnessError as exc:
+        err = {"status": "error", "errors": [{"reason": str(exc)}], "say": str(exc)}
+        _log_usage(_usage_entry(payload, err, t0, "workshop_critic"))
+        return JSONResponse(status_code=502, content=err)
+    except Exception as exc:
+        logger.exception("harness internal error (workshop critic)")
+        err = {"status": "error", "errors": [{"reason": f"harness 内部错误: {exc}"}], "say": f"harness 内部错误: {exc}"}
+        _log_usage(_usage_entry(payload, err, t0, "workshop_critic"))
+        return JSONResponse(status_code=500, content=err)
