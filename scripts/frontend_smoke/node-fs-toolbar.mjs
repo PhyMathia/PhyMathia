@@ -14,11 +14,19 @@ export function run() {
     return true;
   });
 
-  check('node-fs-toolbar: 桥上白名单＝追问/收藏公式/查找，已删的 explain/excerpt 不许回潮', () => {
+  check('node-fs-toolbar: 桥上白名单＝追问/查找两枚；收藏公式/复制为引用/解释/摘录不许回潮', () => {
     const src = readSrc('src/static/js/node-fs-toolbar.js');
-    if (!/NODE_FS_BRIDGE_ACTIONS\s*=\s*\['followup',\s*'collectFormula',\s*'search'\]/.test(src)) return false;
-    // 只拦动作字符串字面量（属性名 .excerpt 之类的普通命名不算回潮）
-    if (/'(explain|excerpt)'/.test(src)) return false;
+    if (!/NODE_FS_BRIDGE_ACTIONS\s*=\s*\['followup',\s*'search'\]/.test(src)) return false;
+    // 只拦动作字符串字面量（'delquote' 之类的普通命名不算回潮）
+    if (/'(collectFormula|quote|explain|excerpt)'/.test(src)) return false;
+    if (src.includes("'收藏公式'") || src.includes("'复制为引用'")) return false;
+    return true;
+  });
+
+  check('node-fs-toolbar: 追问点击必须接到展开输入行（首版漏分支真机事故，双端都要有）', () => {
+    if (!sandbox._nodeFsRunAction.toString().includes('_nodeFsExpandInput')) return false;
+    const bridge = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
+    if (!bridge.includes('expandInput') || !bridge.includes('sendFollowup')) return false;
     return true;
   });
 
@@ -91,6 +99,7 @@ export function run() {
 
   check('node-fs-toolbar: 浮条样式进 graph-override.css（胶囊＋引文输入行＋窄屏图标化）', () => {
     const css = readSrc('src/static/css/graph-override.css');
+    if (css.includes('.node-fs-more') || css.includes('node-fs-menu-item')) return false; // ⋯ 菜单已随工具条收窄退役
     return css.includes('.node-fs-bar')
       && css.includes('.node-fs-input')
       && css.includes('.node-fs-quote-chip')
