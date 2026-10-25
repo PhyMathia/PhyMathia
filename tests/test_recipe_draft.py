@@ -29,8 +29,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from harness import prompts as prompts_mod
 from harness import recipe_draft as draft_mod
+from harness import recipes as recipes_mod
 from harness.recipe_draft import changed_fields, deep_merge, flatten_recipe
+from harness.recipe_templates import RECIPE_TEMPLATES, pick_template, template_catalog
+from harness.recipes import normalize_recipe_input, validate_recipe
 
 MODEL = {"provider": "opencode", "model": "m", "base_url": "https://opencode.ai/zen/v1", "api_key": ""}
 
@@ -128,9 +132,11 @@ class DraftRecipeTest(unittest.TestCase):
     def test_draft_mode_ignores_incoming_draft(self):
         patch = {"recipe": {"name": "错题复盘", "base": {"kind": "module"},
                             "generate": {"prompt": "输出错因"}, "ports": {"static": [{"label": "错因"}]}}}
-        out = _run(patch, draft=dict(BASE), mode="draft")
+        # 指令刻意不命中任何模板（B 起 draft 模式会先挑模板，这里保住「纯从零」的原语义）
+        out = _run(patch, draft=dict(BASE), mode="draft", instruction="造一个整理课堂便签的节点")
         self.assertEqual(out["recipe"]["name"], "错题复盘")
         self.assertEqual(out["recipe"]["ports"]["static"], [{"label": "错因", "drag_form": "draft"}])
+        self.assertEqual(out["template"], "")
 
     def test_invalid_name_keeps_previous_draft(self):
         out = _run({"recipe": {"name": ""}, "say": "改了"}, draft=dict(BASE))
@@ -189,6 +195,129 @@ class DraftRecipeTest(unittest.TestCase):
                    user_recipes=[{"id": "other", "name": "受力分析"}])
         fields = [item["field"] for item in out["field_errors"]]
         self.assertIn("name", fields)
+
+
+class CapabilitiesReflectionTest(unittest.TestCase):
+    """B：能力反射——端点与草稿提示词都从 recipes.py 常量派生，不许手抄第二份。"""
+
+    def test_capabilities_mirror_schema_constants(self):
+        caps = recipes_mod.recipe_capabilities()
+        self.assertEqual(caps["base_kinds"]["all"], list(recipes_mod.RECIPE_BASE_KINDS))
+        self.assertEqual(caps["base_kinds"]["ai"], list(recipes_mod.RECIPE_AI_BASE_KINDS))
+        self.assertEqual(caps["palettes"], list(recipes_mod.RECIPE_PALETTE_KEYS))
+        self.assertEqual(caps["port_types"], list(recipes_mod.RECIPE_PORT_TYPES))
+        self.assertEqual(caps["content_kinds"], list(recipes_mod.RECIPE_CONTENT_KINDS))
+        self.assertEqual(caps["dynamic"]["patterns"], list(recipes_mod.RECIPE_PARSER_PATTERNS))
+        self.assertEqual(caps["dynamic"]["port_types"], list(recipes_mod.RECIPE_DYNAMIC_PORT_TYPES))
+        self.assertEqual(caps["on_generated"]["kinds"], list(recipes_mod.RECIPE_ON_GENERATED_KINDS))
+        self.assertEqual(caps["limits"]["prompt"], recipes_mod.RECIPE_PROMPT_BUDGET)
+        self.assertEqual(caps["limits"]["name"], recipes_mod.RECIPE_NAME_MAX)
+        self.assertEqual(caps["limits"]["ports"], recipes_mod.RECIPE_MAX_PORTS)
+
+    def test_draft_prompt_carries_every_enum(self):
+        # 提示词是插值生成的，但守护仍要钉死：schema 加了枚举值没跟文案，当场红
+        prompt = prompts_mod.HARNESS_RECIPE_DRAFT_SYSTEM_PROMPT
+        values = (
+            recipes_mod.RECIPE_BASE_KINDS + recipes_mod.RECIPE_AI_BASE_KINDS
+            + recipes_mod.RECIPE_PALETTE_KEYS + recipes_mod.RECIPE_CONTENT_KINDS
+            + recipes_mod.RECIPE_PORT_TYPES + recipes_mod.RECIPE_MODEL_ROLES
+            + recipes_mod.RECIPE_CONTEXT_CHANNELS + recipes_mod.RECIPE_AGGREGATIONS
+            + recipes_mod.RECIPE_PARSER_PATTERNS + recipes_mod.RECIPE_LABEL_FROM
+            + recipes_mod.RECIPE_FALLBACK_MODES + recipes_mod.RECIPE_DYNAMIC_PORT_TYPES
+        )
+        for value in values:
+            self.assertIn(value, prompt, f"枚举「{value}」没进草稿提示词——加枚举忘了跟文案")
+        for number in (recipes_mod.RECIPE_PROMPT_BUDGET, recipes_mod.RECIPE_MAX_DYNAMIC,
+                       recipes_mod.RECIPE_NAME_MAX, recipes_mod.RECIPE_MAX_INPUTS):
+            self.assertIn(str(number), prompt)
+
+    def test_capabilities_endpoint_route_registered(self):
+        # C 的工具层与前端查能力的口：路由删了这里先红
+        from harness import api as api_mod
+
+        paths = {getattr(route, "path", "") for route in api_mod.router.routes}
+        self.assertTrue(
+            any(str(path).endswith("/recipe/capabilities") for path in paths),
+            f"GET /recipe/capabilities 路由丢了，实际注册：{sorted(paths)[:8]}…",
+        )
+
+
+class TemplateLibraryTest(unittest.TestCase):
+    """B：模板库——全量合法（schema 演进的守护）、确定性命中、补丁模式不挑模板。"""
+
+    def test_all_templates_normalize_and_validate(self):
+        self.assertTrue(8 <= len(RECIPE_TEMPLATES) <= 12, "模板库约定 8~12 份")
+        for item in RECIPE_TEMPLATES:
+            normalized = normalize_recipe_input(item["recipe"])
+            self.assertIsNotNone(normalized, f"模板 {item['key']} 连归一化都过不了")
+            verdict = validate_recipe(normalized)
+            self.assertTrue(verdict["ok"], f"模板 {item['key']} 校验失败：{verdict['errors']}")
+            self.assertNotIn("id", item["recipe"], "模板不许带固定 id（每次起稿生成新 id，草稿互不串）")
+            self.assertTrue(item.get("keywords"), f"模板 {item['key']} 没配检索关键词")
+
+    def test_pick_template_hits(self):
+        cases = [
+            ("做一个错题复盘节点，喂我做错的题和当时的答案", "mistake_review"),
+            ("想要受力分析：喂题目和受力图，吐方程", "force_analysis"),
+            ("来一个考我的苏格拉底追问节点", "socratic_ask"),
+            ("做一个可视化的流程图节点", "viz_diagram"),
+            ("帮我做个分步解题的助手", "step_by_step"),
+        ]
+        for text, key in cases:
+            picked = pick_template(text)
+            self.assertIsNotNone(picked, f"「{text}」应命中模板")
+            self.assertEqual(picked["key"], key, f"「{text}」应命中 {key}，实际 {picked['key']}")
+
+    def test_pick_template_threshold_and_empty(self):
+        # 只中一个弱关键词：宁可从零起草也不错配底稿
+        self.assertIsNone(pick_template("帮我看看这道受力题"))
+        self.assertIsNone(pick_template("随便来一个节点"))
+        self.assertIsNone(pick_template(""))
+
+    def test_draft_mode_builds_on_matched_template(self):
+        seen = []
+        payload = {"recipe": {"name": "我的错题本"}, "say": "在模板上改名了"}
+        out = _run(payload, mode="draft",
+                   instruction="做一个错题复盘节点，喂做错的题", seen=seen)
+        self.assertEqual(out["status"], "ok")
+        self.assertEqual(out["template"], "错题复盘")
+        self.assertEqual(out["recipe"]["name"], "我的错题本")
+        # 模型没提到的字段原样来自模板底稿（这正是「不从白纸写」的意义）
+        self.assertEqual([p["label"] for p in out["recipe"]["ports"]["inputs"]], ["题目", "我的答案"])
+        self.assertEqual([p["label"] for p in out["recipe"]["ports"]["static"]], ["错因", "正确思路", "同类题眼"])
+        # 模型收到的是「模板底稿＋补丁口径」，不再是「从零起草」
+        user_text = seen[0]["messages"][1]["content"]
+        self.assertIn("模板", user_text)
+        self.assertIn("错题复盘", user_text)
+        self.assertNotIn("从零起草", user_text)
+        # changed 只报模型改的字段，模板基底自身不算改动
+        self.assertEqual(out["changed"], ["name"])
+
+    def test_draft_mode_without_match_stays_from_zero(self):
+        seen = []
+        payload = {"recipe": {"name": "便签整理", "base": {"kind": "note"}}, "say": "手填底稿来了"}
+        out = _run(payload, mode="draft",
+                   instruction="造一个整理课堂便签的节点", seen=seen)
+        self.assertEqual(out["template"], "")
+        self.assertIn("从零起草", seen[0]["messages"][1]["content"])
+        self.assertEqual(out["recipe"]["name"], "便签整理")
+
+    def test_patch_mode_never_picks_template(self):
+        seen = []
+        payload = {"recipe": {"desc": "拆对象、列方程"}, "say": "改了描述"}
+        out = _run(payload, draft=dict(BASE), mode="patch",
+                   instruction="做一个错题复盘节点", seen=seen)
+        self.assertEqual(out["template"], "")
+        # 用户当前草稿（受力分析）才是基底，不许被模板顶掉
+        self.assertIn("受力分析", seen[0]["messages"][1]["content"])
+        self.assertEqual(out["recipe"]["name"], "受力分析")
+
+    def test_template_catalog_is_lightweight(self):
+        entries = template_catalog()
+        self.assertEqual(len(entries), len(RECIPE_TEMPLATES))
+        for entry in entries:
+            self.assertNotIn("recipe", entry, "目录不许带配方正文（端点载荷要轻）")
+            self.assertTrue(entry["key"] and entry["label"] and entry["keywords"])
 
 
 if __name__ == "__main__":

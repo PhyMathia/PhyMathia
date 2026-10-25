@@ -411,3 +411,49 @@ def validate_recipe(recipe: Any, existing: Optional[List[Any]] = None) -> Dict[s
     if dup:
         errors.append(f"已有同名配方：「{name}」")
     return {"ok": not errors, "errors": errors}
+
+
+def recipe_capabilities() -> Dict[str, Any]:
+    """工坊能力清单：本模块枚举/上限/默认值的**反射**（B：模型与工具「查」的事实源）。
+
+    字段只从上面的常量派生，不手抄第二份——schema 演进时这里自动跟上；
+    GET /api/harness/recipe/capabilities 原样吐出它，起草系统提示词的枚举段
+    同样从这里取值（prompts.py 插值），三处永远不会各说各话。
+    """
+    return {
+        "base_kinds": {"all": list(RECIPE_BASE_KINDS), "ai": list(RECIPE_AI_BASE_KINDS)},
+        "palettes": list(RECIPE_PALETTE_KEYS),
+        "content_kinds": list(RECIPE_CONTENT_KINDS),
+        "port_types": list(RECIPE_PORT_TYPES),
+        "model_roles": list(RECIPE_MODEL_ROLES),
+        "context_channels": list(RECIPE_CONTEXT_CHANNELS),
+        "aggregations": list(RECIPE_AGGREGATIONS),
+        "dynamic": {
+            "base_kinds": ["module"],
+            "patterns": list(RECIPE_PARSER_PATTERNS),
+            "label_from": list(RECIPE_LABEL_FROM),
+            "fallback_modes": list(RECIPE_FALLBACK_MODES),
+            "port_types": list(RECIPE_DYNAMIC_PORT_TYPES),
+            "max": RECIPE_MAX_DYNAMIC,
+        },
+        "on_generated": {
+            "kinds": list(RECIPE_ON_GENERATED_KINDS),
+            "content_from": list(RECIPE_ON_GENERATED_CONTENT_FROM),
+            "max": RECIPE_MAX_ON_GENERATED,
+        },
+        "limits": {
+            "name": RECIPE_NAME_MAX,
+            "desc": RECIPE_DESC_MAX,
+            "prompt": RECIPE_PROMPT_BUDGET,
+            "ports": RECIPE_MAX_PORTS,
+            "inputs": RECIPE_MAX_INPUTS,
+            "port_label": RECIPE_PORT_LABEL_MAX,
+        },
+        "defaults": {
+            "palette": "amber",
+            "content_kind": "markdown",
+            "context_channel": "workflow_context",
+            "model_role": "agent",
+            "aggregation": {"ai_base": "ancestors", "manual_base": "none"},
+        },
+    }

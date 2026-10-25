@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 
 from .json_utils import extract_json
 from .prompts import build_recipe_draft_messages
+from .recipe_templates import pick_template
 from .recipes import normalize_recipe_input, validate_recipe
 from .review import HarnessError, _apply_thinking_default, _call_model, _resolve_model
 
@@ -191,12 +192,21 @@ async def draft_recipe(
     base = normalize_recipe_input(draft) if isinstance(draft, dict) else None
     if mode == "draft":
         base = None
+    # B：从零起草先找最近邻模板——命中就把模板当深合并基底，模型在底稿上打补丁，
+    # 不从白纸写整份（弱模型丢字段/枚举瞎猜的最大杠杆）。补丁模式永远不挑模板：
+    # 用户已经有一份自己的草稿，不许被模板顶掉。
+    template = pick_template(instruction) if mode == "draft" else None
+    if template is not None:
+        base = normalize_recipe_input(template["recipe"])
+    msg_mode = "patch" if template is not None else mode
+    template_label = str((template or {}).get("label") or "")
     resolved = _resolve_model(model)
     _apply_thinking_default(resolved, str(thinking or ""), "preset")
     messages = build_recipe_draft_messages(
         instruction=instruction,
         draft=base,
-        mode=mode,
+        mode=msg_mode,
+        template=template_label,
         history=history,
         user_recipes=user_recipes,
         level=level,
@@ -250,6 +260,7 @@ async def draft_recipe(
             "warnings": [],
             "field_errors": [],
             "mode": mode,
+            "template": template_label,
         }
     merged = deep_merge(base or {}, patch) if base else dict(patch)
     normalized = normalize_recipe_input(merged)
@@ -282,15 +293,17 @@ async def draft_recipe(
     if dropped:
         warnings.append("这些设置没能落下（字段名或取值不认识），已忽略：" + "、".join(dropped[:3]))
     if not say:
-        if base is None:
+        if template:
+            say = f"从「{template_label}」模板起了底稿，按你这句话改好了。"
+        elif base is None:
             say = "初稿已经画在中间了，你看看像不像你要的。"
         elif changed:
             say = "改了 " + str(len(changed)) + " 处，卡片上高亮的就是。"
         else:
             say = "这轮没改动配方，我把话补在前面了。"
     logger.info(
-        "recipe draft: mode=%s changed=%d errors=%d dropped=%d",
-        mode, len(changed), len(field_errors), len(dropped),
+        "recipe draft: mode=%s template=%s changed=%d errors=%d dropped=%d",
+        mode, template_label or "-", len(changed), len(field_errors), len(dropped),
     )
     return {
         "status": "ok",
@@ -301,4 +314,5 @@ async def draft_recipe(
         "warnings": warnings,
         "field_errors": field_errors,
         "mode": mode,
+        "template": template_label,
     }

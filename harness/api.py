@@ -626,6 +626,21 @@ async def graph_feedback(request: Request):
 # 独立路由：只产一份配方草稿（补丁合并＋归一化＋字段级校验），不产图操作、
 # 不碰画布、不写配方库——与 Φ 的 review/preset 链路完全解耦（计划 3.4 节）。
 # 失败协议沿用本文件既有口径：业务结果 200＋status，传输层/上游故障才用真实码。
+
+# B（2026-10-25）能力反射：枚举/上限/默认值全部从 schema 属主 recipes.py 派生，
+# 零模型调用。前端与将来的工具层「查能力」都走这一个口，别再各抄一份枚举。
+@router.get("/recipe/capabilities")
+async def recipe_capabilities_endpoint():
+    from .recipe_templates import template_catalog
+    from .recipes import recipe_capabilities
+
+    return {
+        "status": "ok",
+        "capabilities": recipe_capabilities(),
+        "templates": template_catalog(),
+    }
+
+
 @router.post("/recipe/draft")
 async def recipe_draft(request: Request):
     t0 = time.time()
