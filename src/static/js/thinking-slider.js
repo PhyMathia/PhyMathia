@@ -9,8 +9,14 @@
 // 松手吸附最近档并提交；键盘 ←→/Home/End（role=slider）。
 // 最大档动效：ts-at-max 常驻（流光横扫＋白气泡横漂——气泡 2026-10-25 深夜四改
 // 用户拍板回归）；吸附/键盘到最大档触发 ts-burst 一击（拇指弹跳＋扩散光环＋六粒
-// 子扇形上飞＋亮度浪涌），animationend 自摘、强制 reflow 可重复——节奏只活在
-// CSS，本文件零样式零计时器。
+// 子扇形上飞＋亮度浪涌），animationend 自摘、强制 reflow 可重复——动效节奏只活在
+// CSS，本文件零样式零动画计时器（唯一的 setTimeout 是拖拽尾 click 的兜底摘除，
+// 见 _swallowTailClick）。
+// 拖出面板松手不误关面板（2026-10-26，用户报「拖过头松手把模型面板关了」）：两道
+// 保险——①setPointerCapture 捕获指针，Pointer Events 标准会让松手后的 click 改派到
+// 捕获目标＝面板内的滑块自己（而不是按下/松手目标的公共祖先 body）；②无论捕获是否
+// 生效，松手后紧跟的那颗 click 一律吞掉（capture 一次性拦截，对组件无影响——滑块
+// 只听 pointer 事件，不靠 click）。
 // 冒烟沙箱兼容：document/window 是宽松代理（Symbol.toPrimitive→0，任意属性可调），
 // 所有 DOM 调用在该环境下被吸收、几何值一律先 Number 收敛，构造与 API 调用均不抛错。
 function createThinkingSlider(mountEl, opts) {
@@ -187,9 +193,26 @@ function createThinkingSlider(mountEl, opts) {
     if (root && root.classList && e && e.animationName === 'ts-thumb-pop') root.classList.remove('ts-burst');
   }
 
+  // 拖拽尾 click 吞掉：指针在面板内按下、面板外松手时，浏览器把 click 派发到按下/
+  // 松手目标的公共祖先（body/html）——ui.js 的「点外面关闭」监听会把它当真的外点
+  // 关掉模型面板。这颗 click 只是手势的尾巴，capture 一次性拦下不让它继续传。
+  // once 兜自动摘除；没有 click 跟进时（pointercancel、拖出窗外等）setTimeout(0) 兜摘
+  // （输入事件序列 pointerup→click 总在定时器之前派发完，不会误吞下一次真实点击）。
+  function _swallowTailClick() {
+    try {
+      if (!document || typeof document.addEventListener !== 'function') return;
+      const swallow = (ce) => { if (ce && ce.stopPropagation) ce.stopPropagation(); };
+      document.addEventListener('click', swallow, { capture: true, once: true });
+      setTimeout(() => document.removeEventListener('click', swallow, true), 0);
+    } catch (e) {}
+  }
+
   function onPointerDown(e) {
     if (disabled || !root) return;
     if (e && e.preventDefault) e.preventDefault();
+    // 捕获指针：拖出滑块/面板/窗口也持续跟手，且松手后的 click 按 Pointer Events
+    // 标准改派到捕获目标（滑块自己，在面板内）——第一道保险
+    try { if (e && e.pointerId != null && root.setPointerCapture) root.setPointerCapture(e.pointerId); } catch (err) {}
     // 按下即预览最近档（跟手从第一帧开始），提交留到松手——预览不触发 onChange
     const i0 = _nearestFromX(e && e.clientX);
     _paintPos(_t(i0));
@@ -207,6 +230,7 @@ function createThinkingSlider(mountEl, opts) {
       document.removeEventListener('pointercancel', up);
       if (root && root.classList) root.classList.remove('ts-dragging');
       _commitIndex(_nearestFromX(ev && ev.clientX));
+      _swallowTailClick(); // 第二道保险：吞掉紧跟着的尾 click，别让外点关闭监听看见它
     };
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up);

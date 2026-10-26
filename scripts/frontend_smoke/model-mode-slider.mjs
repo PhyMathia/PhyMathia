@@ -10,6 +10,8 @@ const html = fs.readFileSync('src/static/index.html', 'utf8');
 const cssPanels = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
 const modelsSrc = fs.readFileSync('src/static/js/models.js', 'utf8');
 const buildSrc = fs.readFileSync('scripts/build_frontend.mjs', 'utf8');
+const sliderSrc = fs.readFileSync('src/static/js/thinking-slider.js', 'utf8');
+const uiSrc = fs.readFileSync('src/static/js/ui.js', 'utf8');
 
 export function run() {
   check('model-mode：默认简略模式（无记录=simple）＋applyModelPanelMode 落盘模式键', () => {
@@ -40,6 +42,30 @@ export function run() {
     slider.setValue('不存在的档');
     if (slider.getValue() !== '') throw new Error('无效档位应回落空值');
     slider.setDisabled(true);
+    return true;
+  });
+
+  check('model-mode：拖出面板松手不误关面板——拖拽捕获＋尾 click 吞掉（2026-10-26 用户报）', () => {
+    if (!sliderSrc.includes('setPointerCapture')) throw new Error('onPointerDown 应 setPointerCapture 捕获指针（松手后 click 按 Pointer Events 标准改派到捕获目标＝面板内滑块）');
+    if (!sliderSrc.includes('_swallowTailClick')) throw new Error('应有拖拽尾 click 吞掉（_swallowTailClick）');
+    if (!/once:\s*true/.test(sliderSrc)) throw new Error('尾 click 拦截应 once 一次性（发完自摘）');
+    if (!/setTimeout\(\s*\(\)\s*=>\s*document\.removeEventListener\('click',\s*swallow,\s*true\)/.test(sliderSrc)) {
+      throw new Error('无 click 跟进时（pointercancel/拖出窗外）应 setTimeout(0) 兜摘拦截器');
+    }
+    // 布点契约：捕获挂在 pointerdown（预览之前），吞尾挂在松手提交之后（up 路径收口）
+    if (sliderSrc.indexOf('setPointerCapture') > sliderSrc.indexOf('const i0 = _nearestFromX')) {
+      throw new Error('setPointerCapture 应在 onPointerDown 预览最近档之前挂上');
+    }
+    if (sliderSrc.lastIndexOf('_swallowTailClick()') < sliderSrc.indexOf('_commitIndex(_nearestFromX')) {
+      throw new Error('_swallowTailClick 应在 up 路径 _commitIndex 之后调用');
+    }
+    return true;
+  });
+
+  check('model-mode：外点关闭契约原样保留——吞的只是手势尾 click，不碰 ui.js 外点监听本体', () => {
+    if (!uiSrc.includes("document.getElementById('modelPanel'), btns")) throw new Error('ui.js modelPanel 外点关闭监听应原样保留');
+    if (!uiSrc.includes("document.getElementById('dataPanel'), btns")) throw new Error('ui.js dataPanel 外点关闭监听应原样保留');
+    if (!uiSrc.includes('!e.target.isConnected')) throw new Error('detached 目标守卫应原样保留');
     return true;
   });
 
