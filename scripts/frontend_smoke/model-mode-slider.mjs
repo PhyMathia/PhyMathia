@@ -261,6 +261,17 @@ export function run() {
         if (!cssPanels.includes(sel)) throw new Error('缺家族滑块配色：' + sel);
       }
     }
+    // 2026-10-26 六改拍板：糖果深浅统一成浅色一套（用户判浅色版更好看）——两块三色逐值相等
+    const hueTrio = (sel) => {
+      const i = cssPanels.indexOf(sel);
+      if (i === -1) return '';
+      return (cssPanels.slice(i, i + 300).match(/--ts-hue-\d: #[0-9a-f]{6}/g) || []).slice(0, 3).join(' ');
+    };
+    const candyDark = hueTrio('html[data-theme="dark"][data-panel-skin="candy"] .thinking-slider');
+    const candyLight = hueTrio('html[data-theme="light"][data-panel-skin="candy"] .thinking-slider');
+    if (!candyDark || candyDark !== candyLight) {
+      throw new Error('糖果滑块深浅应统一成一套（2026-10-26 拍板）：dark=[' + candyDark + '] light=[' + candyLight + ']');
+    }
     if (!cssPanels.includes('linear-gradient(90deg, var(--ts-hue-1), var(--ts-hue-2) 52%, var(--ts-hue-3))')) {
       throw new Error('填充渐变应为极光三色（青→蓝→紫，深夜四改拍板：单色系被判单调）');
     }
