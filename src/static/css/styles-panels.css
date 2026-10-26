@@ -6309,11 +6309,14 @@ html[data-theme='light'] .thinking-slider {
   --ts-hue-2: #fbbf24;
   --ts-hue-3: #f9a884;
 }
-/* 家族适配（2026-10-25 五改，锚 styles.css 各家族块色斑/网格线/accent 满饱和版）：
-   blueprint 蓝图＝青→蓝图→靛（浅色收进 accent 深蓝＝墨色落纸）；inkstone 砚石＝
-   低饱和石青→石蓝（哑光家族整套压暗，渐变也最收敛）；neon 霓虹＝青→紫→品红
-   （经典霓虹管双色，近黑玻璃上最跳）；candy 糖果＝樱粉→accent 玫粉→香芋紫
-   （暗面柔紫玻璃收紫尖）。hue-2 落 accent、hue-3＝招牌色。 */
+/* 家族适配（2026-10-25 五改，锚 styles.css 各家族块色斑/网格线/accent 满饱和版；
+   2026-10-26 六改按用户反馈重配三族）：blueprint 蓝图＝青→蓝图→靛（深浅同构、
+   浅色收敛——浅色右端弃 accent 深蓝改靛，用户判单调）；inkstone 砚石＝石绿→
+   石青→群青（青绿山水三色，同族饱和度拉开色相跨距——原全石青一条线用户判单调，
+   hue-2 仍落 accent）；neon 霓虹＝青→紫→品红（经典霓虹管双色，近黑玻璃上最跳）；
+   candy 糖果＝蜜桃粉→玫粉→香芋紫（深浅统一成浅色一套，用户判浅色版更好看；左端
+   樱粉改带微橙调的蜜桃粉）。hue-2 尽量落 accent、hue-3＝招牌色（burst 光环/粒子
+   辉光同取）。 */
 html[data-theme="dark"][data-panel-skin="blueprint"] .thinking-slider {
   --ts-hue-1: #38c5e8;
   --ts-hue-2: #4a8fe0;
@@ -6322,17 +6325,17 @@ html[data-theme="dark"][data-panel-skin="blueprint"] .thinking-slider {
 html[data-theme="light"][data-panel-skin="blueprint"] .thinking-slider {
   --ts-hue-1: #4fb9d6;
   --ts-hue-2: #3d78cc;
-  --ts-hue-3: #2f5fae;
+  --ts-hue-3: #6c5ecb;
 }
 html[data-theme="dark"][data-panel-skin="inkstone"] .thinking-slider {
-  --ts-hue-1: #8bd0c2;
+  --ts-hue-1: #82cfa2;
   --ts-hue-2: #55b3a8;
-  --ts-hue-3: #4a86a4;
+  --ts-hue-3: #5e82c4;
 }
 html[data-theme="light"][data-panel-skin="inkstone"] .thinking-slider {
-  --ts-hue-1: #7ab3a4;
+  --ts-hue-1: #6db389;
   --ts-hue-2: #4d9187;
-  --ts-hue-3: #3d7a8c;
+  --ts-hue-3: #4e6ba6;
 }
 html[data-theme="dark"][data-panel-skin="neon"] .thinking-slider {
   --ts-hue-1: #22d3ee;
@@ -6345,12 +6348,12 @@ html[data-theme="light"][data-panel-skin="neon"] .thinking-slider {
   --ts-hue-3: #c44fd8;
 }
 html[data-theme="dark"][data-panel-skin="candy"] .thinking-slider {
-  --ts-hue-1: #ffb3cd;
-  --ts-hue-2: #f08fb4;
-  --ts-hue-3: #d57ae2;
+  --ts-hue-1: #f3a8a0;
+  --ts-hue-2: #d3709c;
+  --ts-hue-3: #a98ae6;
 }
 html[data-theme="light"][data-panel-skin="candy"] .thinking-slider {
-  --ts-hue-1: #f2a4c2;
+  --ts-hue-1: #f3a8a0;
   --ts-hue-2: #d3709c;
   --ts-hue-3: #a98ae6;
 }
