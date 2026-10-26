@@ -654,12 +654,14 @@ let harnessLastAppliedReport = null;
     }
     // T105：空状态不止一行字——内置引导早就写好了（标题栏 ?），把四个示例问题
     // 直接摆到明面上，新会话第一句话有着落
-    chat.innerHTML = harnessHistory.length
+    // 主动体检芯片（2026-10-26）：挂在对话流最顶——有结构问题时才有内容，空态零打扰
+    chat.innerHTML = (typeof _harnessHealthChipHtml === 'function' ? _harnessHealthChipHtml() : '')
+      + (harnessHistory.length
       ? harnessHistory.map(entry => _historyMessageHtml(entry, currentOpsId)).join('')
       : '<div class="graph-harness-empty">还没有助手操作记录，试试：</div>'
         + '<div class="graph-harness-examples">'
         + HARNESS_EXAMPLE_QUESTIONS.map((q, i) => '<button type="button" onclick="sendHarnessExample(' + i + ')">' + _escapeHtml(q) + '</button>').join('')
-        + '</div>';
+        + '</div>');
     // 消息正文里的 <formula>/$$..$$ 由 renderMarkdown 转成 KaTeX 定界符，
     // 这里再跑一遍 renderMath 真正渲染公式（与画布正文同口径）。
     if (typeof renderMath === 'function') {
@@ -998,6 +1000,9 @@ let harnessLastAppliedReport = null;
     // T122：面板不再有独立结果区与应用按钮行要清（两者都在对话流里，随历史渲染）
     await _loadHarnessHistory();
     _renderHarnessChat();
+    // 主动体检芯片（2026-10-26）：开面板即对绑定画布跑一次本地零模型体检（结构问题
+    // 才挂芯片）。fire-and-forget——体检结果到位时自己重渲染，不阻塞面板打开。
+    if (typeof runHarnessHealthCheck === 'function') runHarnessHealthCheck();
   }
 
   function toggleGraphHarnessWindow() {

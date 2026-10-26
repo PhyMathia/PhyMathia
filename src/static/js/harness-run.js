@@ -1200,3 +1200,218 @@
     return parts.join('\n\n');
   }
 
+  // ===== 主动体检芯片（2026-10-26，DSH 对照·方向 4 第 1 档）=====
+  // 打开 Φ 面板时对绑定的画布跑一次本地零模型体检（POST /api/harness/graph/health →
+  // harness/selfcheck.check_snapshot_consistency），发现孤立节点/断链时在对话流顶部
+  // 挂一张建议芯片卡。点芯片＝把整理指令预填进输入框（不自动发送——模型调用只发生
+  // 在用户自己点发送之后）；✕ 收起。同一画布同一组问题只主动提示一次（签名记进
+  // localStorage；修好后记录清空，同款再犯会重新提示）。体检失败/结果为空零打扰。
+
+  let harnessHealthHint = null;       // { sid, issues, sig, instruction }｜null＝当前无芯片
+  let harnessHealthInflight = false;  // 开面板与应用后复检同拍到达时的并发闸
+
+  function _harnessHealthStore() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(STORAGE_KEY_HARNESS_HEALTH) || '{}');
+      return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    } catch (e) { return {}; }
+  }
+
+  function _harnessHealthSaveStore(store) {
+    // 只留最近 40 张画布的记录（按 ts 淘汰）：这个键是用户级全局的，不随画布清理走
+    let out = store || {};
+    const entries = Object.entries(out).filter(entry => entry[1] && typeof entry[1] === 'object');
+    if (entries.length > 40) {
+      entries.sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0));
+      out = {};
+      entries.slice(0, 40).forEach(entry => { out[entry[0]] = entry[1]; });
+    }
+    try { localStorage.setItem(STORAGE_KEY_HARNESS_HEALTH, JSON.stringify(out)); } catch (e) {}
+  }
+
+  // 体检快照：整图原样（不做焦点裁剪——孤儿判定必须看全图）。剥掉撤销/拒绝标记已
+  // 删除的节点与待生成的 blank 占位（它们没连线属预期，报出来全是噪声），连带剥掉
+  // 只触及这两类节点的连线（会把它们误报成断链）；指向真正不存在节点的断链保留。
+  function _harnessHealthSnapshot() {
+    const state = _harnessGraphState() || {};
+    const skip = new Set(Object.keys(state.harnessDeleted || {}));
+    const viewNodes = _graphNodes();
+    viewNodes.forEach(n => { if (n.kind === 'blank') skip.add(String(n.id || '')); });
+    const nodes = viewNodes
+      .filter(n => !skip.has(String(n.id || '')))
+      .map(n => ({
+        id: String(n.id || ''),
+        kind: String(n.kind || ''),
+        label: _nodeLabel(n) || '',
+        moduleKey: String(n.moduleKey || n.module_key || ''),
+      }));
+    const edges = _graphEdges()
+      .filter(e => !skip.has(String(e.from || '')) && !skip.has(String(e.to || '')))
+      .map(e => ({ key: String(e.key || ''), from: String(e.from || ''), to: String(e.to || '') }));
+    return { nodes, edges };
+  }
+
+  // 问题签名只看「问题集合本身」（类型＋位置）：节点正文/顺序无关。修好→记录清空→
+  // 同款再犯时签名相同也会重新提示（判定依据是记录在不在，不是签名新鲜度）。
+  function _harnessHealthSig(issues) {
+    return issues
+      .map(i => i.type + '|' + String(i.node_id || '') + '|' + String(i.edge_key || ''))
+      .sort()
+      .join(';');
+  }
+
+  function _harnessHealthTitle(issues) {
+    const orphans = issues.filter(i => i.type === 'orphan').length;
+    const broken = issues.filter(i => i.type === 'broken_edge').length;
+    const parts = [];
+    if (orphans) parts.push(orphans + ' 个孤立节点');
+    if (broken) parts.push(broken + ' 条断链');
+    return parts.join('、');
+  }
+
+  // 预填指令：点名节点（模型认得出目标）、给判断标准、说清「连不上就删」的出口
+  function _harnessHealthInstruction(issues) {
+    const orphans = issues.filter(i => i.type === 'orphan');
+    const broken = issues.filter(i => i.type === 'broken_edge');
+    const parts = [];
+    if (orphans.length) {
+      const names = orphans.slice(0, 5).map(i => '「' + (i.label || i.node_id) + '」').join('');
+      parts.push('图里有 ' + orphans.length + ' 个没有任何连线的孤立节点（' + names
+        + (orphans.length > 5 ? ' 等' : '') + '）。请整理：判断每个孤立节点与图里哪个节点关系最近，'
+        + '补一条连线并写明关系；确实与整张图无关的，删除该节点');
+    }
+    if (broken.length) {
+      parts.push('图里有 ' + broken.length + ' 条断链（连线指向已不存在的节点），请删除这些无效连线');
+    }
+    return parts.join('；') + '。';
+  }
+
+  function _harnessHealthChipHtml() {
+    const hint = harnessHealthHint;
+    if (!hint) return '';
+    // 只在「芯片所属画布＝当前绑定画布」时渲染：面板内切到绑别的画布的 Φ 会话，
+    // 芯片指令发不出去，挂出来就是死路
+    const bound = (typeof _harnessBoundSid === 'function') ? _harnessBoundSid() : '';
+    if (!bound || bound !== hint.sid) return '';
+    return '<div class="graph-harness-health-chip" role="note">'
+      + '<span class="graph-harness-health-chip-icon" aria-hidden="true">🩺</span>'
+      + '<span class="graph-harness-health-chip-text">'
+      + '<strong>图体检：图里有 ' + _escapeHtml(_harnessHealthTitle(hint.issues)) + '</strong>'
+      + '<em>要不要整理？点「拟整理指令」帮你写好（发送前可改，发送才调模型）</em>'
+      + '</span>'
+      + '<button type="button" class="graph-harness-health-chip-act" onclick="applyHarnessHealthChip()">拟整理指令</button>'
+      + '<button type="button" class="graph-harness-health-chip-close" onclick="dismissHarnessHealthChip()"'
+      + ' aria-label="收起图体检提示" title="收起（同款问题不再提醒）">✕</button>'
+      + '</div>';
+  }
+
+  // 芯片状态变了要重渲染对话流，但两种场合必须让路：生成中（重渲染会撤掉实时气泡）、
+  // 用户正看使用引导（_renderHarnessChat 会把引导视图打回聊天）。这两种场合芯片
+  // 状态已就位，下一次自然触发的渲染会把它带出来。
+  function _harnessHealthRefreshChat() {
+    const chat = document.getElementById('graphHarnessChat');
+    if (!chat || chat._guideOpen) return;
+    if (typeof harnessBusy !== 'undefined' && harnessBusy) return;
+    if (typeof _renderHarnessChat === 'function') _renderHarnessChat();
+  }
+
+  async function runHarnessHealthCheck() {
+    // 只体检「绑定且正打开」的画布：芯片预填的是改图指令，绑的不是当前画布时
+    // 指令发不出去，提示就成了死路（与 runGraphHarness 的 canvasReady 同一门槛）
+    const sid = (typeof _harnessBoundSid === 'function') ? _harnessBoundSid() : '';
+    if (!sid || sid !== _sessionId()) return;
+    if (harnessHealthInflight) return;
+    harnessHealthInflight = true;
+    const prevHint = harnessHealthHint;
+    try {
+      const snapshot = _harnessHealthSnapshot();
+      if (!snapshot.nodes.length) {
+        // 空画布：无结构问题可言，顺手清掉该画布的提示记录
+        const store = _harnessHealthStore();
+        if (store[sid]) { delete store[sid]; _harnessHealthSaveStore(store); }
+        harnessHealthHint = null;
+        if (prevHint && prevHint.sid === sid) _harnessHealthRefreshChat();
+        return;
+      }
+      const resp = await fetch('/api/harness/graph/health', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ snapshot }),
+      });
+      if (!resp.ok) return; // 本地体检失败零打扰：面板保持原样
+      const data = await resp.json();
+      if (!data || data.status === 'error') return;
+      // 只看结构问题：断链（error）＋孤立节点（warning）。duplicate_module 是 info 级
+      // ——不同回答各带一个物理/数学视角模块在这张画布属正常形态，进芯片全是噪声
+      // （左侧工具栏「图体检」面板仍看全量，含 info）。
+      const issues = (Array.isArray(data.issues) ? data.issues : [])
+        .filter(i => i && (i.severity === 'error' || i.severity === 'warning'));
+      const store = _harnessHealthStore();
+      if (!issues.length) {
+        // 问题修好：清记录（同款再犯要能重新提示）、撤芯片
+        if (store[sid]) { delete store[sid]; _harnessHealthSaveStore(store); }
+        harnessHealthHint = null;
+        if (prevHint && prevHint.sid === sid) _harnessHealthRefreshChat();
+        return;
+      }
+      const sig = _harnessHealthSig(issues);
+      const record = store[sid];
+      if (record && record.sig === sig && record.dismissed) {
+        // 收起过的同款问题：不再自动出现（图再变、问题没变就保持安静）
+        harnessHealthHint = null;
+        if (prevHint && prevHint.sid === sid) _harnessHealthRefreshChat();
+        return;
+      }
+      const isNewPrompt = !(record && record.sig === sig);
+      if (isNewPrompt) {
+        store[sid] = { sig, dismissed: false, ts: Date.now() };
+        _harnessHealthSaveStore(store);
+      }
+      harnessHealthHint = { sid, issues, sig, instruction: _harnessHealthInstruction(issues) };
+      if (isNewPrompt) {
+        _setHarnessStatus('图体检：图里有 ' + _harnessHealthTitle(issues) + '——可点对话顶部的芯片一键整理', 'ok');
+        _harnessHealthRefreshChat();
+      } else if (!prevHint || prevHint.sig !== sig) {
+        // 提示过但当前没挂着（如刷新页面后）：恢复芯片即可，不再刷状态行
+        _harnessHealthRefreshChat();
+      }
+    } catch (e) {
+      // 零打扰红线：体检自身失败绝不打扰用户（面板保持原样）
+    } finally {
+      harnessHealthInflight = false;
+    }
+  }
+
+  function applyHarnessHealthChip() {
+    const hint = harnessHealthHint;
+    if (!hint) return;
+    // 芯片指令是改图语义：答疑/创造模式下预填的指令会被当纯问答/配方话术处理，
+    // 先切回编辑模式（已是编辑则 no-op）。只预填不发送——点头（点发送）在前，
+    // 模型调用在后。
+    if (typeof chooseHarnessMode === 'function' && typeof window._harnessMode === 'function'
+      && window._harnessMode() !== 'edit') {
+      chooseHarnessMode('edit');
+    }
+    const inputEl = document.getElementById('graphHarnessInstruction');
+    if (inputEl) { inputEl.value = hint.instruction; inputEl.focus(); }
+    _setHarnessStatus('已拟好整理指令（发送前可修改），点发送执行', 'ok');
+  }
+
+  function dismissHarnessHealthChip() {
+    const hint = harnessHealthHint;
+    harnessHealthHint = null;
+    if (hint) {
+      const store = _harnessHealthStore();
+      if (store[hint.sid]) {
+        store[hint.sid].dismissed = true;
+        store[hint.sid].ts = Date.now();
+        _harnessHealthSaveStore(store);
+      }
+    }
+    const chat = document.getElementById('graphHarnessChat');
+    if (chat && typeof chat.querySelectorAll === 'function') {
+      chat.querySelectorAll('.graph-harness-health-chip').forEach(el => el.remove());
+    }
+    _setHarnessStatus('已收起图体检提示（同款问题不再提醒）', 'ok');
+  }
+

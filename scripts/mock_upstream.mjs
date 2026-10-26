@@ -76,6 +76,27 @@ function replyOf(body) {
     }
     return text('限流演练第二次已放行：mock 正常回包 ' + sfx + '，用于验证 429 自动重试无感。');
   }
+  // —— Φ 主动体检芯片（2026-10-26 真机自测）：编辑相位（tools 带 add_edge）且指令含
+  //    芯片预填话术「没有任何连线的孤立节点」时，从图快照 JSON 里认 id/label 对，
+  //    把指令点名的孤立节点各连一条边到快照里第一个非孤立节点；快照里认不出别的
+  //    节点（焦点收缩后只剩孤儿自己）就删孤儿——指令明说的另一出口。目标解析请求
+  //    （无编辑工具）与质检请求（submit_selfcheck）都不会进这支。
+  if (j.tools.includes('add_edge') && t.includes('没有任何连线的孤立节点')) {
+    const pairs = [...j.allText.matchAll(/"id":"([^"]{1,60})","kind":"[^"]*","label":"([^"]{0,80})"/g)]
+      .map(m => ({ id: m[1], label: m[2] }));
+    const named = [...j.userText.matchAll(/[「『]([^」』]{1,60})[」』]/g)].map(m => m[1]);
+    const orphans = pairs.filter(p => named.includes(p.label));
+    const others = pairs.filter(p => !named.includes(p.label));
+    const calls = orphans.map((p, i) => others.length
+      ? { name: 'add_edge', args: { from: others[i % others.length].id, to: p.id, relation: '相关', reason: '体检芯片：把孤立节点接回网络' } }
+      : { name: 'delete_node', args: { node_id: p.id, reason: '体检芯片：全图无可连节点，删除孤立节点' } });
+    if (calls.length) {
+      return {
+        content: '好的，按体检建议整理孤立节点 ' + sfx,
+        tool_calls: calls.map(c => ({ id: 'call_hc_' + nextId(), type: 'function', function: { name: c.name, arguments: JSON.stringify(c.args) } })),
+      };
+    }
+  }
   // —— 创造模式（P3 battery）：按指令关键词回配方 tool_calls ——
   // 结构体形式：由请求处理端按 stream 与否输出 SSE 分帧或整包 JSON（harness 的
   // 模型调用是非流式的——只回 SSE 会让后端 JSON 解析失败，2026-09-29 踩过）

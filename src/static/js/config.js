@@ -250,6 +250,11 @@ const STORAGE_KEY_PHI_CURRENT = 'phymathia_current_phi_session';
 const STORAGE_KEY_HARNESS_THINKING = 'phymathia_harness_thinking';
 const STORAGE_KEY_HARNESS_FALLBACK = 'phymathia_harness_fallback';
 
+// Φ 主动体检芯片（2026-10-26）：按画布记「已提示过的问题签名＋是否已收起」。同画布
+// 同一组结构问题只主动提示一次；✕ 收起后同款不再自动出现；问题修好记录清空、
+// 再犯同款会重新提示。形状 { [画布sid]: { sig, dismissed, ts } }，只留最近 40 张画布。
+const STORAGE_KEY_HARNESS_HEALTH = 'phymathia_harness_health';
+
 // ====== 匿名设备 ID（用户画像隔离）======
 function getDeviceId() {
   try {
