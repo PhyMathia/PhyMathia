@@ -7954,3 +7954,68 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 .graph-source-ocr-retry:hover {
   background: rgba(255, 255, 255, 0.08);
 }
+
+/* ===== Φ 主动体检芯片（2026-10-26，DSH 对照·方向 4 第 1 档）=====
+   开面板时本地零模型体检（POST /api/harness/graph/health）发现孤立节点/断链，挂在
+   Φ 对话流顶部的建议卡：点「拟整理指令」只预填输入框不发送（模型调用发生在用户
+   点发送之后）；✕ 收起后同画布同款问题不再自动出现。不弹模态；结果为空零打扰。
+   配色走 2026-10-16 Φ 面板口径（var(--accent) 派生，深色/浅色/风格家族自动跟随，
+   禁止两主题同色硬编码）；圆角只用 --r-lg（卡体）与 --r-pill（两颗钮）。 */
+.graph-harness-health-chip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-radius: var(--r-lg);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+.graph-harness-health-chip-icon {
+  flex: 0 0 auto;
+  font-size: var(--fs-lg);
+}
+.graph-harness-health-chip-text {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+.graph-harness-health-chip-text strong {
+  display: block;
+}
+.graph-harness-health-chip-text em {
+  display: block;
+  font-style: normal;
+  opacity: .75;
+  font-size: var(--fs-xs);
+}
+.graph-harness-health-chip-act {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  border-radius: var(--r-pill);
+  padding: 5px 12px;
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  transition: background 0.15s ease;
+}
+.graph-harness-health-chip-act:hover {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+}
+.graph-harness-health-chip-close {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: .55;
+  border-radius: var(--r-pill);
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: var(--fs-xs);
+}
+.graph-harness-health-chip-close:hover {
+  opacity: 1;
+}

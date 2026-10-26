@@ -436,6 +436,9 @@
         _setHarnessStatus('⚠ 体检：本次修改后新增 ' + newIssues.length + ' 个问题（孤儿/断链/重复），可点工具栏体检查看', 'warning');
       }
     }
+    // 主动体检芯片复检（2026-10-26）：图已变化，重新体检并更新/收起对话流顶部的
+    // 芯片（fire-and-forget，与开面板触发同一入口）
+    if (typeof runHarnessHealthCheck === 'function') runHarnessHealthCheck();
   }
 
   function applyGraphHarness() {

@@ -44,6 +44,7 @@
 //   graph-history-batch4    修改历史批次 4（T389：合并连续编辑/起名收藏/单节点恢复/容量提示/恢复排版/另开探索线）
 //   graph-branch-workflow   分支拓展单链路化（T361/T362/T363：三入口落工作流＋删除范围真值，2026-10-17）
 //   graph-scope-confirm     Φ 阶段1 先对齐再动手（2026-10-19：复述确认卡＋选中即范围警告行＋大批拆段渲染）
+//   harness-health          Φ 主动体检芯片（2026-10-26：开面板零模型体检→顶部芯片→点击预填不发送→同画布同问题只提示一次；行为链独占 fetch/getElementById 桩，域尾收口）
 import { finish } from './frontend_smoke/_runner.mjs';
 import { run as _recipes } from './frontend_smoke/recipes.mjs';
 import { run as _phi } from './frontend_smoke/phi.mjs';
@@ -89,6 +90,7 @@ import { run as _graph_branch_workflow } from './frontend_smoke/graph-branch-wor
 import { run as _graph_scope_confirm } from './frontend_smoke/graph-scope-confirm.mjs';
 import { run as _graph_cv_lazy } from './frontend_smoke/graph-cv-lazy.mjs';
 import { run as _graph_reflow_guards } from './frontend_smoke/graph-reflow-guards.mjs';
+import { run as _harness_health } from './frontend_smoke/harness-health.mjs';
 import { run as _workshop } from './frontend_smoke/workshop.mjs';
 import { run as _serial_source_input } from './frontend_smoke/serial-source-input.mjs';
 
@@ -137,6 +139,9 @@ await _graph_branch_workflow();
 _graph_scope_confirm();
 await _graph_cv_lazy();
 await _graph_reflow_guards();
+// Φ 主动体检芯片（2026-10-26）：自带收口线（行为链用例换 fetch/getElementById 桩、
+// 用毕即还原），紧挨 workshop 之前——workshop 也换全局桩，两域整体 await 不交叠。
+await _harness_health();
 // 节点工坊（2026-10-20 创造模式重做 P0–P4）：自带收口线（补丁往返用例是异步的），
 // 放在最后——它会临时替换 fetch/getActiveModelForRole 两个全局桩，用完立刻还原。
 await _workshop();
