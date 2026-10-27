@@ -203,6 +203,28 @@ async function _extractKnowledgeFromWorkflow(question, moduleIds, worldSid) {
   }
 }
 
+// ===== 深入模块一次性提示（T265，2026-10-27）=====
+// 聊天心智的用户读完问题分析概要就直接问下一题，画布右侧的深入模块一枚都没点开过。
+// 起新「根」问题（不带 sourceNodeId 的首问/画布草稿提问）时，若本画布已有带正文的
+// 模块节点且一枚都没被点开过（state.openedModules 空，写入口见 graph-custom.js
+// _markModuleOpened），弹一次 toast 指路；弹过即落 STORAGE_KEY_MODULE_HINT_DONE，
+// 终身一次。追问/方向钮/苏格拉底支线（带 sourceNodeId）不算新问题，不弹。
+function _maybeHintUnreadModules(worldSid) {
+  try {
+    if (localStorage.getItem(STORAGE_KEY_MODULE_HINT_DONE)) return;
+    const state = _graphStateFor(worldSid);
+    const opened = (state && state.openedModules) || {};
+    const mods = ((state && state.customNodes) || []).filter(n => n && n.kind === 'module'
+      && !n.manual && !n.busy && (n.content || '').trim());
+    // 没有上一簇（首问）不提示；点开过任意一枚说明功能已被发现，也不再打扰
+    if (!mods.length || mods.some(n => opened[n.id])) return;
+    localStorage.setItem(STORAGE_KEY_MODULE_HINT_DONE, '1');
+    if (typeof showToast === 'function') {
+      showToast('旁边的深入模块还没打开过，点模块卡右上角的全屏按钮可细读', 9000);
+    }
+  } catch (err) { /* 提示属锦上添花，localStorage 异常不打扰提问主流程 */ }
+}
+
 async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
   // 只读查阅（P3）：工作流首问不经过 sendMessage，必须在它自己的入口拦
   if (phyIsReadonly()) { phyReadonlyBlock('发起提问'); return; }
@@ -258,6 +280,8 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
   // 的总根：画布工作流的世界观过去＝当前显示的画布，切画布即换）。
   const worldSid = ((typeof getCurrentSessionId === 'function' && getCurrentSessionId())
     || (typeof currentSessionId !== 'undefined' ? currentSessionId : '') || '');
+  // T265：新根问题开工前看一眼上一簇模块是否零点开，没发现过深入内容就指一次路
+  if (!options.sourceNodeId) _maybeHintUnreadModules(worldSid);
   // 3.1 事件点（2026-10-24）：提问在建节点之前落一个历史点——撤销粒度＝一整次提问
   // （问题＋回答＋模块一起退）。摘要挂在「当前状态」行；条目自己的摘要仍由自动差异
   // 生成（见 graph-history-diff.js _pushGraphUndo 的口径说明）。

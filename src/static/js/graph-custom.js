@@ -199,9 +199,24 @@ function _moduleTextChanged(before, after, fenceLang) {
   return _stripModuleFence(before) !== _stripModuleFence(after);
 }
 
+// 模块「点开过」记账（T265）：全屏/新窗口/人工编辑任一入口都算。写进
+// state.openedModules 持久化，未读角标（graph-render.js）据此摘除。
+function _markModuleOpened(nodeId) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.kind !== 'module') return;
+  const state = _graphState();
+  state.openedModules = state.openedModules || {};
+  if (state.openedModules[nodeId]) return;
+  state.openedModules[nodeId] = 1;
+  _saveGraphState(state);
+  // 当场重画摘角标；全屏遮罩挂 body 上不受画布重建影响
+  if (typeof renderGraphCanvas === 'function') renderGraphCanvas();
+}
+
 function editModuleNode(nodeId) {
   const node = _findGraphNode(nodeId);
   if (!node || node.kind !== 'module') return;
+  _markModuleOpened(nodeId);
   closeModuleNodeModal();
   const messages = _getChatHistory();
   const msg = node.messageIndex >= 0 ? messages[node.messageIndex] : null;
@@ -563,6 +578,8 @@ function _markNodeHumanFinalized(node) {
 function updateCustomNodeContent(nodeId, value) {
   const node = _findGraphNode(nodeId);
   if (!node || node.messageIndex >= 0) return;
+  // 手建模块卡上直填内容＝用户自己在写自己看，天然算「点开过」，不挂未读角标
+  if (node.kind === 'module') _markModuleOpened(nodeId);
   const next = String(value || '');
   // 卡内 textarea 失焦即存：变了才记撤销点（没变时记了也会被同异比对吞掉）
   if (next !== (node.content || '')) {
@@ -659,6 +676,7 @@ function openNodeFullscreen(nodeId) {
   const message = node.messageIndex >= 0 ? messages[node.messageIndex] : null;
   const text = _nodeFsSourceText(node, message);
   if (!String(text || '').trim()) return;
+  _markModuleOpened(nodeId);
   closeModuleNodeModal();
   closeNodeFullscreen();
   const externalIcon = (typeof UI_ICON_SVG !== 'undefined' && UI_ICON_SVG.external) || '↗';
@@ -695,6 +713,7 @@ async function openNodeNewWindow(nodeId) {
   const message = node.messageIndex >= 0 ? messages[node.messageIndex] : null;
   const text = _nodeFsSourceText(node, message);
   if (!String(text || '').trim()) return;
+  _markModuleOpened(nodeId);
   const title = _nodeFsTitle(node);
   const holder = document.createElement('div');
   holder.className = 'graph-node-fs-offscreen';

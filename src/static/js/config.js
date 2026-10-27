@@ -233,6 +233,9 @@ const STORAGE_KEY_NODE_RECIPES = 'phymathia_node_recipes';
 // 节点工坊草稿（2026-10-20，创造模式重做 P1）：全局键，500ms 防抖落盘；
 // 入册/丢弃时清空（graph-workshop.js 的 _rwSaveDraftNow / _rwClearDraftStorage）
 const STORAGE_KEY_RECIPE_DRAFT = 'phymathia_recipe_draft';
+// 深入模块一次性提示（T265）：起新根问题时上一簇模块零点开就弹一次指路 toast，
+// 弹过即置键永不再弹（经垫片自然分账号）
+const STORAGE_KEY_MODULE_HINT_DONE = 'phymathia_module_hint_done';
 
 // ===== Φ 智能体独立会话（2026-09-30 与画布解耦）======
 // Φ 会话有独立 id 空间（phi_<uuid>），与画布会话（sess_<uuid>）互不隶属：

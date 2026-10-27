@@ -324,6 +324,20 @@
   text-transform: uppercase !important;
 }
 
+/* 未读角标（T265，2026-10-27）：模块正文已生成但从未被点开过（全屏/新窗口/人工编辑
+   任一入口点开即由 _markModuleOpened 记账摘除）。琥珀色与属性色徽章区分，慢脉冲
+   提醒而不刺眼；最小化卡沿用上方 .minimized .graph-node-badge 的整条隐藏规则 */
+.graph-node-badge.graph-node-unread {
+  background: #b9791e !important;
+  color: #ffe9c4 !important;
+  animation: graph-unread-pulse 2.6s ease-in-out infinite;
+}
+
+@keyframes graph-unread-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
 .graph-node-sub {
   width: auto !important;
   margin: 0 !important;
