@@ -572,6 +572,136 @@ check('graph-contextmenu: 节点剪贴板复制→粘贴 roundtrip（类型/内�
   }
 });
 
+check('graph-contextmenu: 复制补捕 AI 结构边＋粘贴物化为普通连线（T343）', () => {
+  const realReadonly = sandbox.phyIsReadonly;
+  sandbox.phyIsReadonly = () => false;
+  vm.runInContext('graphNodeClipboard = null', sandbox);
+  delete storageData['phymathia_node_clipboard'];
+  const realState = sandbox._graphState;
+  const realUndo = sandbox._pushGraphUndo;
+  const realSave = sandbox._saveGraphState;
+  const realRender = sandbox.renderGraphCanvas;
+  const realWorld = sandbox._workflowWorldMessages;
+  const state = { customNodes: [], connections: [] };
+  try {
+    sandbox._graphState = () => state;
+    sandbox._pushGraphUndo = () => {};
+    sandbox._saveGraphState = () => {};
+    sandbox.renderGraphCanvas = () => {};
+    sandbox._workflowWorldMessages = () => [];
+    // 视图边＝_resolveGraphEdges 合并产物：前三条是消息派生结构边（不带 custom 标记），
+    // 模拟「问题→问题分析→两模块」；第四条一端在集外不带；第五条带 custom 标记
+    // ＝connections 成员（补捕必须跳过，否则与 connections 路径重复收）
+    vm.runInContext("graphView.edges = [\n" +
+      "  { from: 'u1', to: 'a1', type: 'primary', fromPort: 'out-0', toPort: 'in-0' },\n" +
+      "  { from: 'a1', to: 'm1', type: 'primary', fromPort: 'out-0', toPort: 'in-0' },\n" +
+      "  { from: 'a1', to: 'm2', type: 'primary', fromPort: 'out-1', toPort: 'in-0' },\n" +
+      "  { from: 'm1', to: 'n_out', type: 'primary', fromPort: 'out-0', toPort: 'in-0' },\n" +
+      "  { from: 'u1', to: 'a1', type: 'custom', custom: true, fromPort: 'out-0', toPort: 'in-0' },\n" +
+      "]", sandbox);
+    const copied = sandbox.graphCopySelectedNodes([
+      { id: 'u1', kind: 'user', messageIndex: -1, x: 0, y: 0, content: '什么是简谐运动？' },
+      { id: 'a1', kind: 'answer', messageIndex: -1, x: 200, y: 0, content: '分析' },
+      { id: 'm1', kind: 'module', moduleKey: 'physics', messageIndex: -1, x: 400, y: -100, content: '物理' },
+      { id: 'm2', kind: 'module', moduleKey: 'math', messageIndex: -1, x: 400, y: 100, content: '数学' },
+    ]);
+    if (copied !== 4) throw new Error('复制数=4：' + copied);
+    const clip = vm.runInContext('graphNodeClipboard', sandbox);
+    if (!clip || clip.edges.length !== 3) {
+      throw new Error('结构边应补捕 3 条（集外/custom 不带）：' + JSON.stringify(clip && clip.edges));
+    }
+    // 粘贴：结构边物化成普通连线，id 重映射、端口与 type 原样（primary 保 320 弹簧张力）
+    const pasted = sandbox.graphPasteNodeClipboard({ x: 1000, y: 500 });
+    if (pasted !== 4) throw new Error('粘贴数=4：' + pasted);
+    if (state.connections.length !== 3) throw new Error('物化连线应 3 条：' + state.connections.length);
+    const [pu, pa, pm1, pm2] = state.customNodes;
+    const findEdge = (from, to) => state.connections.find(e => e.from === from.id && e.to === to.id);
+    const eUA = findEdge(pu, pa);
+    if (!eUA || eUA.type !== 'primary' || eUA.fromPort !== 'out-0' || eUA.toPort !== 'in-0') {
+      throw new Error('问题→问题分析 边未物化：' + JSON.stringify(eUA));
+    }
+    const eAM2 = findEdge(pa, pm2);
+    if (!eAM2 || eAM2.type !== 'primary' || eAM2.fromPort !== 'out-1') {
+      throw new Error('问题分析→math 边未保 out-1：' + JSON.stringify(eAM2));
+    }
+    if (!findEdge(pa, pm1)) throw new Error('问题分析→physics 边丢失');
+    return true;
+  } finally {
+    sandbox._graphState = realState;
+    sandbox._pushGraphUndo = realUndo;
+    sandbox._saveGraphState = realSave;
+    sandbox.renderGraphCanvas = realRender;
+    sandbox._workflowWorldMessages = realWorld;
+    sandbox.phyIsReadonly = realReadonly;
+    vm.runInContext('graphView.edges = []', sandbox);
+    vm.runInContext('graphNodeClipboard = null', sandbox);
+    delete storageData['phymathia_node_clipboard'];
+  }
+});
+
+check('graph-contextmenu: 粘贴端口钳制——附加口自长、顺延避让、hub 同口多线、非标口原样（T344）', () => {
+  const realReadonly = sandbox.phyIsReadonly;
+  sandbox.phyIsReadonly = () => false;
+  vm.runInContext('graphNodeClipboard = null', sandbox);
+  vm.runInContext('graphView.edges = []', sandbox);
+  delete storageData['phymathia_node_clipboard'];
+  const realState = sandbox._graphState;
+  const realUndo = sandbox._pushGraphUndo;
+  const realSave = sandbox._saveGraphState;
+  const realRender = sandbox.renderGraphCanvas;
+  const state = { customNodes: [], connections: [] };
+  try {
+    sandbox._graphState = () => state;
+    sandbox._pushGraphUndo = () => {};
+    sandbox._saveGraphState = () => {};
+    sandbox.renderGraphCanvas = () => {};
+    // 直接塞剪贴板（粘贴侧隔离验证）：B 原有附加输入口 in-1；J 是 junction（同口多线
+    // 合法）；N 是 note（基础出口 0）；A 落 in-0 不应长附加口；link-N 非标口原样
+    storageData['phymathia_node_clipboard'] = JSON.stringify({
+      nodes: [
+        { oid: 'A', kind: 'module', moduleKey: 'physics', x: 0, y: 0 },
+        { oid: 'B', kind: 'answer', x: 200, y: 0 },
+        { oid: 'J', kind: 'junction', x: 400, y: 0 },
+        { oid: 'N', kind: 'note', x: 600, y: 0 },
+      ],
+      edges: [
+        { from: 'A', to: 'B', fromPort: 'out-0', toPort: 'in-1', type: 'custom' },
+        { from: 'A', to: 'B', fromPort: 'out-1', toPort: 'in-1', type: 'custom' },
+        { from: 'A', to: 'J', fromPort: 'out-0', toPort: 'in-0', type: 'custom' },
+        { from: 'B', to: 'J', fromPort: 'out-0', toPort: 'in-0', type: 'custom' },
+        { from: 'N', to: 'B', fromPort: 'out-3', toPort: 'in-0', type: 'custom' },
+        { from: 'N', to: 'A', fromPort: 'link-0', toPort: 'link-0', type: 'custom', link: true, label: '有关' },
+      ],
+      at: 1,
+    });
+    const pasted = sandbox.graphPasteNodeClipboard({ x: 0, y: 0 });
+    if (pasted !== 4) throw new Error('粘贴数=4：' + pasted);
+    const [pa, pb, pj, pn] = state.customNodes;
+    if (pb.inputPortCounts !== 2) throw new Error('answer 附加输入口应长到 2：' + pb.inputPortCounts);
+    if (pa.inputPortCounts !== undefined) throw new Error('in-0 落口不应长附加口：' + pa.inputPortCounts);
+    if (pj.inputPortCounts !== undefined) throw new Error('junction 同口多线不应长口：' + pj.inputPortCounts);
+    if (pn.portCounts !== 4) throw new Error('note 出口应长到 4（绝对口径）：' + pn.portCounts);
+    const bPorts = state.connections.filter(e => e.to === pb.id).map(e => e.toPort).sort();
+    if (bPorts.join(',') !== 'in-0,in-1,in-2') throw new Error('B 落口应为 in-0/in-1/in-2：' + bPorts.join(','));
+    const jPorts = state.connections.filter(e => e.to === pj.id).map(e => e.toPort);
+    if (jPorts.length !== 2 || jPorts.some(p => p !== 'in-0')) throw new Error('junction 两条应同落 in-0：' + jPorts.join(','));
+    const lk = state.connections.find(e => e.link);
+    if (!lk || lk.fromPort !== 'link-0' || lk.toPort !== 'link-0' || lk.label !== '有关') {
+      throw new Error('联系线非标口应原样落：' + JSON.stringify(lk));
+    }
+    return true;
+  } finally {
+    sandbox._graphState = realState;
+    sandbox._pushGraphUndo = realUndo;
+    sandbox._saveGraphState = realSave;
+    sandbox.renderGraphCanvas = realRender;
+    sandbox.phyIsReadonly = realReadonly;
+    vm.runInContext('graphView.edges = []', sandbox);
+    vm.runInContext('graphNodeClipboard = null', sandbox);
+    delete storageData['phymathia_node_clipboard'];
+  }
+});
+
 check('graph-export: 一页概览图（完整内容模式已按用户要求移除）+ 画框纯函数', () => {
   const ge = fs.readFileSync('src/static/js/graph-export.js', 'utf8');
   // 「完整内容」整条链路必须干净移除（长内容交给 .pmu 快照，PNG 回到"按屏幕所见"）
