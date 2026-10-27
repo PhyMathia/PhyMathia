@@ -665,6 +665,61 @@ class HarnessReviewModelTest(unittest.TestCase):
             ))
         self.assertEqual(calls["n"], 2)
 
+    def test_bu_yiju_intent_retries_instead_of_fake_done(self):
+        """T413：「在 X 节点里补一句」必须算改图意图，空操作要重试而不是放行假完成。"""
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        calls = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {
+                    "content": '{"summary": "已在「动生电动势公式」里追加了说明。", "operations": []}',
+                    "tool_calls": [],
+                }
+            return {
+                "content": '{"summary": "已补入说明。", "operations": [{"op": "update_node", "node_id": "A", "patch": {"content": "L 指有效切割长度"}, "reason": "补一句"}]}',
+                "tool_calls": [],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "动生电动势公式"}], "edges": []},
+                "在『动生电动势公式』节点里补一句：上式中的 L 指有效切割长度",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://x", "api_key": ""},
+                mode="auto",
+                self_check="off",
+                retries=1,
+            ))
+        self.assertEqual(calls["n"], 2)
+        self.assertEqual(result["operations"][0]["op"], "update_node")
+
+    def test_bu_yiju_zero_ops_emits_visible_warning(self):
+        """T413：重试后仍是假完成时，兜底警告必须可见。"""
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {
+                "content": '{"summary": "已在「动生电动势公式」里追加了说明。", "operations": []}',
+                "tool_calls": [],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "动生电动势公式"}], "edges": []},
+                "在『动生电动势公式』节点里补一句：上式中的 L 指有效切割长度",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://x", "api_key": ""},
+                mode="auto",
+                self_check="off",
+                retries=0,
+            ))
+        self.assertTrue(any("没有提出任何操作" in str(w.get("reason") or "") for w in result.get("warnings") or []))
+
     def test_evaluate_empty_graph_short_circuits_without_model_call(self):
         """F1: 空图的评价阶段应零调用直接短路返回。"""
         import asyncio
@@ -810,6 +865,28 @@ class HarnessSemanticsTest(unittest.TestCase):
         result = rule_selfcheck({"nodes": [], "edges": []}, "请删除这个节点", [], [])
         self.assertFalse(result["ok"])
         self.assertTrue(any("没有提出任何操作" in issue for issue in result["issues"]))
+
+    def test_rule_selfcheck_bu_yiju_counts_as_edit_intent(self):
+        from harness.semantics import rule_selfcheck
+        result = rule_selfcheck(
+            {"nodes": [], "edges": []},
+            "在『动生电动势公式』节点里补一句：上式中的 L 指有效切割长度",
+            [], [],
+        )
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("没有提出任何操作" in issue for issue in result["issues"]))
+
+    def test_rule_selfcheck_chat_phase_ignores_edit_intent(self):
+        from harness.semantics import rule_selfcheck
+        result = rule_selfcheck(
+            {"nodes": [], "edges": []}, "补充一下这个概念的含义", [], [], phase="chat",
+        )
+        self.assertTrue(result["ok"], "答疑模式本就不改图，不应报「没提出操作」")
+
+    def test_rule_selfcheck_bare_bu_is_not_edit_intent(self):
+        from harness.semantics import rule_selfcheck
+        result = rule_selfcheck({"nodes": [], "edges": []}, "周末要去补课", [], [])
+        self.assertTrue(result["ok"], "单字「补」不应算改图意图")
 
     def test_rule_selfcheck_over_delete(self):
         from harness.semantics import rule_selfcheck
@@ -3918,6 +3995,10 @@ class HarnessChatPhaseTest(unittest.TestCase):
         self.assertEqual(seen["tool_choice"], "auto", "答疑相位即使有改图意图词也不得强制工具调用")
         self.assertEqual(result["operations"], [], "答疑保险丝必须清空图操作")
         self.assertIn("答疑模式不改图", result["summary"])
+        self.assertFalse(
+            any("没有提出任何操作" in str(w.get("reason") or "") for w in result.get("warnings") or []),
+            "答疑模式清空操作后不应再报「没提出操作」",
+        )
 
     def test_undo_still_deterministic_under_locked_phases(self):
         # 确定性撤销在相位分派之前、不看相位——锁定 preset/chat 下「↩撤销上一条」照常工作
