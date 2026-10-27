@@ -1449,6 +1449,14 @@ function _renderNodeHtml(node, messages, state) {
 // 两个例外：ai_eval 卡的锯齿描边故意外扩 6px（paint 包含常开会被裁）；
 // minimized 卡本就不建内容子树，无需再挂。无持久化尺寸的新卡不挂——
 // 占位与真身不符反而污染测量，宁可贵一点。
+// T393（2026-10-27）：contain-intrinsic-size 填的是**内容盒**，实际占位盒还要加
+// padding+border（.graph-node 是 16px 20px+1px，宽 +42/高 +34），所以量到的占位
+// 与持久化尺寸并不相等——不能拿 sizes 直接比。挂完样式后当场量一次 offsetWidth/
+// offsetHeight（布局盒、不受缩放变换影响）记在元素上，_measureNodes 靠它认出
+// 「这卡还没排真身」。这一次强制布局与首帧 rAF 里 _measureNodes 本来要付的是同
+// 一笔账（c-v 已把屏外卡跳掉），只是提前到插完 HTML 这一刻。元素必须是刚插入的
+// 新节点：此刻浏览器还没判过 c-v 相关性，量到的一定是占位盒；若将来在已渲染的
+// DOM 上复用本函数，可见卡会把真身记成占位，别再找第二处调用。
 function _applyNodeLazyLayout(state) {
   if (!graphInner) return;
   if (typeof CSS === 'undefined' || !CSS.supports || !CSS.supports('content-visibility', 'auto')) return;
@@ -1457,6 +1465,7 @@ function _applyNodeLazyLayout(state) {
   graphInner.querySelectorAll('.graph-node[data-node-id]').forEach(el => {
     elById.set(el.dataset.nodeId, el);
   });
+  const marked = [];
   for (const node of graphView.nodes) {
     if (node.kind === 'ai_eval' || node.minimized) continue;
     const s = sizes[String(node.id)];
@@ -1465,6 +1474,15 @@ function _applyNodeLazyLayout(state) {
     if (!el) continue;
     el.style.contentVisibility = 'auto';
     el.style.containIntrinsicSize = 'auto ' + Math.round(s.w) + 'px auto ' + Math.round(s.h) + 'px';
+    marked.push(el);
+  }
+  // 面板隐藏（display:none）时布局宽为 0，量不到占位盒——不记标记，_measureNodes
+  // 退回旧口径（此时它量到的也是 0，与本改动无关）。
+  if (!marked.length || !graphInner.offsetWidth) return;
+  for (const el of marked) {
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    if (w > 0 && h > 0) el.__cvPlaceholder = { w: w, h: h };
   }
 }
 
@@ -1483,8 +1501,16 @@ function _measureNodes() {
     const el = elById.get(String(node.id));
     if (!el) return;
     const r = el.getBoundingClientRect();
-    node.w = r.width / composite;
-    node.h = r.height / composite;
+    const w = r.width / composite;
+    const h = r.height / composite;
+    // T393：content-visibility 跳过的卡报的是占位盒（不是真身，见 _applyNodeLazyLayout），
+    // 与占位读数吻合就跳过——保留 _buildGraphData 从持久化 sizes 垫的初值，等卡进视口
+    // 由 ResizeObserver 补测真身。若不挡，_savePositions 会把占位再次存进 sizes，形成
+    // 「存盘值→下次占位→再存回」的自我强化（自动排版间距与分组边界跟着偏）。
+    const ph = el.__cvPlaceholder;
+    if (ph && Math.abs(w - ph.w) <= 1 && Math.abs(h - ph.h) <= 1) return;
+    node.w = w;
+    node.h = h;
     if (node.kind === 'ai_eval') zigzagNodes.push(node);
   });
   for (const node of zigzagNodes) _updateAiEvalZigzag(node);

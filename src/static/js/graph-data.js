@@ -842,6 +842,18 @@ function _buildGraphData(messages, state) {
     try { _saveGraphState(state); } catch (e) { /* 持久化失败不影响本次渲染 */ }
   }
 
+  // T393：首帧 w/h 先用持久化 sizes 垫底。T376 的 content-visibility 让屏外卡只报
+  // 占位盒，_measureNodes 会跳过这类读数（见 graph-render.js 那一节）；没有初值，
+  // 这些节点会以 0 尺寸参与自动排版与分组包含。customWidth/Height 永远优先——那是
+  // 用户手动拖过的尺寸，sizes 里的测量值只作兜底。
+  for (const node of nodes) {
+    const size = savedSizes[node.id];
+    if (node.customWidth > 0) node.w = node.customWidth;
+    else if (size && size.w > 0) node.w = size.w;
+    if (node.customHeight > 0) node.h = node.customHeight;
+    else if (size && size.h > 0) node.h = size.h;
+  }
+
   return { nodes, edges: _mapAnswerDefaultPorts(_assignDefaultPorts(edges), nodeById), nodeById };
 }
 

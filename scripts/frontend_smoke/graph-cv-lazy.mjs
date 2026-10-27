@@ -19,8 +19,8 @@ check('T376: _applyNodeLazyLayout——有尺寸卡挂 c-v＋占位尺寸，ai_e
   const prevNodes = vm.runInContext('graphView.nodes', sandbox);
   try {
     vm.runInContext([
-      'var __els = ["n-ok","n-eval","n-mini","n-nosize","n-zero"].map(function(id){ return { dataset: { nodeId: id }, style: {} }; });',
-      'graphInner = { querySelectorAll: function(){ return __els; } };',
+      'var __els = ["n-ok","n-eval","n-mini","n-nosize","n-zero"].map(function(id){ return { dataset: { nodeId: id }, style: {}, offsetWidth: 700, offsetHeight: 920 }; });',
+      'graphInner = { offsetWidth: 1200, querySelectorAll: function(){ return __els; } };',
       'graphView.nodes = [',
       "  { id: 'n-ok', kind: 'note' },",
       "  { id: 'n-eval', kind: 'ai_eval' },",
@@ -36,16 +36,21 @@ check('T376: _applyNodeLazyLayout——有尺寸卡挂 c-v＋占位尺寸，ai_e
       '} };',
       '_applyNodeLazyLayout(__state);',
     ].join('\n'), sandbox);
-    const styles = vm.runInContext('JSON.stringify(__els.map(function(e){ return { cv: e.style.contentVisibility || null, cis: e.style.containIntrinsicSize || null }; }))', sandbox);
+    const styles = vm.runInContext('JSON.stringify(__els.map(function(e){ return { cv: e.style.contentVisibility || null, cis: e.style.containIntrinsicSize || null, ph: e.__cvPlaceholder || null }; }))', sandbox);
     const arr = JSON.parse(styles);
     // 有尺寸：挂 auto，占位尺寸取整（Math.round）
     if (arr[0].cv !== 'auto' || arr[0].cis !== 'auto 640px auto 881px') {
       throw new Error('有尺寸卡没挂上或占位尺寸不对：' + JSON.stringify(arr[0]));
     }
+    // T393：挂完样式当场记下占位盒（offsetWidth/Height 是布局盒，不受缩放影响）
+    if (!arr[0].ph || arr[0].ph.w !== 700 || arr[0].ph.h !== 920) {
+      throw new Error('占位盒没记在元素上：' + JSON.stringify(arr[0].ph));
+    }
     // ai_eval（锯齿描边外扩 6px，paint 包含会裁）、minimized（本就无内容子树）、
     // 无尺寸（占位会污染 _measureNodes）、零尺寸：一律不挂
     for (let i = 1; i < arr.length; i++) {
       if (arr[i].cv !== null) throw new Error('不该挂的卡挂上了：index ' + i + ' -> ' + JSON.stringify(arr[i]));
+      if (arr[i].ph !== null) throw new Error('不挂的卡不该记占位盒：index ' + i);
     }
     return true;
   } finally {
@@ -53,6 +58,79 @@ check('T376: _applyNodeLazyLayout——有尺寸卡挂 c-v＋占位尺寸，ai_e
     vm.runInContext('graphView.nodes = __prevNodes;', Object.assign(sandbox, { __prevNodes: prevNodes }));
     vm.runInContext('if (__prevCSS) { CSS = __prevCSS; } else { try { delete CSS; } catch (e) {} }', sandbox);
   }
+});
+
+check('T393: _measureNodes 把占位读数挡在存盘外——占位没变保留旧尺寸，真身变了才收', () => {
+  if (typeof sandbox._measureNodes !== 'function') throw new Error('helper 未暴露');
+  const keep = ['graphInner', 'graphView', '_graphCompositeScale', '_syncGroupMembersByContainment'];
+  const prev = {};
+  for (const k of keep) prev[k] = vm.runInContext('typeof ' + k + ' === "undefined" ? undefined : ' + k, sandbox);
+  try {
+    vm.runInContext([
+      // 占位盒：contain-intrinsic-size 的内容尺寸 + padding/border（320×934），量到的仍是它
+      'var __elPh = { dataset: { nodeId: "n-ph" }, __cvPlaceholder: { w: 320, h: 934 }, getBoundingClientRect: function(){ return { width: 320, height: 934 }; } };',
+      // 同一张卡已经排过真身：读数离开占位盒，必须收
+      'var __elReal = { dataset: { nodeId: "n-real" }, __cvPlaceholder: { w: 320, h: 934 }, getBoundingClientRect: function(){ return { width: 520, height: 1200 }; } };',
+      // 没挂 c-v 的新卡：照旧全收
+      'var __elPlain = { dataset: { nodeId: "n-plain" }, getBoundingClientRect: function(){ return { width: 280, height: 140 }; } };',
+      'var __els = [__elPh, __elReal, __elPlain];',
+      'graphInner = { querySelectorAll: function(){ return __els; } };',
+      'graphView.nodes = [',
+      '  { id: "n-ph", kind: "module", w: 151, h: 900 },',
+      '  { id: "n-real", kind: "module", w: 151, h: 900 },',
+      '  { id: "n-plain", kind: "answer", w: 0, h: 0 },',
+      '];',
+      '_graphCompositeScale = function(){ return 1; };',
+      '_syncGroupMembersByContainment = function(){};',
+      '_measureNodes();',
+    ].join('\n'), sandbox);
+    const got = JSON.parse(vm.runInContext('JSON.stringify(graphView.nodes.map(function(n){ return [n.w, n.h]; }))', sandbox));
+    if (got[0][0] !== 151 || got[0][1] !== 900) throw new Error('占位读数不该覆盖旧尺寸：' + JSON.stringify(got[0]));
+    if (got[1][0] !== 520 || got[1][1] !== 1200) throw new Error('真身读数没被收下：' + JSON.stringify(got[1]));
+    if (got[2][0] !== 280 || got[2][1] !== 140) throw new Error('普通卡测量被误挡：' + JSON.stringify(got[2]));
+    return true;
+  } finally {
+    vm.runInContext([
+      'graphInner = __prev_graphInner;',
+      'graphView.nodes = __prev_graphView_nodes;',
+      '_graphCompositeScale = __prev__graphCompositeScale;',
+      '_syncGroupMembersByContainment = __prev__syncGroupMembersByContainment;',
+    ].join('\n'), Object.assign(sandbox, {
+      __prev_graphInner: prev.graphInner,
+      __prev_graphView_nodes: prev.graphView ? prev.graphView.nodes : undefined,
+      __prev__graphCompositeScale: prev._graphCompositeScale,
+      __prev__syncGroupMembersByContainment: prev._syncGroupMembersByContainment,
+    }));
+  }
+});
+
+check('T393: _buildGraphData 用持久化 sizes 垫首帧 w/h（占位读数被跳过时布局仍有尺寸可用）', () => {
+  if (typeof sandbox._buildGraphData !== 'function') throw new Error('_buildGraphData 未暴露');
+  const msgs = [
+    { role: 'user', content: '单摆周期为什么与质量无关？', timestamp: 100 },
+    { role: 'assistant', content: '<analysis>\n简谐运动\n</analysis>\n\n回复正文。', timestamp: 200 },
+  ];
+  const probe = sandbox._buildGraphData(msgs, {});
+  const sizes = {};
+  probe.nodes.forEach((n, i) => { sizes[n.id] = { w: 200 + i * 7.5, h: 120 + i * 3.25, u: 0 }; });
+  // custom 节点也走同一份垫底（215.3 vs 151 就是 backlog 里记的那条实锤脏值）
+  const customId = 'user-custom-1792229471400-lb46m';
+  sizes[customId] = { w: 215.3, h: 151.2, u: 0 };
+  const state = {
+    sizes,
+    customNodes: [{ id: customId, kind: 'user', x: 10, y: 20, timestamp: 1 }],
+  };
+  const data = sandbox._buildGraphData(msgs, state);
+  if (data.nodes.length !== probe.nodes.length + 1) throw new Error('节点数不对：' + data.nodes.length);
+  const bad = data.nodes.filter(n => !(Math.abs(n.w - sizes[n.id].w) < 1e-9 && Math.abs(n.h - sizes[n.id].h) < 1e-9));
+  if (bad.length) {
+    throw new Error('首帧 w/h 没垫上持久化尺寸：' + bad.map(n => n.id + '=' + n.w + 'x' + n.h).join(', '));
+  }
+  // custom 节点带 customWidth/Height（用户手动尺寸）时优先它，sizes 测量值不覆盖用户意图
+  const st2 = { sizes: { 'c-1': { w: 215, h: 151, u: 0 } }, customNodes: [{ id: 'c-1', kind: 'user', customWidth: 300, customHeight: 260, x: 0, y: 0 }] };
+  const c = sandbox._buildGraphData([], st2).nodeById['c-1'];
+  if (!c || c.w !== 300 || c.h !== 260) throw new Error('customWidth/Height 没优先：' + JSON.stringify(c && [c.w, c.h]));
+  return true;
 });
 
 check('T376: 接线与克隆归位——渲染链插入后首帧前挂、导出克隆剥掉 c-v', () => {
