@@ -1,6 +1,6 @@
 // 输入节点（素材篮）出口几何验收：看得见、点得到、连线锚点对得上。
 //
-//   node scripts/verify_source_ports.mjs        （需真机服务在 5050；本机无头浏览器在 .tools/pw-browsers）
+//   node scripts/verify_source_ports.mjs        （自带隔离实例，无需起服务；本机无头浏览器在 .tools/pw-browsers）
 //
 // 为什么单独一支：出口长在条目行里（`.graph-source-row-port`）＋折叠态改由输出列渲染，
 // 这两件事的正确性全在**布局层**——DOM 里查得到不等于看得见/点得到（首版 right:-18px
@@ -10,11 +10,13 @@
 //
 // 覆盖：空篮 / 有素材（行内口可点）/ 折叠（输出列口可点）/ 展开（回行内）/ 边锚点跟随
 // 三种形态 / 旧版输入节点（只读）出口照旧在输出列。
-// 安全：全程在注入的临时会话 id 下操作（替换 window.getCurrentSessionId + 断 fetch），
-// 不碰真实会话、不写服务端，可随时重跑。
+// 安全：自带隔离实例（T415，临时数据目录的第二实例，不碰真实 data/——10-26 事故后
+// 开页面的测试一律不再打真机）；页面里又在注入的临时会话 id 下操作（替换
+// window.getCurrentSessionId + 断 fetch），不碰真实会话，可随时重跑。
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
+import { startIsolatedServer } from './lib/test_server.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 // 无头浏览器按目录扫（版本号目录会随 playwright 升级变，别写死）——同 visual_baseline.mjs
@@ -29,7 +31,9 @@ function findShell() {
   throw new Error('缺少 .tools/pw-browsers/*/chrome-headless-shell-linux64/chrome-headless-shell（本机没有可用的无头浏览器）');
 }
 const EXE = findShell();
-const BASE = process.env.PHYMATHIA_BASE || 'http://localhost:5050/';
+const srv = await startIsolatedServer({ port: 5087, label: 'phymathia-portcheck' });
+const BASE = srv.base + '/';
+process.on('exit', () => srv.stop());
 const TEST_SID = 'sess_selftest_portcheck';
 
 let fails = 0;
@@ -44,6 +48,13 @@ await page.goto(BASE, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => typeof window.createManualNode === 'function' && typeof graphInner !== 'undefined', null, { timeout: 20000 });
 await page.evaluate(sid => {
   try { typeof endOnboarding === 'function' && endOnboarding(); } catch (e) {}
+  // 隔离实例零模型，首启会弹「配置模型」类浮层盖住画布——不关掉，elementFromPoint
+  // 全打在 overlay 上（T415 实测命中 model-dialog-overlay）。真机上账号里有模型不弹
+  // 这层，属隔离环境差、非产品回归。
+  try { typeof closeModelConfig === 'function' && closeModelConfig(); } catch (e) {}
+  try { typeof closeAddModelDialog === 'function' && closeAddModelDialog(); } catch (e) {}
+  document.querySelectorAll('.model-dialog-overlay, [id$="Overlay"], [id$="overlay"]')
+    .forEach(el => el.classList.remove('show', 'active', 'open'));
   window.fetch = async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => '' });
   window.getCurrentSessionId = () => sid;
   try { localStorage.removeItem('phymathia_graph_' + sid); } catch (e) {}
@@ -61,6 +72,20 @@ const ids = await page.evaluate(() => {
   return { src: src.id, dst: dst.id };
 });
 ok(!!ids.src && !!ids.dst, '临时会话下建点成功（不碰真实会话）', ids);
+// 隔离实例的画布停在默认视角——以前过检靠真机上用户会话残留的平移缩放碰巧把节点
+// 留在屏内（环境态依赖，T415 隔离后当场暴露：出口中心 y=-8 在视口外，elementFromPoint
+// 打不中）。fitGraph 把测试节点拉进视口；但必须等首帧 RO 补测/自动排版落地再 fit，
+// 否则 fit 会被随后的重排冲回默认视角（实测 pan 先 -950 后被冲回）；fit 后再关一次
+// 浮层（零模型首启弹的「配置模型」层会吃掉 elementFromPoint）。
+await page.waitForTimeout(900);
+await page.evaluate(() => {
+  if (typeof fitGraph === 'function') fitGraph();
+  try { typeof closeModelConfig === 'function' && closeModelConfig(); } catch (e) {}
+  try { typeof closeAddModelDialog === 'function' && closeAddModelDialog(); } catch (e) {}
+  document.querySelectorAll('.model-dialog-overlay, [id$="Overlay"], [id$="overlay"]')
+    .forEach(el => el.classList.remove('show', 'active', 'open'));
+});
+await page.waitForTimeout(300);
 
 // ---- A. 空素材篮 ----
 const empty = await page.evaluate(id => {
