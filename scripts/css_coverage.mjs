@@ -6,10 +6,12 @@
 // 本工具三步走：
 //   1. 解析三份源 CSS 成规则表（手写 tokenizer，@media/@supports/@layer 递归、
 //      @keyframes/@font-face 原子记）；
-//   2. 起真机服务（默认 5073，读真实 data/——只读为主，正常使用级 kv 写入），
-//      Playwright 驱动场景矩阵（冷启/最富会话/各风格家族/深浅/大陆/右键菜单/
-//      拖拽态/高倍缩放/各弹窗/窄视口/viewer 冷启＋inbox pmu），逐态对每个子选择器
-//      querySelector 快照取并集——弹窗面板即使被后开的状态盖住，DOM 还在、命中不丢；
+//   2. 起隔离实例（T415，2026-10-27 起：临时数据目录的第二实例，不再读真实 data/——
+//      以前直读真 data/ 还写过 kv，10-26 models.json 事故后开页面的测试一律不打真机；
+//      空数据下「最富会话」态自动缺席、节点两态现造测试节点顶上），Playwright 驱动
+//      场景矩阵（冷启/最富会话/各风格家族/深浅/大陆/右键菜单/拖拽态/高倍缩放/各弹窗/
+//      窄视口/viewer 冷启＋inbox pmu），逐态对每个子选择器 querySelector 快照取并集
+//      ——弹窗面板即使被后开的状态盖住，DOM 还在、命中不丢；
 //   3. 未命中规则再做源码交叉验证（class/id/属性字面量在 js/html 源里连子串都搜不到
 //      才算「证明死」——classList.add('a'+b) 这类拼名天然保守保活）。
 //
@@ -20,11 +22,11 @@
 //
 // 删除永远只删规则文本不动注释（源 CSS 注释是设计文档）；删后须重跑 build:js＋本工具
 // ＋frontend_smoke 复核。@font-face/@property/@import 与纯元素选择器一律保守保留。
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { startIsolatedServer } from './lib/test_server.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const PORT = Number(process.env.PORT || 5073);
@@ -131,19 +133,8 @@ function selectorTokens(sel) {
 }
 
 // ---------- 服务 ----------
-async function startServer() {
-  const logFile = fs.openSync(path.join(root, `logs/css-coverage-server-${PORT}.log`), 'w');
-  const proc = spawn('python3', [path.join(root, 'src/main.py'), '-p', String(PORT)], { cwd: root, stdio: ['ignore', logFile, logFile] });
-  const base = `http://localhost:${PORT}`;
-  for (let i = 0; i < 60; i++) {
-    await new Promise(r => setTimeout(r, 500));
-    try {
-      const r = await fetch(base + '/health');
-      if (r.ok) return { proc, base };
-    } catch { /* 未起 */ }
-  }
-  proc.kill(); throw new Error('服务 60s 未就绪');
-}
+// 起隔离实例这件事归 scripts/lib/test_server.mjs（T415）；不再在真仓库根起服务——
+// 那样 cwd 决定的 DATA_DIR 就是真实 data/，kv 写入会落进日常数据。
 
 // ---------- 场景矩阵（逐态快照） ----------
 async function driveStates(page, base, sels, union, stateHits) {
@@ -221,7 +212,20 @@ async function driveStates(page, base, sels, union, stateHits) {
     await page.evaluate(() => document.documentElement.classList.add('node-blur-lite'));
   });
   // 画布动态态：右键菜单 / 拖拽指示 / 高倍缩放
+  // 节点态需要画布上有节点——隔离实例是空画布（T415 起不依赖真实 data/），现造一组
+  // 覆盖节点家族的测试节点（问题分析＋六族模块视角）。只造一颗不够：answer/module
+  // 族的规则在真实数据里靠会话内容命中，空画布没机会命中就会混进 DEAD 名单——拼名网
+  // 救不了动态拼出来的类名（T415 实测 19 条假阳性）。
+  const ensureNodes = () => page.evaluate(() => {
+    for (const key of ['answer', 'physics', 'math', 'graph', 'viz', 'learn', 'socratic', 'human_note']) {
+      window.addBlankNodePoint = { x: 60 + Math.random() * 640, y: 60 + Math.random() * 420 };
+      window.createManualNode(key);
+    }
+    if (typeof renderGraphCanvas === 'function') renderGraphCanvas();
+    if (!document.querySelector('.graph-node')) throw new Error('造了测试节点仍无 .graph-node');
+  });
   await step('节点右键菜单', async () => {
+    await ensureNodes();
     await page.evaluate(() => {
       const el = document.querySelector('.graph-node');
       if (!el) throw new Error('无节点');
@@ -229,6 +233,7 @@ async function driveStates(page, base, sels, union, stateHits) {
     });
   });
   await step('节点拖拽中', async () => {
+    await ensureNodes();
     await page.evaluate(() => {
       const el = document.querySelector('.graph-node');
       if (!el) throw new Error('无节点');
@@ -285,7 +290,7 @@ async function driveStates(page, base, sels, union, stateHits) {
 }
 
 // ---------- 主流程 ----------
-const server = await startServer();
+const server = await startIsolatedServer({ port: PORT, label: 'phymathia-csscov', copyDataDirs: ['utopia_inbox'] });
 let browser;
 try {
   const rules = [];
@@ -443,5 +448,5 @@ try {
   }
 } finally {
   if (browser) await browser.close().catch(() => { });
-  server.proc.kill();
+  server.stop();
 }

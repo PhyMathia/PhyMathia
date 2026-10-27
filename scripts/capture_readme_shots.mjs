@@ -1,6 +1,15 @@
-// README 配图采集：打开真机服务，载入指定会话，导出 1440×900 @2x 高清截图。
+// README 配图采集：打开「你显式指认的服务」，载入指定会话，导出 1440×900 @2x 高清截图。
 //
-//   node scripts/capture_readme_shots.mjs [--session <sess_id>] [--out docs/images]
+//   PHYMATHIA_BASE=http://127.0.0.1:5050/ node scripts/capture_readme_shots.mjs [--session <sess_id>] [--out docs/images]
+//
+// 本工具是全部脚本里唯一允许打真机的（README 需要真实内容/真实会话，隔离实例给不了），
+// 因此 T415（2026-10-27）起不再有默认端口——必须显式 PHYMATHIA_BASE= 指认，防手滑。
+// 指认真机时两条安全线：
+// - 绝不往 localStorage 种 phymathia_user_models / phymathia_active_models——应用加载
+//   时会把本地模型整包推上服务端账号真源 data/users/<账号>/models.json（10-26 实踩
+//   覆盖过日常 default 账号，修就是为这个）；
+// - 测试类脚本（visual_baseline / verify_* / review_* / css_coverage）都已自带隔离
+//   实例，不要为它们开真机。
 //
 // 与 visual_baseline.mjs 的区别（别混用）：
 // - 基线用 deviceScaleFactor 0.5 出 720×450 的「小图」，只要够比对样式；README 需要 2x 高清。
@@ -14,7 +23,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const BASE = process.env.PHYMATHIA_BASE || 'http://localhost:5050/';
+const BASE = process.env.PHYMATHIA_BASE || '';
+if (!BASE) {
+  console.error('缺 PHYMATHIA_BASE：本工具拍真实内容、必须显式指认服务（也是防手滑打上真机）。\n'
+    + '用法： PHYMATHIA_BASE=http://127.0.0.1:5050/ node scripts/capture_readme_shots.mjs [--session <sess_id>] [--out docs/images]\n'
+    + '（只许读：别往页面种 phymathia_user_models / phymathia_active_models，会整包覆盖服务端账号模型配置——10-26 事故）');
+  process.exit(2);
+}
 
 function arg(name, dflt) {
   const i = process.argv.indexOf('--' + name);

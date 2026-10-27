@@ -9,13 +9,14 @@
 //   4) 浏览器眼中的 app.js 标签带 defer
 // 另复核 #memoryPanel 存在——它在第 259 行 script 标签之后，同步脚本不执行完
 // 它根本不会被解析，defer 后必须立即可见。
-// 用法：先起服务（无需模型上游，index 是静态页），例如
-//   python3 src/main.py -p 5099 --no-file-log &
-//   node scripts/verify_load_defer.mjs [端口，默认 5099]
+// 用法：node scripts/verify_load_defer.mjs（T415 起自带隔离实例——临时数据目录的
+// 第二实例，无需也不该再手工起真机服务；10-26 事故后开页面的测试一律不打 5050）
 import { chromium } from 'playwright';
+import { startIsolatedServer } from './lib/test_server.mjs';
 
-const port = process.argv[2] || '5099';
-const base = `http://127.0.0.1:${port}`;
+const srv = await startIsolatedServer({ port: 5089, label: 'phymathia-defer' });
+const base = srv.base;
+process.on('exit', () => srv.stop());
 
 let failed = 0;
 const check = (name, ok, detail) => {

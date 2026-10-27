@@ -4,6 +4,9 @@
 //   node scripts/visual_baseline.mjs --check    与基线比对（差异退出码 1）
 //
 // 口径说明：
+// - 自带隔离实例（T415，2026-10-27）：临时数据目录的第二实例，不读不写真实 data/。
+//   以前默认连 5050——真机上开应用页会把 localStorage 的模型整包推上服务端账号真源
+//   （10-26 实踩覆盖过日常 default 账号）；基线本就要求确定性，空数据实例反而更纯。
 // - 主判据是「计算样式」——确定性，不受渲染时机影响；截图为辅，供人眼复核。
 // - 必须开 prefers-reduced-motion：页面有 auroraDrift(28s) 与粒子 rAF 两处持续动画，
 //   不开的话同一个界面两次截图都不一样。项目已内置该降级（styles.css `.aurora-glass { animation:none }`）。
@@ -14,9 +17,12 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { startIsolatedServer } from './lib/test_server.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const BASE = process.env.PHYMATHIA_BASE || 'http://localhost:5050/';
+const srv = await startIsolatedServer({ port: 5086, label: 'phymathia-visbase' });
+const BASE = srv.base + '/';
+process.on('exit', () => srv.stop());
 const OUT_DIR = path.join(ROOT, 'baseline');
 const MODE = process.argv.includes('--record') ? 'record'
   : process.argv.includes('--check') ? 'check'
@@ -190,15 +196,7 @@ const PROBE = `
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
-  // 服务必须在跑
-  try {
-    const r = await fetch(BASE + 'health', { signal: AbortSignal.timeout(2000) });
-    if (!r.ok) throw new Error(String(r.status));
-  } catch (e) {
-    console.error('服务未运行：先 python3 src/main.py -p 5050 再跑本脚本（' + BASE + 'health 不可达）');
-    process.exit(2);
-  }
-
+  // 隔离实例已在模块顶层起好并等到 /health（T415），不再有「先起服务」前置
   const shell = findShell();
   const port = 9411;
   // 每次跑用独立 profile：复用同一个目录会撞上浏览器还在写缓存的竞态（ENOTEMPTY）。
@@ -279,7 +277,8 @@ async function main() {
     const msgRaw = await evaluateSoft('return (typeof getChatHistory==="function"?getChatHistory():[]).length;');
     const msgCount = Number(msgRaw);
     const count = Number.isFinite(msgCount) ? msgCount : -1;
-    stateTag = (sessionId && sessionId.indexOf('ERR:') !== 0 ? sessionId : '(无会话)')
+    // 指纹不带 sid：每次跑都是新会话、带 sid 的指纹永远对不上（T131 环境态长红的一处）
+    stateTag = (sessionId && sessionId.indexOf('ERR:') !== 0 ? '会话在' : '(无会话)')
       + ' · 消息 ' + count + ' 条'
       + (count === 0 ? '（空画布：工具栏按设计不出，.graph-canvas-toolbar 一族在探针里必然缺席）' : '');
     if (theme === 'dark') console.log('  · 本次探针会话：' + stateTag);
