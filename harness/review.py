@@ -1819,7 +1819,7 @@ async def _assemble_result_with_selfchecks(
 
     # ---- 语义自检：规则（零成本） ----
     result["self_check"] = {
-        "rules": rule_selfcheck(current, instruction, focus_node_ids, raw_ops),
+        "rules": rule_selfcheck(current, instruction, focus_node_ids, raw_ops, phase=phase),
     }
     for issue in result["self_check"]["rules"].get("issues", []):
         result["warnings"].append({"index": "rules", "op": "selfcheck", "reason": issue})

@@ -442,6 +442,12 @@ class PhaseConvergenceTest(unittest.TestCase):
             for word in words:
                 self.assertIn(word, backend, f"后端关键词表缺少前端词：{word}")
 
+    def test_bu_edit_forms_detected(self):
+        from harness.review import _has_edit_intent
+        for text in ("补一句说明", "补上遗漏的连线", "补齐缺口", "补全公式", "补进节点里"):
+            self.assertTrue(_has_edit_intent(text), text)
+        self.assertFalse(_has_edit_intent("周末去补课"), "单字「补」不应算改图意图")
+
     def test_detect_phase_new_word_cases(self):
         self.assertEqual(_detect_phase("normal", "把标题改成X", self.snap), "normal")
         self.assertEqual(_detect_phase("normal", "重写第二个节点", self.snap), "normal")

@@ -49,6 +49,10 @@ def _anchor_add_covered(text: str, snapshot: Any, touched, untouched) -> bool:
 ACTION_WORDS = (
     "删除", "删掉", "去掉", "新增", "补充", "创建", "加上", "添加", "连接",
     "修改", "改成", "加一个", "补一个", "整理", "优化",
+    # T413：「补」类编辑意图必须带宾语/补语才收（补一句/补上/补进…）。
+    # 不收单字「补」，避免「补课/补习/补充一下」这类正常答疑被误判。
+    "补一句", "补一段", "补一条", "补一行", "补一点", "补个",
+    "补上", "补进", "补入", "补齐", "补全",
 )
 
 
@@ -123,8 +127,14 @@ def rule_selfcheck(
     instruction: str,
     focus_node_ids,
     ops: Any,
+    phase: str = "",
 ) -> Dict[str, Any]:
-    """Cheap deterministic coverage checks. Returns {"ok": bool, "issues": [...]}."""
+    """Cheap deterministic coverage checks. Returns {"ok": bool, "issues": [...]}.
+
+    chat 相位的图操作会被服务端保险丝强制清空，所有「没提出操作」类规则
+    在这里都是误报，直接放行。"""
+    if phase == "chat":
+        return {"ok": True, "issues": []}
     issues: List[str] = []
     text = str(instruction or "")
     total = len(snapshot.get("nodes") or [])
