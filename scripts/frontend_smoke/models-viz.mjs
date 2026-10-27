@@ -510,4 +510,35 @@ check('viz-mount（T375）：进视口才写 srcdoc＋force/无IO 立即挂载',
   if (!css.includes('.viz-card:has(iframe[data-viz-pending])::after')) throw new Error('缺待载态提示样式');
   return true;
 });
+
+// ===== 模型配置向导（2026-10-26 简化计划 3：没配模型时首屏一屏配通）=====
+check('模型向导：接线（一屏三步 markup＋models.js 向导段＋ui.js load 挂钩）', () => {
+  const idx = fs.readFileSync('src/static/index.html', 'utf8');
+  for (const frag of ['id="modelWizardOverlay"', 'id="mwProviderGrid"', 'id="mwApiKey"', 'id="mwModelSelect"', 'id="mwModelInput"', 'id="mwGoBtn"', 'modelWizardGo()', 'modelWizardSkip()', 'modelWizardOpenManual()']) {
+    if (!idx.includes(frag)) throw new Error('向导 markup 缺: ' + frag);
+  }
+  const msrc = fs.readFileSync('src/static/js/models.js', 'utf8');
+  for (const fn of ['function modelWizardMaybeShow', 'function modelWizardGo', 'function modelWizardSkip', 'function modelWizardOpenManual', 'function _wizardConfigured']) {
+    if (!msrc.includes(fn)) throw new Error('models.js 缺: ' + fn);
+  }
+  const ui = fs.readFileSync('src/static/js/ui.js', 'utf8');
+  if (!ui.includes('modelWizardMaybeShow(startFirstOnboarding)')) throw new Error('ui.js load 尾部没挂向导钩子');
+  // 行为红线：打开向导本身零网络请求——向导段内不得出现直连 fetch（测通只许走 _probeModelLive）
+  const wz = msrc.slice(msrc.indexOf('====== 模型配置向导'));
+  if (wz.includes('fetch(')) throw new Error('向导段出现直连 fetch——打开/选择必须零请求，测通只许走 _probeModelLive');
+  if (!wz.includes('await _probeModelLive(')) throw new Error('测通必须复用 T60 探活原语');
+  // 失败不落库：没测通不许调 addModelsForProvider（不留半成品配置）
+  const go = msrc.slice(msrc.indexOf('async function modelWizardGo'), msrc.indexOf('function modelWizardOpenManual'));
+  if (go.indexOf('addModelsForProvider(') < go.indexOf('if (!result || !result.ok)')) throw new Error('modelWizardGo 必须先判测通结果再落库');
+  if (!go.includes('activeModels.agent_model') || !go.includes('persistActiveModels()')) throw new Error('测通后要坐进主模型槽并持久化');
+  return true;
+});
+
+check('模型向导：样式契约', () => {
+  const css = fs.readFileSync('src/static/css/styles.css', 'utf8');
+  for (const frag of ['.model-wizard', '.mw-provider-grid', '.mw-provider-card.active', '.mw-status.error']) {
+    if (!css.includes(frag)) throw new Error('styles.css 缺: ' + frag);
+  }
+  return true;
+});
 }

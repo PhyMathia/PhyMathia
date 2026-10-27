@@ -693,8 +693,11 @@ window.addEventListener('load', async () => {
   // 必须先初始化应用（加载 session、恢复聊天状态）
   await initApp();
 
-  // 首次使用引导（查阅模式跳过：引导完成标记会写进对方账号的浏览器命名空间）
-  setTimeout(() => { if (!phyIsReadonly()) startOnboarding(); }, 600);
+  // 模型配置向导（简化计划 3，2026-10-26）：主模型槽为空（没加过模型或没指槽）先弹
+  // 一屏配通；向导在场时首次引导往后排——配置是「能不能用起来」的第一道坎。
+  const startFirstOnboarding = () => setTimeout(() => { if (!phyIsReadonly()) startOnboarding(); }, 600);
+  if (typeof modelWizardMaybeShow === 'function' && modelWizardMaybeShow(startFirstOnboarding)) return;
+  startFirstOnboarding();
 });
 
 // ====== 深色/浅色模式 ======
