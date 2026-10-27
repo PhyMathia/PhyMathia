@@ -35,7 +35,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
-  <link rel="stylesheet" href="/css/styles.min.css?v=49101f79">
+  <link rel="stylesheet" href="/css/styles.min.css?v=fb89eae3">
   <link rel="stylesheet" href="/css/styles-panels.min.css?v=c520320a">
   <link rel="stylesheet" href="/css/graph-override.min.css?v=9129b79f">
   <link rel="stylesheet" href="/phi/phi-pet.min.css?v=259b0ac7">
@@ -256,7 +256,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=8894cfd1" defer></script>
+  <script src="/js/app.js?v=a96151dc" defer></script>
   <script>
     // app.js 改 defer 后本脚本先于它执行，而 APP_VERSION 是 config.js 的顶层
     // const——内联脚本无法加 defer，只能等 DOMContentLoaded：所有 defer 脚本
@@ -795,6 +795,31 @@
       <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">
         <div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px;">存储诊断</div>
         <div id="storageDebug" style="font-size:11px;color:var(--text-secondary);line-height:1.6;font-family:monospace;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 模型配置向导（2026-10-26 简化计划 3）：没配模型时首屏一屏配通——选预设 → 填 key →
+       测通即自动入列并坐进主模型槽。触发/保存逻辑在 models.js 尾部段；「测通」复用 T60
+       的 /api/models/probe（真发一条最小消息）。行为红线：打开向导本身零网络请求。 -->
+  <div class="model-dialog-overlay" id="modelWizardOverlay" onclick="if(event.target===this)modelWizardSkip()">
+    <div class="model-dialog model-wizard aurora-glass aurora-glass--dialog">
+      <h3>先配一个 AI 模型</h3>
+      <p class="mw-lede">PhyMathia 靠 AI 工作：选一个服务商，填上密钥，测通就能开聊。只需配这一次，之后随时在「模型设置」里改。</p>
+      <div class="mw-step-title"><span class="mw-step-num">1</span>选服务商</div>
+      <div class="mw-provider-grid" id="mwProviderGrid"></div>
+      <div class="am-provider-meta" id="mwProviderMeta"></div>
+      <div class="mw-step-title"><span class="mw-step-num">2</span>填 API 密钥</div>
+      <input type="password" id="mwApiKey" placeholder="sk-..." autocomplete="off" spellcheck="false">
+      <div class="mw-hint" id="mwKeyHint"></div>
+      <div class="mw-step-title"><span class="mw-step-num">3</span>测通并开始使用</div>
+      <select id="mwModelSelect" class="model-select"></select>
+      <input type="text" id="mwModelInput" class="mw-model-input" placeholder="填写模型 ID，例如 doubao-seed-…" autocomplete="off" spellcheck="false" hidden>
+      <button class="md-btn md-btn-save mw-go-btn" id="mwGoBtn" onclick="modelWizardGo()">测通并开始使用</button>
+      <div class="mw-status" id="mwStatus"></div>
+      <div class="md-actions">
+        <button class="md-btn md-btn-cancel" onclick="modelWizardOpenManual()">高级：手动添加模型</button>
+        <button class="md-btn md-btn-cancel" onclick="modelWizardSkip()">稍后再说</button>
       </div>
     </div>
   </div>

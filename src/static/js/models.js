@@ -1777,3 +1777,160 @@ loadUserModels();
 // 模型面板简略/详细模式（默认简略）：boot 即套用，面板首开即所见即所得；
 // 顺带把七个思考滑块建好（renderModelSelects → updateModelMeta → _refreshSlotThinkingSelect）
 applyModelPanelMode(getModelPanelMode());
+
+// ====== 模型配置向导（2026-10-26 简化计划 3）======
+// 上手第一道坎是模型配置：没配主模型时首屏弹一屏向导——选预设 → 填 key → 测通，
+// 测通即自动入列并坐进主模型槽（agent）。「测通」复用 T60 的 /api/models/probe
+// （真发一条最小消息，结果缓存 5 分钟）；行为红线：打开向导本身零网络请求。
+// 入口：ui.js load 尾部 modelWizardMaybeShow（返回 true 表示接管了首启流程）；
+// 「稍后再说」只收本次加载（不落盘）——没配完刷新还会再弹，配完永不再弹。
+let _wizardState = null;        // { provider }
+let _wizardBusy = false;        // 测通在途：按钮防重复点
+let _wizardAfterReady = null;   // 向导退场后接手的首次引导回调（ui.js 传入）
+
+function _wizardConfigured() {
+  const model = getActiveModelForRole('agent');
+  return !!(model && (model.model || model.name));
+}
+
+function modelWizardMaybeShow(afterReady) {
+  if (typeof phyIsReadonly === 'function' && phyIsReadonly()) return false; // 查阅模式不打扰
+  if (_wizardConfigured()) return false;
+  _wizardAfterReady = typeof afterReady === 'function' ? afterReady : null;
+  modelWizardRenderProviders();
+  document.getElementById('modelWizardOverlay').classList.add('show');
+  setTimeout(() => {
+    const key = document.getElementById('mwApiKey');
+    if (key && !key.hidden) key.focus();
+  }, 80);
+  return true;
+}
+
+function _wizardRunAfterReady() {
+  const cb = _wizardAfterReady;
+  _wizardAfterReady = null;
+  if (cb) cb();
+}
+
+function modelWizardSkip() {
+  document.getElementById('modelWizardOverlay').classList.remove('show');
+  _wizardRunAfterReady();
+}
+
+function modelWizardRenderProviders() {
+  const grid = document.getElementById('mwProviderGrid');
+  if (!grid) return;
+  if (!_wizardState) _wizardState = { provider: Object.keys(MODEL_PRESETS)[0] };
+  grid.innerHTML = Object.entries(MODEL_PRESETS).map(([id, p]) =>
+    `<button type="button" class="mw-provider-card${id === _wizardState.provider ? ' active' : ''}" data-provider="${escapeHtml(id)}" onclick="modelWizardPickProvider('${escapeHtml(id)}')">
+      <span class="mw-provider-name">${escapeHtml(p.name)}</span>
+      <span class="mw-provider-desc">${escapeHtml(p.tagline || '')}</span>
+    </button>`).join('');
+  _wizardApplyProvider();
+}
+
+function modelWizardPickProvider(id) {
+  if (!MODEL_PRESETS[id]) return;
+  _wizardState = { provider: id };
+  _wizardApplyProvider();
+  const key = document.getElementById('mwApiKey');
+  if (key) key.focus();
+}
+
+// 选中供应商后的就地刷新：卡高亮 / meta 文案 / 密钥提示（带申请链接）/ 模型清单
+// （热门档排前；注册表没列模型的供应商如豆包改手填，进阶拉全量清单去模型设置）
+function _wizardApplyProvider() {
+  const id = _wizardState ? _wizardState.provider : '';
+  const preset = MODEL_PRESETS[id];
+  if (!preset) return;
+  document.querySelectorAll('#mwProviderGrid .mw-provider-card').forEach(c => {
+    c.classList.toggle('active', c.dataset.provider === id);
+  });
+  const meta = document.getElementById('mwProviderMeta');
+  if (meta) meta.textContent = preset.tagline || '';
+  const hint = document.getElementById('mwKeyHint');
+  if (hint) {
+    hint.innerHTML = preset.docs
+      ? '还没有密钥？<a href="' + escapeHtml(preset.docs) + '" target="_blank" rel="noopener">去 ' + escapeHtml(preset.name) + ' 控制台申请</a>' + (preset.apiKeyHint ? '（' + escapeHtml(preset.apiKeyHint) + '）' : '')
+      : escapeHtml(preset.apiKeyHint || '');
+  }
+  const sel = document.getElementById('mwModelSelect');
+  const input = document.getElementById('mwModelInput');
+  const models = (preset.models || []).slice().sort((a, b) => ((b.hot ? 1 : 0) - (a.hot ? 1 : 0)));
+  if (models.length) {
+    sel.hidden = false;
+    input.hidden = true;
+    sel.innerHTML = models.map(m =>
+      `<option value="${escapeHtml(m.id)}">${escapeHtml(m.label || m.id)}${m.hot ? ' · 推荐' : ''}</option>`).join('');
+  } else {
+    sel.hidden = true;
+    input.hidden = false;
+    input.value = '';
+    input.placeholder = '填写模型 ID（该服务商清单在线获取，可在模型设置里拉取）';
+  }
+}
+
+function _setMwStatus(msg, isErr) {
+  const el = document.getElementById('mwStatus');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.classList.toggle('error', !!isErr);
+}
+
+// 「测通并开始使用」：本地先校验（供应商/模型/密钥），过了就真发一条最小消息；
+// 通了才落库（addModelsForProvider：入列＋组密钥）并坐进主模型槽。没通不写任何
+// 配置——用户换 key 或换模型重试，不留半成品。
+async function modelWizardGo() {
+  if (_wizardBusy) return;
+  const preset = MODEL_PRESETS[_wizardState ? _wizardState.provider : ''];
+  if (!preset) { _setMwStatus('先选一个服务商', true); return; }
+  const provider = _wizardState.provider;
+  const sel = document.getElementById('mwModelSelect');
+  const model = sel.hidden
+    ? String(document.getElementById('mwModelInput').value || '').trim()
+    : sel.value;
+  if (!model) { _setMwStatus('请选择或填写一个模型', true); return; }
+  const apiKey = String(document.getElementById('mwApiKey').value || '').trim();
+  if (!apiKey && !preset.keyOptional && !getGroupKey(provider)) {
+    _setMwStatus('先填 API 密钥' + (preset.apiKeyHint ? '（' + preset.apiKeyHint + '）' : ''), true);
+    document.getElementById('mwApiKey').focus();
+    return;
+  }
+  const baseUrl = preset.baseUrl || '';
+  const btn = document.getElementById('mwGoBtn');
+  _wizardBusy = true;
+  if (btn) btn.disabled = true;
+  _setMwStatus('正在测通（真发一条最小消息，几秒钟）…', false);
+  let result;
+  try {
+    result = await _probeModelLive(provider, baseUrl, model, apiKey || getGroupKey(provider) || '');
+  } catch (e) {
+    result = { ok: false, detail: String((e && e.message) || e), at: 0 };
+  }
+  _wizardBusy = false;
+  if (btn) btn.disabled = false;
+  if (!result || !result.ok) {
+    _setMwStatus('没测通：' + ((result && result.detail) || '未知原因') + '。检查密钥或换一个模型再试。', true);
+    return;
+  }
+  addModelsForProvider(provider, apiKey, baseUrl, [{ model, label: ((preset.models || []).find(m => m.id === model) || {}).label || '' }]);
+  const entry = userModelConfigs.find(c => c.provider === provider && c.model === model);
+  if (entry) {
+    activeModels.agent_model = entry.id;
+    persistActiveModels();
+    renderModelSelects();
+  }
+  _setMwStatus('✓ 测通了！模型已就位，开始提问吧。', false);
+  setTimeout(() => {
+    document.getElementById('modelWizardOverlay').classList.remove('show');
+    _wizardRunAfterReady();
+  }, 900);
+}
+
+// 左下「高级：手动添加模型」：让给既有添加弹窗（预设/手动两页签都在那边）；
+// 向导收起且本次不再弹（引导也撤——用户自选了进阶路线，别再叠一层浮层）。
+function modelWizardOpenManual() {
+  document.getElementById('modelWizardOverlay').classList.remove('show');
+  _wizardAfterReady = null;
+  showAddModelDialog();
+}
