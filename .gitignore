@@ -158,3 +158,4 @@ data/embedding_cache.json
 
 # T378：app.js.map 每次前端构建全量变化（约 4MB），不入库；跑过 build:js 的机器必有
 src/static/js/app.js.map
+*.kate-swp
