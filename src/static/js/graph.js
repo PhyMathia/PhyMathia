@@ -324,6 +324,8 @@ const GRAPH_HISTORY_STALE_SETTLE_MS = 12 * 3600 * 1000;
 let graphHistorySavedAt = 0;        // 本地信封落盘时间（12h 兜底结算用）
 // 面板 800ms 刷新的脏标记（T219/R9）：只有图真被写过才重算「当前状态」与它跟最后
 // 一条的差异；打开面板先算一次。没有它，面板常开时每 800ms 做一次全图深比较。
+// 布局类存盘（opts.layout，见 _saveGraphState）不置脏——位置/尺寸/视口/折叠展开的
+// 投影差异本来就是 layoutOnly，置了脏也只会白算一次全图投影（2026-10-28 T219 补刀）。
 let graphHistoryLiveDirty = true;
 let graphHistoryLiveMetaCache = null;
 let graphHistoryLastScrollCursor = -1;

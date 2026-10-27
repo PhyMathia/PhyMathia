@@ -258,7 +258,7 @@ function toggleGraphNodeExpand(nodeId) {
   else delete state.expandedAnswers[nodeId];
   // 隐式画像：展开答案 = 形式/推导侧偏好信号（只记展开，不记收起）
   if (expanding && typeof window.reportProfileEvent === 'function') window.reportProfileEvent('expand');
-  _saveGraphState(state);
+  _saveGraphState(state, { layout: true }); // T219：展开/收起是显示态写，投影差异不跟踪它
   if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
 }
 

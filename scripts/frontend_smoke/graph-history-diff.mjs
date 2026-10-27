@@ -3,7 +3,8 @@
 //   ②方向：回到那一步 = 现在有的会消失、那时有的会回来、两边不同会改写；
 //   ③清单/计数/图例与点行定位；④两向切换（回到这里会怎样/这一步改了什么），
 //     历史「幽灵虚影」已随简化批次退役（_graphDiffGhost* 一族仍服务 Φ 的向前对比）；
-//   ⑤800ms 深比较只算一次（脏标记缓存）；⑥行摘要回退到正文前 22 字，不再吐节点 ID。
+//   ⑤800ms 深比较只算一次（脏标记缓存；布局存盘 {layout:true} 不置脏——拖拽/缩放不付全图投影，T219 补刀）；
+//   ⑥行摘要回退到正文前 22 字，不再吐节点 ID。
 // 异步用例（点行定位）放最后：前面同步例各自 try/finally 自清理，别在异步让出微任务
 // 期间重置共享沙箱（AGENTS 冒烟混排坑）。
 import { check, drain, sandbox, vm, storageData } from './_runner.mjs';
@@ -284,6 +285,71 @@ export async function run() {
       runCtx('_saveGraphState(_graphState());');
       const fresh = JSON.parse(runCtx('JSON.stringify(_graphVersions()[1].meta)'));
       if (fresh.summary === first.summary) throw new Error('落盘后没有重算当前状态摘要');
+      return true;
+    });
+
+    check('R9/T219 补刀：布局存盘（layout:true）不置脏，未落盘改动的缓存原样保住', () => {
+      reset();
+      runCtx('graphUndoStack = [{ sessionId: ' + JSON.stringify(SID) + ', state: ' + JSON.stringify(_state([])) + ', messages: null, meta: { source: "init", summary: "初始状态", ts: 1, pushedAt: 1 } }];'
+        + 'graphHistoryCursor = 1; graphHistoryLiveDirty = true; graphHistoryLiveMetaCache = null;');
+      mem = _state([_note('n1')]);
+      const first = JSON.parse(runCtx('JSON.stringify(_graphVersions()[1].meta)'));
+      if (first.summary === '当前状态') throw new Error('第一版没算出差异摘要');
+      // 未落盘的内容改动在侧，布局存盘（拖拽/缩放那一类）：脏标记必须保持干净
+      mem = _state([_note('n1'), _note('n2'), _note('n3')]);
+      runCtx('_saveGraphState(_graphState(), { layout: true });');
+      if (runCtx('graphHistoryLiveDirty') !== false) throw new Error('布局存盘把脏标记置真了（下一拍会白付一次全图投影）');
+      const held = JSON.parse(runCtx('JSON.stringify(_graphVersions()[1].meta)'));
+      if (held.summary !== first.summary) throw new Error('布局存盘打掉了缓存');
+      // 普通存盘照旧置脏、下一拍重算
+      runCtx('_saveGraphState(_graphState());');
+      if (runCtx('graphHistoryLiveDirty') !== true) throw new Error('普通存盘没有置脏');
+      const fresh = JSON.parse(runCtx('JSON.stringify(_graphVersions()[1].meta)'));
+      if (fresh.summary === first.summary) throw new Error('普通存盘后没有重算');
+      return true;
+    });
+
+    check('R9/T219 补刀：时间旅行待截断不被布局存盘吞掉，真编辑才截断', () => {
+      reset();
+      runCtx('graphUndoStack = ['
+        + '{ sessionId: ' + JSON.stringify(SID) + ', state: ' + JSON.stringify(_state([])) + ', messages: null, meta: { source: "init", summary: "初始", ts: 1, pushedAt: 1 } },'
+        + '{ sessionId: ' + JSON.stringify(SID) + ', state: ' + JSON.stringify(_state([_note('keep')])) + ', messages: null, meta: { source: "user", summary: "上一步", ts: 2, pushedAt: 2 } }'
+        + ']; graphHistoryCursor = 1; graphHistoryLive = null; graphHistoryPendingTruncate = true; graphHistoryLiveDirty = false; graphHistoryLiveMetaCache = { meta: null, counts: null };');
+      mem = _state([_note('keep', { content: '改过的正文' })]);
+      runCtx('_saveGraphState(_graphState(), { layout: true });');
+      if (runCtx('graphHistoryPendingTruncate') !== true) throw new Error('布局存盘吞掉了待截断标记');
+      if (runCtx('graphHistoryCursor') !== 1) throw new Error('布局存盘截断了未来');
+      runCtx('_saveGraphState(_graphState());');
+      if (runCtx('graphHistoryPendingTruncate') !== false) throw new Error('真编辑没有消费待截断标记');
+      if (runCtx('graphHistoryCursor') !== 2) throw new Error('真编辑没有落截断');
+      return true;
+    });
+
+    check('R9/T219 补刀：预览态一拍不重灌对比 DOM，空 footer 不再反复写 innerHTML', () => {
+      reset();
+      runCtx('graphUndoStack = ['
+        + '{ sessionId: ' + JSON.stringify(SID) + ', state: ' + JSON.stringify(_state([_note("keep"), _note("back")])) + ', messages: null, meta: { source: "user", summary: "两步前", ts: 1, pushedAt: 1 } },'
+        + '{ sessionId: ' + JSON.stringify(SID) + ', state: ' + JSON.stringify(_state([_note("keep")])) + ', messages: null, meta: { source: "user", summary: "上一步", ts: 2, pushedAt: 2 } }'
+        + ']; graphHistoryCursor = 2; graphHistoryLive = null; graphHistoryLiveDirty = true;');
+      mem = _state([_note('keep', { content: '改写后' }), _note('gone')]);
+      els.graphHistoryList = _mkEl('div');
+      els.graphHistoryPos = _mkEl('span');
+      els.graphHistoryDiffText = _mkEl('div');
+      runCtx('openGraphHistoryPanel(); graphHistoryLastSignature = ""; _refreshGraphHistoryPanel();');
+      runCtx('_previewGraphVersion(0);');
+      if (!els.graphHistoryDiffText.innerHTML) throw new Error('预览态 footer 没内容');
+      let sets = 0;
+      let val = els.graphHistoryDiffText.innerHTML;
+      Object.defineProperty(els.graphHistoryDiffText, 'innerHTML', {
+        configurable: true, get: () => val, set: v => { sets++; val = v; },
+      });
+      runCtx('_renderGraphHistoryFooter(); _renderGraphHistoryFooter();');
+      if (sets !== 0) throw new Error('内容没变还在整份重灌 DOM（写 ' + sets + ' 次）');
+      runCtx('exitGraphVersionPreview();');
+      if (sets !== 1 || val !== '') throw new Error('退出预览没清空 footer');
+      runCtx('_renderGraphHistoryFooter();');
+      if (sets !== 1) throw new Error('空 footer 每次 tick 还在写 innerHTML');
+      runCtx('closeGraphHistoryPanel();');
       return true;
     });
 

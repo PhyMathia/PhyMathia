@@ -429,7 +429,7 @@ function _unhideGraphNodeForFocus(node) {
       changed = true;
     }
   }
-  if (changed) _saveGraphState(state);
+  if (changed) _saveGraphState(state, { layout: true }); // T219：定位展开只动折叠/最小化显示态
   // T69：折叠壳没有内容子树（占位符）——定位跳转展开它时先整卡重建，
   // 否则跳过去是一张空壳卡
   const phEl = graphInner && graphInner.querySelector

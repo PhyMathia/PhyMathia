@@ -29,7 +29,7 @@ function _savePositions() {
       if (!copy.userResized) copy.customHeight = null;
       return copy;
     });
-  _saveGraphState(state);
+  _saveGraphState(state, { layout: true }); // T219：拖拽/改尺寸收尾的纯布局写，不置修改历史脏标
   if (typeof window.flushGraphStateServerSave === 'function') window.flushGraphStateServerSave();
 }
 
@@ -416,7 +416,7 @@ function autoArrangeGraph(preservePinned) {
     if (node.kind === 'draft') return;
     state.positions[node.id] = { x: node.x, y: node.y };
   });
-  _saveGraphState(state);
+  _saveGraphState(state, { layout: true }); // T219：自动整理是纯布局写
   if (typeof window.flushGraphStateServerSave === 'function') window.flushGraphStateServerSave();
   _updateNodeTransforms();
   _redrawEdges();

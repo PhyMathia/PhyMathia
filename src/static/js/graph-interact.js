@@ -1560,8 +1560,8 @@ function zoomGraph(factor, centerX, centerY) {
   state.pan.y = cy - wy * newZoom;
   state.zoom = newZoom;
   // 滚轮一格一次 save：本地落盘走防抖（缓存即时更新，localStorage 150ms 后合并落盘），
-  // 其余 save 调用方保持同步写不变
-  _saveGraphState(state, { deferLocalWrite: true });
+  // 其余 save 调用方保持同步写不变。layout:true＝视口写不置修改历史脏标（T219）
+  _saveGraphState(state, { deferLocalWrite: true, layout: true });
   _applyGraphTransform();
 }
 
@@ -1585,7 +1585,7 @@ function fitGraph() {
   state.zoom = Math.max(GRAPH_MIN_ZOOM, zoom);
   state.pan.x = (rect.width - width * state.zoom) / 2 - minX * state.zoom;
   state.pan.y = (rect.height - height * state.zoom) / 2 - minY * state.zoom;
-  _saveGraphState(state);
+  _saveGraphState(state, { layout: true }); // T219：适应视口只写 pan/zoom
   _applyGraphTransform();
 }
 
@@ -2034,7 +2034,7 @@ function _endPointerDrag(event) {
       _syncGroupMembersByContainment();
       const state = _graphState();
       state.groups = graphView.groups.map(item => ({ ...item }));
-      _saveGraphState(state);
+      _saveGraphState(state, { layout: true }); // T219：组框拉伸收尾＝布局写
     }
     graphView.resizeGroupId = null;
     graphView.resizeGroupStartX = 0;
@@ -2067,7 +2067,7 @@ function _endPointerDrag(event) {
         state.positions[id] = { x: node.x, y: node.y };
         state.pinned[id] = true;
       }
-      _saveGraphState(state);
+      _saveGraphState(state, { layout: true }); // T219：整组/多选拖拽收尾钉位＝布局写（成员归属变化由 _sync 的内层存盘诚实置脏）
       _syncGroupMembersByContainment();
       _savePositions();
     }
@@ -2121,7 +2121,7 @@ function _endPointerDrag(event) {
         state.positions[id] = { x: n.x, y: n.y };
         state.pinned[id] = true;
       }
-      _saveGraphState(state);
+      _saveGraphState(state, { layout: true }); // T219：整组/多选拖拽收尾钉位＝布局写（成员归属变化由 _sync 的内层存盘诚实置脏）
       _syncGroupMembersByContainment();
       _savePositions();
     }
@@ -2158,7 +2158,7 @@ function _endPointerDrag(event) {
   // 纯平移的收尾（其余拖拽分支各自保存）：move 期间不再逐帧写存储，
   // 在这里补一次统一保存
   if (graphView.panning && graphView.moved) {
-    _saveGraphState(_graphState());
+    _saveGraphState(_graphState(), { layout: true }); // T219：平移只写 pan
   }
   graphView.panning = false;
   graphView.pointerId = null;
