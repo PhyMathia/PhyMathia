@@ -4081,6 +4081,40 @@ class MachineTextSummaryTest(unittest.TestCase):
         self.assertTrue(_looks_like_machine_text("设置 confused_prompt 与 retry_prompt 两个槽"))
         self.assertTrue(_looks_like_machine_text("level_tags=['基础','进阶','拓展'] 已写入"))
 
+    def test_english_meta_narration_with_chinese_labels_is_machine_text(self):
+        # T414：英文推演夹中文节点名，躲过「无汉字」判定（基线 01/14 同型）
+        from harness.review import _looks_like_machine_text
+        self.assertTrue(_looks_like_machine_text(
+            'The user wants to rename the node "法拉第电磁感应定律" (nd_f1) to '
+            '"法拉第定律". This is a simple label update. I don\'t need to do any '
+            'read operations really, since I can see the node in the snapshot.'
+        ))
+        self.assertTrue(_looks_like_machine_text(
+            "Let me check the snapshot first. I need to update the node「法拉第定律」."
+        ))
+        self.assertTrue(_looks_like_machine_text(
+            "I'll update the node「法拉第定律」now."
+        ))
+        # 中文开头之后接大段英文推演，英文占主导时同样判机器文本
+        self.assertTrue(_looks_like_machine_text(
+            "好的。The user wants to replace the content of「我的理解」with the new "
+            "text, so I should call update_node with a full payload. Looking at the "
+            "snapshot, this is a direct edit instruction."
+        ))
+
+    def test_chinese_prose_with_english_quote_is_not_machine_text(self):
+        # 正常中文答复里引用英文术语/原句不误伤：英文不占主导或只是短引用
+        from harness.review import _looks_like_machine_text
+        self.assertFalse(_looks_like_machine_text(
+            "这个节点讲的是法拉第定律：磁通量变化率决定感应电动势。为了对照，"
+            "我在下面保留英文原句 The user wants to know the flux rule，其余解释都用中文。"
+        ))
+        self.assertFalse(_looks_like_machine_text(
+            '教材原文："Faraday\'s law states that the induced electromotive force '
+            'in any closed circuit is equal to the negative of the time rate of '
+            'change of the magnetic flux." 这句话讲的就是磁通量变化率。'
+        ))
+
 
 class RecipeDescPayloadMismatchTest(unittest.TestCase):
     """T79：op 描述声称改了配方字段而 payload 未携带 → 后端 warning（不拦截）。"""
