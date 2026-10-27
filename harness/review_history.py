@@ -73,14 +73,55 @@ _MACHINE_TEXT_MARKERS = (
     "on_incomplete", "content_kind", "numbered_list",
 )
 
+# T414：英文元叙述（"The user wants to…" / "Let me think…"）常把中文节点名
+# 夹在句子里，躲过「无汉字」判定。句首命中直接判机器文本；出现在中文之后时，
+# 只有英文明显占主导才判，避免中文答复引用英文术语/原句被误伤。
+_ENGLISH_META_RE = re.compile(
+    r"(?:"
+    r"\bthe user (?:wants|asks|asked|is asking|requested|said|needs)\b"
+    r"|\bthe instructions? (?:says|say|asks|ask|requires|require)\b"
+    r"|\bthe system prompt (?:says|asks|requires)\b"
+    r"|\blet me (?:think|check|see|look|update|rename|do)\b"
+    r"|\bi(?:'ll| need to| should| will| can see| could| don't need to| do not need to|'m going to| am going to)\b"
+    r"|\bwe (?:need to|should)\b"
+    r"|\blooking at the\b"
+    r"|\boutput (?:a|the) json\b"
+    r"|\bthis is (?:a|an) (?:simple|direct|trivial)\b"
+    r")",
+    re.IGNORECASE,
+)
+_ENGLISH_META_HEAD_CHARS = 40
+_ENGLISH_META_MIN_LETTERS = 40
+
+
+def _looks_like_english_meta_narration(t: str) -> bool:
+    """T414：中英混排的英文推演。句首（前 40 字符内且前面没有汉字）出现
+    "The user wants…/Let me…" 直接判；出现在中文之后时要求英文占主导
+    （至少 40 个字母且不少于汉字数的两倍），正常中文散文不受影响。"""
+    lowered = t.lower()
+    letters = sum(1 for ch in t if ch.isascii() and ch.isalpha())
+    han = sum(1 for ch in t if "\u4e00" <= ch <= "\u9fff")
+    for match in _ENGLISH_META_RE.finditer(lowered):
+        pos = match.start()
+        if pos <= _ENGLISH_META_HEAD_CHARS and not any(
+            "\u4e00" <= ch <= "\u9fff" for ch in lowered[:pos]
+        ):
+            return True
+        if letters >= _ENGLISH_META_MIN_LETTERS and letters >= han * 2:
+            return True
+    return False
+
 
 def _looks_like_machine_text(text) -> bool:
-    """用户向 summary 是中文散文；无汉字（英文独白/JSON 残段）或混着配方
-    schema 键名（弱模型把 payload 草稿写进 content）都判为机器文本。"""
+    """用户向 summary 是中文散文；无汉字（英文独白/JSON 残段）、混着配方
+    schema 键名（弱模型把 payload 草稿写进 content）或夹带英文元叙述都判为
+    机器文本。"""
     t = str(text or "")
     if not any("\u4e00" <= ch <= "\u9fff" for ch in t):
         return True
-    return any(marker in t for marker in _MACHINE_TEXT_MARKERS)
+    if any(marker in t for marker in _MACHINE_TEXT_MARKERS):
+        return True
+    return _looks_like_english_meta_narration(t)
 
 
 def _extract_summary_from_json_shell(text):
