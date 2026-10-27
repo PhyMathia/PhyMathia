@@ -235,12 +235,19 @@ function focusGraphHistoryDiff(index) {
   _renderGraphHistoryFooter();
 }
 
+// T219 补刀：footer 的「上次灌进去的 HTML」。预览态下 800ms 一拍都会走到
+// _renderGraphHistoryFooter——内容没变就别整份重灌（打断文本选中、白付一次重排）。
+let graphHistoryFooterLastHtml = "";
+
 function _renderGraphHistoryFooter() {
   const footer = document.getElementById("graphHistoryDiffText");
   if (!footer) return;
+  if (graphHistoryPreviewing < 0 || !graphHistoryDiffModel) {
+    if (graphHistoryFooterLastHtml !== '') { graphHistoryFooterLastHtml = ''; footer.innerHTML = ''; }
+    return;
+  }
   const esc = typeof window.escapeHtml === "function" ? window.escapeHtml : function (s) { return String(s); };
   const model = graphHistoryDiffModel;
-  if (graphHistoryPreviewing < 0 || !model) { footer.innerHTML = ''; return; }
   const counts = model.counts || {};
   const step = model.dir === "step";
   const cntLabel = function (will) { return _graphDiffWillLabel(will, model.dir); };
@@ -283,7 +290,10 @@ function _renderGraphHistoryFooter() {
     + '<button type="button" class="g-hd-jump" onclick="jumpGraphVersion(' + model.index + ')">回到这一步</button>'
     + '<button type="button" class="graph-history-exit-preview" onclick="exitGraphVersionPreview()">✕ 退出对比</button>'
     + '</div>';
-  footer.innerHTML = head + legend + list + actions;
+  const html = head + legend + list + actions;
+  if (html === graphHistoryFooterLastHtml) return;
+  graphHistoryFooterLastHtml = html;
+  footer.innerHTML = html;
 }
 
 function exitGraphVersionPreview() {

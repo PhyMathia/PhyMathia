@@ -346,8 +346,13 @@ function _graphHistoryTruncateOnEdit(state) {
 
 function _saveGraphState(state, opts) {
   if (_graphProjQuiet > 0) return; // 投影构建只读：派生节点的存盘副作用掐掉
-  if (graphHistoryPendingTruncate) _graphHistoryTruncateOnEdit(state);
-  graphHistoryLiveDirty = true;    // 图真被写过：面板的「当前状态」摘要下次刷新重算
+  // T219 补刀（2026-10-28）：布局类存盘（opts.layout——位置/尺寸/视口/折叠展开，口径
+  // 对齐撤销层的 _pushGraphUndo(false,{layout:true})）不置脏、不触发截断。它们的投影
+  // 差异本来就是 layoutOnly、进不了「当前状态」行；没有这道闸，面板常开时拖一下/
+  // 滚一格缩放（滚轮一格一次 save）就白付一次全图投影（_buildGraphData 级）深比对。
+  const layoutOnly = !!(opts && opts.layout);
+  if (!layoutOnly && graphHistoryPendingTruncate) _graphHistoryTruncateOnEdit(state);
+  if (!layoutOnly) graphHistoryLiveDirty = true;    // 图真被写过：面板的「当前状态」摘要下次刷新重算
   if (typeof window.saveGraphState === "function") {
     window.saveGraphState(window.getCurrentSessionId ? window.getCurrentSessionId() : "", state, opts);
   }

@@ -177,7 +177,7 @@ function _centerGraphOnPreview() {
   const zoom = state.zoom || 0.9;
   state.pan.x = (rect.left - canvasRect.left) + rect.width / 2 - avgX * zoom;
   state.pan.y = (rect.top - canvasRect.top) + rect.height / 2 - avgY * zoom;
-  _saveGraphState(state);
+  _saveGraphState(state, { layout: true }); // T219：预览居中只写 pan
   _applyGraphTransform();
   _updateNodeTransforms();
   if (typeof _redrawEdges === 'function') _redrawEdges();
