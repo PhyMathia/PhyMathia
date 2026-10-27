@@ -3296,6 +3296,88 @@ class ReasoningStripTest(unittest.TestCase):
         self.assertTrue(entry["think_stripped"])
 
 
+class ReasoningOnlyRetryTest(unittest.TestCase):
+    """T412：推理模型把输出预算全花在思维链上（content 空）时定向重试。
+
+    依据：glm-5.3-flash 编辑相位 84s/76s 两次空轮的 completion_tokens 恰为
+    max_tokens 上限 4000、正文零字符——同一预算原样重发只会再空一次，所以
+    重试轮把思考档压到 low，正常轮维持原档。
+    """
+
+    REASONING_ONLY = {
+        "content": "", "tool_calls": [],
+        "reasoning_content": "先想清楚这张图该怎么整理，逐条列出节点的关系……",
+        "reasoning_only": True,
+    }
+    OK_EDIT = {
+        "content": '{"summary": "已整理", "operations": [{"op": "update_node", '
+                   '"node_id": "A", "patch": {"content": "整理后的内容"}, "reason": "整理"}]}',
+        "tool_calls": [],
+    }
+
+    def _run(self, responses, instruction="把这张图整理一下", **kwargs):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        calls = []
+
+        async def fake_call(messages, model, max_tokens, tools=None,
+                            tool_choice=None, json_mode=False):
+            calls.append(dict(model))
+            return dict(responses[min(len(calls) - 1, len(responses) - 1)])
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
+                instruction,
+                model={"provider": "opencode", "model": "m",
+                       "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                self_check="off",
+                **kwargs,
+            ))
+        return result, calls
+
+    def test_empty_reasoning_round_retries_with_low_thinking(self):
+        # 「整理一下」不在 MODIFY_HINTS 里：旧逻辑直接落占位文案、图一点没动
+        result, calls = self._run([self.REASONING_ONLY, self.OK_EDIT],
+                                  mode="tools", retries=1)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0].get("thinking"), "")
+        self.assertEqual(calls[1].get("thinking"), "low")
+        self.assertEqual(result["operations"][0]["op"], "update_node")
+
+    def test_retry_keeps_explicit_thinking_off(self):
+        # 用户已关思考：再「降档」会把思考重新打开，只能原样重试
+        result, calls = self._run([self.REASONING_ONLY, self.OK_EDIT],
+                                  mode="tools", retries=1, thinking="off")
+        self.assertEqual([c.get("thinking") for c in calls], ["off", "off"])
+
+    def test_exhausted_retries_keep_friendly_placeholder(self):
+        result, calls = self._run([self.REASONING_ONLY], mode="tools", retries=0)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(result["status"], "no_ops")
+        self.assertIn("思考过程", result["summary"])
+
+    def test_empty_reply_retries_in_json_mode(self):
+        ok_json = {"content": '{"summary": "已整理", "operations": []}', "tool_calls": []}
+        result, calls = self._run([self.REASONING_ONLY, ok_json],
+                                  mode="json", retries=1)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result["status"], "no_ops")
+        self.assertEqual(result["summary"], "已整理")
+
+    def test_lower_thinking_floor_skips_off_and_low(self):
+        from harness.review import _lower_thinking_for_retry
+        model = {"thinking": ""}
+        self.assertTrue(_lower_thinking_for_retry(model))
+        self.assertEqual(model["thinking"], "low")
+        self.assertFalse(_lower_thinking_for_retry(model))
+        off = {"thinking": "off"}
+        self.assertFalse(_lower_thinking_for_retry(off))
+        self.assertEqual(off["thinking"], "off")
+
+
 class FocusSubgraphTest(unittest.TestCase):
     def test_focus_subgraph_keeps_neighborhood(self):
         from harness.review import _focus_subgraph

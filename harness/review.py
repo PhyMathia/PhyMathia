@@ -293,6 +293,22 @@ BATCH_OVERSIZED_OPS = 24
 # 显式 thinking kwarg / 请求体字段优先，可覆盖任何相位默认（含关掉）。
 PHASE_THINKING = {"evaluate": "high", "preset": "high", "apply": "high", "chat": "low"}
 
+# ---- T412：空正文轮（推理模型把输出预算全花在思维链上）的恢复档 ----
+# 实测 glm-5.3-flash 编辑相位 84s/76s 的 completion_tokens 恰好等于上限 4000、
+# 正文零字符——同一预算原样重发只会再空一次（基线 18 条中 2 条＋复跑 3 条同型）。
+# 因此命中一次就只把**重试那一轮**的思考档压到 low：正常轮零变化，不牺牲其他
+# 场景的思考质量（备份方向②「编辑相位整体降档」会让每次改图都变浅，不采纳）。
+RETRY_THINKING_LEVEL = "low"
+_REASONING_ONLY_RETRY_REASON = (
+    "上一轮没有正式回复：整轮输出都花在思考上，正文为空。"
+    "请直接给出结果——需要改图就调用工具提交 operations，"
+    "不需要改图就用一两句话说明结论；不要只输出思考过程。"
+)
+_EMPTY_REPLY_RETRY_REASON = (
+    "上一轮正文为空，没有给出任何结果。请直接给出结果——"
+    "需要改图就调用工具提交 operations，不需要改图就用一两句话说明结论。"
+)
+
 
 class HarnessError(RuntimeError):
     pass
@@ -394,6 +410,22 @@ def _apply_thinking_default(target: Dict[str, Any], thinking: str, phase: str) -
         target["thinking"] = thinking
     elif not target.get("thinking"):
         target["thinking"] = PHASE_THINKING.get(phase, "")
+
+
+def _lower_thinking_for_retry(target: Dict[str, Any]) -> bool:
+    """T412：空正文轮命中后，把**重试轮**的思考档压到 low。
+
+    只改传入的模型副本（调用方每次重试前从 resolved_model 复制），正常轮与
+    critic/复述调用都维持原档。返回是否真的改了档：
+
+    - ``off``：用户已关思考，再「降档」反而会把它重新打开，不碰；
+    - ``low``：已是最低档，不重复降。
+    """
+    level = str(target.get("thinking") or "").strip().lower()
+    if level in ("off", "low"):
+        return False
+    target["thinking"] = RETRY_THINKING_LEVEL
+    return True
 
 
 def _sanitize_fallback_models(raw: Any) -> Optional[list]:
@@ -1576,6 +1608,26 @@ def _parse_plan_output(
                 summary = _clamp_display_summary(str(content_payload["summary"]).strip())
     else:
         payload = extract_json(last_raw)
+        # T412：空正文轮（content 为空、无 tool_calls）不是「模型选了纯文字回答」，
+        # 而是失败轮——推理模型会把输出预算全花在思维链上（实测 glm-5.3-flash
+        # 两次 84s/76s 的 completion_tokens 恰为上限 4000、正文零字符）。判定
+        # 与相位/意图词无关：「整理一下」不在 MODIFY_HINTS 里，旧逻辑直接落占位
+        # 文案、图一点没动。只要还有重试机会就先定向重试；若本轮确实只吐了
+        # 思考（reasoning_only_seen），主链会把重试轮思考档压到 RETRY_THINKING_LEVEL
+        # ——否则同一预算下会再空一次。纯空正文（无思考可证）重试维持原档。
+        if payload is None and not last_raw.strip() and attempt < retries:
+            return {
+                "kind": "retry",
+                "reasoning_only": bool(reasoning_only_seen),
+                "errors": [{
+                    "index": "reply",
+                    "op": "reasoning_only" if reasoning_only_seen else "empty",
+                    "reason": (
+                        _REASONING_ONLY_RETRY_REASON if reasoning_only_seen
+                        else _EMPTY_REPLY_RETRY_REASON
+                    ),
+                }],
+            }
         if payload is None and current_tools is not None:
             # 模型选择纯文字回答（未调用工具），视为对话，不强制图操作；
             # 若文本是“JSON 外壳”（模型把 JSON 写进正文且引号未转义），只保留内层 summary
@@ -2271,6 +2323,9 @@ async def review_graph(
         else:
             tool_choice = "required" if (_has_edit_intent(instruction) and can_require) else "auto"
         json_mode = _supports_json_mode(provider) if mode != "tools" else False
+        # T412：命中空正文轮后才创建的重试模型副本（思考档压 low）。放在
+        # candidate 循环内＝换备用模型后重新从原档开始。
+        retry_model: Optional[Dict[str, Any]] = None
         try:
             for attempt in range(retries + 1):
                 attempt_feedback = _summarize_errors(last_errors) if attempt > 0 else ""
@@ -2313,13 +2368,16 @@ async def review_graph(
                 model_kwargs: Dict[str, Any] = {}
                 if progress is not None:
                     model_kwargs["on_delta"] = lambda chunk: _emit({"type": "delta", "text": chunk})
+                # T412：空正文轮之后的重试使用压过思考档的副本；正常轮原样用
+                # resolved_model（critic/复述两处调用也仍用原档）。
+                attempt_model = retry_model or resolved_model
                 # T96 journal：记录本调用的降级形态（required→auto / tools→json），
                 # 成功返回后统一落一条往返
                 journal_fallback = ""
                 try:
                     raw = await _counted_call(
                         messages,
-                        resolved_model,
+                        attempt_model,
                         max_tokens,
                         tools=current_tools,
                         tool_choice=current_choice,
@@ -2335,7 +2393,7 @@ async def review_graph(
                             journal_fallback = "tool_choice_auto"
                             raw = await _counted_call(
                                 messages,
-                                resolved_model,
+                                attempt_model,
                                 max_tokens,
                                 tools=current_tools,
                                 tool_choice="auto",
@@ -2350,7 +2408,7 @@ async def review_graph(
                             journal_fallback = "json_mode"
                             raw = await _counted_call(
                                 messages,
-                                resolved_model,
+                                attempt_model,
                                 max_tokens,
                                 json_mode=_supports_json_mode(provider),
                                 **model_kwargs,
@@ -2378,7 +2436,7 @@ async def review_graph(
                 raw, last_raw, reasoning_only_seen = await _run_readonly_query_loop(
                     raw, messages, full_snapshot, account, _kb, readonly_enabled,
                     current_tools, tool_choice, model_kwargs, attempt, journal,
-                    resolved_model, max_tokens, last_raw, reasoning_only_seen,
+                    attempt_model, max_tokens, last_raw, reasoning_only_seen,
                     _counted_call, _consume_model_output, _emit,
                     instruction, focus_node_ids,
                 )
@@ -2395,6 +2453,15 @@ async def review_graph(
                     )
                 if parsed["kind"] == "retry":
                     last_errors = parsed["errors"]
+                    # T412：空正文轮之后，下一轮改用压过思考档的模型副本（off/low
+                    # 不覆盖，见 _lower_thinking_for_retry）；正常轮与 critic 不受影响
+                    if parsed.get("reasoning_only") and retry_model is None:
+                        retry_model = dict(resolved_model)
+                        _lower_thinking_for_retry(retry_model)
+                        logger.info(
+                            "harness: empty reply (reasoning-only), retrying with thinking=%s",
+                            retry_model.get("thinking") or "-",
+                        )
                     continue
                 raw_ops = parsed["ops"]
                 summary = parsed["summary"]
