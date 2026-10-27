@@ -237,6 +237,7 @@ export async function run() {
       reset();
       nodeEls.n1 = _mkEl('div');
       nodeEls.n2 = _mkEl('div');
+      nodeEls.n1.style.contentVisibility = 'auto';
       runCtx('graphInner = __fakeInner; graphView.nodes = [{ id: "n1" }, { id: "n2" }]; graphView.edges = []; graphView.nodeById = { n1: graphView.nodes[0], n2: graphView.nodes[1] };');
       runCtx('applyGraphHistoryDiff(' + JSON.stringify({
         ops: [
@@ -250,7 +251,11 @@ export async function run() {
       if (!n2.classList.contains('graph-diff-dim')) throw new Error('未变化节点没压暗（聚光灯失效）');
       const badge = n1.children.find(c => c.className && c.className.indexOf('graph-diff-badge') >= 0);
       if (!badge || badge.textContent !== '−') throw new Error('缺「−」角标');
+      // T395：c-v:auto 的 paint 包含会裁掉角标，标记节点须临时关掉懒渲染
+      if (n1.style.contentVisibility !== 'visible') throw new Error('标记节点没临时关掉 c-v，角标会被裁成小三角');
+      if (n2.style.contentVisibility) throw new Error('未标记节点不该动 c-v');
       runCtx('clearGraphDiffHighlights();');
+      if (n1.style.contentVisibility !== 'auto') throw new Error('clear 没还原标记节点的 c-v');
       if (n2.classList.contains('graph-diff-dim')) throw new Error('clear 没摘掉聚光灯');
       runCtx('graphInner = null; graphView.nodes = []; graphView.edges = []; graphView.nodeById = {};');
       return true;

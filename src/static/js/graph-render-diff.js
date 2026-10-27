@@ -10,6 +10,24 @@ const GRAPH_DIFF_EXTRA_CLASSES = [
   'graph-diff-dim', 'graph-diff-flash',
 ];
 
+// T395：T376 的 content-visibility:auto 自带 paint 包含，会把挂在卡左上角
+// （top/left:-10px）的红圈角标裁进圆角边框盒，只剩一个小三角。打角标的节点
+// 临时关掉 c-v（记原值），对比清除时还原——与 ai_eval 例外同一逻辑。
+const _graphDiffCvRestore = [];
+
+function _graphDiffUnclipNode(el) {
+  if (!el || !el.style || !el.style.contentVisibility) return;
+  _graphDiffCvRestore.push({ el, value: el.style.contentVisibility });
+  el.style.contentVisibility = 'visible';
+}
+
+function _graphDiffRestoreCv() {
+  while (_graphDiffCvRestore.length) {
+    const saved = _graphDiffCvRestore.pop();
+    saved.el.style.contentVisibility = saved.value;
+  }
+}
+
 function _graphDiffGhostLayerHost() {
   // 幽灵层必须挂进 graphInner（真正被 translate/scale 的那层）。挂 graphCanvas 时
   // 坐标把 pan/zoom 算死了，一平移/缩放就和节点错位（R6）。
@@ -17,6 +35,7 @@ function _graphDiffGhostLayerHost() {
 }
 
 function clearGraphDiffHighlights() {
+  _graphDiffRestoreCv();
   graphInner?.querySelectorAll('.graph-diff-add, .graph-diff-update, .graph-diff-delete')
     .forEach(el => el.classList.remove('graph-diff-add', 'graph-diff-update', 'graph-diff-delete'));
   graphInner?.querySelectorAll('.' + GRAPH_DIFF_EXTRA_CLASSES.join(', .'))
@@ -223,6 +242,7 @@ function applyGraphHistoryDiff(diff, opts) {
       if (spotlight) el.classList.add('graph-diff-dim');
       return;
     }
+    _graphDiffUnclipNode(el);
     if (vanish.has(id)) {
       el.classList.add('graph-diff-will-vanish');
       _graphDiffAddBadge(el, '−', 'will-vanish');
