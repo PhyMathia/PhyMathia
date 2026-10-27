@@ -681,8 +681,9 @@ function _graphCtxClipContent(node) {
 }
 
 // 复制入口：nodes 为节点对象数组（单选 1 个 / 多选 N 个）。draft 草稿不进剪贴板
-// （与收藏同口径）。两端都在复制集里的 custom 连线（含联系线）一并带走——
-// AI 结构边（消息派生）不带：copy 落地是 custom 节点，默认边无从重建。
+// （与收藏同口径）。两端都在复制集里的 custom 连线（含联系线）原样带走；AI 结构边
+// （消息派生的默认边，不落 connections）也从已解析视图边里补捕——复制品 messageIndex=-1
+// 无从再派生，不带就是「一颗问题＋六个模块贴出七颗散节点」（T343），粘贴时物化成普通连线。
 function graphCopySelectedNodes(nodes) {
   const picked = (Array.isArray(nodes) ? nodes : [])
     .filter(node => node && node.id && node.kind !== 'draft');
@@ -703,6 +704,28 @@ function graphCopySelectedNodes(nodes) {
   const edges = (state.connections || [])
     .filter(edge => ids.has(String(edge.from)) && ids.has(String(edge.to)))
     .map(edge => ({ ...edge }));
+  // 结构边补捕（T343）：视图边是 _resolveGraphEdges 合并产物，带 custom 标记的是
+  // connections 成员（已按原样带走）；不带的才是消息派生边，按同键去重后补进载荷。
+  // type 原样保留（primary 的 320 弹簧张力与原布局一致）。用户删过的结构边不在
+  // 视图边里（removedEdges 墓碑已滤），天然不复活。
+  if (typeof graphView !== 'undefined' && Array.isArray(graphView.edges) && graphView.edges.length) {
+    const connKeys = new Set(edges.map(edge => _edgeKey(_normalizeGraphEdge(edge))));
+    graphView.edges.forEach(edge => {
+      if (edge.custom) return;
+      if (!ids.has(String(edge.from)) || !ids.has(String(edge.to))) return;
+      const norm = _normalizeGraphEdge(edge);
+      const key = _edgeKey(norm);
+      if (connKeys.has(key)) return;
+      connKeys.add(key);
+      edges.push({
+        from: String(norm.from),
+        to: String(norm.to),
+        fromPort: norm.fromPort,
+        toPort: norm.toPort,
+        type: norm.type || 'primary',
+      });
+    });
+  }
   _graphClipSave({ nodes: payloadNodes, edges, at: Date.now() });
   _graphCtxToast('已复制 ' + payloadNodes.length + ' 个节点（可粘贴到任意画布）');
   return payloadNodes.length;
@@ -788,11 +811,46 @@ function graphPasteNodeClipboard(point) {
   });
   if (Array.isArray(clip.edges) && clip.edges.length) {
     state.connections = state.connections || [];
+    // 落边三件事（T344）：id 重映射；输入口按占用顺延找自由口（同 _freeModuleInputPort 的
+    // 口径，占用集用本组落边现算——新 id 不会有存量边）；下标超出基础口数就当场长口
+    // （inputPortCounts 附加口径 index-base+1、portCounts 绝对口径 index+1），端口元素在，
+    // _portAnchor 才锚得到真口。hub/junction 同口多线合法（_resolveGraphEdges 的 fan-in 例外）；
+    // 非 out-N/in-N 形状的口（联系线 link-N 等）原样落，不参与占用与长口。
+    const createdById = {};
+    created.forEach(node => { createdById[node.id] = node; });
+    const occupiedInputs = {};
     clip.edges.forEach(edge => {
       const from = idMap[String(edge.from)];
       const to = idMap[String(edge.to)];
       if (!from || !to || from === to) return;
-      state.connections.push({ ...edge, from, to });
+      const landed = { ...edge, from, to };
+      const outMatch = /^out-(\d+)$/.exec(String(landed.fromPort || 'out-0'));
+      const inMatch = /^in-(\d+)$/.exec(String(landed.toPort || 'in-0'));
+      if (outMatch) {
+        const idx = parseInt(outMatch[1], 10) || 0;
+        const outBase = (typeof _nodeBaseOutputPorts === 'function')
+          ? _nodeBaseOutputPorts(createdById[from], []).length : 1;
+        if (idx + 1 > Math.max(outBase, Number(createdById[from].portCounts) || 0)) {
+          createdById[from].portCounts = idx + 1;
+        }
+        landed.fromPort = 'out-' + idx;
+      }
+      if (inMatch) {
+        let idx = parseInt(inMatch[1], 10) || 0;
+        const toNode = createdById[to];
+        const occ = occupiedInputs[to] || (occupiedInputs[to] = new Set());
+        const fanIn = toNode && (toNode.kind === 'hub' || toNode.kind === 'junction');
+        if (!(fanIn && occ.has('in-' + idx))) {
+          while (occ.has('in-' + idx)) idx += 1;
+        }
+        occ.add('in-' + idx);
+        landed.toPort = 'in-' + idx;
+        const inBase = (typeof _nodeBaseInputPortCount === 'function') ? _nodeBaseInputPortCount(toNode) : 1;
+        if (idx >= inBase) {
+          toNode.inputPortCounts = Math.max(Number(toNode.inputPortCounts) || 0, idx - inBase + 1);
+        }
+      }
+      state.connections.push(landed);
     });
   }
   _saveGraphState(state);
