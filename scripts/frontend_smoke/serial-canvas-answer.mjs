@@ -1821,6 +1821,104 @@ check('answer 卡展开切换：toggleGraphNodeExpand 翻转 graphState.expanded
   return true;
 });
 
+// ===== T265（2026-10-27）：深入模块未读角标＋起新根问题的一次性指路 toast =====
+check('T265 模块未读角标：有正文未点开才挂，点开/生成中/手建/answer 卡不挂', () => {
+  const realRM = sandbox.renderMarkdown;
+  sandbox.renderMarkdown = (t) => '<p>' + String(t) + '</p>';
+  try {
+    const mod = { id: 'm-unread', kind: 'module', moduleKey: 'physics', messageIndex: -1, timestamp: 1, status: 'done', content: '波速与张力有关。' };
+    const html = String(sandbox._renderNodeHtml(mod, [], {}));
+    if (!html.includes('graph-node-unread') || !html.includes('未读')) throw new Error('有正文未点开的模块卡应挂未读角标');
+    const opened = String(sandbox._renderNodeHtml(mod, [], { openedModules: { 'm-unread': 1 } }));
+    if (opened.includes('graph-node-unread')) throw new Error('点开过的模块卡不应再挂未读角标');
+    const busy = String(sandbox._renderNodeHtml({ ...mod, busy: true }, [], {}));
+    if (busy.includes('graph-node-unread')) throw new Error('生成中的模块卡不应挂未读角标');
+    const hand = String(sandbox._renderNodeHtml({ ...mod, manual: true }, [], {}));
+    if (hand.includes('graph-node-unread')) throw new Error('手建模块的内容是用户自己写的，不应挂未读角标');
+    const ans = String(sandbox._renderNodeHtml({ id: 'a-unread', kind: 'answer', messageIndex: -1, timestamp: 2, analysis: '概要' }, [], {}));
+    if (ans.includes('graph-node-unread')) throw new Error('非模块卡不应挂未读角标');
+  } finally {
+    sandbox.renderMarkdown = realRM;
+  }
+  return true;
+});
+
+check('T265 点开记账：_markModuleOpened 写 openedModules 并保存重画，非模块不记', () => {
+  const mod = { id: 'm-open', kind: 'module', moduleKey: 'math', messageIndex: -1, timestamp: 3 };
+  const state = { customNodes: [mod] };
+  const saved = [];
+  const realFind = sandbox._findGraphNode;
+  const realRender = sandbox.renderGraphCanvas;
+  let rerender = 0;
+  sandbox._findGraphNode = (id) => (id === 'm-open' ? mod : null);
+  sandbox.window.getGraphState = () => state;
+  sandbox.window.saveGraphState = (sid, s) => { saved.push(s); };
+  sandbox.renderGraphCanvas = () => { rerender++; };
+  try {
+    sandbox._markModuleOpened('m-open');
+    if (state.openedModules['m-open'] !== 1 || !saved.length) throw new Error('点开未落 openedModules');
+    if (!rerender) throw new Error('记账后没有重画摘角标');
+    sandbox._markModuleOpened('m-open');
+    if (saved.length !== 1) throw new Error('重复记账应幂等，不该反复存盘');
+    sandbox._markModuleOpened('a-open');
+    if (saved.length !== 1) throw new Error('非模块节点不应记账');
+  } finally {
+    sandbox._findGraphNode = realFind;
+    sandbox.renderGraphCanvas = realRender;
+    sandbox.window.getGraphState = () => ({});
+    delete sandbox.window.saveGraphState;
+  }
+  return true;
+});
+
+check('T265 一次性指路：上一簇模块零点开才弹，弹过落键不再弹', () => {
+  const HINT = 'phymathia_module_hint_done';
+  const mods = [
+    { id: 'm-h1', kind: 'module', moduleKey: 'physics', manual: false, busy: false, content: '惯性质量' },
+    { id: 'm-h2', kind: 'module', moduleKey: 'math', manual: false, busy: false, content: '二阶导数' },
+  ];
+  const realToast = sandbox.showToast;
+  const realStateFor = sandbox._graphStateFor;
+  const fired = [];
+  sandbox.showToast = (msg, dur) => { fired.push([msg, dur]); };
+  sandbox._graphStateFor = () => ({ customNodes: mods.map(m => ({ ...m })) });
+  try {
+    sandbox.localStorage.removeItem(HINT);
+    sandbox._maybeHintUnreadModules('s-hint');
+    if (fired.length !== 1) throw new Error('零点开的新根问题应弹一次指路 toast');
+    if (fired[0][1] !== 9000) throw new Error('指路 toast 应停留久一点（9000ms）');
+    if (!sandbox.localStorage.getItem(HINT)) throw new Error('弹过没落一次性键，刷新后会再弹');
+    sandbox._maybeHintUnreadModules('s-hint');
+    if (fired.length !== 1) throw new Error('一次性键没拦住第二次弹');
+    sandbox.localStorage.removeItem(HINT);
+    sandbox._graphStateFor = () => ({ customNodes: mods.map(m => ({ ...m, id: m.id + 'o' })), openedModules: { 'm-h1o': 1 } });
+    sandbox._maybeHintUnreadModules('s-hint');
+    if (fired.length !== 1) throw new Error('点开过任意一枚模块就不该再弹');
+    sandbox._graphStateFor = () => ({ customNodes: [] });
+    sandbox._maybeHintUnreadModules('s-hint');
+    if (fired.length !== 1) throw new Error('首问（没有上一簇）不该弹');
+    if (sandbox.localStorage.getItem(HINT)) throw new Error('没弹不该落键');
+  } finally {
+    sandbox.localStorage.removeItem(HINT);
+    sandbox.showToast = realToast;
+    if (realStateFor === undefined) delete sandbox._graphStateFor; else sandbox._graphStateFor = realStateFor;
+  }
+  return true;
+});
+
+check('T265 接线：首问挂指路检查，点开入口记账齐全', () => {
+  const wf = fs.readFileSync('src/static/js/graph-workflow-template.js', 'utf8');
+  if (!wf.includes('if (!options.sourceNodeId) _maybeHintUnreadModules(worldSid);')) {
+    throw new Error('startQuestionWorkflow 没挂指路（或挂到了带 sourceNodeId 的追问上）');
+  }
+  const custom = fs.readFileSync('src/static/js/graph-custom.js', 'utf8');
+  const marks = custom.split('_markModuleOpened(nodeId);').length - 1;
+  if (marks < 3) throw new Error('点开入口记账少于三处（本页全屏/新窗口/人工编辑）');
+  const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  if (!css.includes('.graph-node-badge.graph-node-unread')) throw new Error('未读角标样式丢了');
+  return true;
+});
+
 // 静态契约（T128→2026-10-02 家族化）：风格家族机制——注册表/存储键/入口/双属性挂钩，防「机制在、入口丢」回退。
 // 家族＝面板质感＋节点皮肤＋强调色一个开关（用户拍板焊接），原皮肤面板/壁纸挑选器并入 #themePanel。
 check('风格家族（T128 演进）：注册表、存储键、页头入口、双属性与启动预置全接线', () => {

@@ -1340,6 +1340,13 @@ function _renderNodeHtml(node, messages, state) {
     : '';
   const badge = node.isRoot ? '核心问题' : (node.isBranch ? '延伸追问' : (node.kind === 'answer' ? (node.manual ? '我的回答' : (node.socraticMeta ? '苏格拉底反馈' : '问题分析')) : ''));
   const badgeHtml = badge ? '<span class="graph-node-badge">' + escapeHtml(badge) + '</span>' : '';
+  // 未读角标（T265）：模块正文已生成但从未被点开过（全屏/新窗口/人工编辑都没走过，
+  // 见 _markModuleOpened）。生成中（busy）不挂；手建模块的内容是用户自己写的，不挂。
+  const openedModulesMap = ((state || _graphState()).openedModules) || {};
+  const unreadHtml = (node.kind === 'module' && !node.manual && !node.busy
+      && (node.content || '').trim() && !openedModulesMap[node.id])
+    ? '<span class="graph-node-badge graph-node-unread" title="这个深入模块还没打开过，点右上角全屏按钮可细读">未读</span>'
+    : '';
   const label = node.recipeId && node.recipe && node.recipe.name
     ? node.recipe.name
     : node.kind === 'module'
@@ -1428,7 +1435,7 @@ function _renderNodeHtml(node, messages, state) {
   return '<div class="' + baseClass + modClass + attrClass + rootClass + branchClass + selectedClass + dimmedClass + minimizedClass + resizedClass + pendingClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + inputHtml
     + '<div class="graph-node-main">'
-    + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span>' + badgeHtml + subHtml + statusHtml + minimizeToggle + editBtn + fsBtnsHtml + quickConnectBtn + deleteBtn + '</div>'
+    + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span>' + badgeHtml + unreadHtml + subHtml + statusHtml + minimizeToggle + editBtn + fsBtnsHtml + quickConnectBtn + deleteBtn + '</div>'
     + labelHtml
     + (skipBody ? _minimizedBodyHtml() : (body ? '<div class="graph-node-full-content">' + body + '</div>' : ''))
     + (expandable && !skipBody ? '<div class="graph-node-actions"><button class="graph-answer-expand-btn" onclick="toggleGraphNodeExpand(\'' + node.id + '\')" title="' + (expanded ? '收起，回到预览' : '查看完整内容') + '">' + (expanded ? '收起 ▴' : '展开全文 ▾') + '</button></div>' : '')
