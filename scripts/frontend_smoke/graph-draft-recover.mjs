@@ -5,7 +5,7 @@
 //   ④ 水合时 _sanitizeStaleBusyCustomNodes 只剥 busy/running，草稿/账本旧文没人结算。
 // 本域回归：中断结算口径（草稿入账/旧版兜回/无账本原样）、module 路周期落盘行为、
 // 看门狗行为（超时取消读流并抛 TimeoutError）、以及看门狗确实接在流式读帧上（静态契约）。
-import { check, drain, addFailed, sandbox, fs } from './_runner.mjs';
+import { check, drain, addFailed, sandbox, fs, restoreWindowStub } from './_runner.mjs';
 
 // 本域两条异步用例都要临时替换共享的 setTimeout/clearTimeout 桩，不能并发注册：
 // 后一条会把前一条的桩换掉，流式用例的定时器就被看门狗用例的桩吞了（本轮实踩）。
@@ -120,8 +120,8 @@ export async function run() {
       if (saves !== chunks.length + 1) throw new Error('落盘次数＝' + saves + '，期望 ' + (chunks.length + 1));
     } finally {
       sandbox.setTimeout = realSetTimeout;
-      sandbox.window.saveGraphState = realSave;
-      sandbox.window.getGraphState = realGetState;
+      restoreWindowStub('saveGraphState', realSave);
+      restoreWindowStub('getGraphState', realGetState);
     }
     return true;
   });

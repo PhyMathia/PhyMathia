@@ -12,7 +12,7 @@
 // 在第一个 await 让出微任务期间，同文件后续同步用例的 _seed() 会重置共享图状态
 //（2026-10-17 实踩：撤销链用例的 stateContent 读到被重置的「旧总结」假红）。
 import fs from 'node:fs';
-import { check, drain, sandbox, vm, storageData } from './_runner.mjs';
+import { check, drain, sandbox, vm, storageData, restoreWindowStub } from './_runner.mjs';
 
 function _emptyState() {
   return { collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9,
@@ -124,9 +124,9 @@ export async function run() {
     // 收口必须放在 finally 之前：异步用例（整链护栏/版本生命周期）要在夹具还原前跑完
     await drain();
   } finally {
-    sandbox.window.getGraphState = prevGet;
-    sandbox.window.saveGraphState = prevSave;
-    sandbox.window.getCurrentSessionId = prevSid;
+    restoreWindowStub('getGraphState', prevGet);
+    restoreWindowStub('saveGraphState', prevSave);
+    restoreWindowStub('getCurrentSessionId', prevSid);
     sandbox.document = prevDoc;
     sandbox.escapeHtml = prevEsc;
     delete sandbox.__field;

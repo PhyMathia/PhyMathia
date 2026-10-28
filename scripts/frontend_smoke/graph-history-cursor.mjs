@@ -8,7 +8,7 @@
 // 本文件唯一异步用例（端到端链）放最后：异步让出微任务期间不得有同步用例重置共享沙箱
 //（AGENTS 冒烟混排坑），同步三例都排在它前面、且各自 try/finally 自清理。
 import fs from 'node:fs';
-import { check, drain, sandbox, vm, storageData } from './_runner.mjs';
+import { check, drain, sandbox, vm, storageData, restoreWindowStub } from './_runner.mjs';
 
 const SID = 'sess_history_cursor';
 const HIST_KEY = 'phymathia_graph_history_' + SID;
@@ -221,11 +221,11 @@ export async function run() {
 
     await drain();
   } finally {
-    sandbox.window.getCurrentSessionId = prevSid;
-    sandbox.window.getGraphState = prevGet;
-    sandbox.window.saveGraphState = prevSave;
-    sandbox.window.getChatHistory = prevChat;
-    sandbox.window.replaceChatHistory = prevReplace;
+    restoreWindowStub('getCurrentSessionId', prevSid);
+    restoreWindowStub('getGraphState', prevGet);
+    restoreWindowStub('saveGraphState', prevSave);
+    restoreWindowStub('getChatHistory', prevChat);
+    restoreWindowStub('replaceChatHistory', prevReplace);
     if (prevToast === undefined) delete sandbox.showToast; else sandbox.showToast = prevToast;
     sandbox.document = prevDoc;
     sandbox.escapeHtml = prevEsc;

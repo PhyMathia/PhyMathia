@@ -7,7 +7,7 @@
 // 执行顺序：同步例在前、异步例全部排到最后。异步 check 注册即开跑（跑到第一个 await
 // 前是同步的），与后面的同步例共用沙箱会互相拆台（AGENTS 冒烟混排坑实锤）。
 import fs from 'node:fs';
-import { check, drain, sandbox, vm, storageData } from './_runner.mjs';
+import { check, drain, sandbox, vm, storageData, restoreWindowStub } from './_runner.mjs';
 
 const SID = 'sess_history_ai';
 const HIST_KEY = 'phymathia_graph_history_' + SID;
@@ -251,11 +251,11 @@ export async function run() {
 
     await drain();
   } finally {
-    sandbox.window.getCurrentSessionId = prevSid;
-    sandbox.window.getGraphState = prevGet;
-    sandbox.window.saveGraphState = prevSave;
-    sandbox.window.getChatHistory = prevChat;
-    sandbox.window.replaceChatHistory = prevReplace;
+    restoreWindowStub('getCurrentSessionId', prevSid);
+    restoreWindowStub('getGraphState', prevGet);
+    restoreWindowStub('saveGraphState', prevSave);
+    restoreWindowStub('getChatHistory', prevChat);
+    restoreWindowStub('replaceChatHistory', prevReplace);
     if (prevToast === undefined) delete sandbox.showToast; else sandbox.showToast = prevToast;
     if (prevToastMsg === undefined) delete sandbox.toastMsg; else sandbox.toastMsg = prevToastMsg;
     sandbox.document = prevDoc;
