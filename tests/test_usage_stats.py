@@ -336,6 +336,80 @@ class FailureAndDurationTest(UsageStatsBase):
         self.assertEqual(out["kinds"]["chat"]["errorRequests"], 1)
 
 
+class SessionDimensionTest(UsageStatsBase):
+    """T197 会话维度：summarize(session=…) 按 sessionId 精确聚合一桶回读
+    （前端「本次会话消耗」卡的数据源）。"""
+
+    def _write(self, day, entries):
+        usage_stats.USAGE_DIR.mkdir(parents=True, exist_ok=True)
+        path = usage_stats.USAGE_DIR / f"{day}.jsonl"
+        path.write_text("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in entries), encoding="utf-8")
+
+    def test_session_bucket_aggregates_matching_only(self):
+        today = "2099-01-10"
+        self._write(today, [
+            {"ts": f"{today}T10:00:00", "kind": "chat", "provider": "p", "model": "a", "sessionId": "s1",
+             "status": "ok", "prompt_tokens": 100, "completion_tokens": 10, "durationMs": 500},
+            # 别的画布（s2）不进 s1 的账
+            {"ts": f"{today}T10:00:01", "kind": "chat", "provider": "p", "model": "b", "sessionId": "s2",
+             "status": "ok", "prompt_tokens": 50, "completion_tokens": 5},
+            # 无会话上下文的内部调用（知识提取/描述等落空串）不入会话账
+            {"ts": f"{today}T10:00:02", "kind": "extract", "provider": "p", "model": "a", "sessionId": "",
+             "status": "ok", "prompt_tokens": 7, "completion_tokens": 1},
+            # 失败调用也归会话（计次不计 token）；带 durationMs 的记录进均值
+            {"ts": f"{today}T10:00:03", "kind": "chat", "provider": "p", "model": "a", "sessionId": "s1",
+             "status": "error", "error": "boom", "prompt_tokens": None, "completion_tokens": None,
+             "durationMs": 100},
+            # T288 脏记录（model=primary）主循环跳过，会话桶一并跳过
+            {"ts": f"{today}T10:00:04", "kind": "chat", "provider": "p", "model": "primary", "sessionId": "s1",
+             "status": "ok", "prompt_tokens": 999, "completion_tokens": 999},
+        ])
+        out = usage_stats.summarize(days=30, session="s1")
+        cur = out["currentSession"]
+        self.assertEqual(cur["requests"], 2)
+        self.assertEqual(cur["errorRequests"], 1)
+        self.assertEqual(cur["promptTokens"], 100)
+        self.assertEqual(cur["completionTokens"], 10)
+        self.assertEqual(cur["totalTokens"], 110)
+        self.assertEqual(cur["avgDurationMs"], 300)
+        # 全局桶不受 session 参数影响（口径互不污染）
+        self.assertEqual(out["total"]["totalTokens"], 173)
+        # 聚合桶与既有桶同构
+        for key in ("requests", "errorRequests", "promptTokens", "completionTokens",
+                    "totalTokens", "cachedTokens", "hitKnownRequests", "hitRate", "avgDurationMs"):
+            self.assertIn(key, cur)
+
+    def test_session_unset_none_and_zero_bucket_distinction(self):
+        today = "2099-01-11"
+        self._write(today, [
+            {"ts": f"{today}T10:00:00", "kind": "chat", "provider": "p", "model": "a", "sessionId": "s1",
+             "status": "ok", "prompt_tokens": 10, "completion_tokens": 1},
+        ])
+        # 未传/空串/None → currentSession 为 None（前端不渲染卡，旧调用方零影响）
+        self.assertIsNone(usage_stats.summarize(days=30)["currentSession"])
+        self.assertIsNone(usage_stats.summarize(days=30, session="")["currentSession"])
+        self.assertIsNone(usage_stats.summarize(days=30, session=None)["currentSession"])
+        # 传了但范围内无匹配 → requests=0 的桶（前端显「还没有调用」而非藏卡）
+        out = usage_stats.summarize(days=30, session="nope")
+        self.assertEqual(out["currentSession"]["requests"], 0)
+        self.assertEqual(out["currentSession"]["totalTokens"], 0)
+
+    def test_session_respects_day_window(self):
+        # 范围外（旧日子）的同会话调用不计入
+        self._write("2000-01-01", [
+            {"ts": "2000-01-01T10:00:00", "kind": "chat", "provider": "p", "model": "a", "sessionId": "s1",
+             "status": "ok", "prompt_tokens": 500, "completion_tokens": 50},
+        ])
+        today = "2099-01-12"
+        self._write(today, [
+            {"ts": f"{today}T10:00:00", "kind": "chat", "provider": "p", "model": "a", "sessionId": "s1",
+             "status": "ok", "prompt_tokens": 10, "completion_tokens": 1},
+        ])
+        out = usage_stats.summarize(days=30, session="s1")
+        self.assertEqual(out["currentSession"]["totalTokens"], 11)
+        self.assertEqual(out["currentSession"]["requests"], 1)
+
+
 class DefaultDirTest(unittest.TestCase):
     def test_default_dir_is_repo_root_data_usage(self):
         # 2026-10-08 拨回仓库根 data/usage（与 config.py DATA_DIR 同口径）：

@@ -27,6 +27,11 @@
 // 指针在边界会抖），改指针坐标反解角度/半径对照静态边界算命中扇区——几何稳定
 // 不闪。图例行悬停同样驱动浮起（细扇区好点）；分线模式下点扇区＝点图例（聚焦
 // 折线，复用 _tokenUsageHighlight 链）。prefers-reduced-motion 时只保留中心换字。
+// 2026-10-28（backlog T197 销账）：加「本次会话消耗」卡——后端 summarize 收
+// session 参数按 sessionId 精确聚合一桶（currentSession），前端拉取时带上当前
+// 画布会话 id（session.js 顶层 let currentSessionId，bundle 共享词法绑定，
+// typeof 守卫读取）。会话内聊天/工作流/滚动摘要都带画布会话 id；知识提取等
+// 无会话上下文的内部调用（sessionId 落空串）不计入——口径即「这块画布花了多少」。
 
 const TOKEN_USAGE_KIND_LABELS = {
   chat: '聊天问答',
@@ -541,6 +546,41 @@ function _tokenUsageWfRunsHtml(data) {
   return '<div class="token-usage-table token-runs-table">' + head + rows + '</div>';
 }
 
+// 当前画布会话 id（内部）：session.js 顶层 let currentSessionId 是 bundle 共享
+// 词法绑定（不是 window 属性），typeof 守卫读——冒烟沙箱/查看器子集没有它时
+// 回空串，拉取就不带 session 参数（后端回 currentSession=null，卡不渲染）。
+function _currentTokenSessionId() {
+  return (typeof currentSessionId !== 'undefined' && currentSessionId)
+    ? String(currentSessionId) : '';
+}
+
+// 会话查询参数纯函数（冒烟测试直接调用）：会话 id 在场拼 &session=…（encodeURIComponent），
+// 空串/纯空白不带参数——URL 与 T197 之前完全同形，旧断言/旧服务端零影响。
+function _tokenUsageSessionParam(sid) {
+  const s = String(sid == null ? '' : sid).trim();
+  return s ? '&session=' + encodeURIComponent(s) : '';
+}
+
+// 本次会话消耗卡（冒烟测试直接调用，T197）：data.currentSession（后端按 session
+// 参数聚合的回读桶）→ 一张窄卡。null（未带参数/旧服务端）不渲染卡；范围内零调用
+// 显「还没有 AI 调用」文案而非 0——「还没花」与「花了 0」要读得出来。副注有数才
+// 显（平均耗时/失败次数，与汇总卡口径一致）；静态卡不进 morph 快照，切范围走
+// 交叉淡化（与明细表同待遇）。
+function _tokenUsageSessionHtml(data) {
+  const s = data && data.currentSession;
+  if (!s) return '';
+  const line = s.requests
+    ? '<b class="token-session-val">' + _tokenFormatNum(s.totalTokens) + '</b>'
+      + '<span class="token-session-unit">tok</span>'
+      + '<span class="token-session-meta">' + Number(s.requests || 0) + ' 次调用</span>'
+      + (s.avgDurationMs != null ? '<span class="token-session-meta">平均 ' + _tokenFormatMs(s.avgDurationMs) + '</span>' : '')
+      + (s.errorRequests ? '<span class="token-session-meta token-session-err">失败 ' + s.errorRequests + ' 次</span>' : '')
+    : '<span class="token-session-meta">本会话在统计范围内还没有 AI 调用</span>';
+  return '<div class="token-chart-card token-session-card"><div class="token-chart-title">本次会话消耗'
+    + '<span class="token-chart-sub">当前画布会话（问答/工作流/摘要）在统计范围内的合计</span></div>'
+    + '<div class="token-session-line">' + line + '</div></div>';
+}
+
 // 面板主体拼装（冒烟测试直接调用）：汇总卡＋六张卡（趋势/圆环/用途/模型明细/
 // 工作流运行/最近调用明细）；零调用走整体空态。圆环图例只在分线模式下可点（联动聚焦）。
 function _tokenUsageDashboardHtml(data, days, split) {
@@ -550,6 +590,7 @@ function _tokenUsageDashboardHtml(data, days, split) {
       + '用量按天记在本机 data/usage/ 下，聊过天、提取过知识这里就会有数。</div>';
   }
   return '<div class="token-summary-row">' + _tokenUsageSummaryHtml(data.total) + '</div>'
+    + _tokenUsageSessionHtml(data)
     + '<div class="token-chart-card"><div class="token-chart-title">每日 token 趋势'
     + '<span class="token-chart-sub">纵轴 prompt+completion 合计，横轴按自然日补零，悬停数据点可读当日值</span></div>'
     + _tokenUsageLineHtml(data, days, split) + '</div>'
@@ -774,7 +815,7 @@ function _runTokenMorph(body, prev, next) {
     ghost.innerHTML = _tokenUsageGhostSvg(prev);
     svg.appendChild(ghost);
   }
-  body.querySelectorAll('.token-chart-legend, .token-usage-table').forEach(el => {
+  body.querySelectorAll('.token-chart-legend, .token-usage-table, .token-session-card').forEach(el => {
     if (el.classList) el.classList.add('token-fade-in');
   });
 
@@ -1087,7 +1128,9 @@ async function renderTokenUsage() {
   }
   let data = null;
   try {
-    const resp = await fetch('/api/usage/stats?days=' + _tokenUsageDays + '&records=' + TOKEN_USAGE_RECORDS_LIMIT, {
+    // T197：当前画布会话 id 在场才拼 &session=…（后端据此聚合 currentSession 桶）
+    const sessionParam = _tokenUsageSessionParam(_currentTokenSessionId());
+    const resp = await fetch('/api/usage/stats?days=' + _tokenUsageDays + '&records=' + TOKEN_USAGE_RECORDS_LIMIT + sessionParam, {
       cache: 'no-cache',
       signal: AbortSignal.timeout(10000),
     });
@@ -1236,6 +1279,8 @@ if (typeof window !== 'undefined') {
   window._tokenUsageTableHtml = _tokenUsageTableHtml;
   window._tokenUsageRecordsHtml = _tokenUsageRecordsHtml;
   window._tokenUsageWfRunsHtml = _tokenUsageWfRunsHtml;
+  window._tokenUsageSessionHtml = _tokenUsageSessionHtml;
+  window._tokenUsageSessionParam = _tokenUsageSessionParam;
   window._tokenRecordTime = _tokenRecordTime;
   window._tokenUsageDashboardHtml = _tokenUsageDashboardHtml;
   window.renderTokenUsage = renderTokenUsage;

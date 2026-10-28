@@ -396,6 +396,36 @@ export async function run() {
       return true;
     });
 
+    check('token-usage：本次会话消耗卡（T197 currentSession 桶渲染＋会话参数拼接）', () => {
+      // 未带 session 参数/旧服务端（currentSession 为 null/缺键）不渲染卡
+      if (sandbox._tokenUsageSessionHtml({}) !== '') throw new Error('无 currentSession 键应不渲染卡');
+      if (sandbox._tokenUsageSessionHtml({ currentSession: null }) !== '') throw new Error('null 桶应不渲染卡');
+      // 范围内零调用：显「还没有 AI 调用」文案而非 0 tok
+      const empty = sandbox._tokenUsageSessionHtml({ currentSession: { requests: 0, totalTokens: 0 } });
+      if (!empty.includes('本次会话消耗')) throw new Error('零调用也应有卡（读了才有「还没花」的答案）');
+      if (!empty.includes('还没有 AI 调用')) throw new Error('零调用应显文案而非 0 tok');
+      const html = sandbox._tokenUsageSessionHtml({
+        currentSession: { requests: 12, errorRequests: 1, totalTokens: 25000, promptTokens: 20000,
+                          completionTokens: 5000, avgDurationMs: 1234 },
+      });
+      if (!html.includes('token-session-card')) throw new Error('应带会话卡类');
+      if (!html.includes('2.5万')) throw new Error('总消耗应走万口径');
+      if (!html.includes('12 次调用')) throw new Error('应带调用次数');
+      if (!html.includes('平均 1.2s')) throw new Error('应带平均耗时');
+      if (!html.includes('失败 1 次')) throw new Error('应带失败次数');
+      // 无失败/无耗时的桶：副注自然缺失（与汇总卡「有数才显」口径一致）
+      const bare = sandbox._tokenUsageSessionHtml({ currentSession: { requests: 3, totalTokens: 500 } });
+      if (bare.includes('失败') || bare.includes('平均')) throw new Error('旧桶不应出现失败/平均副注');
+      // 会话参数拼接：在场编码、空串/纯空白不带（URL 与既有断言同形）
+      const p = sandbox._tokenUsageSessionParam;
+      if (p('sess_x') !== '&session=sess_x') throw new Error('会话参数拼接不符：' + p('sess_x'));
+      if (p('a b/c') !== '&session=a%20b%2Fc') throw new Error('会话参数应 encodeURIComponent：' + p('a b/c'));
+      for (const bad of ['', '  ', null, undefined]) {
+        if (p(bad) !== '') throw new Error('空会话 id 不应带参数：' + JSON.stringify(bad));
+      }
+      return true;
+    });
+
     check('token-usage：dashboard 空态两档与整体拼装', () => {
       if (!sandbox._tokenUsageDashboardHtml(null, 30, false).includes('暂无用量数据')) throw new Error('null 应给空态');
       if (!sandbox._tokenUsageDashboardHtml({ total: { requests: 0 } }, 30, false).includes('没有 AI 调用记录')) {
@@ -419,6 +449,22 @@ export async function run() {
       if (!full.includes('工作流运行（按轮）')) throw new Error('应有工作流运行卡（T327）');
       if (!full.includes('token-runs-row')) throw new Error('工作流运行卡应带 runs 行');
       if (!full.includes('最近调用明细')) throw new Error('末卡应为最近调用明细');
+      // T197：带 currentSession 桶多出一张会话卡（6→7），插在汇总行之后、趋势卡之前；
+      // 上面 full（无该键）仍是 6 张＝「没带参数就不渲染」的缺席契约
+      const withSession = sandbox._tokenUsageDashboardHtml({
+        total: { requests: 3, promptTokens: 240, completionTokens: 25, totalTokens: 265, cachedTokens: 150, hitKnownRequests: 2, hitRate: 0.625 },
+        days: { [dates[6]]: { totalTokens: 265 } },
+        models: { 'deepseek-chat': { totalTokens: 265, requests: 3, hitRate: 0.625 } },
+        series: { [dates[6]]: { 'deepseek-chat': { totalTokens: 265 } } },
+        kinds: { chat: { totalTokens: 265, requests: 3 } },
+        currentSession: { requests: 2, totalTokens: 200 },
+      }, 7, false);
+      const cardsWithSession = [...withSession.matchAll(/token-chart-card/g)].length;
+      if (cardsWithSession !== 7) throw new Error('带 currentSession 应多一张会话卡（6→7）：' + cardsWithSession);
+      if (!withSession.includes('本次会话消耗')) throw new Error('应含本次会话消耗卡（T197）');
+      if (withSession.indexOf('token-session-card') > withSession.indexOf('每日 token 趋势')) {
+        throw new Error('会话卡应插在趋势卡之前');
+      }
       return true;
     });
 
@@ -555,6 +601,20 @@ export async function run() {
         if (customCalls.length !== 1 || customCalls[0].url !== '/api/usage/stats?days=45&records=100') {
           throw new Error('45 天应恰好拉一次：' + customCalls.map(c => c.url).join(','));
         }
+        // T197：会话参数接线——沙箱里 bundle 词法绑定 currentSessionId 桩不到
+        // （上面全部 URL 断言已隐式验证「无会话 id 不带参数」）；把 helper 换成
+        // 真函数桩后 URL 应增参，finally 原函数复原（桩位铁则：桩必须持真函数）
+        const prevSessFn = sandbox._currentTokenSessionId;
+        sandbox._currentTokenSessionId = () => 'sess_smoke';
+        try {
+          await sandbox.renderTokenUsage();
+          const sessCall = fetchCalls[fetchCalls.length - 1];
+          if (sessCall.url !== '/api/usage/stats?days=45&records=100&session=sess_smoke') {
+            throw new Error('会话 id 在场应带 session 参数：' + sessCall.url);
+          }
+        } finally {
+          sandbox._currentTokenSessionId = prevSessFn;
+        }
         return true;
       } finally {
         sandbox.document = prevDoc;
@@ -625,6 +685,13 @@ export async function run() {
       if (!src.includes('window._tokenUsageWfRunsHtml')) throw new Error('运行汇总渲染未导出冒烟');
       if (!panels.includes('.token-runs-row')) throw new Error('工作流运行表样式缺失');
       if (!usageStatsSrc.includes('wfRuns')) throw new Error('summarize 缺 wfRuns 轮次聚合（T327）');
+      // T197：本次会话消耗卡——渲染/参数拼接导出、拉取接线（空 id 不带参数由
+      // 行为用例隐式钉死）、卡样式、后端会话回读桶
+      if (!src.includes('window._tokenUsageSessionHtml')) throw new Error('本次会话消耗卡渲染未导出冒烟（T197）');
+      if (!src.includes('window._tokenUsageSessionParam')) throw new Error('会话参数拼接未导出冒烟（T197）');
+      if (!src.includes('_tokenUsageSessionParam(_currentTokenSessionId())')) throw new Error('拉取应接线会话参数（T197）');
+      if (!panels.includes('.token-session-card')) throw new Error('本次会话消耗卡样式缺失（T197）');
+      if (!usageStatsSrc.includes('currentSession')) throw new Error('summarize 缺会话回读桶（T197）');
       const contextSrc = fs.readFileSync('src/server/context.py', 'utf8');
       if (!contextSrc.includes('def normalize_workflow_context')) throw new Error('workflow_context 入口规范化缺失（T327）');
       for (const py of ['src/server/models_routes.py', 'src/server/http_client.py', 'harness/review.py']) {

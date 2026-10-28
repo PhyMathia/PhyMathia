@@ -300,7 +300,7 @@ def _load_day_entries(path: Path) -> list:
     return entries
 
 
-def summarize(days=30, records=0):
+def summarize(days=30, records=0, session=None):
     """读最近 N 天的 JSONL，返回按天/按模型/按用途/总体的汇总。
 
     返回键：
@@ -320,6 +320,11 @@ def summarize(days=30, records=0):
       「工作流运行（按轮）」卡的数据源。聚合桶与既有桶同构（requests 含失败，
       cachedTokens≈预计省下的 prompt），nodes/waves 为去重计数；非工作流
       调用与缺 run 形状不进这里
+    - currentSession（T197）：session 传会话 id 时附带回读桶——范围内 sessionId
+      精确匹配该 id 的聚合（与各桶同构，失败/耗时口径同 total）。聊天/工作流/
+      滚动摘要落盘时都带画布会话 id；知识提取等无会话上下文的内部调用落空串，
+      天然不入会话账。session 未传/空串为 None（旧调用方零影响）；传了但范围内
+      无匹配是 requests=0 的桶（前端据此区分「没问」与「还没花」）
     """
     try:
         day_limit = max(1, min(365, int(days)))
@@ -331,6 +336,10 @@ def summarize(days=30, records=0):
     except (TypeError, ValueError):
         record_limit = 0
     cutoff = (datetime.now() - timedelta(days=day_limit - 1)).strftime("%Y-%m-%d")
+    # T197 会话维度：session 传会话 id 时附带回读桶，entry 的 sessionId 是精确
+    # 匹配键。消毒同 wf 键思路：截 128 字符防病态查询，strip 后空串视为未传。
+    session_key = str(session or "").strip()[:128] or None
+    session_bucket = _agg_bucket() if session_key else None
     by_day = {}
     by_model = {}
     by_kind = {}
@@ -354,6 +363,9 @@ def summarize(days=30, records=0):
             # 聚合与明细一并跳过，不再污染模型分布/趋势线；原始 JSONL 保持不动。
             if str(entry.get("model") or "") == "primary":
                 continue
+            # T197：会话回读桶与主聚合同一遍循环、同一 primary 跳过口径
+            if session_bucket is not None and str(entry.get("sessionId") or "") == session_key:
+                _agg_add(session_bucket, entry)
             day_bucket = by_day.setdefault(day, _agg_bucket())
             model = str(entry.get("model") or "unknown")
             kind = str(entry.get("kind") or "unknown")
@@ -441,6 +453,7 @@ def summarize(days=30, records=0):
         "series": {day: {m: _agg_finalize(b) for m, b in models_of_day.items()}
                    for day, models_of_day in sorted(by_series.items())},
         "wfRuns": wf_runs,
+        "currentSession": _agg_finalize(session_bucket) if session_bucket is not None else None,
         "records": record_items,
         "total": _agg_finalize(total),
     }
