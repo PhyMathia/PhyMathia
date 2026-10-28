@@ -7,7 +7,7 @@
 //   ⑤另开探索线：从任意一步复制成新画布，标题带来源，历史从「分叉自…」开始。
 // 执行顺序：同步例在前、异步例进串行队列（check 注册即开跑，异步例会让出给下一条）。
 import fs from 'node:fs';
-import { check, drain, sandbox, vm, storageData } from './_runner.mjs';
+import { check, drain, sandbox, vm, storageData, restoreWindowStub } from './_runner.mjs';
 
 const SID = 'sess_history_b4';
 const HIST_KEY = 'phymathia_graph_history_' + SID;
@@ -321,11 +321,11 @@ export async function run() {
 
     await drain();
   } finally {
-    sandbox.window.getCurrentSessionId = prevSid;
-    sandbox.window.getGraphState = prevGet;
-    sandbox.window.saveGraphState = prevSave;
-    sandbox.window.getChatHistory = prevChat;
-    sandbox.window.replaceChatHistory = prevReplace;
+    restoreWindowStub('getCurrentSessionId', prevSid);
+    restoreWindowStub('getGraphState', prevGet);
+    restoreWindowStub('saveGraphState', prevSave);
+    restoreWindowStub('getChatHistory', prevChat);
+    restoreWindowStub('replaceChatHistory', prevReplace);
     if (prevToast === undefined) delete sandbox.showToast; else sandbox.showToast = prevToast;
     delete sandbox.toastMsg;
     sandbox.document = prevDoc;

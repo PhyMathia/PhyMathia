@@ -19,11 +19,15 @@ const CONTINENT_SRC_FILES = [
 const readContinentSrc = () => CONTINENT_SRC_FILES.map(f => fs.readFileSync('src/static/js/' + f, 'utf8')).join('\n');
 
 // 宽松对象：任意属性访问返回同款代理；可调用；可赋值。不用 has/trap 避免死循环。
+// loose 的 get 有固化副作用（读 window.X 就把假函数写进 target）——由此引出
+// T411 桩位铁则，见下方 restoreWindowStub 处注释。
+const LOOSE_MARK = Symbol.for('phymathia_smoke_loose');
 export function loose(name) {
   const store = {};
   const fn = function () { return loose(name + '()'); };
   return new Proxy(fn, {
     get(t, p) {
+      if (p === LOOSE_MARK) return true;
       if (p === Symbol.toPrimitive) return () => 0;
       if (p === 'then' || p === 'catch' || p === 'finally') return undefined;
       if (p === 'length') return 0;
@@ -35,6 +39,9 @@ export function loose(name) {
     construct: () => loose('new ' + name),
   });
 }
+
+// 是否 loose 代理（探测走 LOOSE_MARK 陷阱，不固化新属性）
+export const isLoose = (v) => { try { return v != null && v[LOOSE_MARK] === true; } catch { return false; } };
 
 export const storageData = { phymathia_level: 'university' };
 let __smokeUuid = 0;
@@ -87,6 +94,36 @@ sandbox.window = loose('window');
 sandbox.document = loose('document');
 sandbox.globalThis = sandbox;
 sandbox.self = sandbox;
+
+// ===== T411 跨域桩位铁则（2026-10-28）=====
+// 沙箱 window 是 loose 代理且与全局对象脱钩：源码从不给 window.getGraphState /
+// saveGraphState 赋值（只有读），桩位真值只能来自测试 set。而 loose 的 get 固化
+// 副作用让「读一下」就永久留下假函数——源码 _graphState() 的 typeof 兜底因此
+// 永远走不到（loose 的 typeof 恒为 'function'），落图链 _pushGraphUndo 的
+// JSON.parse(JSON.stringify(松代理)) 当场炸 "undefined" is not valid JSON。
+// 铁则：这两个桩位任何时候都必须持有真函数——还原前值是 loose、或想清桩，
+// 一律回填中性桩；裸赋回 loose 会传染，裸 delete 留下的空位下一位读者一读
+// 又固化 loose，同样炸。graph-stub-sentinel.mjs 在两个雷区位置站岗放哨。
+const EMPTY_GRAPH_STATE = () => ({ collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {},
+  pan: { x: 80, y: 80 }, zoom: 0.9, layoutVersion: 1, connections: null, removedEdges: [],
+  portCounts: {}, inputPortCounts: {}, groups: [], customNodes: [], harnessDeleted: {}, harnessCheckpoint: null });
+// 中性桩按 key 语义给出最无害的默认（字段对齐 graph-history-diff.js _graphState 兜底）
+const NEUTRAL_WINDOW_STUBS = {
+  getGraphState: () => EMPTY_GRAPH_STATE(),
+  saveGraphState: () => {},
+  getCurrentSessionId: () => '',
+  getChatHistory: () => [],
+};
+// 桩位还原唯一正口：前值真函数原样赋回；前值 loose（读固化副作用产物，非真前值）
+// 回填该 key 的中性桩——绝不把 loose 赋回去
+export function restoreWindowStub(key, prev) {
+  sandbox.window[key] = isLoose(prev) ? NEUTRAL_WINDOW_STUBS[key] || (() => {}) : prev;
+}
+// 清桩唯一正口（替代裸 delete）：清完桩位上留的是中性真函数，不是空位
+export function fillNeutralGraphStubs() {
+  sandbox.window.getGraphState = NEUTRAL_WINDOW_STUBS.getGraphState;
+  sandbox.window.saveGraphState = NEUTRAL_WINDOW_STUBS.saveGraphState;
+}
 
 try {
   vm.createContext(sandbox);

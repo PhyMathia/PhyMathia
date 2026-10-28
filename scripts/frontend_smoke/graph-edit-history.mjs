@@ -9,7 +9,7 @@
 //     同异比对只比 state，messageIndex≥0 的模块编辑只写 msg.content（图状态一字未动），
 //     快照会被整个吞掉。反向同样成立：消息编辑之后紧接一次状态编辑也会被吞。
 import fs from 'node:fs';
-import { check, drain, sandbox, vm, storageData } from './_runner.mjs';
+import { check, drain, sandbox, vm, storageData, restoreWindowStub } from './_runner.mjs';
 
 const FULL_HTML = '<!DOCTYPE html><html><head><title>t</title></head><body>hello viz</body></html>';
 const MERMAID = 'graph TD\n  A[力] --> B[加速度]';
@@ -318,9 +318,9 @@ export async function run() {
     // 已复位、用例对着真链表空转
     await drain();
   } finally {
-    sandbox.window.getGraphState = prevGet;
-    sandbox.window.saveGraphState = prevSave;
-    sandbox.window.getCurrentSessionId = prevSid;
+    restoreWindowStub('getGraphState', prevGet);
+    restoreWindowStub('saveGraphState', prevSave);
+    restoreWindowStub('getCurrentSessionId', prevSid);
     sandbox.document = prevDoc;
     sandbox.escapeHtml = prevEsc;
     delete sandbox.__field;

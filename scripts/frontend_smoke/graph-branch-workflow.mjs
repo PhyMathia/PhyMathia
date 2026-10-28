@@ -13,7 +13,7 @@
 // 的同款说明；这里 2026-10-17 实踩过一次：多选删除的 await 让出时后一条同步用例
 // _seed() 重置了图，恢复后读到空夹具假红）。
 import fs from 'node:fs';
-import { check, drain, sandbox, vm } from './_runner.mjs';
+import { check, drain, sandbox, vm, restoreWindowStub } from './_runner.mjs';
 
 function _emptyState() {
   return { collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9,
@@ -508,16 +508,16 @@ export async function run() {
 
     await drain();
   } finally {
-    sandbox.window.getGraphState = prevGet;
-    sandbox.window.saveGraphState = prevSave;
-    sandbox.window.getCurrentSessionId = prevSid;
-    sandbox.window.getChatHistory = prevHist;
-    sandbox.window.deleteGraphMessagesByTimestamps = prevDelMulti;
-    sandbox.window.deleteGraphMessageByTimestamp = prevDelOne;
-    sandbox.window.startSocraticWorkflow = prevSocWf;
-    sandbox.window.startQuestionWorkflow = prevQwf;
-    sandbox.window.sendBranchQuick = prevQuick;
-    sandbox.window.recordSocraticAnswer = prevRecord;
+    restoreWindowStub('getGraphState', prevGet);
+    restoreWindowStub('saveGraphState', prevSave);
+    restoreWindowStub('getCurrentSessionId', prevSid);
+    restoreWindowStub('getChatHistory', prevHist);
+    restoreWindowStub('deleteGraphMessagesByTimestamps', prevDelMulti);
+    restoreWindowStub('deleteGraphMessageByTimestamp', prevDelOne);
+    restoreWindowStub('startSocraticWorkflow', prevSocWf);
+    restoreWindowStub('startQuestionWorkflow', prevQwf);
+    restoreWindowStub('sendBranchQuick', prevQuick);
+    restoreWindowStub('recordSocraticAnswer', prevRecord);
     sandbox.confirm = prevConfirm;
     vm.runInContext('renderGraphCanvas = __smokePrevRender;', sandbox);
     delete sandbox.__smokePrevRender;

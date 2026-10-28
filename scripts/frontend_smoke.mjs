@@ -35,6 +35,7 @@
 //   load-order             首屏脚本加载契约（T208：app.js defer 与 appVersion 内联脚本时序的静态守卫）
 //   storage-fetch           会话存储层 fetch 超时契约（T237：session.js 每处 fetch 必带 AbortSignal.timeout 的静态守卫）
 //   storage-lru             本机会话缓存 LRU（T348：保留窗口＝当前＋最近 N；T342 删除回收 history 键）
+//   graph-stub-sentinel     T411 跨域桩位传染哨兵（graph 系开门＋全量收尾各一条：不带桩跑 _graphState 实链，loose 占位当场红）
 //   graph-busy-sweep        生成中断电清扫（T275：busy/running 残留的启动清扫＋历史回放清洗）
 //   graph-mirror-slim       服务端镜像体量治理（T212：只减重不删条目＋读回水合丢弃）
 //   graph-edit-history      人工编辑节点内容进撤销历史＋viz/mermaid 围栏编辑态往返（2026-10-16）
@@ -76,6 +77,7 @@ import { run as _token_usage } from './frontend_smoke/token-usage.mjs';
 import { run as _load_order } from './frontend_smoke/load-order.mjs';
 import { run as _storage_fetch } from './frontend_smoke/storage-fetch.mjs';
 import { run as _storage_lru } from './frontend_smoke/storage-lru.mjs';
+import { run as _graph_stub_sentinel } from './frontend_smoke/graph-stub-sentinel.mjs';
 import { run as _graph_busy_sweep } from './frontend_smoke/graph-busy-sweep.mjs';
 import { run as _graph_mirror_slim } from './frontend_smoke/graph-mirror-slim.mjs';
 import { run as _graph_edit_history } from './frontend_smoke/graph-edit-history.mjs';
@@ -125,6 +127,8 @@ await _token_usage();
 _load_order();
 _storage_fetch();
 await _storage_lru();
+// T411 传染哨兵（graph 系开门）：serial-source-input 清桩之后、graph 系第一读点之前
+_graph_stub_sentinel('graph 系开门'); // 纯同步注册、不换任何全局桩
 await _graph_busy_sweep();
 await _graph_mirror_slim();
 await _graph_edit_history();
@@ -145,4 +149,6 @@ await _harness_health();
 // 节点工坊（2026-10-20 创造模式重做 P0–P4）：自带收口线（补丁往返用例是异步的），
 // 放在最后——它会临时替换 fetch/getActiveModelForRole 两个全局桩，用完立刻还原。
 await _workshop();
+// T411 传染哨兵（全量收尾）：全流程跑完后桩位必须仍持有可序列化真函数
+_graph_stub_sentinel('全量收尾');
 await finish();

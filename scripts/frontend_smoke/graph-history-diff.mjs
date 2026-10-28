@@ -7,7 +7,7 @@
 //   ⑥行摘要回退到正文前 22 字，不再吐节点 ID。
 // 异步用例（点行定位）放最后：前面同步例各自 try/finally 自清理，别在异步让出微任务
 // 期间重置共享沙箱（AGENTS 冒烟混排坑）。
-import { check, drain, sandbox, vm, storageData } from './_runner.mjs';
+import { check, drain, sandbox, vm, storageData, restoreWindowStub } from './_runner.mjs';
 
 const SID = 'sess_history_diff';
 const HIST_KEY = 'phymathia_graph_history_' + SID;
@@ -373,13 +373,13 @@ export async function run() {
 
     await drain();
   } finally {
-    sandbox.window.getCurrentSessionId = prevSid;
-    sandbox.window.getGraphState = prevGet;
-    sandbox.window.saveGraphState = prevSave;
-    sandbox.window.getChatHistory = prevChat;
-    sandbox.window.replaceChatHistory = prevReplace;
+    restoreWindowStub('getCurrentSessionId', prevSid);
+    restoreWindowStub('getGraphState', prevGet);
+    restoreWindowStub('saveGraphState', prevSave);
+    restoreWindowStub('getChatHistory', prevChat);
+    restoreWindowStub('replaceChatHistory', prevReplace);
     if (prevToast === undefined) delete sandbox.showToast; else sandbox.showToast = prevToast;
-    if (prevFlash === undefined) delete sandbox.window.flashGraphHistoryDiff; else sandbox.window.flashGraphHistoryDiff = prevFlash;
+    if (prevFlash === undefined) delete sandbox.window.flashGraphHistoryDiff; else restoreWindowStub('flashGraphHistoryDiff', prevFlash);
     sandbox.document = prevDoc;
     sandbox.escapeHtml = prevEsc;
     delete sandbox.__fakeInner;

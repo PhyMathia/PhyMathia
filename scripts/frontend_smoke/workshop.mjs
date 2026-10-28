@@ -9,7 +9,7 @@
 // 入册（含重名拦）＋源码契约（构建登记与「创造」入口改道）/ C1 Φ 自助调优四条 /
 // C2 副作用三条（Φ 自己落图整链·用户拒绝不重试·keepOpen 默认即关）/
 // C3 内容初筛三条（pass 恰一次·fail 一轮补丁＋复跑·降级不断链）。
-import { check, drain, addFailed, vm, sandbox, localStorage, fs } from './_runner.mjs';
+import { check, drain, addFailed, vm, sandbox, localStorage, fs, restoreWindowStub } from './_runner.mjs';
 
 const draftKey = 'phymathia_recipe_draft';
 const state = () => sandbox._recipeWorkshopState();
@@ -1224,9 +1224,9 @@ export async function run() {
         sandbox.closeRecipeWorkshop = prev.close;
         sandbox.getGraphViewNodes = prev.nodes;
         sandbox._saveGraphState = prev.saveGraph;
-        sandbox.window.getGraphState = prev.winGet;
-        sandbox.window.saveGraphState = prev.winSave;
-        sandbox.window.getCurrentSessionId = prev.winSid;
+        restoreWindowStub('getGraphState', prev.winGet);
+        restoreWindowStub('saveGraphState', prev.winSave);
+        restoreWindowStub('getCurrentSessionId', prev.winSid);
         resetWorkshop(true);
       }
     }],
@@ -1360,9 +1360,9 @@ export async function run() {
         sandbox.closeRecipeWorkshop = prev.close;
         sandbox.confirm = prev.confirm;
         sandbox.renderMarkdown = prev.markdown;
-        sandbox.window.getGraphState = prev.winGet;
-        sandbox.window.saveGraphState = prev.winSave;
-        sandbox.window.getCurrentSessionId = prev.winSid;
+        restoreWindowStub('getGraphState', prev.winGet);
+        restoreWindowStub('saveGraphState', prev.winSave);
+        restoreWindowStub('getCurrentSessionId', prev.winSid);
         resetWorkshop(true);
       }
     }],

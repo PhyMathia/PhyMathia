@@ -7,7 +7,7 @@
 // 本文件有用例会 await 且替换全局 fetch 桩——串行域契约（见 AGENTS.md 硬规则 4），
 // 执行顺序由 ../frontend_smoke.mjs 调用序列决定，收口线 drain() 之前注册完毕。
 import { readFileSync } from 'node:fs';
-import { check, drain, sandbox, vm } from './_runner.mjs';
+import { check, drain, sandbox, vm, fillNeutralGraphStubs } from './_runner.mjs';
 
 function seedNode(items, extra) {
   const node = Object.assign({
@@ -159,8 +159,8 @@ check('素材篮删中间条目：out-i 的边删除、其后端口左移一位�
     sandbox._pushGraphUndo = realUndo;
     sandbox.renderGraphCanvas = realRender;
     sandbox.saveGraphState = realSave;
-    delete sandbox.window.getGraphState;
-    delete sandbox.window.saveGraphState;
+    // T411：清桩走中性回填（裸 delete 留空位，下一位读者一读又固化 loose 代理）
+    fillNeutralGraphStubs();
   }
   if (!saved) throw new Error('删条目必须落盘 state');
   const node = vm.runInContext('graphView.nodeById["src-test"]', sandbox);
@@ -312,8 +312,8 @@ check('素材篮按素材加口全链（2026-10-24 三）：绑定记账、条�
     sandbox._pushGraphUndo = realUndo;
     sandbox.renderGraphCanvas = realRender;
     sandbox.saveGraphState = realSave;
-    delete sandbox.window.getGraphState;
-    delete sandbox.window.saveGraphState;
+    // T411：清桩走中性回填（裸 delete 留空位，下一位读者一读又固化 loose 代理）
+    fillNeutralGraphStubs();
   }
   return true;
 });
@@ -359,8 +359,8 @@ check('素材篮附加口随条目增删平移：加条目右移＋1、删条目
     sandbox._pushGraphUndo = realUndo;
     sandbox.renderGraphCanvas = realRender;
     sandbox.saveGraphState = realSave;
-    delete sandbox.window.getGraphState;
-    delete sandbox.window.saveGraphState;
+    // T411：清桩走中性回填（裸 delete 留空位，下一位读者一读又固化 loose 代理）
+    fillNeutralGraphStubs();
   }
   return true;
 });
@@ -723,8 +723,8 @@ check('addSourceText：短文本本地入篮；超长文本走 ingest 落盘并�
     sandbox.renderGraphCanvas = realRender;
     sandbox.saveGraphState = realSave;
     sandbox.fetch = prevFetch;
-    delete sandbox.window.getGraphState;
-    delete sandbox.window.saveGraphState;
+    // T411：清桩走中性回填（裸 delete 留空位，下一位读者一读又固化 loose 代理）
+    fillNeutralGraphStubs();
     vm.runInContext('graphView.nodes = []; graphView.edges = []; graphView.nodeById = {};', sandbox);
   }
   return true;
