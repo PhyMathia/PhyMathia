@@ -55,7 +55,6 @@ from server import config as config_mod  # noqa: E402
 from server import continent as continent_mod  # noqa: E402
 from server import knowledge as knowledge_mod  # noqa: E402  _ai_extract_knowledge 属主（T163）
 from server import context as context_mod  # noqa: E402
-from server import documents as documents_mod  # noqa: E402
 from server import family as family_mod  # noqa: E402
 from server import knowledge as knowledge_mod  # noqa: E402
 from server import profile as profile_mod  # noqa: E402
@@ -233,7 +232,7 @@ class RouteShapeAndSessionIdTest(RouteTestBase):
         self.assertEqual(resp.status_code, 400)
 
 
-# ====== B. context / knowledge / documents ======
+# ====== B. context / knowledge ======
 
 class RollingMemoryProtectsActiveTest(unittest.TestCase):
     def test_active_content_lives_in_tail_block_not_history(self):
@@ -265,26 +264,6 @@ class RollingMemoryProtectsActiveTest(unittest.TestCase):
         self.assertFalse(any(c.startswith("（会话记忆）") for c in joined),
                          "记忆不应再出现在历史里")
         self.assertEqual(mem, "（会话记忆）之前聊过阻尼振动的基本模型。")
-
-
-class LocalDocumentExtractTest(unittest.TestCase):
-    def test_module_name_headings_produce_no_empty_title(self):
-        text = ("# 讲义\n## 知识图谱\n内容A\n## 延伸思考\n内容B\n## 阻尼振动\n"
-                "振幅随时间衰减的振动。\n")
-        nodes, edges, _ = documents_mod._local_extract_document_knowledge(text, "a.md", 10)
-        titles = [n["title"] for n in nodes]
-        self.assertTrue(titles)
-        self.assertTrue(all(t.strip() for t in titles), titles)
-        self.assertIn("阻尼振动", titles)
-
-    def test_edges_filtered_to_kept_nodes_after_truncation(self):
-        text = "\n".join(f"## 标题{i}\n内容{i}\n" for i in range(1, 10))
-        nodes, edges, _ = documents_mod._local_extract_document_knowledge(text, "a.md", 3)
-        kept = {n["id"] for n in nodes}
-        self.assertEqual(len(nodes), 3)
-        for e in edges:
-            self.assertIn(e["from"], kept)
-            self.assertIn(e["to"], kept)
 
 
 class ProfileOpsBracketScanTest(unittest.TestCase):

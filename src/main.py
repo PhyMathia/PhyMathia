@@ -369,7 +369,7 @@ from server import input_routes, knowledge_routes, models_routes, profile_routes
 app.include_router(models_routes.router)
 app.include_router(session_routes.router)
 app.include_router(knowledge_routes.router)
-# 输入节点素材摄取（2026-10-22 重做）：机械转写通道，与 documents/parse 并存
+# 输入节点素材摄取（2026-10-22 重做）：机械转写通道（documents/parse 已退役，T383）
 app.include_router(input_routes.router)
 app.include_router(profile_routes.router)
 

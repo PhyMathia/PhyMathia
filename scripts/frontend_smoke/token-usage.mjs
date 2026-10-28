@@ -630,8 +630,12 @@ export async function run() {
       for (const py of ['src/server/models_routes.py', 'src/server/http_client.py', 'harness/review.py']) {
         if (!fs.readFileSync(py, 'utf8').includes('record_failure')) throw new Error(py + ' 未接失败记账');
       }
-      for (const py of ['src/server/knowledge.py', 'src/server/documents.py']) {
+      for (const py of ['src/server/knowledge.py']) {
         if (!fs.readFileSync(py, 'utf8').includes('post_chat_completion')) throw new Error(py + ' 未走 post_chat_completion 出网收口（T222）');
+      }
+      // T383：documents.py 的 parse 链退役后已无出网点；素材摄取必须保持机械转写
+      if (fs.readFileSync('src/server/input_routes.py', 'utf8').includes('post_chat_completion')) {
+        throw new Error('input_routes.py 必须保持机械转写（不得接 post_chat_completion）');
       }
       const html = fs.readFileSync('src/static/index.html', 'utf8');
       for (const needle of ['id="tokenDialog"', 'id="tokenUsageBody"', 'id="tokenUsageRange"', 'id="tokenRangeMenu"',

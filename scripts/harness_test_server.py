@@ -58,14 +58,9 @@ harness_review._call_model = _logged_call_model
 
 app = FastAPI(title="Harness Test Server")
 import time
-import base64
 import logging
-from pathlib import Path as _Path
 
 from src.server.config import OPENCODE_DEFAULT_API_KEY
-from src.server.documents import (
-    _sanitize_filename, _extract_document_text, _ai_extract_document_knowledge, _local_extract_document_knowledge,
-)
 from src.server.knowledge import (
     _ai_extract_knowledge, _local_extract_knowledge, _extract_summary, _describe_formulas, _is_socratic_followup,
 )
@@ -131,53 +126,6 @@ async def extract_knowledge(request: Request):
             logger.warning("describe failed: %s", exc)
     return {"items": items, "descriptions": descriptions}
 
-
-@app.post("/api/documents/parse")
-async def parse_document(request: Request):
-    try:
-        payload = await request.json()
-    except Exception:
-        return {"ok": False, "error": "bad json"}
-    filename = _sanitize_filename(payload.get("fileName") or "upload.txt")
-    try:
-        max_items = min(max(int(payload.get("maxItems") or 5), 1), 50)
-    except (TypeError, ValueError):
-        max_items = 5
-    try:
-        content = base64.b64decode(str(payload.get("contentBase64") or ""))
-    except Exception:
-        return {"ok": False, "error": "bad base64"}
-    if not content:
-        return {"ok": False, "error": "empty content"}
-    text = _extract_document_text(filename, content)
-    ext = _Path(filename).suffix.lower()
-    is_image = ext in {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tiff"}
-    image_b64 = base64.b64encode(content).decode("ascii") if is_image else ""
-    provider = str(payload.get("provider") or "")
-    api_key = str(payload.get("api_key") or "")
-    model = str(payload.get("model") or "")
-    base_url = str(payload.get("base_url") or "")
-    level = str(payload.get("level") or "university")
-    if not api_key and provider == "opencode":
-        api_key = OPENCODE_DEFAULT_API_KEY
-    nodes, edges, relations = [], [], []
-    if model and (api_key or provider == "opencode"):
-        try:
-            nodes, edges, relations = await _ai_extract_document_knowledge(text, filename, is_image, image_b64, provider, api_key, model, base_url, level, max_items)
-        except Exception as exc:
-            logger.warning("AI doc extract failed: %s", exc)
-    if not nodes:
-        nodes, edges, relations = _local_extract_document_knowledge(text, filename, max_items)
-    return {
-        "ok": True,
-        "fileName": filename,
-        "maxItems": max_items,
-        "textLength": len(text),
-        "nodes": nodes,
-        "edges": edges,
-        "relations": relations,
-        "extractedTextPreview": text[:500],
-    }
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

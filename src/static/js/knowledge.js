@@ -510,10 +510,9 @@ function renderKnowledgePanel() {
       // 来源标记走 UI_ICON_SVG 线稿，跟面板其余线条图标同一套笔画（emoji 走系统彩色字体，
       // 与界面里其它线性图标不统一）。sparkles 区分于 star：一个是"AI 提取"，一个是"手动收藏"。
       const sourceIcon = item.source === 'ai_extract' ? UI_ICON_SVG.sparkles
-        : item.source === 'file' ? UI_ICON_SVG.note
         : item.source === 'harness' ? UI_ICON_SVG.pencil
         : UI_ICON_SVG.star;
-      const sourceText = item.source === 'ai_extract' ? 'AI提取' : item.source === 'file' ? '文件导入' : item.source === 'harness' ? 'AI 编辑' : '手动收藏';
+      const sourceText = item.source === 'ai_extract' ? 'AI提取' : item.source === 'harness' ? 'AI 编辑' : '手动收藏';
       const tagsHtml = (item.tags || []).map(t => `<span class="kp-tag">${escapeHtml(t)}</span>`).join('');
       const timeStr = new Date(item.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
       // 展开状态记忆：重渲染时对集合内的卡直接恢复 expanded 并当场填好详情
