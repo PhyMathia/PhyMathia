@@ -1106,14 +1106,15 @@ async def api_fix_formula(request: Request):
 
 
 @router.get("/api/usage/stats")
-async def api_usage_stats(days: int = 7, records: int = 0):
+async def api_usage_stats(days: int = 7, records: int = 0, session: str = ""):
     """token 用量与缓存命中率汇总（前缀缓存改造的观测口）。
 
     数据来自 data/usage/YYYY-MM-DD.jsonl；hitRate 只在「上游确实回报了
     命中字段」的请求上累计（hitKnownRequests 可分辨供应商是否回报）。
     records>0 时附带返回最近 N 条调用明细（时间倒序，服务端上限 500）。
+    session 传会话 id 时附带回读桶 currentSession（T197 本次会话消耗卡）。
     """
-    return usage_stats.summarize(days=days, records=records)
+    return usage_stats.summarize(days=days, records=records, session=session)
 
 
 

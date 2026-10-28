@@ -5179,6 +5179,25 @@
 .token-stat-label { margin-top: 2px; font-size: var(--fs-2xs); color: var(--text-secondary); }
 .token-stat-label em { font-style: normal; opacity: .8; }
 
+/* 本次会话消耗卡（T197）：复用 token-chart-card 外壳（卡间距由 body 的 grid gap
+   给出），标题行距收紧——内部只有一条数值行，默认 10px 会显得头重脚轻 */
+.token-session-card .token-chart-title { margin-bottom: 4px; }
+
+.token-session-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+}
+
+.token-session-val { font-size: var(--fs-xl, 22px); font-weight: 700; color: var(--text-primary); }
+
+.token-session-unit { font-size: var(--fs-xs); color: var(--text-secondary); }
+
+.token-session-meta { font-size: var(--fs-xs); color: var(--text-secondary); }
+
+.token-session-err { color: var(--danger-fg); font-weight: 600; }
+
 /* 图表卡与空态：quiz-chart-card / accounts-row-loading 同款口径 */
 .token-chart-card {
   padding: 12px;
