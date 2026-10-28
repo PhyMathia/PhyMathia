@@ -1,19 +1,18 @@
-"""文档解析（server/documents.py）的单元回归。
-
-这个模块此前只有路由层零星触及，核心的解析与清洗函数一个测试都没有
-（backlog D4 登记于 2026-09-27）。它是「把一份 PDF/图片丢进来，自动长出知识点」
-这条链路的解析端，脏数据全靠这里的正则和守卫挡——挡错了就是脏条目进库。
+"""documents.py（文件上传存取与文本/图片抽取）的单元回归。
 
 覆盖三块：
-- **纯函数**：模型返回的 JSON 解析、分数钳位、公式抽取、文件名清洗；
+- **文件名清洗**：目录穿越必须在读盘前掐掉；
 - **文本提取的编码兜底**：utf-8 / utf-8-sig / gbk 依次尝试；
 - **OCR 临时文件**：用完即删不留残留（`_extract_image_text` 的 finally）。
+
+（2026-10-28 T383：/api/documents/parse 知识点提取链退役，模型 JSON 解析/
+分数钳位/公式抽取三组纯函数测试随链路一并删除，git 历史可查。原先本文件
+就是为补那条链路的测试空白而建——backlog D4，2026-09-27。）
 
 **不加载 OCR 引擎**（rapidocr_onnxruntime 几百 MB，且多数机器没装）：引擎用桩
 替掉，测的是我们自己的临时文件生命周期与异常兜底，不是引擎质量。
 """
 
-import json
 import os
 import sys
 import tempfile
@@ -30,104 +29,6 @@ for p in (ROOT, SRC):
 os.environ.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
 
 from server import documents as docs  # noqa: E402
-
-
-class ParseExtractJsonTest(unittest.TestCase):
-    """模型返回的知识点 JSON —— 脏数据都该在这里被挡掉。"""
-
-    def test_plain_json_object(self):
-        nodes, edges, relations = docs._parse_document_extract_json(
-            json.dumps({"nodes": [{"title": "简谐运动", "category": "physics"}]}), 20)
-        self.assertEqual(len(nodes), 1)
-        self.assertEqual(nodes[0]["title"], "简谐运动")
-        self.assertEqual(nodes[0]["category"], "physics")
-
-    def test_fenced_json_block(self):
-        text = '这是模型的回答：\n```json\n{"nodes":[{"title":"梯度","category":"math"}]}\n```\n以上。'
-        nodes, _, _ = docs._parse_document_extract_json(text, 20)
-        self.assertEqual([n["title"] for n in nodes], ["梯度"])
-
-    def test_json_embedded_in_prose_without_fence(self):
-        """模型爱在正文里裸吐 JSON——从第一个 { 到最后一个 } 抠出来。"""
-        text = '好的，结果如下：{"nodes":[{"title":"能量守恒"}]} 希望有用。'
-        nodes, _, _ = docs._parse_document_extract_json(text, 20)
-        self.assertEqual([n["title"] for n in nodes], ["能量守恒"])
-
-    def test_garbage_returns_empty_not_raise(self):
-        """解析失败必须返回空三元组，不能把异常抛给上传接口。"""
-        for bad in ["", "完全不是 JSON", "{断掉的", None, "[]", '"一个字符串"', "123"]:
-            with self.subTest(bad=bad):
-                self.assertEqual(docs._parse_document_extract_json(bad, 20), ([], [], []))
-
-    def test_items_alias_accepted(self):
-        """nodes 与 items 两个键都收——模型两代输出格式。"""
-        nodes, _, _ = docs._parse_document_extract_json(
-            json.dumps({"items": [{"title": "泊松分布"}]}), 20)
-        self.assertEqual(len(nodes), 1)
-
-    def test_unknown_category_falls_back_to_other(self):
-        nodes, _, _ = docs._parse_document_extract_json(
-            json.dumps({"nodes": [{"title": "某概念", "category": "量子力学"}]}), 20)
-        self.assertEqual(nodes[0]["category"], "other")
-
-    def test_entries_without_title_dropped(self):
-        nodes, _, _ = docs._parse_document_extract_json(
-            json.dumps({"nodes": [{"category": "math"}, {"title": "  "}, {"title": "散度"}]}), 20)
-        self.assertEqual([n["title"] for n in nodes], ["散度"])
-
-    def test_non_dict_nodes_ignored(self):
-        """nodes 是个 list 但里面混了非 dict——不能整个炸掉，跳过即可。"""
-        nodes, _, _ = docs._parse_document_extract_json(
-            json.dumps({"nodes": ["字符串", 42, {"title": "旋度"}]}), 20)
-        self.assertEqual([n["title"] for n in nodes], ["旋度"])
-
-    def test_max_items_caps(self):
-        payload = {"nodes": [{"title": "概念%d" % i} for i in range(10)]}
-        nodes, _, _ = docs._parse_document_extract_json(json.dumps(payload), 3)
-        self.assertLessEqual(len(nodes), 3)
-
-
-class SafeScoreTest(unittest.TestCase):
-    """分数钳位：脏值一律回落到默认值，绝不放行 0<=x<=1 之外的东西。"""
-
-    def test_in_range_passthrough(self):
-        self.assertAlmostEqual(docs._safe_score(0.42), 0.42)
-        self.assertAlmostEqual(docs._safe_score(0), 0.0)
-        self.assertAlmostEqual(docs._safe_score(1), 1.0)
-        self.assertAlmostEqual(docs._safe_score("0.8"), 0.8)
-
-    def test_out_of_range_falls_back(self):
-        for bad in [-0.1, 1.1, 5, -3, 999]:
-            with self.subTest(bad=bad):
-                self.assertAlmostEqual(docs._safe_score(bad), 0.7)
-
-    def test_non_numeric_falls_back(self):
-        for bad in ["高", None, "", [], {}, float("nan"), float("inf")]:
-            with self.subTest(bad=bad):
-                got = docs._safe_score(bad)
-                self.assertTrue(0.0 <= got <= 1.0, "回退值也必须落在 [0,1]，实得 %r" % got)
-
-
-class ExtractTextFormulasTest(unittest.TestCase):
-    def test_all_four_delimiters(self):
-        text = r"行内 $a^2+b^2$、\(x+y\)、块 $$E=mc^2$$、方块 \[F=ma\]"
-        got = docs._extract_text_formulas(text)
-        self.assertTrue(got, "四种定界符都该被认出来")
-        for want in ("a^2+b^2", "x+y", "E=mc^2", "F=ma"):
-            self.assertTrue(any(want in g for g in got), "漏了 %s，实得 %r" % (want, got))
-
-    def test_deduplicated(self):
-        text = "$E=mc^2$ 和 $E=mc^2$ 是同一个"
-        got = docs._extract_text_formulas(text)
-        self.assertEqual(len(got), 1, "同一条公式出现两次只收一次")
-
-    def test_capped_at_eight(self):
-        text = " ".join("$f%d(x)$" % i for i in range(20))
-        self.assertLessEqual(len(docs._extract_text_formulas(text)), 8)
-
-    def test_prose_without_math_returns_empty(self):
-        self.assertEqual(docs._extract_text_formulas("这是一段普通中文，没有公式。"), [])
-        self.assertEqual(docs._extract_text_formulas(""), [])
 
 
 class ExtractDocumentTextTest(unittest.TestCase):

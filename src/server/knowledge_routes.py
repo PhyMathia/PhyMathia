@@ -7,7 +7,6 @@ tests 打在 server.knowledge 上的补丁因此对 extract 与 describe 全部�
 """
 
 import asyncio
-import base64
 import hashlib
 import json
 import logging
@@ -20,16 +19,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
-from . import accounts, continent, context, documents, embedding, family, knowledge, profile, storage
-from .config import UPLOAD_MAX_BYTES, UTOPIA_INBOX_DIR
-from .documents import (
-    _ai_extract_document_knowledge,
-    _extract_document_text,
-    _local_extract_document_knowledge,
-    _read_upload,
-    _sanitize_filename,
-    _save_upload,
-)
+from . import accounts, continent, context, embedding, family, knowledge, profile, storage
+from .config import UTOPIA_INBOX_DIR
 from .knowledge import (
     _add_formulas_from_items,
     _coerce_created_at,
@@ -695,74 +686,3 @@ async def api_extract_knowledge(request: Request):
 
     return {"items": items, "descriptions": descriptions, "summaries": knowledge_summaries,
             "profile": profile_result or {"changed": 0, "promoted": []}}
-
-@router.post("/api/documents/parse")
-async def api_parse_document(request: Request):
-    payload = await _parse_json_object(request)
-
-    filename = _sanitize_filename(payload.get("fileName") or "")
-    try:
-        max_items = min(max(int(payload.get("maxItems") or 5), 1), 50)
-    except (TypeError, ValueError):
-        max_items = 5
-    content = None
-    file_id = str(payload.get("fileId") or "")
-    if file_id:
-        # 20MB 级文件的读盘与 base64 解码都是秒级同步 CPU/IO 重活：
-        # 全部卸到工作线程，期间事件循环继续服务 AI 回复流等其他请求
-        loaded = await asyncio.to_thread(_read_upload, file_id)
-        if not loaded:
-            raise HTTPException(status_code=404, detail="文件不存在，请重新上传")
-        entry, content = loaded
-        filename = _sanitize_filename(entry.get("filename") or filename)
-    else:
-        try:
-            content = await asyncio.to_thread(base64.b64decode, str(payload.get("contentBase64") or ""))
-        except Exception:
-            raise HTTPException(status_code=400, detail="文件内容格式错误")
-        if not content:
-            raise HTTPException(status_code=400, detail="缺少文件内容")
-        if len(content) > UPLOAD_MAX_BYTES:
-            raise HTTPException(status_code=413, detail="文件超过 20MB 限制")
-        file_id = "doc_" + uuid.uuid4().hex[:12]
-        await asyncio.to_thread(_save_upload, file_id, filename, content)
-
-    # PDF/DOCX/PPTX 解析与图片 OCR：最重的同步 CPU 段，必须离事件循环
-    text = await asyncio.to_thread(_extract_document_text, filename, content)
-    ext = Path(filename).suffix.lower()
-    is_image = ext in {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tiff"}
-    image_b64 = await asyncio.to_thread(lambda: base64.b64encode(content).decode("ascii")) if is_image else ""
-
-    provider = str(payload.get("provider") or "")
-    api_key = str(payload.get("api_key") or "")
-    api_key, env_key_used = resolve_api_key(provider, api_key)
-    model = str(payload.get("model") or "")
-    base_url = str(payload.get("base_url") or "")
-    level = str(payload.get("level") or "university")
-
-    nodes, edges, relations = [], [], []
-    if model and (api_key or provider in ("opencode", "opencode-go")):
-        try:
-            nodes, edges, relations = await _ai_extract_document_knowledge(
-                text, filename, is_image, image_b64, provider, api_key, model, base_url, level, max_items,
-                env_key_used=env_key_used
-            )
-        except Exception as e:
-            logger.warning(f"AI document extraction failed: {e}")
-    if not nodes:
-        nodes, edges, relations = await asyncio.to_thread(_local_extract_document_knowledge, text, filename, max_items)
-    if not nodes:
-        raise HTTPException(status_code=422, detail="无法从文件中提取知识点。请使用文本/PDF/DOCX，或为图片配置视觉模型/OCR。")
-
-    return {
-        "ok": True,
-        "fileId": file_id,
-        "fileName": filename,
-        "maxItems": max_items,
-        "textLength": len(text),
-        "nodes": nodes,
-        "edges": edges,
-        "relations": relations,
-        "extractedTextPreview": text[:500],
-    }
-

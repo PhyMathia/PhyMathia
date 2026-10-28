@@ -1,8 +1,8 @@
 """输入节点素材摄取：POST /api/input/ingest（2026-10-22 输入节点重做 P0）。
 
-与 /api/documents/parse 的分工：parse 是旧「上传→AI 提炼知识点」一体化链路
-（存量输入节点入口保留）；ingest 只做机械转写——文本抽取 / PDF 抽页 / 图片
-OCR，绝不调 AI 模型、不产知识点、不写知识面板。返回文本截 8000 字，截断时
+ingest 只做机械转写——文本抽取 / PDF 抽页 / 图片 OCR，绝不调 AI 模型、不产
+知识点、不写知识面板；旧「上传→AI 提炼知识点」链路 /api/documents/parse 已于
+2026-10-28（T383）退役，本路由是唯一的素材摄取通道。返回文本截 8000 字，截断时
 全文落 ``data/uploads/<fileId>.txt``（前端按 fileId 可取回）。
 """
 
