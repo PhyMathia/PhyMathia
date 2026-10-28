@@ -1,4 +1,4 @@
-"""聊天主应用（src/server）与 Φ 图编辑智能体（harness）的共享底层事实源。
+"""聊天主应用（src/server）与 Φ 图编辑助手（harness）的共享底层事实源。
 
 两侧运行时都 import 得到 server 包（src/main.py 启动时把 src 插进 sys.path，
 打包 --collect-submodules server 全收；harness 侧由 main 与 tests/conftest
@@ -12,7 +12,7 @@
   src/server/config.py），harness 导不进 src.server.*（src 不是包）也必须同
   口径校验，防「请求体指定 provider + 任意 base_url」把 .env 真实密钥外发
 - thinking_request_params：思考程度→上游请求参数映射（原 main.py
-  _thinking_request_params），聊天主应用与 Φ 智能体共用同一张表
+  _thinking_request_params），聊天主应用与 Φ助手共用同一张表
 - opencode_gateway_headers / PHYMATHIA_USER_AGENT：opencode.ai 网关会话头
   （原 main.py 与 harness/review.py 各一份，仅 session id 来源不同）
 

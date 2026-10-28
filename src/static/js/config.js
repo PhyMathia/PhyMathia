@@ -237,7 +237,7 @@ const STORAGE_KEY_RECIPE_DRAFT = 'phymathia_recipe_draft';
 // 弹过即置键永不再弹（经垫片自然分账号）
 const STORAGE_KEY_MODULE_HINT_DONE = 'phymathia_module_hint_done';
 
-// ===== Φ 智能体独立会话（2026-09-30 与画布解耦）======
+// ===== Φ助手独立会话（2026-09-30 与画布解耦）======
 // Φ 会话有独立 id 空间（phi_<uuid>），与画布会话（sess_<uuid>）互不隶属：
 // 名单与当前指针走下面两个键（名单镜像到服务端 KV 全局键 phi_sessions 防换浏览器丢失）；
 // 对话历史沿用 harness_history_ 前缀但挂 phi id（phymathia_harness_history_phi_<id>，
