@@ -270,7 +270,7 @@ export async function run() {
           docs: { totalTokens: 0, requests: 5 },
         },
       });
-      const hPos = html.indexOf('Φ 智能体');
+      const hPos = html.indexOf('Φ助手');
       const cPos = html.indexOf('聊天问答');
       if (hPos < 0 || cPos < 0) throw new Error('用途中文名映射缺失');
       if (hPos > cPos) throw new Error('应按 token 降序排列');
@@ -323,7 +323,7 @@ export async function run() {
       });
       if (!html.includes('10-08 21:33') || !html.includes('950ms')) throw new Error('成功行时间/耗时应展示');
       if (!html.includes('9800')) throw new Error('token 合计应展示');
-      if (!html.includes('聊天问答') || !html.includes('Φ 智能体')) throw new Error('用途应中文映射');
+      if (!html.includes('聊天问答') || !html.includes('Φ助手')) throw new Error('用途应中文映射');
       if (!html.includes('token-record-failed')) throw new Error('失败行应有标红类');
       if (!html.includes('title="HTTP 502 bad gateway"')) throw new Error('失败原因应进行 title 悬停可读');
       if (!html.includes('token-record-err">失败') || !html.includes('token-record-ok">成功')) {

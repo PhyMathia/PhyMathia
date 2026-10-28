@@ -549,7 +549,7 @@ check('首次使用引导覆盖当前功能面（2026-10-24 重写：大陆/检�
   const uiSrc = fs.readFileSync('src/static/js/ui-onboarding.js', 'utf8');
   const m = uiSrc.match(/const _obSteps = \[([\s\S]*?)\n\];/);
   if (!m) throw new Error('_obSteps 未找到');
-  for (const needle of ['知识大陆', '知识检测', '多账号', '回收站', '只读查阅', '用量统计', '修改历史', '导出', 'Φ 智能体', '知识库']) {
+  for (const needle of ['知识大陆', '知识检测', '多账号', '回收站', '只读查阅', '用量统计', '修改历史', '导出', 'Φ助手', '知识库']) {
     if (!m[1].includes(needle)) throw new Error('首次使用引导缺少「' + needle + '」');
   }
   const g = uiSrc.match(/const EXAMPLE_GUIDE_STEPS = \[([\s\S]*?)\n\];/);

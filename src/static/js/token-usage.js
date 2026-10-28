@@ -1,7 +1,7 @@
 // ====== Token 用量统计（2026-10-08）：AI 调用记账的只读可视化面板 ======
 // 数据源＝GET /api/usage/stats?days=N（server/usage_stats.summarize，记账点在
 // record_usage 的七个调用点：聊天流式/非流式、知识提取/描述、文档解析、记忆摘要、
-// Φ 智能体）。面板只读不写；图表零依赖——趋势线手写 SVG 单调三次平滑曲线、圆环
+// Φ助手）。面板只读不写；图表零依赖——趋势线手写 SVG 单调三次平滑曲线、圆环
 // conic-gradient＋radial mask 挖孔、条形 div 宽度百分比（先例 quiz-render.js 的
 // _quizPieHtml/_quizLineHtml 与 memory-bar）。2026-10-08 借鉴 ZCode 控制台三件：
 // 平滑曲线（防过冲取单调插值）、圆环＋中心总量、数字万/亿中文口径。
@@ -40,7 +40,7 @@ const TOKEN_USAGE_KIND_LABELS = {
   extract: '知识提取',
   describe: '知识描述',
   docs: '文档解析',
-  harness: 'Φ 智能体',
+  harness: 'Φ助手',
   unknown: '其他',
 };
 

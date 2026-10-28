@@ -88,7 +88,7 @@ def _chat_request_headers(provider: str, api_key: str, base_url: str, session_id
 def _thinking_request_params(provider: str, level: str, model: str = "") -> dict:
     """「思考程度」→ 上游请求参数（薄包装）。
 
-    唯一实现已下沉 llm_common.thinking_request_params（2026-09-30，Φ 智能体
+    唯一实现已下沉 llm_common.thinking_request_params（2026-09-30，Φ助手
     按相位接同一张表）；此处保留同名函数，调用方与直测它的用例零改动。
     model 参数（2026-10-25）供智谱 5.x 分支识别模型代次——glm-5.x 强度走
     reasoning_effort、思考关不掉，旧代仍布尔开关。

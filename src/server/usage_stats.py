@@ -1,4 +1,4 @@
-"""LLM token 用量与缓存命中计量（聊天主应用与 Φ 智能体的共享底层）。
+"""LLM token 用量与缓存命中计量（聊天主应用与 Φ助手的共享底层）。
 
 上游 chat/completions 响应里的 usage 字段此前只写一行日志就丢弃——缓存
 命中率无从谈起。本模块把每次调用的 usage 解析后追加落盘
@@ -15,7 +15,7 @@ data/usage/YYYY-MM-DD.jsonl，并提供按天/模型汇总（GET /api/usage/stat
 成功与失败都带 durationMs（调用点用 elapsed_ms 从 monotonic 起点算），聚合出
 avgDurationMs。旧记录没有 status/durationMs 字段，聚合按「成功、无耗时」兼容。
 
-住进 server 包的理由：聊天主应用与 Φ 智能体（harness）两侧运行时都
+住进 server 包的理由：聊天主应用与 Φ助手（harness）两侧运行时都
 import 得到 server 包（路径保证见 llm_common.py 头注）。
 只依赖标准库；本模块不得 import 任何使用方。
 """
