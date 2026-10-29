@@ -40,13 +40,41 @@ def test_profile_manage_preserves_interleaved_updates_http():
     _run_isolated("test_profile_manage")
 
 
-def _isolated_client(directory):
-    """Child-only bootstrap; do not import test_routes/main during collection."""
-    sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
-    production = ROOT / "data"
+def test_guard_exempts_only_loopback_connects():
+    # T416: 只放行 asyncio self-pipe 的本机回环 connect，外网地址仍在拦截范围。
+    assert _is_loopback_address(("127.0.0.1", 50123))
+    assert _is_loopback_address(("::1", 50123, 0, 0))
+    assert not _is_loopback_address(("203.0.113.9", 443))
+    assert not _is_loopback_address(b"127.0.0.1")  # AF_UNIX 路径不是地址元组
+    assert not _is_loopback_address(None)
+    guard = _make_guard(ROOT / "data")
+    guard("socket.connect", (object(), ("127.0.0.1", 50123)))  # Windows self-pipe
+    for event, args in (("socket.connect", (object(), ("203.0.113.9", 443))),
+                        ("socket.getaddrinfo", ("example.com", 443, 0, 0))):
+        try:
+            guard(event, args)
+        except AssertionError:
+            continue
+        raise AssertionError(f"guard let {event} {args!r} through")
 
-    # Fail closed on any accidental access to live data, including reads. The
-    # audit hook remains confined to this disposable child process.
+
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def _is_loopback_address(address):
+    """sockaddr 是否只指向本机回环（tuple 形式的 AF_INET/AF_INET6 地址）。"""
+    if not isinstance(address, tuple) or not address:
+        return False
+    host = address[0]
+    if isinstance(host, bytes):
+        host = host.decode("ascii", "ignore")
+    return host in _LOOPBACK_HOSTS
+
+
+def _make_guard(production):
+    """Fail closed on live data and off-box network; loopback connect is the one
+    exception (Windows asyncio self-pipe, see T416 note below)."""
+
     def guard(event, args):
         path_args = {"open": (0,), "os.listdir": (0,), "os.scandir": (0,),
                      "os.mkdir": (0,), "os.remove": (0,), "os.rmdir": (0,),
@@ -57,10 +85,25 @@ def _isolated_client(directory):
                 path = Path(os.fsdecode(value)).absolute()
                 if path == production or production in path.parents:
                     raise AssertionError(f"Live data access forbidden: {event} {path}")
-        if event in ("socket.connect", "socket.getaddrinfo"):
+        # T416: on Windows asyncio's Proactor loop builds its self-pipe with
+        # socket.socketpair(), which is a loopback TCP connect and therefore
+        # raises the socket.connect audit event (on Linux socketpair is a plain
+        # syscall, invisible to audit hooks). Exempt loopback only; any real
+        # outbound connect or name lookup is still fatal.
+        if event == "socket.getaddrinfo" or (
+                event == "socket.connect" and not _is_loopback_address(args[1])):
             raise AssertionError(f"Network access forbidden: {event}")
 
-    sys.addaudithook(guard)
+    return guard
+
+
+def _isolated_client(directory):
+    """Child-only bootstrap; do not import test_routes/main during collection."""
+    sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
+    production = ROOT / "data"
+
+    # The audit hook remains confined to this disposable child process.
+    sys.addaudithook(_make_guard(production))
     original_mkdir = Path.mkdir
 
     def config_mkdir(path, *args, **kwargs):
