@@ -82,6 +82,88 @@ check('graph-contextmenu: 节点菜单裁剪（端口统一门 2026-10-10/折叠
   return true;
 });
 
+check('graph-contextmenu: 「AI 总结 ⇄ 我的总结」互转项与门控（backlog #268）', () => {
+  const labelOf = (node) => {
+    const item = sandbox._graphContextItemsForNode(node).find(i => i.key === 'convert-kind');
+    return item ? item.label : '';
+  };
+  vm.runInContext('graphView.selectedNodeIds = new Set()', sandbox);
+  // 两个方向各给对应文案
+  if (labelOf({ id: 'c1', kind: 'summary', moduleKey: 'summary', content: 'x' }) !== '转为我的总结') return false;
+  if (labelOf({ id: 'c2', kind: 'note', moduleKey: 'note', manual: true, content: 'x' }) !== '转为 AI 总结') return false;
+  // 配方节点：kind 由配方底座决定，转了会与配方失联
+  if (labelOf({ id: 'c3', kind: 'summary', moduleKey: 'summary', content: 'x', recipeId: 'r1' })) return false;
+  // 生成中不给（流式写入与身份切换会打架）
+  if (labelOf({ id: 'c4', kind: 'summary', moduleKey: 'summary', content: 'x', busy: true })) return false;
+  if (labelOf({ id: 'c5', kind: 'summary', moduleKey: 'summary', content: 'x', status: 'running' })) return false;
+  // 其余类型没有这一项（包括同为笔记本卡的「我的回答」）
+  for (const kind of ['module', 'answer', 'human_note', 'blank', 'source', 'direct', 'user']) {
+    if (labelOf({ id: 'o_' + kind, kind, moduleKey: 'physics', content: 'x' })) return false;
+  }
+  return true;
+});
+
+check('graph-contextmenu: 互转动作字段与撤销点（summary→note 定稿 / note→summary 交回 AI）', () => {
+  const realFind = sandbox._findGraphNode;
+  const realUndo = sandbox._pushGraphUndo;
+  const realSave = sandbox._saveCustomNodes;
+  const realRender = sandbox.renderGraphCanvas;
+  const realHash = sandbox._nodeInputHash;
+  const realToast = sandbox.showToast;
+  let undoCount = 0;
+  let saveCount = 0;
+  let renderCount = 0;
+  const toasts = [];
+  const nodes = {
+    s1: {
+      id: 's1', kind: 'summary', moduleKey: 'summary', manual: false, messageIndex: -1,
+      content: 'AI 写的总结', title: '动量', status: 'done', inputHash: 'stale', generatedAt: 1,
+    },
+    n1: {
+      id: 'n1', kind: 'note', moduleKey: 'note', manual: true, messageIndex: -1,
+      content: '我改过的总结', title: '', status: 'done', humanDone: true, inputHash: 'notehash',
+    },
+    r1: { id: 'r1', kind: 'summary', moduleKey: 'summary', content: 'x', messageIndex: -1, recipeId: 'rc' },
+    b1: { id: 'b1', kind: 'summary', moduleKey: 'summary', content: 'x', messageIndex: -1, busy: true },
+  };
+  try {
+    sandbox._findGraphNode = (id) => nodes[id] || null;
+    sandbox._pushGraphUndo = () => { undoCount += 1; };
+    sandbox._saveCustomNodes = () => { saveCount += 1; };
+    sandbox.renderGraphCanvas = () => { renderCount += 1; };
+    sandbox._nodeInputHash = () => 'HASH';
+    sandbox.showToast = (msg) => { toasts.push(String(msg)); };
+    // 拒绝路径：查不到 / 配方节点 / 生成中——都不落撤销点、不改身份
+    if (sandbox.convertSummaryNodeKind('ghost') !== false) return false;
+    if (sandbox.convertSummaryNodeKind('r1') !== false || nodes.r1.kind !== 'summary') return false;
+    if (sandbox.convertSummaryNodeKind('b1') !== false || nodes.b1.kind !== 'summary') return false;
+    if (undoCount !== 0) return false;
+    // ① AI 总结 → 我的总结：认领＝走 T355 定稿路径，内容/标题原样，工作流从此豁免
+    if (sandbox.convertSummaryNodeKind('s1') !== true) return false;
+    const s = nodes.s1;
+    if (s.kind !== 'note' || s.moduleKey !== 'note' || s.manual !== true) return false;
+    if (s.humanDone !== true || s.status !== 'done' || s.inputHash !== 'HASH') return false;
+    if (s.content !== 'AI 写的总结' || s.title !== '动量') return false;
+    // ② 我的总结 → AI 总结：交回 AI，清定稿标记与哈希，内容留着（旧版进版本账）
+    if (sandbox.convertSummaryNodeKind('n1') !== true) return false;
+    const n = nodes.n1;
+    if (n.kind !== 'summary' || n.moduleKey !== 'summary' || n.manual !== false) return false;
+    if (n.humanDone !== false || n.inputHash !== '') return false;
+    if (n.content !== '我改过的总结' || n.status !== 'done') return false;
+    // 每次转换各占一个撤销点、各存盘重渲一次；toast 说清去向
+    if (undoCount !== 2 || saveCount !== 2 || renderCount !== 2) return false;
+    if (toasts.length !== 2 || toasts[0].indexOf('我的总结') < 0 || toasts[1].indexOf('AI 总结') < 0) return false;
+    return true;
+  } finally {
+    sandbox._findGraphNode = realFind;
+    sandbox._pushGraphUndo = realUndo;
+    sandbox._saveCustomNodes = realSave;
+    sandbox.renderGraphCanvas = realRender;
+    sandbox._nodeInputHash = realHash;
+    if (realToast === undefined) delete sandbox.showToast; else sandbox.showToast = realToast;
+  }
+});
+
 check('graph-contextmenu: 收藏为知识点走书签弹窗预填（复用 saveBookmark 持久化路径）', () => {
   const items = sandbox._graphContextItemsForNode({
     id: 'a1', kind: 'module', moduleKey: 'math', messageIndex: -1,

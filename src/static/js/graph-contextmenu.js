@@ -119,6 +119,22 @@ function _graphContextItemsForNode(node, point) {
       run: () => graphCopySelectedNodes([node]),
     });
   }
+  // AI 总结 ⇄ 我的总结 互转（backlog #268，2026-10-29 拍板）：同一张笔记本卡的两个
+  // 身位之间搭桥——改得面目全非的 AI 总结可以认领为自己的，自己写的也能交回 AI 接手。
+  // 仅这两类；配方节点的 kind 由配方底座决定（转了会与配方失联），生成中也不给
+  // （流式写入与身份切换会打架）。只读查看页按 label 白名单自动剪掉，勿加进白名单。
+  if ((node.kind === 'summary' || node.kind === 'note')
+      && !node.recipeId && !node.busy && node.status !== 'running'
+      && typeof convertSummaryNodeKind === 'function') {
+    items.push({
+      key: 'convert-kind',
+      label: node.kind === 'summary' ? '转为我的总结' : '转为 AI 总结',
+      title: node.kind === 'summary'
+        ? '认领为我的总结：工作流从此不再改写它'
+        : '交回 AI 接手：下次「全部开始」会重写一次，旧内容可在版本里切回',
+      run: () => convertSummaryNodeKind(node.id),
+    });
+  }
   // 存为配方（P1）：从现有节点提炼可复用类型。只读查看页（viewer）没有配方库与
   // 编辑入口，该项在 viewer 的 READONLY_MENU_LABELS 白名单外会被静默剪掉——刻意为之
   // （与「复制节点」同口径），改文案时注意别把它加进白名单。
