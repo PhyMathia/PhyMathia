@@ -59,6 +59,39 @@ function _hasPendingSend() {
   return _sendQueue.length > 0;
 }
 
+// 节点级生成链在途标记（T341，2026-10-29）：node.busy 在流末尾就落了，而生成函数
+// 还要做 viz 归一/失败重试/版本收账——排队等的是「整条生成链跑完」，不是「流结束」。
+// 三个会置 busy 的入口（_generateCustomNode / _generateAnalysis /
+// _applyWorkflowNodeRegenerate）在收尾时调 _nodeGenEnd，顺手放行等这颗节点的队首。
+// 按节点 id 全局记、不查当前画布：任务可能属于另一张画布，切回去之前也得等。
+var _nodeGenInFlight = new Set();
+
+function _nodeGenBegin(nodeId) {
+  if (nodeId) _nodeGenInFlight.add(String(nodeId));
+}
+
+function _nodeGenEnd(nodeId) {
+  if (nodeId) _nodeGenInFlight.delete(String(nodeId));
+  if (!_sendQueue.length || typeof _flushSendQueue !== 'function') return;
+  try {
+    return _flushSendQueue();
+  } catch (e) {
+    // 放行失败不能毁掉生成收尾；队列下次有空闲时机再走
+    console.warn('Queue flush after node generation failed:', e);
+  }
+}
+
+// 队首这条是不是在等某颗节点的在途生成（T341：带字修订撞上生成中）。
+// busy 与在途标记都要看：busy 覆盖「前置段还没走到 try」的窗口，标记覆盖
+// 「流已结束、生成函数还在收尾」的窗口（busy 已落 false，内容仍会被归一/重试改写）。
+function _queueWaitsForNode(item) {
+  const nodeId = item && item.waitNodeId;
+  if (!nodeId) return false;
+  if (_nodeGenInFlight.has(String(nodeId))) return true;
+  const node = typeof _findGraphNode === 'function' ? _findGraphNode(nodeId) : null;
+  return !!(node && node.busy);
+}
+
 // 收下一次发送请求。label 只用于提示文案（「苏格拉底回答」「追问」…），
 // run 必须返回 promise：flush 靠 await 它来保证下一条等上一条真的发出去了。
 // meta（可选）：{ text, title, kind, replay, sessionId, sessionTitle }。
@@ -97,6 +130,8 @@ function _enqueueSend(label, run, meta) {
     taskId: task ? task.id : null,
     sessionId: task ? task.sessionId : info.sessionId,
     dedupeKey: opts.dedupeKey || null,
+    // T341：等待中要等的节点（带字修订撞上生成中）。null＝普通排队，放行只看全局忙闲。
+    waitNodeId: opts.waitNodeId || null,
   });
   _renderQueueChip();
   toastMsg('已收到「' + name + '」，当前任务完成后自动开始');
@@ -144,6 +179,7 @@ function _enqueueNodeJob(label, run, meta) {
     sessionId: opts.sessionId,
     sessionTitle: opts.sessionTitle,
     dedupeKey: dedupeKey,
+    waitNodeId: opts.waitNodeId || null,
   });
 }
 
@@ -202,6 +238,11 @@ async function _flushSendQueue() {
   _sendQueueFlushing = true;
   try {
     while (_sendQueue.length && !_isActuallyBusy()) {
+      const head = _sendQueue[0];
+      // T341：队首要等的那颗节点还在生成——留在队首保持「等待中」，不能 shift，
+      // 否则任务会被记成「进行中」、活儿还会在节点仍写盘时开跑。节点生成链收尾时
+      // _nodeGenEnd 会再叫一次 flush。
+      if (_queueWaitsForNode(head)) break;
       const item = _sendQueue.shift();
       _renderQueueChip();
       if (!(await _sendQueueReady(item))) continue;

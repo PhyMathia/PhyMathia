@@ -1258,6 +1258,20 @@ async function _applyWorkflowNodeRegenerate(nodeId, text) {
     // 留空直发＝现状重跑。confirmed=true：下游提醒已写在面板里，发送即确认，不再二弹。
     return runWorkflowNode(nodeId, true, false, null, true);
   }
+  // T341：节点自己正在生成（工作流/独立联系节点都算）——带字修订不能当场起跑：
+  // 两条流会交替写同一颗 content，版本账还把中间态收成草稿版。收进队列并挂
+  // waitNodeId，_flushSendQueue 会让它保持「等待中」，等这颗节点整条生成链收尾
+  // （_nodeGenEnd）后自动接管。放行瞬间若又忙起来，这里会再排一次，不会并发。
+  if (node.busy && typeof _enqueueNodeJob === 'function') {
+    _enqueueNodeJob(_regenNodeActionLabel(node), function() {
+      return _applyWorkflowNodeRegenerate(nodeId, text);
+    }, {
+      kind: 'node',
+      replay: { nodeJob: { id: nodeId, kind: 'regen', text: text } },
+      waitNodeId: nodeId,
+    });
+    return;
+  }
   // T330：问题分析卡没有 node.content 可修订（正文在 analysis，由 _generateAnalysis
   // 产出）——带字＝写进 requirements 重跑分析（hash 随 requirements 变、force 保证真
   // 重跑），不走 _regenWorkflowNodeContent 修订内核（它吃 node.content，对分析卡会
@@ -1281,6 +1295,7 @@ async function _applyWorkflowNodeRegenerate(nodeId, text) {
   if (typeof _saveCustomNodes === 'function') _saveCustomNodes();
   if (typeof _refreshWorkflowNodeStatusUi === 'function') _refreshWorkflowNodeStatusUi(node);
   else if (typeof renderGraphCanvas === 'function') renderGraphCanvas();
+  if (typeof _nodeGenBegin === 'function') _nodeGenBegin(nodeId);
   const jobAbort = new AbortController();
   const taskId = (typeof _taskBeginNodeJob === 'function')
     ? _taskBeginNodeJob({ title: _regenNodeActionLabel(node), nodeId: nodeId, nodeKind: node.kind })
@@ -1322,6 +1337,8 @@ async function _applyWorkflowNodeRegenerate(nodeId, text) {
     throw err;
   } finally {
     _regeneratingNodes.delete(nodeId);
+    // T341：修订自己也是一条生成链——排在同颗节点后面的修订/生成要等它整条收尾。
+    if (typeof _nodeGenEnd === 'function') _nodeGenEnd(nodeId);
   }
   // 渲染必须放在摘掉忙账之后：按钮的置灰态读 _regeneratingNodes，先渲染会把
   // 「重新生成」钉死在「生成中...」（真机实证：mock 验证 B 通道当场抓到）
@@ -1356,6 +1373,13 @@ async function submitRegenerateNode(nodeId) {
       replay: { nodeJob: { id: nodeId, kind: 'regen', text: text } },
     });
     return;
+  }
+  // T341：节点自己在生成、但全局不忙（如联系节点独立生成）——也先收面板再走
+  // _applyWorkflowNodeRegenerate 的 node.busy 守卫。不在这里包闭包：否则排队条目
+  // 挂不上 waitNodeId，放行时会直接撞上仍在写的节点。
+  if (!isMessageModule && node.busy) {
+    closeRegeneratePanel(nodeId);
+    return _applyWorkflowNodeRegenerate(nodeId, text);
   }
   if (isMessageModule) {
     const messages = _getChatHistory();
