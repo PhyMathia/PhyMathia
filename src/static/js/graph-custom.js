@@ -575,6 +575,50 @@ function _markNodeHumanFinalized(node) {
   }
 }
 
+// 「AI 总结 ⇄ 我的总结」互转（backlog #268，2026-10-29 用户拍板双向都做）。
+// 这两个是同一套笔记本卡的两个身位：卡面标题、颜色、纸纹材质、编辑钮、是否进工作流
+// 全部从 kind/manual 现场推导，所以转换＝一次纯数据改动——内容、标题、连线、位置全不动，
+// 渲染层自动换身份。两个方向各自沿用现成机制，不新开旁路：
+//   → 我的总结：走 T355 定稿路径（置 done＋同步 inputHash＋打 humanDone），
+//     此后「全部开始」与整链跑动都不再改写它，语义与手动编辑保存完全一致；
+//   → AI 总结：清掉 humanDone 与 inputHash——下次「全部开始」重写一次（旧文字已在
+//     版本账里，‹ › 可切回），生成完 inputHash 自动同步，之后上游不变就不再跑。
+// 门控在右键菜单侧判定（仅这两类、非配方节点、不在生成中），这里再兜一次：
+// Φ/脚本等绕过菜单的入口同样不能把配方节点转成失联的裸 kind。
+function convertSummaryNodeKind(nodeId) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.messageIndex >= 0) return false;
+  if (node.kind !== 'summary' && node.kind !== 'note') return false;
+  // 配方节点的类型由配方底座决定（kind 与内嵌快照必须同源），转了就和配方失联
+  if (node.recipeId) return false;
+  if (node.busy || node.status === 'running') return false;
+  const toNote = node.kind === 'summary';
+  _pushGraphUndo(false, {
+    source: 'user',
+    summary: toNote ? '转为我的总结' : '转为 AI 总结',
+  });
+  node.kind = toNote ? 'note' : 'summary';
+  // 这两类的 moduleKey 与 kind 同值（createManualNode 按 option.key 写入），
+  // 而 _nodeInputHash 前缀含 moduleKey——两处一起换才不会留下错位身份
+  node.moduleKey = node.kind;
+  node.manual = toNote;
+  if (toNote) {
+    _markNodeHumanFinalized(node);
+  } else {
+    node.humanDone = false;
+    node.inputHash = '';
+    node.status = (node.content || '').trim() ? 'done' : 'empty';
+  }
+  _saveCustomNodes();
+  renderGraphCanvas();
+  if (typeof showToast === 'function') {
+    showToast(toNote
+      ? '已转为我的总结：工作流不再改写它'
+      : '已转为 AI 总结：下次「全部开始」会重写一次，旧内容可在版本里切回');
+  }
+  return true;
+}
+
 function updateCustomNodeContent(nodeId, value) {
   const node = _findGraphNode(nodeId);
   if (!node || node.messageIndex >= 0) return;
