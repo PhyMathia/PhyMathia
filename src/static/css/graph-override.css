@@ -3823,13 +3823,18 @@ html[data-theme="light"] .graph-node-fs,
   flex: 1;
 }
 
-/* ---------- AI evaluation node ---------- */
+/* ---------- AI 评价节点（ai-eval）——T270 材质轴拍板（2026-10-29）----------
+   材质语言＝「AI 的旁注批改」：无 CSS 边框，JS 画 SVG 锯齿描边（graph-render.js，
+   外扩 6px 防 paint 裁切）。颜色轴全令牌：卡底/属性章从 --node-ai-eval 派生；
+   锯齿深浅三个定值（#fbbf24/#fff7ed/#c2410c）是对比度拍板例外，无对应令牌，勿当
+   漏改收编。卡内动作钮/优先级章的状态色与 diff 家族同语言（design-ruler deny
+   豁免），不在材质轴管辖。白名单见 docs/dev/node-skins.md「材质轴白名单」。 */
 .graph-node-ai-eval {
   min-width: 260px;
   max-width: 340px;
   border: none !important;
   border-radius: var(--r-md) !important;
-  background: rgba(245, 158, 11, 0.07) !important;
+  background: color-mix(in srgb, var(--node-ai-eval) 7%, transparent) !important;
   transition: background-color 0.35s ease, box-shadow 0.35s ease !important;
 }
 
@@ -4020,6 +4025,7 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   overflow: visible;
   pointer-events: none;
   z-index: 5;
+  /* 拍板例外（T270）：深色对比亮琥珀定值，无对应令牌 */
   color: #fbbf24;
   opacity: 0.85;
   transition: color 0.35s ease, opacity 0.35s ease !important;
@@ -4034,8 +4040,8 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
 }
 
 .graph-node-ai-eval .graph-node-attribute {
-  color: #f59e0b !important;
-  border-color: #f59e0b !important;
+  color: var(--node-ai-eval) !important;
+  border-color: var(--node-ai-eval) !important;
 }
 
 .graph-ai-eval-suggestion {
@@ -4092,11 +4098,13 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
 }
 
 [data-theme="light"] .graph-node-ai-eval {
+  /* 拍板例外（T270）：浅色橙纸底定值，无对应令牌 */
   background: #fff7ed !important;
   transition: background-color 0.35s ease, box-shadow 0.35s ease !important;
 }
 
 [data-theme="light"] .graph-ai-eval-zigzag {
+  /* 拍板例外（T270）：浅色压深锯齿定值，无对应令牌 */
   color: #c2410c;
   transition: color 0.35s ease, opacity 0.35s ease !important;
 }
