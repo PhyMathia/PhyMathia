@@ -19,7 +19,14 @@ def evidence(tmp_path_factory):
     root = tmp_path_factory.mktemp("review-e")
     shutil.copytree(ROOT / "src", root / "src",
                     ignore=shutil.ignore_patterns("__pycache__", "static"))
-    (root / "src" / "static").symlink_to(ROOT / "src" / "static", target_is_directory=True)
+    static = root / "src" / "static"
+    try:
+        # 17MB 静态目录只为保持源码树完整，被测 API 不读它：链接省一次拷贝。
+        static.symlink_to(ROOT / "src" / "static", target_is_directory=True)
+    except OSError:
+        # T416: Windows 建符号链接需特权（WinError 1314），退化为真拷贝。
+        shutil.copytree(ROOT / "src" / "static", static,
+                        ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(ROOT / "harness", root / "harness",
                     ignore=shutil.ignore_patterns("__pycache__"))
     script = r'''
