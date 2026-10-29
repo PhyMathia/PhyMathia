@@ -76,6 +76,7 @@ async function _generateAnalysis(node, nodeSignal) {
   const signal = _workflowNodeSignal(nodeSignal);
   const blankStartedAt = Date.now();
 
+  if (typeof _nodeGenBegin === 'function') _nodeGenBegin(node.id);
   try {
     let resp = null;
     if (typeof getActiveModelForRole === 'function' && typeof proxyChat === 'function') {
@@ -114,6 +115,9 @@ async function _generateAnalysis(node, nodeSignal) {
     _refreshWorkflowNodeStatusUi(live);
     if (err.name !== 'AbortError' && typeof showToast === 'function') showToast('问题分析失败：' + (err.message || err));
     if (typeof hideProgress === 'function') hideProgress();
+  } finally {
+    // T341：生成链整条收尾（流落帐/异常结清）后才放行等这颗节点的排队修订
+    if (typeof _nodeGenEnd === 'function') _nodeGenEnd(node.id);
   }
 }
 
@@ -274,6 +278,7 @@ async function _generateCustomNode(node, nodeSignal) {
   };
   const signal = _workflowNodeSignal(nodeSignal);
 
+  if (typeof _nodeGenBegin === 'function') _nodeGenBegin(node.id);
   try {
     let resp = null;
     const slotCall = _slotCallForWorkflowNode(node);
@@ -436,6 +441,10 @@ async function _generateCustomNode(node, nodeSignal) {
     _saveCustomNodes();
     _refreshWorkflowNodeStatusUi(live);
     if (err.name !== 'AbortError' && typeof showToast === 'function') showToast('生成失败：' + (err.message || err));
+  } finally {
+    // T341：流末尾 busy 已落 false，但 viz 归一/重试/版本收账还在跑——排队修订
+    // 要等整条生成链收尾才放行，否则仍会与收尾写入并发。
+    if (typeof _nodeGenEnd === 'function') _nodeGenEnd(node.id);
   }
 }
 

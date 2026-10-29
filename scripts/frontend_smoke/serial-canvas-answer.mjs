@@ -279,6 +279,95 @@ checkSq('排队连点去重（T280）：同颗节点同款活儿等待中只收�
   if (sqEval('_hasPendingSend()')) throw new Error('放行后队列没清空');
 });
 
+// ===== 串行边界追加：生成中带字修订（T341，2026-10-29）=====
+// 真机复现（慢速 mock、两路请求）：生成中走面板修订会当场起第二条流，content 被
+// 版本账清空后又被原流写回（卡面来回闪），中间态还被收成草稿版本；mock 计数显示
+// 两路请求重叠（maxActive=2）。修法＝node.busy 时收进队列、挂 waitNodeId，
+// 生成链收尾 _nodeGenEnd 后自动接管。下面两条钉住「忙时只排队、闲时照旧直跑」。
+checkSq('T341 节点生成中带字修订：只排队不抢跑，生成链收尾后自动接管', async () => {
+  sqReset();
+  sqEval('_regeneratingNodes.clear(); _nodeGenInFlight.clear(); _taskActive = []; _taskHistory = []; __t341regen = 0;');
+  const node = { id: 't341n', kind: 'module', moduleKey: 'physics', busy: true, status: 'running', content: '旧内容', versions: [], messageIndex: -1 };
+  const prevFind = sandbox._findGraphNode;
+  const prevRegen = sandbox._regenWorkflowNodeContent;
+  const prevSave = sandbox._saveCustomNodes;
+  const prevRefresh = sandbox._refreshWorkflowNodeStatusUi;
+  const prevRender = sandbox.renderGraphCanvas;
+  sandbox._findGraphNode = (id) => (String(id) === 't341n' ? node : null);
+  sandbox._regenWorkflowNodeContent = async () => { sqEval('__t341regen++;'); return '修订后的内容'; };
+  sandbox._saveCustomNodes = () => {};
+  sandbox._refreshWorkflowNodeStatusUi = () => {};
+  sandbox.renderGraphCanvas = () => {};
+  try {
+    // 复刻现场：节点正在流式生成（busy＋生成链在途标记），全局不忙
+    sqEval("_nodeGenBegin('t341n');");
+    await sqEval("_applyWorkflowNodeRegenerate('t341n', '换个说法')");
+    if (sqEval('__t341regen') !== 0) {
+      throw new Error('节点还在生成就起了修订流——两条流会交替写同一颗 content（T341 原症状）');
+    }
+    if (sqEval('_sendQueue.length') !== 1) throw new Error('修订没有进队列');
+    if (sqEval('_sendQueue[0].waitNodeId') !== 't341n') {
+      throw new Error('排队条目没挂 waitNodeId，放行时会撞上仍在写的节点');
+    }
+    const row = JSON.parse(sqEval('JSON.stringify(_taskActive[0] || null)'));
+    if (!row || row.state !== 'waiting') throw new Error('等待中的修订没在任务列表上记成「等待中」：' + JSON.stringify(row));
+    if (!row.replay || !row.replay.nodeJob || row.replay.nodeJob.text !== '换个说法') {
+      throw new Error('重放要求没带进任务账（失败后重试会丢用户写的话）：' + JSON.stringify(row));
+    }
+    // 全局空闲但节点还忙：flush 必须把它留在队首——shift 出去会被记成「进行中」
+    await sqEval('_flushSendQueue()');
+    if (sqEval('__t341regen') !== 0) throw new Error('节点还没收尾，flush 就把修订放了出去');
+    if (sqEval('_sendQueue.length') !== 1) throw new Error('flush 把等待中的条目移出队了');
+    if (JSON.parse(sqEval('JSON.stringify(_taskActive[0] || null)')).state !== 'waiting') {
+      throw new Error('flush 之后任务不再显示「等待中」');
+    }
+    // 生成链收尾：busy 落 false、marker 摘除——队列自动接管
+    node.busy = false;
+    await sqEval("_nodeGenEnd('t341n')");
+    if (sqEval('__t341regen') !== 1) throw new Error('生成收尾后修订没有接管（regen=' + sqEval('__t341regen') + '）');
+    if (sqEval('_sendQueue.length') !== 0) throw new Error('接管后队列没清空');
+    if (node.content !== '修订后的内容') throw new Error('修订内容没落到节点上');
+  } finally {
+    sandbox._findGraphNode = prevFind;
+    sandbox._regenWorkflowNodeContent = prevRegen;
+    sandbox._saveCustomNodes = prevSave;
+    sandbox._refreshWorkflowNodeStatusUi = prevRefresh;
+    sandbox.renderGraphCanvas = prevRender;
+    sqEval('_regeneratingNodes.clear(); _nodeGenInFlight.clear(); _taskActive = []; _taskHistory = [];');
+    sqReset();
+  }
+});
+
+checkSq('T341 节点空闲时带字修订：照旧直跑，不进队列', async () => {
+  sqReset();
+  sqEval('_regeneratingNodes.clear(); _nodeGenInFlight.clear(); _taskActive = []; _taskHistory = []; __t341regen = 0;');
+  const node = { id: 't341n', kind: 'module', moduleKey: 'physics', busy: false, status: 'done', content: '旧内容', versions: [], messageIndex: -1 };
+  const prevFind = sandbox._findGraphNode;
+  const prevRegen = sandbox._regenWorkflowNodeContent;
+  const prevSave = sandbox._saveCustomNodes;
+  const prevRefresh = sandbox._refreshWorkflowNodeStatusUi;
+  const prevRender = sandbox.renderGraphCanvas;
+  sandbox._findGraphNode = (id) => (String(id) === 't341n' ? node : null);
+  sandbox._regenWorkflowNodeContent = async () => { sqEval('__t341regen++;'); return '修订后的内容'; };
+  sandbox._saveCustomNodes = () => {};
+  sandbox._refreshWorkflowNodeStatusUi = () => {};
+  sandbox.renderGraphCanvas = () => {};
+  try {
+    await sqEval("_applyWorkflowNodeRegenerate('t341n', '换个说法')");
+    if (sqEval('__t341regen') !== 1) throw new Error('空闲时修订应直接起跑，实际 regen=' + sqEval('__t341regen'));
+    if (sqEval('_sendQueue.length') !== 0) throw new Error('空闲时修订不该进队列');
+    if (node.content !== '修订后的内容') throw new Error('修订内容没落到节点上');
+  } finally {
+    sandbox._findGraphNode = prevFind;
+    sandbox._regenWorkflowNodeContent = prevRegen;
+    sandbox._saveCustomNodes = prevSave;
+    sandbox._refreshWorkflowNodeStatusUi = prevRefresh;
+    sandbox.renderGraphCanvas = prevRender;
+    sqEval('_regeneratingNodes.clear(); _nodeGenInFlight.clear(); _taskActive = []; _taskHistory = [];');
+    sqReset();
+  }
+});
+
 // ===== 串行边界追加：工作流世界——跑动期间切画布不再换世界观（T313/T314/T315，2026-10-13）=====
 // 画布工作流的世界观过去＝「当前显示的画布」：graphView.nodes/edges、_graphState()、
 // SESSION_ID 全是现场读。新会话首问后切走画布，三条口子同时炸：
