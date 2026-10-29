@@ -3237,6 +3237,18 @@ html[data-theme="light"] .graph-node-fs,
   outline-offset: 3px;
 }
 
+/* T321 拖线类型对口点亮（2026-10-29）：拖拽端口带内容类型时，画布上同类型端口
+   的圆点亮一圈 accent 光环（graph-interact.js _applyLinkDragTypeHighlight 落类）。
+   纯视觉指引——类型绝不拦线（2026-10-10 连线自由化拍板），非对口端口照常可落。
+   光环用 accent 而非 --port-color：port-color 是节点身份色，点亮是「操作指引」
+   语义，两轴分开（同 T270 材质/颜色两轴的口径） */
+.graph-port.graph-port-type-match .graph-port-dot {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 38%, transparent) !important;
+}
+.graph-port.graph-port-type-match .graph-port-type {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent) !important;
+}
+
 /* ---------- Desktop pet + chat window ---------- */
 /* ---------- Φ 桌宠（harness 化身）+ chat window ---------- */
 .phi-pet-root {

@@ -377,6 +377,7 @@ function _startLinkDrag(event, portEl) {
   graphView.pointerId = event.pointerId;
   graphView.moved = false;
   graphCanvas?.classList.add('linking');
+  _applyLinkDragTypeHighlight();
   _redrawEdges();
 }
 
@@ -417,6 +418,33 @@ function _updateLinkDragHover(clientX, clientY) {
 
 function _clearLinkDragHover() {
   graphInner?.querySelectorAll('.graph-node.graph-link-drop-target').forEach(el => el.classList.remove('graph-link-drop-target'));
+}
+
+// T321 拖线类型对口点亮：拖拽端口带内容类型时（配方输出口 data-port-content-type /
+// 配方具名输入口 data-port-type），把画布上对口端口点亮——输出口拖拽点亮同类型
+// 输入口，输入口拖拽点亮同类型输出口。纯视觉指引：类型绝不拦线（2026-10-10 连线
+// 自由化拍板），非对口端口照常可落。拖拽开始时一次性点亮（拖动中流式重渲染会掉类，
+// 属可接受的瞬态缺口），结束统一清。注意与 _clearLinkDragHover 分开：后者每次
+// pointermove 都跑，会把拖拽开始时点亮的类立刻抹掉。
+function _applyLinkDragTypeHighlight() {
+  _clearLinkDragTypeHighlight();
+  const drag = graphView.linkDrag;
+  if (!drag || !drag.portMeta || !graphInner || typeof graphInner.querySelectorAll !== 'function') return;
+  let selector = '';
+  if (drag.mode === 'output' && drag.portMeta.contentType) {
+    selector = '.graph-input-port[data-port-type="' + drag.portMeta.contentType + '"]';
+  } else if (drag.mode === 'input' && drag.portMeta.type
+    && typeof RECIPE_PORT_TYPE_LABELS !== 'undefined' && RECIPE_PORT_TYPE_LABELS[drag.portMeta.type]) {
+    // 输入口的 data-port-type 就是内容类型轴（T263），输出口的在 data-port-content-type（T264）
+    selector = '.graph-output-port[data-port-content-type="' + drag.portMeta.type + '"]';
+  }
+  if (!selector) return;
+  graphInner.querySelectorAll(selector).forEach(el => el.classList.add('graph-port-type-match'));
+}
+
+function _clearLinkDragTypeHighlight() {
+  graphInner?.querySelectorAll('.graph-port.graph-port-type-match')
+    .forEach(el => el.classList.remove('graph-port-type-match'));
 }
 
 function _connectPorts(fromNodeId, fromPort, toNodeId, toPort) {
@@ -1443,6 +1471,30 @@ function graphAddInputPort(nodeId) {
   renderGraphCanvas();
 }
 
+// T266 附加输入口手动命名：双击端口起名，覆盖连线派生名并进喂料分路（与配方具名口
+// 同一条 input_port 通道）；留空提交＝撤销手动名、回到派生口径。持久化在
+// state.inputPortNames（键=节点id→'in-<下标>'，与 inputPortCounts 同族：消息派生
+// 节点的对象本体不入 state，挂 state 级 map 才能跨刷新存活）。权限与可删下限同
+// 加/删口——只有附加口可命名，基础口/配方具名口身份固定不开放。
+function graphRenameInputPort(nodeId, portIndex) {
+  const node = _findGraphNode(nodeId);
+  if (!node || !_nodeCanAddInputPorts(node)) return;
+  const minPort = node.isRoot ? 0 : _nodeBaseInputPortCount(node);
+  if (portIndex < minPort) return;
+  const state = _graphState();
+  const names = (state.inputPortNames && state.inputPortNames[nodeId]) || {};
+  const current = names['in-' + portIndex] || '';
+  const next = String(window.prompt('输入端口名称（≤24 字，留空恢复自动命名）：', current) || '').trim();
+  if (next === current) return;
+  _pushGraphUndo();
+  state.inputPortNames = state.inputPortNames || {};
+  state.inputPortNames[nodeId] = state.inputPortNames[nodeId] || {};
+  if (next) state.inputPortNames[nodeId]['in-' + portIndex] = next.slice(0, 24);
+  else delete state.inputPortNames[nodeId]['in-' + portIndex];
+  _saveGraphState(state);
+  renderGraphCanvas();
+}
+
 function graphRemoveInputPort(nodeId, portIndex) {
   const node = _findGraphNode(nodeId);
   // 端口机制统一：权限走统一门；可删下限与渲染同基（isRoot 根 answer 卡基础口为 0）
@@ -1464,6 +1516,20 @@ function graphRemoveInputPort(nodeId, portIndex) {
       return c;
     })
     .filter(Boolean);
+  // T266：手动名随口下标平移（删中间口后，排在后面的名字前移一位）；被删口的名字丢弃
+  if (state.inputPortNames && state.inputPortNames[nodeId]) {
+    const portNames = state.inputPortNames[nodeId];
+    delete portNames['in-' + portIndex];
+    Object.keys(portNames)
+      .map(key => parseInt(String(key).replace('in-', ''), 10) || 0)
+      .filter(idx => idx > portIndex)
+      .sort((a, b) => a - b)
+      .forEach(idx => {
+        portNames['in-' + (idx - 1)] = portNames['in-' + idx];
+        delete portNames['in-' + idx];
+      });
+    if (!Object.keys(portNames).length) delete state.inputPortNames[nodeId];
+  }
   _saveGraphState(state);
   renderGraphCanvas();
 }
@@ -2004,6 +2070,7 @@ function _endPointerDrag(event) {
       }
     }
     _clearLinkDragHover();
+    _clearLinkDragTypeHighlight();
     graphView.linkDrag = null;
     graphView.pointerId = null;
     graphView.panning = false;

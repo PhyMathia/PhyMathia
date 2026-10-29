@@ -153,7 +153,7 @@ function _graphProjectionOf(state, messages) {
     n: nodes,
     e: edges,
     g: JSON.stringify(groups),
-    p: JSON.stringify([clone.portCounts || {}, clone.inputPortCounts || {}]),
+    p: JSON.stringify([clone.portCounts || {}, clone.inputPortCounts || {}, clone.inputPortNames || {}]),
   };
 }
 

@@ -125,6 +125,8 @@
     // 仅靠 CSS 隐藏挡着，控制台仍可调；统一后更多节点带附加口，一并堵上
     graphRemoveOutputPort: '只读快照：不能增删端口',
     graphRemoveInputPort: '只读快照：不能增删端口',
+    // T266 手动命名：双击改名也是端口写操作，与增删口同族封堵
+    graphRenameInputPort: '只读快照：不能增删端口',
     _graphCtxDuplicateNode: '只读快照：不能复制出新节点',
     _graphCtxPasteNode: '只读快照：不能粘贴成新节点',
     _graphCtxCreateBlankNodeWithText: '只读快照：不能新建节点',
