@@ -332,7 +332,7 @@ const EXAMPLE_GUIDE_STEPS = [
     title: '输入端口：重连或断开',
     icon: UI_ICON_SVG.monitor,
     desc: '按住<strong>左侧输入端口</strong>拖动：拖到其他节点的输出端口可以重连来源；拖到空白处松手则断开当前输入。',
-    points: ['所有常驻节点都能点击 + 增加输入端口。', '加出来的端口先显示「待命名」，连上输出口后会自动改用它的名字。'],
+    points: ['所有常驻节点都能点击 + 增加输入端口。', '加出来的端口先显示「待命名」，连上输出口后会自动改用它的名字，双击端口也可以手动起名。'],
     target: '[data-node-id="demo-math"] .graph-input-port',
   },
   {

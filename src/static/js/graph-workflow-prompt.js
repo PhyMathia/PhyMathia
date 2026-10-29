@@ -650,11 +650,18 @@ function _buildWorkflowContextForNode(node) {
   // T263 喂料分路：目标配方声明了具名输入口时，上游条目标注「来自哪个输入口」，
   // 结构化载荷与内联文本都按口分组；未声明（旧配方/旧快照）不设键，载荷形状与今日一致
   const declaredInputs = (node.recipeId && typeof _recipeInputPorts === 'function') ? _recipeInputPorts(node) : [];
+  // T266：附加口手动名同走 input_port 通道（覆盖「其他输入」兜底；具名段下标不认，
+  // 与渲染层一致——手动名只写在附加段，配方改动后残留键不会顶掉声明名）。
+  // 未手动命名任何口时行为与旧版逐字节一致
   const typeLabels = typeof RECIPE_PORT_TYPE_LABELS !== 'undefined' ? RECIPE_PORT_TYPE_LABELS : {};
   const portMetaFor = (toPort) => {
-    if (!declaredInputs.length || !toPort) return null;
-    const m = /^in-(\d+)$/.exec(String(toPort));
-    if (!m) return null;
+    const m = /^in-(\d+)$/.exec(String(toPort || ''));
+    if (m) {
+      const idx = parseInt(m[1], 10);
+      const manual = typeof _manualInputPortName === 'function' ? _manualInputPortName(node, idx) : '';
+      if (manual && idx >= declaredInputs.length) return { label: manual, type: '' };
+    }
+    if (!declaredInputs.length || !toPort || !m) return null;
     const named = declaredInputs[parseInt(m[1], 10)];
     if (named) return { label: named.label, type: named.type || '' };
     return { label: '其他输入', type: '' };

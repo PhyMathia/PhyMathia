@@ -344,6 +344,17 @@ function _nodeInputLabel(node) {
 // 显示的名字与连线继承来的名字永远同一个口径。seen 是环路护栏：匿名口↔匿名口
 // 互为命名来源时会互相递归，访问过即回空白，由 _adoptedInputPortMeta 回落宿主
 // 品类标签兜底——已接线必有身份（2026-10-10 双匿名死锁修复），未连线仍待命名。
+// T266 手动命名读取：附加输入口的用户起名（state.inputPortNames，键=节点id→
+// 'in-<下标>'，graphRenameInputPort 写入）。渲染覆盖与喂料分路（portMetaFor）
+// 共用这一个读取口；_graphState 不可用（查看器早期/沙箱）时静默无名，回退派生口径。
+function _manualInputPortName(node, portIndex) {
+  if (!node || typeof _graphState !== 'function') return '';
+  let book = null;
+  try { book = _graphState().inputPortNames || null; } catch (e) { return ''; }
+  const names = book && book[String(node.id)];
+  return (names && names['in-' + portIndex]) || '';
+}
+
 function _nodeInputPortMeta(node, portIndex, seen) {
   seen = seen || new Set();
   const key = String(node && node.id) + ':in-' + portIndex;
@@ -357,6 +368,10 @@ function _nodeInputPortMeta(node, portIndex, seen) {
   const baseCount = (node && node.isRoot) ? 0 : _nodeBaseInputPortCount(node);
   if (portIndex >= baseCount) {
     const adopted = _adoptedInputPortMeta(node, portIndex, seen);
+    // T266 手动命名：用户双击起的名字覆盖连线派生名；类型仍随连线走——名字是
+    // 用户意图、类型是来源事实，两轴不混
+    const manual = _manualInputPortName(node, portIndex);
+    if (manual) return { label: manual, type: (adopted && adopted.type) || '', manual: true };
     return adopted ? { label: adopted.label, type: adopted.type } : { label: '', type: '' };
   }
   return { label: _nodeInputLabel(node), type: '' };
@@ -572,11 +587,17 @@ function _renderInputPorts(node, state) {
     const portTitle = named
       ? '输入「' + label + '」' + (typeLabel ? '（' + typeLabel + '）' : '') + '：可连接任意来源（类型仅作标注）'
       : (isAdditional
-        ? (label
-          ? '输入「' + label + '」：名字与类型来自所连输出口'
-          : '待命名的输入端口：连到某个输出口后，将采用该端口的名字与类型')
+        ? (inputMeta.manual
+          ? '输入「' + label + '」（手动命名）：双击端口可改名；类型来自所连输出口'
+          : (label
+            ? '输入「' + label + '」：名字与类型来自所连输出口；双击端口可手动命名'
+            : '待命名的输入端口：连到某个输出口后，将采用该端口的名字与类型；也可双击端口先手动命名'))
         : (node.kind === 'user' || node.kind === 'human_note' ? '任意输入端口：可连接任意来源' : '输入端口：拖到右侧输出可重连来源'));
-    html += '<div class="graph-port graph-input-port' + anyClass + '" data-node-id="' + node.id + '" data-port-id="in-' + i + '" data-attribute="' + portAttr + '"'
+    // T266：附加口双击手动命名（覆盖连线派生名并进喂料语义）；基础口/具名口身份固定不开放
+    const renameAttr = (isAdditional && canAddInput)
+      ? ' ondblclick="event.stopPropagation();graphRenameInputPort(\'' + node.id + '\',' + i + ')"'
+      : '';
+    html += '<div class="graph-port graph-input-port' + anyClass + '" data-node-id="' + node.id + '" data-port-id="in-' + i + '" data-attribute="' + portAttr + '"' + renameAttr
       + (named ? ' data-port-label="' + encodeURIComponent(label) + '"' + (typeKey ? ' data-port-type="' + typeKey + '"' : '') : '')
       + ' style="--port-color:' + portColor + ';" title="' + escapeHtml(portTitle) + '">'
       + '<span class="graph-port-dot"></span><span class="graph-port-label' + blankClass + '">' + escapeHtml(shownLabel) + '</span>'

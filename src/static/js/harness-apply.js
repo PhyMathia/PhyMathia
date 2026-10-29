@@ -120,6 +120,7 @@
       delete state.sizes[id];
       delete state.pinned[id];
       delete state.inputPortCounts[id];
+      if (state.inputPortNames) delete state.inputPortNames[id];
       return;
     }
     if (name === 'add_edge') {
@@ -347,6 +348,7 @@
         delete state.sizes[id];
         delete state.pinned[id];
         delete state.inputPortCounts[id];
+        if (state.inputPortNames) delete state.inputPortNames[id];
       });
     }
     state.harnessCheckpoint = {
@@ -795,6 +797,7 @@
       delete state.sizes[id];
       delete state.pinned[id];
       delete state.inputPortCounts[id];
+      if (state.inputPortNames) delete state.inputPortNames[id];
     });
     if (typeof window.saveGraphState === 'function') window.saveGraphState(_sessionId(), state);
     if (typeof window.flushGraphStateServerSave === 'function') window.flushGraphStateServerSave();

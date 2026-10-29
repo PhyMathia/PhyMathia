@@ -1676,6 +1676,209 @@ check('T266 追补（真机缺口）：连线/断线/删边必须触发整画布
   return true;
 });
 
+check('T266 手动命名（渲染）：双击起名覆盖派生名、类型仍随连线、未连线也显示、具名口不开放改名', () => {
+  const realEsc = sandbox.escapeHtml;
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
+  const prevGet = sandbox.window.getGraphState, prevSid = sandbox.window.getCurrentSessionId;
+  // r1：配方节点，声明 in-0「力一/text」＋ inputPortCounts 撑出附加 in-1（手动名挂附加段）
+  const recipeNode = { id: 'r1', kind: 'module', recipeId: 'rec1', recipe: { name: '矢量合成', ports: { inputs: [{ label: '力一', type: 'text' }] } }, messageIndex: -1, timestamp: 2 };
+  const moduleNode = { id: 'm1', kind: 'module', moduleKey: 'physics', messageIndex: -1, timestamp: 1 };
+  const state = () => ({ portCounts: { m1: 2 }, inputPortCounts: { r1: 1 }, inputPortNames: { r1: { 'in-1': '力学材料' } } });
+  sandbox.window.getGraphState = () => state();
+  sandbox.window.getCurrentSessionId = () => 'sess_t266_name';
+  vm.runInContext('graphView.edges = []; graphView.nodeById = { r1: null, m1: null };', sandbox);
+  try {
+    // 1. 已连线＋手动名：标签用手动名、tooltip 标注手动命名、双击属性只挂附加口
+    vm.runInContext('graphView.edges = [{ from: "m1", fromPort: "out-1", to: "r1", toPort: "in-1" }];', sandbox);
+    let html = String(sandbox._renderInputPorts(recipeNode, state()));
+    if (!html.includes('>力学材料</span>')) throw new Error('手动名应覆盖派生名显示');
+    if (!html.includes('（手动命名）')) throw new Error('手动名口 tooltip 应标注「（手动命名）」');
+    if ((html.split('graphRenameInputPort').length - 1) !== 1) throw new Error('双击改名属性只应挂在附加口（in-1）');
+    if (!html.includes('>力一</span>') || !html.includes('data-port-type="text"')) throw new Error('具名口「力一」应保持原名与类型徽标');
+
+    // 2. 未连线：手动名仍然显示（名字是用户意图，不依赖连线）
+    vm.runInContext('graphView.edges = [];', sandbox);
+    html = String(sandbox._renderInputPorts(recipeNode, state()));
+    if (!html.includes('>力学材料</span>')) throw new Error('未连线的手动名也应显示');
+
+    // 3. 撤掉手动名（inputPortNames 清空）：回到派生口径，手动 tooltip 消失
+    const bare = () => ({ portCounts: { m1: 2 }, inputPortCounts: { r1: 1 }, inputPortNames: {} });
+    sandbox.window.getGraphState = bare;
+    vm.runInContext('graphView.edges = [{ from: "m1", fromPort: "out-1", to: "r1", toPort: "in-1" }];', sandbox);
+    html = String(sandbox._renderInputPorts(recipeNode, bare()));
+    if (html.includes('>力学材料</span>')) throw new Error('清空手动名后不应残留');
+    if (html.includes('（手动命名）')) throw new Error('非手动口不应带「（手动命名）」tooltip');
+  } finally {
+    sandbox.escapeHtml = realEsc;
+    sandbox.window.getGraphState = prevGet;
+    sandbox.window.getCurrentSessionId = prevSid;
+    vm.runInContext('graphView.edges = []; graphView.nodeById = {};', sandbox);
+  }
+  return true;
+});
+
+check('T266 手动命名（graphRenameInputPort）：写入/清空即撤销/同值不动/具名口越界拒绝', () => {
+  const prevGet = sandbox.window.getGraphState, prevSave = sandbox.window.saveGraphState, prevSid = sandbox.window.getCurrentSessionId;
+  const prevPrompt = sandbox.window.prompt;
+  const realRender = sandbox.renderGraphCanvas;
+  let renderCalls = 0;
+  sandbox.renderGraphCanvas = () => { renderCalls += 1; };
+  const emptyState = () => ({ collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9, layoutVersion: 1, connections: null, removedEdges: [], portCounts: {}, inputPortCounts: { r1: 2 }, inputPortNames: {}, groups: [], customNodes: [], harnessDeleted: {}, harnessCheckpoint: null });
+  let mem = emptyState();
+  sandbox.window.getGraphState = () => mem;
+  sandbox.window.saveGraphState = (_sid, state) => { mem = state; };
+  sandbox.window.getCurrentSessionId = () => 'sess_t266_rename';
+  const recipeNode = { id: 'r1', kind: 'module', recipeId: 'rec1', recipe: { name: '矢量合成', ports: { inputs: [{ label: '力一', type: 'text' }] } }, messageIndex: -1, timestamp: 2 };
+  vm.runInContext('graphView.nodes = [' + JSON.stringify(recipeNode) + ']; graphView.nodeById = { r1: graphView.nodes[0] };', sandbox);
+  let promptCalls = 0;
+  try {
+    sandbox.window.prompt = (msg, def) => { promptCalls += 1; return '力学上游'; };
+    sandbox.graphRenameInputPort('r1', 1);
+    if (!mem.inputPortNames || !mem.inputPortNames.r1 || mem.inputPortNames.r1['in-1'] !== '力学上游') throw new Error('改名应写入 state.inputPortNames');
+    if (renderCalls !== 1) throw new Error('改名后应重渲染');
+    // 同值提交：不动（不推撤销、不重渲染）
+    sandbox.window.prompt = () => '力学上游';
+    sandbox.graphRenameInputPort('r1', 1);
+    if (renderCalls !== 1) throw new Error('同值提交不应触发保存');
+    // 留空＝撤销手动名，回派生口径
+    sandbox.window.prompt = () => '   ';
+    sandbox.graphRenameInputPort('r1', 1);
+    if (mem.inputPortNames.r1 && mem.inputPortNames.r1['in-1']) throw new Error('留空应删除手动名');
+    // 具名口（in-0 声明段）拒绝：不弹 prompt
+    sandbox.window.prompt = () => { promptCalls += 1; return '越权名'; };
+    sandbox.graphRenameInputPort('r1', 0);
+    if (promptCalls !== 1) throw new Error('具名口不应弹改名 prompt');
+  } finally {
+    sandbox.window.prompt = prevPrompt;
+    sandbox.renderGraphCanvas = realRender;
+    sandbox.window.getGraphState = prevGet;
+    sandbox.window.saveGraphState = prevSave;
+    sandbox.window.getCurrentSessionId = prevSid;
+    vm.runInContext('graphView.nodes = []; graphView.nodeById = {};', sandbox);
+  }
+  return true;
+});
+
+check('T266 手动命名（删口平移）：删中间附加口后，排在后面的手动名前移一位', () => {
+  const prevGet = sandbox.window.getGraphState, prevSave = sandbox.window.saveGraphState, prevSid = sandbox.window.getCurrentSessionId;
+  const realRender = sandbox.renderGraphCanvas;
+  let renderCalls = 0;
+  sandbox.renderGraphCanvas = () => { renderCalls += 1; };
+  const moduleNode = { id: 'm2', kind: 'module', moduleKey: 'physics', messageIndex: -1, timestamp: 1 };
+  let mem = { collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9, layoutVersion: 1, connections: null, removedEdges: [], portCounts: {}, inputPortCounts: { m2: 3 }, inputPortNames: { m2: { 'in-1': '甲', 'in-2': '乙' } }, groups: [], customNodes: [], harnessDeleted: {}, harnessCheckpoint: null };
+  sandbox.window.getGraphState = () => mem;
+  sandbox.window.saveGraphState = (_sid, state) => { mem = state; };
+  sandbox.window.getCurrentSessionId = () => 'sess_t266_shift';
+  vm.runInContext('graphView.nodes = [' + JSON.stringify(moduleNode) + ']; graphView.nodeById = { m2: graphView.nodes[0] };', sandbox);
+  try {
+    sandbox.graphRemoveInputPort('m2', 1);
+    if ((mem.inputPortCounts.m2 || 0) !== 2) throw new Error('删口后附加数应减一');
+    const names = (mem.inputPortNames || {}).m2 || {};
+    if (names['in-1'] !== '乙' || names['in-2'] !== undefined) throw new Error('手动名应随下标前移（in-2→in-1）');
+  } finally {
+    sandbox.renderGraphCanvas = realRender;
+    sandbox.window.getGraphState = prevGet;
+    sandbox.window.saveGraphState = prevSave;
+    sandbox.window.getCurrentSessionId = prevSid;
+    vm.runInContext('graphView.nodes = []; graphView.nodeById = {};', sandbox);
+  }
+  return true;
+});
+
+check('T266 手动命名（喂料）：portMetaFor 认手动名进 input_port 通道，清空回落「其他输入」/无标注', () => {
+  const prevGet = sandbox.window.getGraphState, prevSid = sandbox.window.getCurrentSessionId;
+  const recipeNode = { id: 'r1', kind: 'module', recipeId: 'rec1', recipe: { name: '矢量合成', ports: { inputs: [{ label: '力一', type: 'text' }] } }, messageIndex: -1, timestamp: 2 };
+  const moduleNode = { id: 'm1', kind: 'module', moduleKey: 'physics', messageIndex: -1, timestamp: 1 };
+  const summaryNode = { id: 's9', kind: 'summary', messageIndex: -1, timestamp: 3 };
+  let mem = { collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9, layoutVersion: 1, connections: [{ from: 'm1', fromPort: 'out-0', to: 'r1', toPort: 'in-1' }, { from: 'm1', fromPort: 'out-0', to: 's9', toPort: 'in-1' }], removedEdges: [], portCounts: {}, inputPortCounts: { r1: 2, s9: 2 }, inputPortNames: { r1: { 'in-1': '力学材料' }, s9: { 'in-1': '重点材料' } }, groups: [], customNodes: [], harnessDeleted: {}, harnessCheckpoint: null };
+  sandbox.window.getGraphState = () => mem;
+  sandbox.window.getCurrentSessionId = () => 'sess_t266_feed';
+  vm.runInContext('graphView.nodes = [' + JSON.stringify(moduleNode) + ',' + JSON.stringify(recipeNode) + ',' + JSON.stringify(summaryNode) + '];'
+    + 'graphView.nodeById = { m1: graphView.nodes[0], r1: graphView.nodes[1], s9: graphView.nodes[2] }; graphView.defaultEdges = [];'
+    // _workflowEdgeTable 读 graphView.edges（已解析边表），不读 state.connections
+    + 'graphView.edges = [{ from: "m1", fromPort: "out-0", to: "r1", toPort: "in-1" }, { from: "m1", fromPort: "out-0", to: "s9", toPort: "in-1" }];', sandbox);
+  try {
+    // 上游条目不带 id（_workflowUpstreamEntry 形状），按来源模块定位 m1
+    // 1. 配方节点：附加口手动名覆盖「其他输入」兜底
+    let ctx = sandbox._buildWorkflowContextForNode(recipeNode);
+    const feedR1 = (ctx.upstream || []).find(item => item.kind === 'module' && item.module === 'physics');
+    if (!feedR1 || feedR1.input_port !== '力学材料') throw new Error('配方附加口手动名应进 input_port');
+    // 2. 非配方节点（summary）：手动名同样激活分路标注
+    ctx = sandbox._buildWorkflowContextForNode(summaryNode);
+    const feedS9 = (ctx.upstream || []).find(item => item.kind === 'module' && item.module === 'physics');
+    if (!feedS9 || feedS9.input_port !== '重点材料') throw new Error('非配方节点手动名应进 input_port');
+    // 3. 清空手动名：配方节点回落「其他输入」、非配方节点回到无标注（形状与旧版一致）
+    mem.inputPortNames = {};
+    ctx = sandbox._buildWorkflowContextForNode(recipeNode);
+    if (((ctx.upstream || []).find(item => item.kind === 'module' && item.module === 'physics') || {}).input_port !== '其他输入') throw new Error('清空后配方附加口应回落「其他输入」');
+    ctx = sandbox._buildWorkflowContextForNode(summaryNode);
+    if ('input_port' in ((ctx.upstream || []).find(item => item.kind === 'module' && item.module === 'physics') || {})) throw new Error('清空后非配方节点应回到无 input_port 标注');
+  } finally {
+    sandbox.window.getGraphState = prevGet;
+    sandbox.window.getCurrentSessionId = prevSid;
+    vm.runInContext('graphView.nodes = []; graphView.nodeById = {}; graphView.defaultEdges = []; graphView.edges = [];', sandbox);
+  }
+  return true;
+});
+
+check('T321 拖线类型点亮：带内容类型的拖拽点亮对口端口、双向各一轴、无类型不亮、收尾清类', () => {
+  const realInner = vm.runInContext('graphInner', sandbox);
+  const makeEl = () => { const s = new Set(); return { classes: s, classList: { add: c => s.add(c), remove: c => s.delete(c) } }; };
+  try {
+    // 1. 输出口拖拽带 contentType：点亮同内容类型的输入口
+    const inEl = makeEl();
+    sandbox.__smokeTypeEl = inEl;
+    vm.runInContext('graphInner = { querySelectorAll: function () { return [__smokeTypeEl]; } };'
+      + 'graphView.linkDrag = { mode: "output", nodeId: "x", portMeta: { contentType: "diagram" } };', sandbox);
+    sandbox._applyLinkDragTypeHighlight();
+    if (!inEl.classes.has('graph-port-type-match')) throw new Error('diagram 拖拽应点亮 data-port-type="diagram" 的输入口');
+    // 2. 输入口拖拽带内容类型（具名口 data-port-type）：点亮同类型输出口
+    const outEl = makeEl();
+    sandbox.__smokeTypeEl = outEl;
+    vm.runInContext('graphView.linkDrag = { mode: "input", nodeId: "x", portMeta: { type: "html" } };', sandbox);
+    sandbox._applyLinkDragTypeHighlight();
+    if (!outEl.classes.has('graph-port-type-match')) throw new Error('html 输入口拖拽应点亮 data-port-content-type="html" 的输出口');
+    // 3. 无内容类型：不点亮任何人
+    const idleEl = makeEl();
+    sandbox.__smokeTypeEl = idleEl;
+    vm.runInContext('graphView.linkDrag = { mode: "output", nodeId: "x", portMeta: { contentType: "" } };', sandbox);
+    sandbox._applyLinkDragTypeHighlight();
+    if (idleEl.classes.size !== 0) throw new Error('无内容类型不应点亮');
+    // 4. 收尾清类
+    sandbox.__smokeTypeEl = inEl;
+    vm.runInContext('graphView.linkDrag = { mode: "output", nodeId: "x", portMeta: { contentType: "text" } };', sandbox);
+    sandbox._applyLinkDragTypeHighlight();
+    sandbox._clearLinkDragTypeHighlight();
+    if (inEl.classes.has('graph-port-type-match')) throw new Error('清类后不应残留 graph-port-type-match');
+  } finally {
+    delete sandbox.__smokeTypeEl;
+    vm.runInContext('graphView.linkDrag = null; graphInner = ' + JSON.stringify(realInner === undefined ? null : realInner) + ';', sandbox);
+  }
+  return true;
+});
+
+check('T266/T321 静态契约：改名插点/喂料读取/删口平移/viewer 只读桩/点亮挂钩与 CSS 在位', () => {
+  const interactSrc = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
+  if (!interactSrc.includes('function graphRenameInputPort')) throw new Error('graphRenameInputPort 函数缺失');
+  if (!interactSrc.includes('_applyLinkDragTypeHighlight();')) throw new Error('_startLinkDrag 应挂类型点亮');
+  if (!interactSrc.includes('_clearLinkDragTypeHighlight();')) throw new Error('拖拽收尾应清类型点亮');
+  if (!interactSrc.includes('手动名随口下标平移')) throw new Error('删口应平移手动名');
+  const renderSrc = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
+  if (!renderSrc.includes('function _manualInputPortName')) throw new Error('手动名读取口缺失');
+  if (!renderSrc.includes('graphRenameInputPort')) throw new Error('输入口渲染缺双击改名插点');
+  const promptSrc = fs.readFileSync('src/static/js/graph-workflow-prompt.js', 'utf8');
+  if (!promptSrc.includes('_manualInputPortName(node, idx)')) throw new Error('portMetaFor 未接手动名');
+  const applySrc = fs.readFileSync('src/static/js/harness-apply.js', 'utf8');
+  if ((applySrc.match(/delete state\.inputPortNames\[id\]/g) || []).length !== 3) throw new Error('harness 删节点三路应同清 inputPortNames');
+  const viewerSrc = fs.readFileSync('src/static/js/viewer-main.js', 'utf8');
+  if (!viewerSrc.includes("graphRenameInputPort: '只读快照：不能增删端口'")) throw new Error('viewer 只读桩缺 graphRenameInputPort');
+  const cssSrc = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  if (!cssSrc.includes('.graph-port.graph-port-type-match .graph-port-dot')) throw new Error('类型点亮 CSS 缺失');
+  const onboardingSrc = fs.readFileSync('src/static/js/ui-onboarding.js', 'utf8');
+  if (!onboardingSrc.includes('双击端口也可以手动起名')) throw new Error('引导文案未提手动命名');
+  return true;
+});
+
 check('待命名口拖空开节点菜单（2026-10-10 拍板）：不再预设提问卡，选中即自动连回源口，取消即清挂起', () => {
   const prevGet = sandbox.window.getGraphState, prevSave = sandbox.window.saveGraphState, prevSid = sandbox.window.getCurrentSessionId;
   const realRender = sandbox.renderGraphCanvas;
