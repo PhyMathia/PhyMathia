@@ -1,5 +1,4 @@
 node_modules
-dist
 .DS_Store
 *.swp
 .git/*
@@ -109,7 +108,6 @@ html/
 # 已于 2026-10-24 迁出仓库根＝../PhyMathia-归档/experiments/，死行随删；
 # baseline/＝视觉与嵌入基线留根勿挪；录屏/演示视频＝旧落盘位，2026-10-24 T399 已迁出仓库根＝../PhyMathia-归档/
 /.tmp/
-/windows_deploy/
 
 # 本地工具与缓存（2026-08-24）
 .npm-cache/
@@ -154,7 +152,6 @@ data/embedding_cache.json
 /style_debt.json
 /skills-lock.json
 /PhyMathia.desktop
-/build_exe.ps1
 
 # T378：app.js.map 每次前端构建全量变化（约 4MB），不入库；跑过 build:js 的机器必有
 src/static/js/app.js.map
