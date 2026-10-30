@@ -1590,22 +1590,54 @@ function _applyModelListDiff(provider, baseUrl, addedEntries, removedModelIds) {
   return { added: addedCount, removed: removedCount };
 }
 
-// 当前更新会话的上下文：{ provider, baseUrl, diff }；异步回包时靠引用比对弃用过期结果
+// 纯判定（无 DOM，冒烟直测）：更新弹窗「应用更新」何时可用。
+// keyChanged 只在输入非空且与已保存组密钥不同时为真——留空＝沿用已保存密钥，
+// 避免把空串当「清空」（清空仍走模型面板组头输入框的确认流程）。
+function _modelUpdateApplyState(savedKey, typedKey, diff) {
+  const saved = String(savedKey == null ? '' : savedKey).trim();
+  const typed = String(typedKey == null ? '' : typedKey).trim();
+  const added = Array.isArray(diff && diff.added) ? diff.added.length : 0;
+  const removed = Array.isArray(diff && diff.removed) ? diff.removed.length : 0;
+  const keyChanged = !!typed && typed !== saved;
+  const hasDiff = !!(added || removed);
+  return { keyChanged, hasDiff, canApply: keyChanged || hasDiff };
+}
+
+// 当前更新会话的上下文：{ provider, baseUrl, diff, fetching }；异步回包时靠引用比对弃用过期结果
 let _modelUpdateCtx = null;
+
+// 应用按钮可用态统一出口：拉取在途一律禁用；密钥有改动或存在 diff 才可点。
+function _syncModelUpdateApplyBtn() {
+  const ctx = _modelUpdateCtx;
+  const applyBtn = document.getElementById('umApplyBtn');
+  if (!applyBtn) return;
+  if (!ctx || ctx.fetching) { applyBtn.disabled = true; return; }
+  const keyEl = document.getElementById('umApiKey');
+  const typed = keyEl ? keyEl.value : '';
+  applyBtn.disabled = !_modelUpdateApplyState(getGroupKey(ctx.provider), typed, ctx.diff).canApply;
+}
+
+// 输入即刷新按钮态：填了新钥后「应用更新」立刻可点（保存并重取），不再无反应。
+function onUmModelKeyInput() {
+  _syncModelUpdateApplyBtn();
+}
 
 function openModelListUpdate(provider) {
   const entry = userModelConfigs.find(m => m.provider === provider);
   if (!entry) return;
   const baseUrl = entry.baseUrl || MODEL_PRESETS[provider]?.baseUrl || '';
   if (!baseUrl) { alert('该分组没有可用的 API 地址，请先在单个模型配置里补上'); return; }
-  _modelUpdateCtx = { provider, baseUrl, diff: null };
+  _modelUpdateCtx = { provider, baseUrl, diff: null, fetching: false };
   document.getElementById('umGroupTitle').textContent = MODEL_PRESETS[provider]?.name || provider;
+  const keyEl = document.getElementById('umApiKey');
+  if (keyEl) keyEl.value = getGroupKey(provider);
   document.getElementById('umNewSection').hidden = true;
   document.getElementById('umStaleSection').hidden = true;
   document.getElementById('umSameNote').hidden = true;
   document.getElementById('umNewList').innerHTML = '';
   document.getElementById('umStaleList').innerHTML = '';
   document.getElementById('updateModelsDialog').classList.add('show');
+  _syncModelUpdateApplyBtn();
   _fetchModelListForUpdate();
 }
 
@@ -1625,12 +1657,16 @@ async function _fetchModelListForUpdate() {
   const fetchBtn = document.getElementById('umFetchBtn');
   const applyBtn = document.getElementById('umApplyBtn');
   const statusEl = document.getElementById('umFetchStatus');
+  const keyEl = document.getElementById('umApiKey');
+  const typedAtStart = String((keyEl && keyEl.value) || '').trim();
+  ctx.fetching = true;
   statusEl.textContent = '正在从上游获取模型列表…';
   statusEl.classList.remove('um-fetch-error');
   if (fetchBtn) fetchBtn.disabled = true;
   if (applyBtn) applyBtn.disabled = true;
   try {
-    const apiKey = getGroupKey(provider) || (userModelConfigs.find(m => m.provider === provider)?.apiKey) || '';
+    // 弹窗里填的新钥优先；留空才沿用已保存的组密钥/首条目密钥
+    const apiKey = typedAtStart || getGroupKey(provider) || (userModelConfigs.find(m => m.provider === provider)?.apiKey) || '';
     const resp = await fetch('/api/models/list', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1640,6 +1676,13 @@ async function _fetchModelListForUpdate() {
     if (!resp.ok) throw new Error(data.detail || `API ${resp.status}`);
     // 回包时弹窗已关或已换分组 → 弃用（与添加弹窗「异步期间切换则弃用」同守卫）
     if (_modelUpdateCtx !== ctx || !document.getElementById('updateModelsDialog').classList.contains('show')) return;
+    // 拉取期间用户改了密钥：旧回包按旧钥算，弃用，等用户重新获取
+    const typedNow = String((document.getElementById('umApiKey') || {}).value || '').trim();
+    if (typedNow !== typedAtStart) {
+      statusEl.textContent = '分组密钥已更换，请重新获取模型列表。';
+      statusEl.classList.remove('um-fetch-error');
+      return;
+    }
     const existing = userModelConfigs.filter(m => m.provider === provider).map(m => m.model);
     const diff = diffUpstreamModels(existing, data.models || []);
     ctx.diff = diff;
@@ -1647,10 +1690,14 @@ async function _fetchModelListForUpdate() {
     _renderUpdateDialog(provider, diff, (data.models || []).length, ctx.meta);
   } catch (e) {
     if (_modelUpdateCtx !== ctx) return;
-    statusEl.textContent = `获取失败：${e.message}（可点「重新获取」重试）`;
+    statusEl.textContent = `获取失败：${e.message}（可在上方「分组密钥」框填写新密钥后重试）`;
     statusEl.classList.add('um-fetch-error');
   } finally {
     if (fetchBtn) fetchBtn.disabled = false;
+    if (_modelUpdateCtx === ctx) {
+      ctx.fetching = false;
+      _syncModelUpdateApplyBtn();
+    }
   }
 }
 
@@ -1684,8 +1731,7 @@ function _renderUpdateDialog(provider, diff, upstreamTotal, meta) {
     document.getElementById('umStaleCount').textContent = String(diff.removed.length);
     document.getElementById('umStaleList').innerHTML = diff.removed.map(id => _presetModelRowHtml(id, localLabelOf(id), false)).join('');
   }
-  const applyBtn = document.getElementById('umApplyBtn');
-  if (applyBtn) applyBtn.disabled = !(diff.added.length || diff.removed.length);
+  _syncModelUpdateApplyBtn();
 }
 
 // 小节头「全选」复选框：只管自己小节里的行
@@ -1695,21 +1741,58 @@ function toggleUmSectionAll(listId, checked) {
 
 function applyModelListUpdate() {
   const ctx = _modelUpdateCtx;
-  if (!ctx || !ctx.diff) return;
+  if (!ctx || ctx.fetching) return;
   const provider = ctx.provider;
-  const addedEntries = Array.from(document.querySelectorAll('#umNewList input[type="checkbox"]:checked')).map(cb => {
-    const id = cb.value;
-    return { model: id, label: (MODEL_PRESETS[provider]?.models || []).find(m => m.id === id)?.label || '' };
-  });
-  const removedIds = Array.from(document.querySelectorAll('#umStaleList input[type="checkbox"]:checked')).map(cb => cb.value);
-  if (!addedEntries.length && !removedIds.length) { closeModelListUpdate(); return; }
-  const res = _applyModelListDiff(provider, ctx.baseUrl, addedEntries, removedIds);
-  closeModelListUpdate();
-  renderModelList();
-  renderModelSelects();
-  if (typeof showToast === 'function') {
-    showToast(`已更新「${MODEL_PRESETS[provider]?.name || provider}」：新增 ${res.added} 个，移除 ${res.removed} 个`);
+  const statusEl = document.getElementById('umFetchStatus');
+  const keyEl = document.getElementById('umApiKey');
+  const typedKey = String((keyEl && keyEl.value) || '').trim();
+  const state = _modelUpdateApplyState(getGroupKey(provider), typedKey, ctx.diff);
+  if (!state.canApply) {
+    statusEl.textContent = '没有可应用的变更：请在上方填写新密钥，或先「重新获取」并勾选模型增删。';
+    statusEl.classList.remove('um-fetch-error');
+    return;
   }
+  // 先落密钥：新增模型经 addModelsForProvider 继承的正是组密钥
+  if (state.keyChanged) saveGroupKey(provider, typedKey);
+  if (state.hasDiff) {
+    const addedEntries = Array.from(document.querySelectorAll('#umNewList input[type="checkbox"]:checked')).map(cb => {
+      const id = cb.value;
+      return { model: id, label: (MODEL_PRESETS[provider]?.models || []).find(m => m.id === id)?.label || '' };
+    });
+    const removedIds = Array.from(document.querySelectorAll('#umStaleList input[type="checkbox"]:checked')).map(cb => cb.value);
+    if (!addedEntries.length && !removedIds.length) {
+      if (state.keyChanged) {
+        statusEl.textContent = '分组密钥已保存；请先勾选要加入或移除的模型，或点「取消」关闭弹窗。';
+        statusEl.classList.remove('um-fetch-error');
+        _syncModelUpdateApplyBtn();
+        return;
+      }
+      closeModelListUpdate();
+      return;
+    }
+    const res = _applyModelListDiff(provider, ctx.baseUrl, addedEntries, removedIds);
+    closeModelListUpdate();
+    renderModelList();
+    renderModelSelects();
+    if (typeof showToast === 'function') {
+      showToast(`已更新「${MODEL_PRESETS[provider]?.name || provider}」：新增 ${res.added} 个，移除 ${res.removed} 个${state.keyChanged ? '，分组密钥已更新' : ''}`);
+    }
+    return;
+  }
+  // 只改了密钥：本次已成功拉过且与上游一致 → 保存即完成；否则保存后自动重试
+  if (ctx.diff) {
+    closeModelListUpdate();
+    renderModelList();
+    renderModelSelects();
+    if (typeof showToast === 'function') {
+      showToast(`「${MODEL_PRESETS[provider]?.name || provider}」分组密钥已保存，模型列表与上游一致`);
+    }
+    return;
+  }
+  statusEl.textContent = '分组密钥已保存，正在重新获取模型列表…';
+  statusEl.classList.remove('um-fetch-error');
+  if (typeof showToast === 'function') showToast('分组密钥已保存');
+  _fetchModelListForUpdate();
 }
 
 async function proxyChatWithModel(model, body, signal) {

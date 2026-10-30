@@ -256,7 +256,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=8ced6ab4" defer></script>
+  <script src="/js/app.js?v=011b6703" defer></script>
   <script>
     // app.js 改 defer 后本脚本先于它执行，而 APP_VERSION 是 config.js 的顶层
     // const——内联脚本无法加 defer，只能等 DOMContentLoaded：所有 defer 脚本
@@ -598,6 +598,10 @@
   <div class="model-dialog-overlay" id="updateModelsDialog">
     <div class="model-dialog model-dialog-add aurora-glass aurora-glass--dialog">
       <h3>更新模型列表 — <span id="umGroupTitle"></span></h3>
+      <div class="md-field">
+        <label for="umApiKey">分组密钥 <span style="color:var(--text-secondary);font-size:11px">（同组模型共用；留空沿用已保存密钥）</span></label>
+        <input type="password" id="umApiKey" placeholder="sk-..." autocomplete="new-password" spellcheck="false" data-lpignore="true" oninput="onUmModelKeyInput()">
+      </div>
       <div class="um-status-line">
         <span class="am-fetch-status" id="umFetchStatus"></span>
         <button type="button" class="am-mini-btn" id="umFetchBtn" onclick="refetchModelListUpdate()">↻ 重新获取</button>
