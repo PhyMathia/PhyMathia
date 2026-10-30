@@ -336,11 +336,11 @@ check('model-key-guard：回包补钥只填空位（服务端合并后本地镜�
 
 
 check('model-update：组级更新接线（组头 ↻ 按钮 + 更新弹窗 + diff/应用函数）静态断言', () => {
-  for (const t of ['openModelListUpdate', 'refetchModelListUpdate', 'closeModelListUpdate', 'applyModelListUpdate', 'diffUpstreamModels', '_applyModelListDiff', '_fetchModelListForUpdate', 'toggleUmSectionAll', 'model-group-refresh', 'updateModelsDialog']) {
+  for (const t of ['openModelListUpdate', 'refetchModelListUpdate', 'closeModelListUpdate', 'applyModelListUpdate', 'diffUpstreamModels', '_applyModelListDiff', '_fetchModelListForUpdate', '_modelUpdateApplyState', '_syncModelUpdateApplyBtn', 'onUmModelKeyInput', 'toggleUmSectionAll', 'model-group-refresh', 'updateModelsDialog']) {
     if (!code.includes(t)) throw new Error('打包产物缺：' + t);
   }
   const html = fs.readFileSync('src/static/index.html', 'utf8');
-  for (const id of ['updateModelsDialog', 'umGroupTitle', 'umFetchStatus', 'umFetchBtn', 'umNewSection', 'umNewCount', 'umNewAll', 'umNewList', 'umStaleSection', 'umStaleCount', 'umStaleAll', 'umStaleList', 'umSameNote', 'umApplyBtn']) {
+  for (const id of ['updateModelsDialog', 'umGroupTitle', 'umApiKey', 'umFetchStatus', 'umFetchBtn', 'umNewSection', 'umNewCount', 'umNewAll', 'umNewList', 'umStaleSection', 'umStaleCount', 'umStaleAll', 'umStaleList', 'umSameNote', 'umApplyBtn']) {
     if (!html.includes(`id="${id}"`)) throw new Error('index.html 缺更新弹窗元素：' + id);
   }
   return true;
@@ -368,6 +368,28 @@ check('model-update：diffUpstreamModels 纯逻辑（新增/已下线/去空白�
   if (kept.added.length || kept.removed.length) throw new Error('一致列表应为空 diff: ' + JSON.stringify(kept));
   for (const empty of [sandbox.diffUpstreamModels([], []), sandbox.diffUpstreamModels(null, undefined)]) {
     if (empty.added.length || empty.removed.length) throw new Error('空输入应为空 diff: ' + JSON.stringify(empty));
+  }
+  return true;
+});
+
+check('model-update：密钥输入判定（留空＝沿用 / 相同不触发 / 新钥或 diff 才可应用）', () => {
+  const f = sandbox._modelUpdateApplyState;
+  const emptyDiff = { added: [], removed: [] };
+  const cases = [
+    ['', '', emptyDiff, false, false, false],
+    ['sk-old', 'sk-old', emptyDiff, false, false, false],
+    ['sk-old', '  sk-old  ', emptyDiff, false, false, false],
+    ['sk-old', '', emptyDiff, false, false, false],
+    ['sk-old', 'sk-new', emptyDiff, true, false, true],
+    ['sk-old', '', { added: ['m'], removed: [] }, false, true, true],
+    ['sk-old', 'sk-old', { added: [], removed: ['m'] }, false, true, true],
+    ['sk-old', 'sk-new', { added: ['m'], removed: ['n'] }, true, true, true],
+  ];
+  for (const [saved, typed, diff, keyChanged, hasDiff, canApply] of cases) {
+    const r = f(saved, typed, diff);
+    if (r.keyChanged !== keyChanged || r.hasDiff !== hasDiff || r.canApply !== canApply) {
+      throw new Error('判定不符: ' + JSON.stringify({ saved, typed, diff, r }));
+    }
   }
   return true;
 });
