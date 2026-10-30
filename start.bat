@@ -18,8 +18,8 @@ if not exist "%PY%" (
     %PY% -m pip install -r requirements.txt
 )
 
-rem 4 秒后（等服务就绪）自动打开浏览器
-start /min cmd /c "timeout /t 4 /nobreak >nul && start %URL%"
+rem 轮询 /health，服务真正就绪后再打开浏览器（最多等 60 秒，避免先开页面后起服务）
+start /min powershell -NoProfile -WindowStyle Hidden -Command "for($i=0;$i -lt 60;$i++){try{$null = Invoke-WebRequest -UseBasicParsing -TimeoutSec 1 'http://127.0.0.1:%PORT%/health'; Start-Process '%URL%'; break}catch{Start-Sleep -Seconds 1}}"
 
 echo PhyMathia 启动中: %URL%
 echo 关闭本窗口即停止服务
