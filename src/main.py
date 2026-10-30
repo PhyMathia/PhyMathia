@@ -145,7 +145,7 @@ _LOG_CONSOLE_HANDLER = "phymathia_console"
 
 def _resolve_log_file(port: int):
     """返回 logs/server-<port>.log 路径（目录不存在则建）；不可写时返回 None。"""
-    base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(_ROOT_DIR)
+    base = Path(_ROOT_DIR)
     log_dir = base / "logs"
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -423,11 +423,6 @@ if __name__ == "__main__":
     logger.info("  - 模型：需在「模型设置」中配置（支持 OpenAI 兼容接口）")
     logger.info("=" * 50)
     logger.info(f"访问地址: http://localhost:{args.port}")
-    # 打包版（PyInstaller）自动打开浏览器；开发模式不自动打开
-    if getattr(sys, "frozen", False):
-        import threading
-        import webbrowser
-        threading.Timer(1.2, lambda: webbrowser.open(f"http://127.0.0.1:{args.port}")).start()
 
     uvicorn.run(
         app,
