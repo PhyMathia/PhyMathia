@@ -106,12 +106,12 @@ async function _generateAnalysis(node, nodeSignal) {
     }
     await _streamAnalysisResponse(resp, node, question);
   } catch (err) {
-    const live = _findGraphNode(node.id);
+    const live = _findGraphNodeTail(node.id);
     if (live) {
       live.busy = false;
       live.status = err.name === 'AbortError' ? 'waiting' : 'error';
     }
-    _saveCustomNodes();
+    _saveGraphNodeTail(live);
     _refreshWorkflowNodeStatusUi(live);
     if (err.name !== 'AbortError' && typeof showToast === 'function') showToast('问题分析失败：' + (err.message || err));
     if (typeof hideProgress === 'function') hideProgress();
@@ -317,7 +317,7 @@ async function _generateCustomNode(node, nodeSignal) {
     } catch (err) {
       streamError = err;
       console.warn('Viz module direct stream failed, will try fallback:', err);
-      const failedLive = _findGraphNode(node.id);
+      const failedLive = _findGraphNodeTail(node.id);
       const vizCarrier = (node.kind === 'module' && node.moduleKey === 'viz')
         || !!(recipe && recipe.content_kind === 'html_iframe');
       const partial = String((err && err.streamPartial) || '');
@@ -332,7 +332,7 @@ async function _generateCustomNode(node, nodeSignal) {
         failedLive.status = 'error';
         // 版本账（T339）：这一版按「未跑完」入账（旧文仍在前一位，‹› 可回）
         _commitWorkflowNodeVersion(failedLive);
-        _saveCustomNodes();
+        _saveGraphNodeTail(failedLive);
         _refreshWorkflowNodeStatusUi(failedLive);
         if (typeof showToast === 'function') showToast('连接超时、生成没跑完：已保留收到的内容，可重新生成');
         return;
@@ -343,7 +343,8 @@ async function _generateCustomNode(node, nodeSignal) {
       }
     }
 
-    const live = _findGraphNode(node.id);
+    // T419：成功/归一/重试各收口同样按生成收尾寻址结算
+    const live = _findGraphNodeTail(node.id);
     // viz 式收口（官方交互可视化＋P2 配方 html_iframe 载体）：内容必须归一成完整
     // HTML 代码块；不合格时按配方声明的重试预算（on_incomplete.max_retries，官方 1 次）
     // 与重试提示词（retry_prompt）走独立 HTML 生成通道重试
@@ -382,7 +383,7 @@ async function _generateCustomNode(node, nodeSignal) {
         live.busy = false;
         // 版本账（T339）：这轮没产出可用内容，兜回上一版（账上有版本时旧内容原样回来）
         _restoreWorkflowNodeVersion(live);
-        _saveCustomNodes();
+        _saveGraphNodeTail(live);
         if (workflowRunActive) _refreshWorkflowNodeUi(live);
         else renderGraphCanvas();
         if (!wasAborted && typeof showToast === 'function') {
@@ -396,7 +397,7 @@ async function _generateCustomNode(node, nodeSignal) {
       live.busy = false;
       // 版本账（T339）：归一后的整页 HTML 收作新版本
       _commitWorkflowNodeVersion(live);
-      _saveCustomNodes();
+      _saveGraphNodeTail(live);
       if (workflowRunActive) _refreshWorkflowNodeUi(live);
       else renderGraphCanvas();
       if (recipe && recipe.on_generated) _recipeAfterGenerated(live);
@@ -418,27 +419,30 @@ async function _generateCustomNode(node, nodeSignal) {
       live.busy = false;
       // 版本账（T339）：空内容不算新版本，兜回上一版
       _restoreWorkflowNodeVersion(live);
-      _saveCustomNodes();
+      _saveGraphNodeTail(live);
       _refreshWorkflowNodeStatusUi(live);
       if (typeof showToast === 'function') showToast('生成失败：模型返回了空内容，请点击该节点重试');
       return;
     }
     // 版本账（T339）：成功收账（放在 mermaid 归一之后——归一改写过的 content 才是落定的版本）
     _commitWorkflowNodeVersion(live);
+    // 收账后立刻落盘（T419 顺带）：过去成功路只由流尾那发保存盖住，账本条目在内存里
+    // 等下一次任意保存才落盘——人切走画布时（收尾走兜底）下一发不知何时，刷新即丢
+    if (live) _saveGraphNodeTail(live);
     // on_generated 编排钩子（P2）：生成成功后按声明自动建链（进阶学习四步链的数据版）
     if (live && recipe && recipe.on_generated) _recipeAfterGenerated(live);
     // T361：苏格拉底反馈落地后把回复里的建议追问抽成派生「苏格拉底追问」节点
     // （闭环下一题），并结算本轮（profile 记账＋闭环结束复位）
     if (live && live.socraticMeta) _materializeSocraticFollowup(live);
   } catch (err) {
-    const live = _findGraphNode(node.id);
+    const live = _findGraphNodeTail(node.id);
     if (live) {
       live.busy = false;
       live.status = err.name === 'AbortError' ? 'waiting' : 'error';
       // 版本账（T339）：流式草稿不算数，兜回上一版——中止/失败都不丢旧内容
       _restoreWorkflowNodeVersion(live);
     }
-    _saveCustomNodes();
+    _saveGraphNodeTail(live);
     _refreshWorkflowNodeStatusUi(live);
     if (err.name !== 'AbortError' && typeof showToast === 'function') showToast('生成失败：' + (err.message || err));
   } finally {

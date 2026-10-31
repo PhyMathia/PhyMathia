@@ -636,6 +636,116 @@ checkSq('T313 窗口B＋接手：切画布后上游问题/边表/会话号/保�
   }
 });
 
+// T419：生成收尾寻址——流结束那一刻人不在节点那张画布上、任务 ctx 也不在（工作流
+// 收摊后的在途流/排队兑现前的等待都会走到），旧口径 _findGraphNode 找不到节点，
+// 收尾整段被 if (live) 跳过：busy=true（开跑时落盘的）永久留在自己那张画布上，节点
+// 回来就是「空卡＋生成中」转圈、重生成点不动。现在 _findGraphNodeTail 兜底扫会话
+// state 结算、_saveGraphNodeTail 落回它自己那张画布。T313 两窗验的是 ctx 接管路，
+// 本条验无 ctx 的裸兜底路。
+checkSq('T419：流式收尾时人已切走且无任务 ctx——内容与忙账仍结到节点所属画布的 state', async () => {
+  const A = 'a419', B = 'b419';
+  const modId = 'physics-custom-t419';
+  const prev = {
+    sid: wfEval('currentSessionId'),
+    sessId: wfEval('typeof SESSION_ID !== "undefined" ? SESSION_ID : ""'),
+    sessions: wfEval('JSON.stringify(sessions)'),
+    hist: wfEval('JSON.stringify(chatHistory)'),
+    nodes: wfEval('JSON.stringify(graphView.nodes)'),
+    edges: wfEval('JSON.stringify(graphView.edges)'),
+    runActive: wfEval('workflowRunActive'),
+    lsCurrent: sandbox.localStorage.getItem('phymathia_current_session'),
+  };
+  const prevRender = sandbox.renderGraphCanvas;
+  const prevStreamProgress = sandbox._scheduleWorkflowStreamProgress;
+  const prevWorld = wfPinWorldAccessors();
+  // graphInner 置空让流式渲染路径整体短路（T313 窗口A 同款语义：本条验会话归属不是渲染）
+  wfEval('__t419SavedGraphInner = graphInner; graphInner = null;');
+  try {
+    sandbox.localStorage.setItem('phymathia_current_session', A);
+    wfEval('currentSessionId = ' + JSON.stringify(A) + '; SESSION_ID = ' + JSON.stringify('r' + A) + ';'
+      + ' sessions = { ' + A + ': { id: "' + A + '", sessionId: "r' + A + '", title: "", updatedAt: 1 }, '
+      + B + ': { id: "' + B + '", sessionId: "r' + B + '", title: "B 画布", updatedAt: 1 } };'
+      + ' chatHistory = []; workflowRunActive = false;');
+    sandbox.localStorage.setItem('phymathia_graph_' + A, JSON.stringify({
+      updatedAt: 1,
+      customNodes: [
+        { id: modId, kind: 'module', moduleKey: 'physics', messageIndex: -1, content: '', busy: true, status: 'running', label: '物理视角', requirements: '' },
+      ],
+      connections: [],
+    }));
+    sandbox.localStorage.setItem('phymathia_graph_' + B, JSON.stringify({ updatedAt: 1, customNodes: [], connections: [] }));
+    // 视图按「当前会话的 state」重建（真机 renderGraphCanvas 的最小替身，T313 窗口A 同款）
+    wfEval('__t419Render = function() {'
+      + '  const st = window.getGraphState(getCurrentSessionId());'
+      + '  graphView.nodes = (st.customNodes || []).map(function(n) { return Object.assign({}, n); });'
+      + '  graphView.nodeById = {};'
+      + '  graphView.nodes.forEach(function(n) { graphView.nodeById[n.id] = n; });'
+      + '  graphView.edges = (st.connections || []).slice();'
+      + '};');
+    sandbox.renderGraphCanvas = () => wfEval('__t419Render()');
+    sandbox._scheduleWorkflowStreamProgress = () => {};
+    wfEval('__t419Render()');
+    const node = wfEval('graphView.nodeById[' + JSON.stringify(modId) + ']');
+    if (!node || !node.busy) throw new Error('用例自身坏了：视图里没有在跑的模块节点');
+    // 假 SSE：第二帧取出时切到 B（视图整体换成 B 的、无任务 ctx）——用户「点完生成
+    // 就去翻别的画布」的那一下
+    let switched = false;
+    const frames = [
+      '压强由法向力平衡决定：P = F/S。\n',
+      '结论：压强只与深度和密度有关。\n',
+    ];
+    const fakeResp = {
+      ok: true, status: 200,
+      body: { getReader() {
+        let i = 0;
+        return { read: async () => {
+          if (i === 1 && !switched) {
+            switched = true;
+            sandbox.localStorage.setItem('phymathia_current_session', B);
+            wfEval('currentSessionId = ' + JSON.stringify(B) + '; SESSION_ID = ' + JSON.stringify('r' + B) + ';');
+            wfEval('__t419Render()');
+          }
+          if (i < frames.length) {
+            const chunk = 'data: ' + JSON.stringify({ choices: [{ delta: { content: frames[i++] } }] }) + '\n\n';
+            return { done: false, value: new TextEncoder().encode(chunk) };
+          }
+          return { done: true, value: undefined };
+        } };
+      } },
+    };
+    await sandbox._streamCustomNodeResponse(fakeResp, node);
+    if (!switched) throw new Error('切换没有在流中发生（用例自身坏了）');
+    // 断言一：A 的 state 里内容/状态/忙账全结算到位（旧口径这里留下 busy:true 的空卡）
+    const aAfter = JSON.parse(sandbox.localStorage.getItem('phymathia_graph_' + A));
+    const modSaved = (aAfter.customNodes || []).find(n => n.id === modId);
+    if (!modSaved || modSaved.busy) {
+      throw new Error('忙账没结到节点所属画布：' + JSON.stringify(modSaved && { busy: modSaved.busy, status: modSaved.status }));
+    }
+    if (modSaved.status !== 'done') throw new Error('状态没落 done：' + modSaved.status);
+    if (!String(modSaved.content || '').includes('压强')) throw new Error('内容没落回所属画布：' + JSON.stringify(modSaved.content));
+    // 断言二：别人的画布没有被塞进 A 的节点
+    const bAfter = JSON.parse(sandbox.localStorage.getItem('phymathia_graph_' + B) || '{"customNodes":[]}');
+    if ((bAfter.customNodes || []).some(n => n.id === modId)) throw new Error('A 的节点被误写进 B 画布');
+    // 断言三：兜底登记配对消费（留着会在下一次收尾误落别人家）
+    if (wfEval('_tailHomeStates.size') !== 0) throw new Error('收尾落盘没消费兜底登记');
+  } finally {
+    wfUnpinWorldAccessors(prevWorld);
+    sandbox.renderGraphCanvas = prevRender;
+    sandbox._scheduleWorkflowStreamProgress = prevStreamProgress;
+    if (prev.lsCurrent === null) sandbox.localStorage.removeItem('phymathia_current_session');
+    else sandbox.localStorage.setItem('phymathia_current_session', prev.lsCurrent);
+    sandbox.localStorage.removeItem('phymathia_graph_' + A);
+    sandbox.localStorage.removeItem('phymathia_graph_' + B);
+    wfEval('currentSessionId = ' + JSON.stringify(prev.sid) + '; SESSION_ID = ' + JSON.stringify(prev.sessId)
+      + '; sessions = ' + prev.sessions + '; chatHistory = ' + prev.hist + '; workflowRunActive = ' + prev.runActive + ';');
+    wfEval('graphInner = __t419SavedGraphInner;');
+    wfEval('graphView.nodes = ' + prev.nodes + '; graphView.nodeById = {};'
+      + ' graphView.nodes.forEach(function(n) { graphView.nodeById[n.id] = n; });'
+      + ' graphView.edges = ' + prev.edges + ';');
+    wfEval('typeof _invalidateGraphStateCache === "function" && _invalidateGraphStateCache();');
+  }
+});
+
 checkSq('T314：收尾知识提取记回工作流所属画布，取材从世界 state 捞', async () => {
   const A = 'a314', B = 'b314';
   const modId = 'physics-y';

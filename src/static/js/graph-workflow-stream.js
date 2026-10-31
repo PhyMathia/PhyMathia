@@ -171,7 +171,9 @@ async function _streamCustomNodeResponse(resp, node) {
   // _cleanBlankNodeContent，两条路合一后不能丢这一步（否则卡面会带出整段标签）
   let cleaned = (node.kind === 'module' || node.kind === 'blank') ? _cleanBlankNodeContent(node, content) : content;
   if (!cleaned.trim()) cleaned = content;
-  const live = _findGraphNode(node.id);
+  // T419：收尾按「生成收尾寻址」找节点＋落盘——人切到别的画布时也能把内容与忙账
+  // 结到节点自己那张画布的 state 上，不再整段跳过留永久「生成中」
+  const live = _findGraphNodeTail(node.id);
   if (live) {
     live.content = cleaned;
     live.summary = _graphSummary(cleaned);
@@ -180,7 +182,7 @@ async function _streamCustomNodeResponse(resp, node) {
     live.inputHash = _nodeInputHash(live);
     live.busy = false;
   }
-  _saveCustomNodes();
+  _saveGraphNodeTail(live);
   if (node.kind === 'blank') _renderBlankNodeLive(node, cleaned);
   _refreshWorkflowNodeStatusUi(live);
 }
@@ -216,7 +218,8 @@ async function _streamAnalysisResponse(resp, node, question) {
   if (typeof stripXmlTags === 'function') cleaned = stripXmlTags(cleaned).trim();
   if (!cleaned) throw new Error('问题分析返回空内容');
   if (cleaned.length > 1200) cleaned = cleaned.slice(0, 1200);
-  const live = _findGraphNode(node.id);
+  // T419：分析段同样按生成收尾寻址结算（分析最长的几十秒里人常切走画布）
+  const live = _findGraphNodeTail(node.id);
   if (live) {
     live.analysis = cleaned;
     live.analysisHash = _simpleHash(question + '|' + (node.requirements || ''));
@@ -228,7 +231,7 @@ async function _streamAnalysisResponse(resp, node, question) {
     renderBox.innerHTML = _renderCustomNodeContentHtml(live);
     if (typeof renderMath === 'function') renderMath(renderBox);
   }
-  _saveCustomNodes();
+  _saveGraphNodeTail(live);
   _refreshWorkflowNodeStatusUi(live);
   if (typeof hideProgress === 'function') hideProgress();
 }

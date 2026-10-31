@@ -1304,8 +1304,9 @@ async function _applyWorkflowNodeRegenerate(nodeId, text) {
   let done = false;
   try {
     const reply = await _regenWorkflowNodeContent(node, text, jobAbort.signal, revisionBase);
-    // 生成链里画布可能整体重建、节点对象被换成新对象：账必须读画布上活着的那个
-    const live = _findGraphNode(nodeId);
+    // 生成链里画布可能整体重建、节点对象被换成新对象：账必须读画布上活着的那个；
+    // 人切走画布时兜底到节点所属会话的 state（T419），只有真被删了才 throw
+    const live = _findGraphNodeTail(nodeId);
     if (!live) throw new Error('节点已不在画布上');
     live.content = reply;
     live.summary = typeof _graphSummary === 'function' ? _graphSummary(reply) : reply.slice(0, 120);
@@ -1314,14 +1315,14 @@ async function _applyWorkflowNodeRegenerate(nodeId, text) {
     live.status = 'done';
     // 版本账（T339）：修订成品收作新版本
     if (typeof _commitWorkflowNodeVersion === 'function') _commitWorkflowNodeVersion(live);
-    if (typeof _saveCustomNodes === 'function') _saveCustomNodes();
+    if (typeof _saveGraphNodeTail === 'function') _saveGraphNodeTail(live);
     if (taskId && typeof _taskFinish === 'function') _taskFinish(taskId, 'done');
     done = true;
   } catch (err) {
     const aborted = jobAbort.signal.aborted || (err && err.name === 'AbortError');
     // 忙账就地结清（与 _generateCustomNode 的 catch 同口径）：失败→「失败」徽标可重试；
     // 中止→旧内容一字未动，回「完成」。重绘从快照重建，账必须读画布上活着的那个
-    const liveErr = _findGraphNode(nodeId);
+    const liveErr = _findGraphNodeTail(nodeId);
     if (liveErr) {
       liveErr.busy = false;
       liveErr.status = aborted ? 'done' : 'error';
@@ -1329,7 +1330,7 @@ async function _applyWorkflowNodeRegenerate(nodeId, text) {
       // ——「中止→旧内容一字未动」的口径由版本账续上
       if (typeof _restoreWorkflowNodeVersion === 'function') _restoreWorkflowNodeVersion(liveErr);
     }
-    if (typeof _saveCustomNodes === 'function') _saveCustomNodes();
+    if (typeof _saveGraphNodeTail === 'function') _saveGraphNodeTail(liveErr);
     if (typeof _refreshWorkflowNodeStatusUi === 'function') _refreshWorkflowNodeStatusUi(liveErr);
     if (taskId && typeof _taskFinish === 'function') {
       _taskFinish(taskId, aborted ? 'stopped' : 'error', aborted ? '已停止' : ((err && err.message) || '重新生成失败'));
