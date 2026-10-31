@@ -7,8 +7,47 @@ import { check, code, sandbox, fs } from './_runner.mjs';
 const readSrc = (p) => fs.readFileSync(p, 'utf8');
 
 export function run() {
+  // T420 假 KaTeX 节点：annotation 带 tex；replaceWith 把替换文本写回所在 fragment 的
+  // textContent（沙箱无真 DOM，按替换后的可见文本模拟）。display 决定 $ 还是 $$。
+  const fakeKatex = (tex, display) => {
+    const k = {
+      nodeType: 1,
+      textContent: 'Ω→R2',
+      classList: { contains: (c) => c === 'katex' || (!!display && c === 'katex-display') },
+      closest: (sel) => (display && sel === '.katex-display' ? k : null),
+      querySelector: (sel) => (String(sel).indexOf('annotation') >= 0 ? { textContent: tex } : null),
+      parentNode: null,
+      parentElement: null,
+    };
+    return k;
+  };
+  const fakeFrag = (katex, visible) => {
+    const f = {
+      _text: visible,
+      get textContent() { return f._text; },
+      querySelectorAll: () => (katex ? [katex] : []),
+      querySelector: () => katex,
+    };
+    if (katex) katex.replaceWith = (tn) => { f._text = String(tn && tn.textContent != null ? tn.textContent : ''); };
+    return f;
+  };
+  const fakeRangeInKatex = (katex, frag) => {
+    const textNode = { nodeType: 3, parentElement: katex };
+    return {
+      startContainer: textNode,
+      endContainer: textNode,
+      commonAncestorContainer: { nodeType: 1 },
+      cloneRange: () => ({
+        setStartBefore: () => {},
+        setEndAfter: () => {},
+        cloneContents: () => frag,
+      }),
+      cloneContents: () => frag,
+    };
+  };
+
   check('node-fs-toolbar: 动作层符号挂上全局（选区提取/浮条/输入行/桥接收端/预览脚本生成器）', () => {
-    for (const fn of ['_nodeFsPickSelection', '_nodeFsPickSearchText', '_nodeFsHideBar', '_nodeFsExpandInput', '_nodeFsRunAction', '_buildNodeFsPreviewScript', '_setNodeFsPreviewCtx', '_nodeFsComposeFollowup']) {
+    for (const fn of ['_nodeFsPickSelection', '_nodeFsPickSearchText', '_nodeFsKatexFragmentText', '_nodeFsExpandRangeToFormulas', '_nodeFsCopySelectionText', '_nodeFsHideBar', '_nodeFsExpandInput', '_nodeFsRunAction', '_buildNodeFsPreviewScript', '_setNodeFsPreviewCtx', '_nodeFsComposeFollowup']) {
       if (typeof sandbox[fn] !== 'function') throw new Error(fn + ' 未暴露');
     }
     return true;
@@ -30,29 +69,85 @@ export function run() {
     return true;
   });
 
-  check('node-fs-toolbar: _nodeFsPickSearchText 部分公式选段＝所选可见字符（用户实报场景：选公式尾部「常量」不再被扩成整条 $...$）', () => {
-    if (typeof sandbox._nodeFsPickSearchText !== 'function') return false;
-    // 部分选区的 fragment 里没有完整 .katex（wrapper 在 commonAncestor 之外），textContent 即所选字符
-    const frag = { textContent: '常量' };
-    if (sandbox._nodeFsPickSearchText({ cloneContents: () => frag }) !== '常量') return false;
-    // 空选段/异常兜底：不炸、返回空串（调用侧退扩公式文本）
-    if (sandbox._nodeFsPickSearchText({ cloneContents: () => null }) !== '') return false;
-    if (sandbox._nodeFsPickSearchText({ cloneContents: () => { throw new Error('x'); } }) !== '') return false;
-    return true;
+  check('node-fs-toolbar: 查找碰公式喂 LaTeX 本体（符号片段「Ω→R2」不再拿渲染字形去撞 LaTeX 索引；T420）', () => {
+    const prevCreate = sandbox.document.createTextNode;
+    sandbox.document.createTextNode = (v) => ({ textContent: String(v) });
+    try {
+      // 部分公式选段（端点落 .katex 内）→ 扩整条 → tex 本体，不带 $ 定界符
+      const k = fakeKatex('\\Omega\\to\\mathbb R^2', false);
+      const frag = fakeFrag(k, 'Ω→R2');
+      if (sandbox._nodeFsPickSearchText(fakeRangeInKatex(k, frag)) !== '\\Omega\\to\\mathbb R^2') return false;
+      // 没碰公式的选段原样返回所选可见字符
+      if (sandbox._nodeFsPickSearchText({ cloneContents: () => ({ textContent: '常量' }) }) !== '常量') return false;
+      // 空选段/异常兜底：不炸、返回空串（调用侧退复制文本）
+      if (sandbox._nodeFsPickSearchText({ cloneContents: () => null }) !== '') return false;
+      if (sandbox._nodeFsPickSearchText({ cloneContents: () => { throw new Error('x'); } }) !== '') return false;
+      return true;
+    } finally {
+      sandbox.document.createTextNode = prevCreate;
+    }
   });
 
-  check('node-fs-toolbar: 查找查询接线——原始选段单独一份（searchText）双端喂它，整条公式还原 LaTeX 本体不带 $', () => {
+  check('node-fs-toolbar: 查找查询接线——选段单独一份（searchText）双端喂它，公式喂 tex 本体不带 $', () => {
     const src = readSrc('src/static/js/node-fs-toolbar.js');
     if (!/return \{ text, searchText, rect \};/.test(src)) return false;
     if (!src.includes('searchText: picked.searchText || picked.text')) return false;
     if (!src.includes('_nodeFsSearchCanvas(st.searchText || st.fullText)')) return false;
-    // 整条公式完整入选才还原成 tex 本体直入文本节点，不包 $ 定界符——索引侧把 $ 剥掉了，带 $ 恒失配
-    if (!/function _nodeFsPickSearchText[\s\S]*?document\.createTextNode\(tex \|\|/.test(src)) return false;
+    // 查找与复制共用扩公式口径，但写文本节点时不包 $——索引侧把 $ 剥掉了，带 $ 恒失配
+    if (!/function _nodeFsPickSearchText[\s\S]*?_nodeFsKatexFragmentText\(frag, false\)/.test(src)) return false;
     // 预览页双胞胎同款：pickSearchText 在场、查找 postAction 用 searchText 兜底 picked.text
     const bridge = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
     if (!bridge.includes('function pickSearchText(range)')) return false;
+    if (!bridge.includes('fragText(frag,false)')) return false;
     if (!bridge.includes('picked.searchText||picked.text')) return false;
     return true;
+  });
+
+  check('node-fs-toolbar: 系统复制碰公式按胶囊口径重写纯文本（完整 $tex$/$$tex$$、半截扩整条；T420）', () => {
+    const prevCreate = sandbox.document.createTextNode;
+    const prevSel = sandbox.window.getSelection;
+    sandbox.document.createTextNode = (v) => ({ textContent: String(v) });
+    const setSel = (sel) => { sandbox.window.getSelection = () => sel; };
+    try {
+      // 端点落公式内（半截 DOM）→ 扩整条 + display 公式 $$...$$
+      const k = fakeKatex('(X,Y):\\Omega\\to\\mathbb R^2', true);
+      const frag = fakeFrag(k, '(X,Y):Ω→R2');
+      const range = fakeRangeInKatex(k, frag);
+      range.commonAncestorContainer = { nodeType: 1 };
+      setSel({ rangeCount: 1, isCollapsed: false, getRangeAt: () => range });
+      if (sandbox._nodeFsCopySelectionText() !== '$$(X,Y):\\Omega\\to\\mathbb R^2$$') return false;
+      // 半截扩公式时克隆片段没有 .katex-display 祖先——display 要能认 MathML 的
+      // <math display="block">，否则 display 公式会降级成 $...$（真实 Chromium 踩到）
+      const kBlock = fakeKatex('x^2', false);
+      kBlock.querySelector = (sel) => (sel === 'math[display="block"]'
+        ? {}
+        : (String(sel).indexOf('annotation') >= 0 ? { textContent: 'x^2' } : null));
+      setSel({ rangeCount: 1, isCollapsed: false, getRangeAt: () => fakeRangeInKatex(kBlock, fakeFrag(kBlock, 'x2')) });
+      if (sandbox._nodeFsCopySelectionText() !== '$$x^2$$') return false;
+      // 没碰公式：返回空串＝不拦截，默认复制零变化
+      const plainRange = {
+        commonAncestorContainer: {},
+        startContainer: {},
+        endContainer: {},
+        cloneContents: () => ({ textContent: '普通文字' }),
+      };
+      setSel({ rangeCount: 1, isCollapsed: false, getRangeAt: () => plainRange });
+      if (sandbox._nodeFsCopySelectionText() !== '') return false;
+      // 折叠选区不拦
+      setSel({ rangeCount: 1, isCollapsed: true, getRangeAt: () => range });
+      if (sandbox._nodeFsCopySelectionText() !== '') return false;
+      // 双端接线：主应用与预览页脚本都注册 copy 拦截并写 text/plain
+      const src = readSrc('src/static/js/node-fs-toolbar.js');
+      if (!src.includes("document.addEventListener('copy'")) return false;
+      if (!src.includes("ev.clipboardData.setData('text/plain'")) return false;
+      const bridge = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
+      if (!bridge.includes('addEventListener("copy"')) return false;
+      if (!bridge.includes('setData("text/plain"')) return false;
+      return true;
+    } finally {
+      sandbox.document.createTextNode = prevCreate;
+      sandbox.window.getSelection = prevSel;
+    }
   });
 
   check('node-fs-toolbar: 画布搜索查询与索引同管归一——手贴/桥上带 $ 的公式查询也能命中（graph-search.js）', () => {
