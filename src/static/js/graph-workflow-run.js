@@ -177,12 +177,13 @@ async function _runWorkflowNodeConcurrent(node, subgraph, force, processed, fail
     ok = await _processWorkflowChainItem(node, shouldForce, nodeController.signal);
   } catch (err) {
     console.error('Workflow node failed:', err);
-    const live = _findGraphNode(node.id);
+    // T419：调度器兜底结算同样按生成收尾寻址——人切走画布时也要摘掉节点的忙账
+    const live = _findGraphNodeTail(node.id);
     if (live) {
       live.busy = false;
       if (live.status !== 'error') live.status = 'error';
     }
-    _saveCustomNodes();
+    _saveGraphNodeTail(live);
     _refreshWorkflowNodeStatusUi(live);
   }
   (window.__wfLogs = window.__wfLogs || []).push({ type: 'done', label, t: Date.now() });

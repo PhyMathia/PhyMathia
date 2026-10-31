@@ -342,6 +342,53 @@ function _findGraphNode(nodeId) {
   return graphView.nodeById[nodeId] || null;
 }
 
+// ===== T419：生成收尾寻址 =====
+// 生成中允许切画布（2026-10-11）之后，收尾那一刻人往往不在节点那张画布上——
+// _findGraphNode 只认当前视图（和任务工作副本），live 为空，busy/content/status 的
+// 收尾整段被 if (live) 跳过：busy=true 是开跑时落盘的，节点在自己那张画布上永久卡
+// 「生成中」（T275 清扫只在整页刷新时跑，活会话内无自救）。这里兜一层：视图/任务
+// 副本都没有时，扫内存里各会话的图 state 找节点本体（自定义节点 id 带随机后缀、
+// 消息派生 id 来自单画布消息时间戳，跨画布撞 id 实际不可能；当前画布的 state 与
+// 视图同源，视图没有就是真没有，跳过）。找到的会话登记进 _tailHomeStates，收尾
+// 落盘走配对的 _saveGraphNodeTail 落那一份；找不到维持原「找不到就不动」口径。
+const _tailHomeStates = new Map();
+function _findGraphNodeTail(nodeId) {
+  const live = _findGraphNode(nodeId);
+  if (live) return live;
+  if (typeof window.getGraphState !== 'function' || typeof window.getCurrentSessionId !== 'function') return null;
+  const sidNow = window.getCurrentSessionId() || '';
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || key.indexOf('phymathia_graph_') !== 0) continue;
+      const sid = key.slice('phymathia_graph_'.length);
+      if (!sid || sid === sidNow) continue;
+      const state = window.getGraphState(sid);
+      const list = Array.isArray(state && state.customNodes) ? state.customNodes : [];
+      const node = list.find(item => item && String(item.id) === String(nodeId) && item.messageIndex < 0);
+      if (node) {
+        _tailHomeStates.set(String(nodeId), { sid: sid, state: state });
+        return node;
+      }
+    }
+  } catch (e) { /* localStorage 不可用（沙箱等）：维持「找不到就不动」 */ }
+  return null;
+}
+// 与 _findGraphNodeTail 配对的收尾落盘：兜底命中的节点落它所属会话的 state
+// （_saveGraphStateFor 按 sid 路由，含 T360 合并推服务端），其余原路 _saveCustomNodes
+// （任务副本合并照旧）。传兜底查到的 live 本身；live 为空照走原路，与旧口径一致。
+function _saveGraphNodeTail(node) {
+  const home = node ? _tailHomeStates.get(String(node.id)) : null;
+  if (home) {
+    _tailHomeStates.delete(String(node.id));
+    if (typeof _saveGraphStateFor === 'function') {
+      _saveGraphStateFor(home.sid, home.state);
+      return;
+    }
+  }
+  if (typeof _saveCustomNodes === 'function') _saveCustomNodes();
+}
+
 function _pushEdge(edges, from, to, type, fromPort, toPort) {
   if (!from || !to || from === to) return;
   if (edges.some(e =>

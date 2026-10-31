@@ -326,13 +326,14 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
       return;
     }
 
-    const liveAnswer2 = _findGraphNode(template.answerNode.id);
+    // T419：分析跑的几十秒里人常切走画布，按生成收尾寻址拿节点＋落盘
+    const liveAnswer2 = _findGraphNodeTail(template.answerNode.id);
     if (!liveAnswer2 || !(liveAnswer2.analysis || '').trim()) {
       if (liveAnswer2) {
         liveAnswer2.status = 'error';
         liveAnswer2.busy = false;
       }
-      _saveCustomNodes();
+      _saveGraphNodeTail(liveAnswer2);
       if (typeof showToast === 'function') showToast('问题分析为空，请检查模型配置或重试');
       return;
     }
