@@ -156,6 +156,25 @@ export function run() {
     return true;
   });
 
+  check('node-fs-toolbar: 索引归一模拟 markdown 转义——公式内 \\; 类反斜杠标点双侧同形（T420 补漏，用户真实数据）', () => {
+    const norm = sandbox._graphSearchPlainText;
+    if (typeof norm !== 'function') return false;
+    // 用户场景（kv 原文 vs KaTeX annotation）：marked 吃掉 \; 的反斜杠后，查询
+    // F_{X,Y}(x,y)=\mathbb P(X\le x,;Y\le y) 与索引原文差一个 \，恒失配——
+    // 归一补上转义模拟后两侧必须同形可命中。
+    const indexText = norm('$$F_{X,Y}(x,y)=\\mathbb P(X\\le x,\\;Y\\le y)$$');
+    const query = norm('F_{X,Y}(x,y)=\\mathbb P(X\\le x,;Y\\le y)');
+    if (!indexText.includes(query)) return false;
+    // 转义口径：标点/空白前的反斜杠吃掉，字母命令不动；\\ 还原成 \
+    if (norm('x,\\;Y') !== 'x,;Y') return false;
+    if (norm('\\le x') !== '\\le x') return false;
+    if (norm('\\\\text{常量}') !== '\\text{常量}') return false;
+    // $ 定界符剥除与 CJK 的老口径不回归
+    if (norm('$x$') !== 'x') return false;
+    if (norm('常量') !== '常量') return false;
+    return true;
+  });
+
   check('node-fs-toolbar: 预览脚本生成器两模式产物都能编译、标题带 </script> 被转义', () => {
     const bridge = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 'tok_smoke', nodeId: 'n1', title: '含 </script> 的标题' });
     new Function(bridge); // 只编译不执行——字符串拼接坏了这里当场炸

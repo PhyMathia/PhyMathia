@@ -1039,6 +1039,12 @@ function _graphSearchPlainText(text) {
   out = out.replace(/```[\s\S]*?```/g, ' ');
   out = out.replace(/!\[[^\]]*\]\([^)]*\)/g, ' ');
   out = out.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');
+  // markdown 转义模拟：正文与 <formula> 内容都要过 marked，CommonMark 会吃掉
+  // 「反斜杠+标点/空白」里的反斜杠（\; → ;）——KaTeX annotation 里存的是吃过之后的
+  // tex，索引若仍留原文，划词查找/复制来的整条公式查询就永远差一个反斜杠（T420
+  // 补漏，2026-10-31 用户实报：F_{X,Y}(x,y)=\mathbb P(X\le x,\;Y\le y) 搜不到）。
+  // 索引与查询同过本管，两侧同形；字母命令（\le、\mathbb、\text）不受影响。
+  out = out.replace(/\\([\s!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g, '$1');
   out = out.replace(/\$\$?/g, ' ');
   out = out.replace(/\s+/g, ' ').trim();
   return out;
