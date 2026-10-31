@@ -14,7 +14,7 @@ const NODE_FS_FOLLOWUP_DEFAULT = '请把这段再展开讲讲';
 const NODE_FS_EXCERPT_MAX = 2000;   // 追问引文截断（超出标注「已取前 2000 字」）
 const NODE_FS_EXCERPT_LINES = 3;    // 引文最多带 3 行
 const NODE_FS_BRIDGE_TEXT_MAX = 20000; // 桥上文本上限（超限截断不报错）
-const NODE_FS_SEARCH_SNIPPET_MAX = 40; // 在画布中查找：取选段前 40 字
+const NODE_FS_SEARCH_SNIPPET_MAX = 120; // 在画布中查找：取选段前 120 字（整条公式的 LaTeX 本体常超 40，截半截必搜不中）
 
 let _nfsBar = null;         // 浮条单例（出现即重建，收起即移除，不做显隐切换）
 let _nfsState = null;       // { overlay, container, nodeId, nodeTitle, fullText, hasFormula, rect, expanded, quoteDropped }
@@ -30,6 +30,30 @@ function _nodeFsClosestKatex(node) {
     el = el.parentElement;
   }
   return null;
+}
+
+// 查找查询＝未扩公式的原始选区：选了公式的一段就搜所选的可见字符（如公式尾部的
+// 「常量」），整条公式完整落在选区里才还原成 LaTeX 本体（不带 $ 定界符）。
+// 为什么不能喂扩公式后的 $...$：索引侧 _graphSearchPlainText 建索引时把 $ 剥成空格
+// （graph-data.js），带 $ 的查询做子串匹配恒失配——2026-10-31 用户实报「选公式尾部
+// 的常量，查找框被塞进整条 $\frac{m}{2}(...)=\text{常量}$ 还什么都搜不到」。
+// 复制/追问引文仍走扩公式口径（_nodeFsPickSelection 里的 r 不动），只有查找用这份。
+function _nodeFsPickSearchText(range) {
+  let frag;
+  try { frag = range.cloneContents(); } catch (e) { return ''; }
+  if (!frag) return '';
+  if (frag.querySelectorAll) {
+    const ks = frag.querySelectorAll('.katex');
+    for (let i = ks.length - 1; i >= 0; i--) {
+      const k = ks[i];
+      const ann = k.querySelector ? k.querySelector('annotation[encoding="application/x-tex"]') : null;
+      const tex = ann ? ann.textContent : '';
+      const tn = document.createTextNode(tex || (k.textContent || ''));
+      if (k.replaceWith) k.replaceWith(tn);
+      else if (k.parentNode) k.parentNode.replaceChild(tn, k);
+    }
+  }
+  return String(frag.textContent || '');
 }
 
 // 选区克隆成纯文本；.katex 用 annotation 里的 x-tex 还原成 $...$ / $$...$$。
@@ -68,12 +92,14 @@ function _nodeFsPickSelection(container) {
   }
   const text = String(frag.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
   if (text.length < 2) return null; // 至少 2 个字
+  // 查找查询从原始 range（未扩公式）另提一份，取不到（异常/空）再退扩公式文本
+  const searchText = _nodeFsPickSearchText(range).replace(/\s+/g, ' ').trim() || text;
   let rect = null;
   try {
     const rects = r.getClientRects ? r.getClientRects() : [];
     rect = (rects && rects.length) ? rects[rects.length - 1] : r.getBoundingClientRect();
   } catch (e) { rect = null; }
-  return { text, rect };
+  return { text, searchText, rect };
 }
 
 // 追问引文：掐头去尾空行 → 最多 3 行 → 最多 2000 字，返回 { excerpt, truncated }
@@ -117,6 +143,7 @@ function _nodeFsShowBar(overlay, container, picked) {
     nodeId,
     nodeTitle,
     fullText: picked.text,
+    searchText: picked.searchText || picked.text,
     rect: picked.rect,
     expanded: false,
     quoteDropped: false,
@@ -176,7 +203,7 @@ function _nodeFsRunAction(act) {
   if (act === 'send') { _nodeFsSendFollowup(); return; }
   if (act === 'copy') { _nodeFsCopyText(st.fullText); _nodeFsHideBar(); return; }
   if (act === 'search') {
-    _nodeFsSearchCanvas(st.fullText);
+    _nodeFsSearchCanvas(st.searchText || st.fullText); // 查找用未扩公式选段（见 _nodeFsPickSearchText）
     _nodeFsHideBar();
     return;
   }
@@ -415,7 +442,9 @@ function _nodeFsEscAttr(s) {
 
 
 
-// 内嵌脚本＝主应用浮条的过桥版：选区提取与 LaTeX 还原同款。三件工具（2026-10-25
+// 内嵌脚本＝主应用浮条的过桥版：选区提取与 LaTeX 还原同款（查找查询另走未扩公式
+// 的 pickSearchText，口径与主应用 _nodeFsPickSearchText 一致——带 $ 的查询在搜索
+// 索引侧恒失配）。三件工具（2026-10-25
 // 用户拍板收窄）：追问＝本页展开输入行（引文 chip 可删）、拼好整句 postMessage 过桥
 // 直发——浏览器不允许后台页抢焦点（「跳转回主应用」真机实测做不到），输入行只能
 // 落在本页；复制页内完成；查找过桥回主应用开搜索面板。file:// 单文件（bridge:false）
@@ -473,6 +502,15 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'function oneLine(s){return String(s||"").replace(/\\s+/g," ").slice(0,60);}'
     + 'function closestKatex(n){var el=n&&n.nodeType===1?n:(n&&n.parentElement);'
     + 'while(el){if(el.classList&&el.classList.contains("katex"))return el;el=el.parentElement;}return null;}'
+    + 'function pickSearchText(range){var frag;try{frag=range.cloneContents();}catch(e){return"";}'
+    + 'if(!frag)return"";'
+    + 'if(frag.querySelectorAll){var ks=frag.querySelectorAll(".katex");'
+    + 'for(var i=ks.length-1;i>=0;i--){var k=ks[i];'
+    + 'var ann=k.querySelector?k.querySelector(\'annotation[encoding="application/x-tex"]\'):null;'
+    + 'var tex=ann?ann.textContent:"";'
+    + 'var tn=document.createTextNode(tex||(k.textContent||""));'
+    + 'if(k.replaceWith)k.replaceWith(tn);else if(k.parentNode)k.parentNode.replaceChild(tn,k);}}'
+    + 'return String(frag.textContent||"");}'
     + 'function pickSelection(){var container=document.querySelector(".cp-body");if(!container)return null;'
     + 'var sel=window.getSelection?window.getSelection():null;if(!sel||!sel.rangeCount||sel.isCollapsed)return null;'
     + 'var range=sel.getRangeAt(0);if(!container.contains(range.commonAncestorContainer))return null;'
@@ -491,7 +529,8 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'if(text.length<2)return null;'
     + 'var rect=null;try{var rects=r.getClientRects?r.getClientRects():[];'
     + 'rect=(rects&&rects.length)?rects[rects.length-1]:r.getBoundingClientRect();}catch(e){}'
-    + 'return {text:text,rect:rect};}'
+    + 'var searchText=pickSearchText(range).replace(/\\s+/g," ").replace(/^\\s+|\\s+$/g,"")||text;'
+    + 'return {text:text,searchText:searchText,rect:rect};}'
     + 'function buildExcerpt(text){var lines=String(text||"").split("\\n");'
     + 'while(lines.length&&!lines[0].replace(/\\s/g,""))lines.shift();'
     + 'while(lines.length&&!lines[lines.length-1].replace(/\\s/g,""))lines.pop();'
@@ -572,7 +611,7 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'if(act==="send"){sendFollowup();return;}'
     + 'if(!picked)return;'
     + 'if(act==="copy"){copyText(picked.text);hideBar();return;}'
-    + 'if(act==="search"){postAction("search",picked.text);hideBar();return;}}'
+    + 'if(act==="search"){postAction("search",picked.searchText||picked.text);hideBar();return;}}'
     + 'document.addEventListener("pointerdown",function(ev){if(!bar)return;'
     + 'if(!bar.contains(ev.target))hideBar();},true);'
     + 'document.addEventListener("click",function(ev){if(!bar)return;var t=ev.target;'

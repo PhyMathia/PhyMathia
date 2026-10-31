@@ -8,7 +8,7 @@ const readSrc = (p) => fs.readFileSync(p, 'utf8');
 
 export function run() {
   check('node-fs-toolbar: 动作层符号挂上全局（选区提取/浮条/输入行/桥接收端/预览脚本生成器）', () => {
-    for (const fn of ['_nodeFsPickSelection', '_nodeFsHideBar', '_nodeFsExpandInput', '_nodeFsRunAction', '_buildNodeFsPreviewScript', '_setNodeFsPreviewCtx', '_nodeFsComposeFollowup']) {
+    for (const fn of ['_nodeFsPickSelection', '_nodeFsPickSearchText', '_nodeFsHideBar', '_nodeFsExpandInput', '_nodeFsRunAction', '_buildNodeFsPreviewScript', '_setNodeFsPreviewCtx', '_nodeFsComposeFollowup']) {
       if (typeof sandbox[fn] !== 'function') throw new Error(fn + ' 未暴露');
     }
     return true;
@@ -27,6 +27,37 @@ export function run() {
     if (!sandbox._nodeFsRunAction.toString().includes('_nodeFsExpandInput')) return false;
     const bridge = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
     if (!bridge.includes('expandInput') || !bridge.includes('sendFollowup')) return false;
+    return true;
+  });
+
+  check('node-fs-toolbar: _nodeFsPickSearchText 部分公式选段＝所选可见字符（用户实报场景：选公式尾部「常量」不再被扩成整条 $...$）', () => {
+    if (typeof sandbox._nodeFsPickSearchText !== 'function') return false;
+    // 部分选区的 fragment 里没有完整 .katex（wrapper 在 commonAncestor 之外），textContent 即所选字符
+    const frag = { textContent: '常量' };
+    if (sandbox._nodeFsPickSearchText({ cloneContents: () => frag }) !== '常量') return false;
+    // 空选段/异常兜底：不炸、返回空串（调用侧退扩公式文本）
+    if (sandbox._nodeFsPickSearchText({ cloneContents: () => null }) !== '') return false;
+    if (sandbox._nodeFsPickSearchText({ cloneContents: () => { throw new Error('x'); } }) !== '') return false;
+    return true;
+  });
+
+  check('node-fs-toolbar: 查找查询接线——原始选段单独一份（searchText）双端喂它，整条公式还原 LaTeX 本体不带 $', () => {
+    const src = readSrc('src/static/js/node-fs-toolbar.js');
+    if (!/return \{ text, searchText, rect \};/.test(src)) return false;
+    if (!src.includes('searchText: picked.searchText || picked.text')) return false;
+    if (!src.includes('_nodeFsSearchCanvas(st.searchText || st.fullText)')) return false;
+    // 整条公式完整入选才还原成 tex 本体直入文本节点，不包 $ 定界符——索引侧把 $ 剥掉了，带 $ 恒失配
+    if (!/function _nodeFsPickSearchText[\s\S]*?document\.createTextNode\(tex \|\|/.test(src)) return false;
+    // 预览页双胞胎同款：pickSearchText 在场、查找 postAction 用 searchText 兜底 picked.text
+    const bridge = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
+    if (!bridge.includes('function pickSearchText(range)')) return false;
+    if (!bridge.includes('picked.searchText||picked.text')) return false;
+    return true;
+  });
+
+  check('node-fs-toolbar: 画布搜索查询与索引同管归一——手贴/桥上带 $ 的公式查询也能命中（graph-search.js）', () => {
+    const src = readSrc('src/static/js/graph-search.js');
+    if (!src.includes('_graphSearchPlainText(raw) || raw.trim()')) return false;
     return true;
   });
 

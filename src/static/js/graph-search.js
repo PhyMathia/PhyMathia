@@ -144,7 +144,11 @@ function _renderGraphSearchResults(matches, query, showSession) {
 
 function _performGraphSearch() {
   if (!graphSearchOpen) return;
-  const q = String(graphSearchQuery || '').trim();
+  // 查询与索引同管归一：索引文本建自 _graphSearchPlainText（$ 定界符在那里被剥成空格），
+  // 查询不过同一管，带 $ 的输入做子串匹配恒失配——划词查找送来的整条公式、手贴的
+  // LaTeX 都落这个坑（2026-10-31 用户实报：查找框塞 $...$ 连本节点都搜不到）
+  const raw = String(graphSearchQuery || '');
+  const q = raw.trim() ? (_graphSearchPlainText(raw) || raw.trim()) : '';
   const resultsEl = document.getElementById('graphSearchResults');
   if (!q) {
     if (resultsEl) resultsEl.innerHTML = '<div class="graph-search-empty">输入关键词搜索节点</div>';
