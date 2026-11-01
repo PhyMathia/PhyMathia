@@ -693,7 +693,8 @@ function _cleanFormulaLatex(latex) {
   else s = s.replace(/^\$+|\$+$/g, '').trim();
   return s
     .replace(/\\\$/g, '$')
-    .replace(/\\([=,;:])/g, '$1')
+    // 只清 PowerShell 转义垃圾 \=；\, \; \: 是合法间距命令，剥了公式里会长出字面 ; ,（T422）
+    .replace(/\\=/g, '=')
     .trim();
 }
 
