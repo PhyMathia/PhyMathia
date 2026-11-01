@@ -1035,6 +1035,17 @@ function _nodeContent(message, node, stateArg) {
 function _graphSearchPlainText(text) {
   let out = String(text || '');
   if (typeof stripXmlTags === 'function') out = stripXmlTags(out);
+  // <formula> 块先掏出来、tex 本体递归走同一根管道、最后回填占位符：块内 tex 的裸
+  // <（\mathbb P(a<X\le b,...) 的小于号）会被下面的标签剥离当成标签起点，一路吃到
+  // 下一个 >（</formula> 的 >，或后文 \(f_Y(y)>0\) 的 >），整条公式正文从索引里
+  // 消失＝划词查找怎么都「未找到」，修剪查询只能命中同节点另一条无 < 的公式（＝
+  // 「搜到的不是对应的那个」）。查询侧（KaTeX annotation tex，无包裹标签）与掏出
+  // 后的 tex 同管同形，裸 < 双侧一致（T421，2026-11-01 用户实报矩形概率公式）。
+  const stash = [];
+  out = out.replace(/<formula[^>]*>([\s\S]*?)<\/formula>/gi, (m, tex) => {
+    stash.push(_graphSearchPlainText(tex));
+    return '\n\u0000' + (stash.length - 1) + '\u0000\n';
+  });
   out = out.replace(/<[^>]+>/g, ' ');
   out = out.replace(/```[\s\S]*?```/g, ' ');
   out = out.replace(/!\[[^\]]*\]\([^)]*\)/g, ' ');
@@ -1046,6 +1057,7 @@ function _graphSearchPlainText(text) {
   // 索引与查询同过本管，两侧同形；字母命令（\le、\mathbb、\text）不受影响。
   out = out.replace(/\\([\s!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g, '$1');
   out = out.replace(/\$\$?/g, ' ');
+  out = out.replace(/\u0000(\d+)\u0000/g, (m, i) => stash[Number(i)] || ' ');
   out = out.replace(/\s+/g, ' ').trim();
   return out;
 }
