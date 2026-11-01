@@ -175,6 +175,27 @@ export function run() {
     return true;
   });
 
+  check('node-fs-toolbar: <formula> 内裸 < 不再被标签剥离吞整条公式——矩形概率公式整条查询命中（T421，用户真实数据）', () => {
+    const norm = sandbox._graphSearchPlainText;
+    if (typeof norm !== 'function') return false;
+    // 用户场景：索引侧 <formula> 内 \mathbb P(a<X\le b,...) 的裸 < 被当标签起点，
+    // <[^>]+> 一路吃到 </formula> 的 >，整条公式从索引消失＝「未找到」；修剪成
+    // \mathbb P 只能命中同节点另一条无 < 的公式＝「搜到的不是对应的那个」。
+    const content = '增量得到：\n<formula>\\mathbb P(a<X\\le b,\\;c<Y\\le d)=F_{X,Y}(b,d)</formula>\n当 \\(f_Y(y)>0\\) 时';
+    const indexText = norm(content);
+    if (!indexText.includes('a<X\\le b')) return false;
+    if (!indexText.includes('F_{X,Y}(b,d)')) return false;
+    // 查询侧＝KaTeX annotation 形态（marked 已吃 \; 的反斜杠）过同一根管道，必须命中
+    const query = norm('\\mathbb P(a<X\\le b,;c<Y\\le d)=F_{X,Y}(b,d)');
+    if (!indexText.includes(query)) return false;
+    // 掏块后正文与公式互不干扰：后文 \(...\) 的 > 不再被拖去凑一对
+    if (!indexText.includes('当 (f_Y(y)>0) 时')) return false;
+    // T420 补漏口径零回归：无 < 的公式照旧、转义模拟照旧
+    const joint = norm('$$F_{X,Y}(x,y)=\\mathbb P(X\\le x,\\;Y\\le y)$$');
+    if (!joint.includes(norm('F_{X,Y}(x,y)=\\mathbb P(X\\le x,;Y\\le y)'))) return false;
+    return true;
+  });
+
   check('node-fs-toolbar: 预览脚本生成器两模式产物都能编译、标题带 </script> 被转义', () => {
     const bridge = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 'tok_smoke', nodeId: 'n1', title: '含 </script> 的标题' });
     new Function(bridge); // 只编译不执行——字符串拼接坏了这里当场炸
