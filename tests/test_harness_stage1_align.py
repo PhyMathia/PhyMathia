@@ -1,7 +1,7 @@
 """阶段1「先对齐、再动手」（2026-10-19 计划）：范围硬闸＋复述确认＋拆批提示。
 
 配套 T253 事件环境标记的落点断言也在本文件（Class HarnessEventEnvTest）。
-计划：docs/Φ智能体继续建设计划-2026-10-19.md 阶段 1/阶段 0。
+计划：docs/archive/Φ智能体继续建设计划-2026-10-19.md 阶段 1/阶段 0。
 """
 import asyncio
 import json
