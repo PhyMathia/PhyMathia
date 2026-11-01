@@ -136,5 +136,25 @@ export async function run() {
     return true;
   });
 
+  // T422（2026-11-01）：公式清洗只剥 PowerShell 转义垃圾 \=，合法间距命令 \, \; \: 不再误伤
+  // （旧字符类 [=,;:] 把画布公式渲染成字面 b,;c）。沙箱跑打包产物 app.js，渲染链
+  // _cleanFormulaLatex 与公式芯片收集链 _normalizeFormulaLatex 两条都断言。
+  vm.runInContext('globalThis.__cleanLatex = (l) => _cleanFormulaLatex(l);' +
+    'globalThis.__normLatex = (l) => _normalizeFormulaLatex(l);', sandbox);
+  check('公式清洗：合法间距命令 \\, \\; \\: 保留（T422 画布公式杂符根修）', () => {
+    if (sandbox.__cleanLatex('a\\,b') !== 'a\\,b') throw new Error('\\, 被剥：' + JSON.stringify(sandbox.__cleanLatex('a\\,b')));
+    if (sandbox.__cleanLatex('a\\;b') !== 'a\\;b') throw new Error('\\; 被剥');
+    if (sandbox.__cleanLatex('a\\:b') !== 'a\\:b') throw new Error('\\: 被剥');
+    if (sandbox.__cleanLatex('\\mathbb P(X\\le x,\\;Y\\le y)') !== '\\mathbb P(X\\le x,\\;Y\\le y)') throw new Error('条件概率公式被改写');
+    if (sandbox.__cleanLatex('a\\=b') !== 'a=b') throw new Error('\\= 垃圾转义应仍被清（PowerShell 转义原意图）');
+    return true;
+  });
+
+  check('公式清洗：_normalizeFormulaLatex 同口径（公式芯片收集链）', () => {
+    if (sandbox.__normLatex('a\\,b') !== '$a\\,b$') throw new Error('\\, 被剥：' + JSON.stringify(sandbox.__normLatex('a\\,b')));
+    if (sandbox.__normLatex('a\\=b') !== '$a=b$') throw new Error('\\= 应清');
+    return true;
+  });
+
   await drain();
 }

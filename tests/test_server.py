@@ -54,6 +54,10 @@ class FormulaTest(unittest.TestCase):
     def test_normalize_formula_cleans_escapes(self):
         self.assertEqual(knowledge_mod._normalize_formula("\\$x\\$"), "$x$")
         self.assertEqual(knowledge_mod._normalize_formula("\\=x"), "$=x$")
+        # 合法间距命令 \, \; \: 不剥（2026-11-01 T422：旧字符类 [=,;:] 误伤，渲染长字面 ; ,）
+        self.assertEqual(knowledge_mod._normalize_formula("a\\,b"), "$a\\,b$")
+        self.assertEqual(knowledge_mod._normalize_formula("a\\;b"), "$a\\;b$")
+        self.assertEqual(knowledge_mod._normalize_formula("a\\:b"), "$a\\:b$")
 
     def test_looks_like_formula(self):
         self.assertTrue(knowledge_mod._looks_like_formula("$F=-kx$"))

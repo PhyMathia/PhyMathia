@@ -56,8 +56,8 @@ def _normalize_formula(latex: str) -> str:
     s = re.sub(r"^\$+|\$+$", "", s).strip()
     # 内部残留的 $ 会在包上 $..$ 后形成畸形嵌套定界符（KaTeX 扫描时提前截断），移除
     s = s.replace("$", "")
-    # 清洗 PowerShell 转义等产生的无效 LaTeX 命令（\= 等）
-    s = re.sub(r"\\([=,;:])", r"\1", s)
+    # 清洗 PowerShell 转义等产生的无效 LaTeX 命令（\=）；\, \; \: 是合法间距命令不剥（T422）
+    s = re.sub(r"\\=", "=", s)
     if not s:
         return ""
     return f"${s}$"

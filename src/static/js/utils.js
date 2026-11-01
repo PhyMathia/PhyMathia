@@ -163,12 +163,13 @@ function _looksLikeFormula(latex) {
   return true;
 }
 
-// 公式：与后端 _normalize_formula 一致（\$→$、去首尾 $、统一包 $..$，清洗 \= 等无效命令）
+// 公式：与后端 _normalize_formula 一致（\$→$、去首尾 $、统一包 $..$，清洗 \= 无效命令）
 function _normalizeFormulaLatex(latex) {
   let s = String(latex || '').trim();
   s = s.replace(/\\\$/g, '$').trim();
   s = s.replace(/^\$+|\$+$/g, '').trim();
-  s = s.replace(/\\([=,;:])/g, '$1');
+  // 只清 \=；\, \; \: 合法间距命令不剥（T422，与后端 _normalize_formula 同步）
+  s = s.replace(/\\=/g, '=');
   return s ? '$' + s + '$' : '';
 }
 
