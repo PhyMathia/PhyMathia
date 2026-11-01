@@ -230,6 +230,10 @@ const ONBOARDING_KEY = 'phymathia_onboarding_done';
 const STORAGE_KEY_DEVICE_ID = 'phymathia_device_id';
 // 节点配方库（P1）：全局键（不带会话后缀），localStorage 与服务端 /api/kv/node_recipes 双写
 const STORAGE_KEY_NODE_RECIPES = 'phymathia_node_recipes';
+// 官方配方包「已添加」标记（P4 生态，2026-11-01）：全局键，存 packKey 字符串数组。
+// 只记「加过没有」；配方本体仍走 phymathia_node_recipes——packKey 不落配方库
+// （normalizeRecipeInput 字段白名单剥除），添加成功时由 graph-recipe-pack.js 写这里
+const STORAGE_KEY_RECIPE_PACK_ADDED = 'phymathia_recipe_pack_added';
 // 节点工坊草稿（2026-10-20，创造模式重做 P1）：全局键，500ms 防抖落盘；
 // 入册/丢弃时清空（graph-workshop.js 的 _rwSaveDraftNow / _rwClearDraftStorage）
 const STORAGE_KEY_RECIPE_DRAFT = 'phymathia_recipe_draft';

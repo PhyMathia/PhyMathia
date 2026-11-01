@@ -50,6 +50,10 @@ function openAddBlankNodeModal(x, y) {
     + '<button class="graph-add-node-item graph-recipe-guide" onclick="openRecipeForm(null)" title="创建自己的节点类型：起名、写提示词、配出口">'
     + '<span class="graph-add-node-dot is-round"></span>＋ 新建配方'
     + '</button>'
+    // 官方配方包入口（P4 生态，D-R7）：默认不添加任何东西，勾选清单式按需入「我的配方」
+    + '<button class="graph-add-node-item graph-recipe-guide" onclick="openRecipePackModal()" title="官方附赠的示范配方：勾选添加，进「我的配方」后可编辑可删除">'
+    + '<span class="graph-add-node-dot is-round"></span>＋ 官方配方包'
+    + '</button>'
     + '</div></div>';
   overlay.innerHTML = '<div class="graph-add-node-dialog aurora-glass aurora-glass--dialog">'
     + '<div class="graph-add-node-head">'

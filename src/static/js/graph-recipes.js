@@ -477,6 +477,68 @@ async function syncUserRecipesFromServer() {
   return true;
 }
 
+// ---- 导入导出（P4 生态，2026-11-01）：纯数据 JSON（D-R2），文件＝normalize 后 schema 的原样序列化 ----
+// 导出文件头 _format/version 供将来 schema 升级时识别旧文件；单条导出也走 recipes 数组
+// （导入端一套解析器三种形态全认：标准包 / 裸数组 / 单配方对象——手改文件不炸，脏数据校验器挡）。
+const RECIPE_EXPORT_FORMAT = 'phymathia-recipe';
+const RECIPE_EXPORT_VERSION = 1;
+
+function parseRecipeImportText(text) {
+  let data;
+  try {
+    data = JSON.parse(String(text == null ? '' : text));
+  } catch (e) {
+    return { ok: false, error: '不是合法的 JSON 文件' };
+  }
+  let list = null;
+  if (Array.isArray(data)) list = data;
+  else if (data && typeof data === 'object' && data._format === RECIPE_EXPORT_FORMAT && Array.isArray(data.recipes)) list = data.recipes;
+  else if (data && typeof data === 'object' && (data.base || data.generate || data.ports)) list = [data];
+  if (!list || !list.length) return { ok: false, error: '文件里没有配方' };
+  return { ok: true, recipes: list };
+}
+
+// 导出载荷：统一标准包形态（单条导出＝数组里一条）。
+function recipeExportPayload(recipes) {
+  return {
+    _format: RECIPE_EXPORT_FORMAT,
+    version: RECIPE_EXPORT_VERSION,
+    exported: new Date().toISOString(),
+    recipes: (Array.isArray(recipes) ? recipes : []).map(normalizeRecipeInput).filter(Boolean),
+  };
+}
+
+// 导入核心（无副作用，落库归调用方）：id 一律重生成——配方身份是内容不是 id，一份文件
+// 发给多台设备各自导入互不冲突；同名靠校验器查重挡（报错让用户改名，不静默覆盖、
+// 不自动改名，2026-11-01 拍板）。base 逐条吃进已入库项，同批文件内部同名也照查重。
+function importRecipesFromList(rawList, existingList) {
+  const base = (Array.isArray(existingList) ? existingList : []).slice();
+  const added = [];
+  const failed = [];
+  (Array.isArray(rawList) ? rawList : []).forEach(raw => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      failed.push({ name: '（不是配方对象）', reason: '结构不合法' });
+      return;
+    }
+    const candidate = Object.assign({}, raw, {
+      id: 'recipe-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '-' + added.length,
+    });
+    const normalized = normalizeRecipeInput(candidate);
+    if (!normalized) {
+      failed.push({ name: String(raw.name || '').slice(0, 24) || '（未命名）', reason: '缺名称或底座类型不合法' });
+      return;
+    }
+    const verdict = validateRecipe(normalized, base);
+    if (!verdict.ok) {
+      failed.push({ name: normalized.name, reason: verdict.errors[0] });
+      return;
+    }
+    base.push(normalized);
+    added.push(normalized);
+  });
+  return { added, failed };
+}
+
 // ---- 节点侧助手（渲染/工作流/交互挂载点共用）----
 // 节点内嵌快照（recipeEmbedSnapshot 的产物）挂在 node.recipe 上；删配方不毁旧节点（3.4 节）。
 function recipeEmbedSnapshot(recipe) {
@@ -672,6 +734,10 @@ window.validateRecipe = validateRecipe;
 window.getUserRecipes = getUserRecipes;
 window.setUserRecipes = setUserRecipes;
 window.syncUserRecipesFromServer = syncUserRecipesFromServer;
+// 导入导出核心挂 window：graph-recipe-edit.js / graph-recipe-pack.js 两处 UI 共用，冒烟直测
+window.parseRecipeImportText = parseRecipeImportText;
+window.recipeExportPayload = recipeExportPayload;
+window.importRecipesFromList = importRecipesFromList;
 window.recipeEmbedSnapshot = recipeEmbedSnapshot;
 window._nodeRecipeSnapshot = _nodeRecipeSnapshot;
 window._recipeNodeAttribute = _recipeNodeAttribute;

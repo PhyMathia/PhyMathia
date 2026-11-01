@@ -2843,4 +2843,151 @@ check('Φ 建点内容回填（T74）：AI 底座批量送工作流、relation �
   }
   return true;
 });
+
+// ===== 2026-11-01 P4 生态：配方导入导出＋官方配方包 =====
+// 与本域既有口径一致：全程同步（无 await），共享 phymathia_node_recipes 键的用例
+// 自带存/还原（_lsRecipeSeed/_lsRecipeRestore，本文件配方优化批次已定义）；pack
+// 标记键 phymathia_recipe_pack_added 同法自带存/还原。
+
+check('配方导入导出核心（P4）：文件三形态解析＋id 重生成＋同名查重（含批内）＋脏数据剔除＋导出往返', () => {
+  const parse = sandbox.window.parseRecipeImportText;
+  const importList = sandbox.window.importRecipesFromList;
+  const exportPayload = sandbox.window.recipeExportPayload;
+  if (typeof parse !== 'function' || typeof importList !== 'function' || typeof exportPayload !== 'function') {
+    throw new Error('导入导出核心未挂 window');
+  }
+  // 解析三形态：标准包 / 裸数组 / 单配方对象
+  const packText = JSON.stringify({ _format: 'phymathia-recipe', version: 1, recipes: [_smokeValidRecipe()] });
+  const p1 = parse(packText);
+  if (!p1.ok || p1.recipes.length !== 1) throw new Error('标准包解析失败');
+  const p2 = parse(JSON.stringify([_smokeValidRecipe()]));
+  if (!p2.ok || p2.recipes.length !== 1) throw new Error('裸数组解析失败');
+  const p3 = parse(JSON.stringify(_smokeValidRecipe()));
+  if (!p3.ok || p3.recipes.length !== 1) throw new Error('单配方对象解析失败');
+  for (const [label, text] of [['非法 JSON', '这不是 JSON'], ['无配方对象', '{"a":1}'], ['空 recipes', '{"_format":"phymathia-recipe","recipes":[]}']]) {
+    const bad = parse(text);
+    if (bad.ok || !bad.error) throw new Error(label + ' 应解析失败并带原因：' + JSON.stringify(bad));
+  }
+  // 导出载荷：标准头＋原 id 保留（导出不改身份）
+  const payload = exportPayload([_smokeValidRecipe()]);
+  if (payload._format !== 'phymathia-recipe' || payload.version !== 1 || payload.recipes[0].id !== 'recipe-smoke-1') {
+    throw new Error('导出载荷形态不对：' + JSON.stringify({ f: payload._format, v: payload.version }));
+  }
+  // 导入：id 一律重生成（配方身份是内容不是 id）、未知字段剥除
+  const raw = { ..._smokeValidRecipe(), id: 'recipe-from-file', evil: 'drop me' };
+  const first = importList([raw], []);
+  if (first.added.length !== 1 || first.failed.length) throw new Error('首导入应成功：' + JSON.stringify(first.failed));
+  if (first.added[0].id === 'recipe-from-file' || !first.added[0].id) throw new Error('导入 id 应重生成');
+  if (first.added[0].evil !== undefined) throw new Error('未知字段未剥除');
+  if (first.added[0].name !== '错题复盘') throw new Error('名称应保留');
+  // 同名再导入被查重挡（报错让用户改名，不静默覆盖不自动改名——2026-11-01 拍板）
+  const again = importList([raw], first.added);
+  if (again.added.length || again.failed.length !== 1 || !again.failed[0].reason.includes('同名')) {
+    throw new Error('同名再导入未被挡：' + JSON.stringify(again));
+  }
+  // 批内同名：第一条入库，第二条报同名
+  const batch = importList([raw, { ...raw }], []);
+  if (batch.added.length !== 1 || batch.failed.length !== 1) throw new Error('批内同名应 1 成 1 败：' + JSON.stringify(batch));
+  // 脏数据剔除不炸
+  const dirty = importList([{}, 'not-an-object', null], []);
+  if (dirty.added.length || dirty.failed.length !== 3) throw new Error('脏数据应全数剔除：' + JSON.stringify(dirty));
+  // 同 id 不同名：id 重生成后与库无冲突，照常入库
+  const sameId = importList([{ ..._smokeValidRecipe(), name: '换个名字', id: 'recipe-smoke-1' }], first.added);
+  if (sameId.added.length !== 1) throw new Error('同 id 不同名应照常入库：' + JSON.stringify(sameId.failed));
+  return true;
+});
+
+check('配方导入导出 UI（P4）：管理面板接线＋applyRecipeImportText 落库与逐条失败反馈', () => {
+  const editSrc = fs.readFileSync('src/static/js/graph-recipe-edit.js', 'utf8');
+  if (!editSrc.includes('onclick="exportRecipeById(')) throw new Error('管理行缺导出按钮');
+  if (!editSrc.includes('onclick="importRecipeFile()"')) throw new Error('管理面板缺导入按钮');
+  if (!editSrc.includes('exportAllRecipes()')) throw new Error('管理面板缺导出全部');
+  if (!editSrc.includes('file.text()')) throw new Error('导入未走文件文本读取');
+  const buildSrc = fs.readFileSync('scripts/build_frontend.mjs', 'utf8');
+  if (!buildSrc.includes("'graph-recipe-pack.js'")) throw new Error('graph-recipe-pack.js 未进构建顺序');
+  // 行为：applyRecipeImportText（顶层函数声明 → vm 全局）落库＋反馈；失败逐条给原因不静默
+  const packText = JSON.stringify({ _format: 'phymathia-recipe', version: 1, recipes: [_smokeValidRecipe()] });
+  const prevToast = sandbox.toastMsg;
+  const toasts = [];
+  sandbox.toastMsg = msg => { toasts.push(String(msg)); };
+  const rawBefore = _lsRecipeRaw();
+  try {
+    _lsRecipeSeed([]);
+    sandbox.applyRecipeImportText(packText);
+    if (sandbox.window.getUserRecipes().length !== 1) throw new Error('导入后库里应有 1 条');
+    if (!toasts.some(t => t.includes('导入 1 条'))) throw new Error('成功反馈缺失：' + JSON.stringify(toasts));
+    // 同名再导入：库不变，toast 给查重原因
+    toasts.length = 0;
+    sandbox.applyRecipeImportText(packText);
+    if (sandbox.window.getUserRecipes().length !== 1) throw new Error('同名再导入不应重复入库');
+    if (!toasts.some(t => t.includes('同名'))) throw new Error('同名失败原因未反馈：' + JSON.stringify(toasts));
+    // 垃圾文本：不炸、不写库
+    toasts.length = 0;
+    sandbox.applyRecipeImportText('{{{not json');
+    if (sandbox.window.getUserRecipes().length !== 1) throw new Error('垃圾文本不应改库');
+    if (!toasts.some(t => t.includes('JSON'))) throw new Error('垃圾文本未反馈原因：' + JSON.stringify(toasts));
+    return true;
+  } finally {
+    _lsRecipeRestore(rawBefore);
+    sandbox.toastMsg = prevToast;
+  }
+});
+
+check('官方配方包（P4）：条目全过校验器＋覆盖面＋添加落库＋packKey 标记＋重复添加被挡＋默认全不勾', () => {
+  const pack = sandbox.window.OFFICIAL_RECIPE_PACK;
+  if (!Array.isArray(pack) || pack.length < 5 || pack.length > 8) throw new Error('官方配方包应 5–8 条，实际 ' + (pack && pack.length));
+  const normalize = sandbox.window.normalizeRecipeInput;
+  const validate = sandbox.window.validateRecipe;
+  const seenKeys = new Set();
+  pack.forEach(item => {
+    if (!item || !item.packKey || !item.recipe) throw new Error('包条目缺 packKey/recipe');
+    if (seenKeys.has(item.packKey)) throw new Error('packKey 重复：' + item.packKey);
+    seenKeys.add(item.packKey);
+    if (!item.packKey.startsWith('official:')) throw new Error('packKey 应带 official: 前缀：' + item.packKey);
+    const normalized = normalize(item.recipe);
+    if (!normalized) throw new Error('包条目 normalize 失败：' + item.packKey);
+    const verdict = validate(normalized, []);
+    if (!verdict.ok) throw new Error('包条目未过校验器：' + item.packKey + ' → ' + verdict.errors.join('；'));
+    if (item.recipe.name !== normalized.name) throw new Error('包条目名会被 normalize 改写（packKey 对名打标记会失配）：' + item.packKey);
+  });
+  // 覆盖面：包同时是 schema 的活教材，至少各一条 html_iframe 与动态出口示范
+  if (!pack.some(item => item.recipe.content_kind === 'html_iframe')) throw new Error('包里应有一条 html_iframe 示范');
+  if (!pack.some(item => item.recipe.ports && item.recipe.ports.dynamic)) throw new Error('包里应有一条动态出口示范');
+  // 添加核心行为：落库＋packKey 标记；重复添加被同名查重挡（UI 层「已添加」禁勾是第一道）
+  const prevToast = sandbox.toastMsg;
+  sandbox.toastMsg = () => {};
+  const rawBefore = _lsRecipeRaw();
+  const packKeyBefore = localStorage.getItem('phymathia_recipe_pack_added');
+  try {
+    _lsRecipeSeed([]);
+    localStorage.removeItem('phymathia_recipe_pack_added');
+    const first = sandbox.addOfficialRecipesFromPack(['official:feynman-restate', 'official:three-tier-probe']);
+    if (first.added.length !== 2 || first.failed.length) throw new Error('两条应全加成：' + JSON.stringify(first.failed));
+    if (sandbox.window.getUserRecipes().length !== 2) throw new Error('落库数不对');
+    const marked = JSON.parse(localStorage.getItem('phymathia_recipe_pack_added') || '[]');
+    if (!marked.includes('official:feynman-restate') || !marked.includes('official:three-tier-probe')) {
+      throw new Error('packKey 未标记：' + localStorage.getItem('phymathia_recipe_pack_added'));
+    }
+    if (!sandbox.window.getRecipePackAddedKeys().has('official:feynman-restate')) throw new Error('getRecipePackAddedKeys 未反映标记');
+    const second = sandbox.addOfficialRecipesFromPack(['official:feynman-restate']);
+    if (second.added.length || !second.failed[0].reason.includes('同名')) {
+      throw new Error('重复添加未被挡：' + JSON.stringify(second));
+    }
+    if (sandbox.window.getUserRecipes().length !== 2) throw new Error('重复添加不应改变库');
+    // 入口与弹窗契约：添加面板有入口；勾选框默认全不勾（D-R7）；已添加条目禁勾
+    const customSrc = fs.readFileSync('src/static/js/graph-custom.js', 'utf8');
+    if (!customSrc.includes('openRecipePackModal()')) throw new Error('添加面板缺官方配方包入口');
+    const packSrc = fs.readFileSync('src/static/js/graph-recipe-pack.js', 'utf8');
+    // 模板字面量必须是裸 <input type="checkbox">＋disabledAttr 拼接——默认档无 checked 属性
+    // （这里不能宽正则扫 checked：模板里 this.checked 是事件参数，不是勾选属性）
+    if (!packSrc.includes('\'<input type="checkbox"\' + disabledAttr')) throw new Error('配方包勾选框不许默认勾选（D-R7）');
+    if (!packSrc.includes("disabledAttr = isAdded ? ' disabled' : ''")) throw new Error('已添加条目未禁勾');
+    return true;
+  } finally {
+    _lsRecipeRestore(rawBefore);
+    if (packKeyBefore == null) localStorage.removeItem('phymathia_recipe_pack_added');
+    else localStorage.setItem('phymathia_recipe_pack_added', packKeyBefore);
+    sandbox.toastMsg = prevToast;
+  }
+});
 }

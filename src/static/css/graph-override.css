@@ -6932,6 +6932,45 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   padding: 8px 0 14px;
 }
 
+/* ---------- 官方配方包勾选清单（P4 生态，2026-11-01） ----------
+   结构仿 .recipe-manage-row；全令牌复用，零新色值零新字号（T8 红线） */
+.recipe-pack-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 2px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-md);
+  cursor: pointer;
+}
+
+.recipe-pack-row input[type="checkbox"] {
+  accent-color: var(--accent);
+  flex: none;
+}
+
+.recipe-pack-name {
+  font-weight: 600;
+}
+
+.recipe-pack-meta {
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  margin-right: auto;
+}
+
+.recipe-pack-added {
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  flex: none;
+}
+
+.recipe-pack-hint {
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  padding: 6px 0 10px;
+}
+
 /* ---------- T96 撤销时间线（Φ 面板内联区块，2026-09-30） ----------
    位置在 composer 之前、对话区之后，普通文档流＋max-height：绝对定位浮层会盖住
    对话记录，不做。本块不写 background——面板的极光磨砂层透上来；只给行与按钮
