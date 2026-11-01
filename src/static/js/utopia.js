@@ -165,12 +165,30 @@ function buildUtopiaSnapshot() {
   };
 }
 
-// 导出成功浮卡：给一条明确的「下一步」——一键在查看器里打开刚导出的快照。
+// 导出成功浮卡：给一条明确的「下一步」——一键在查看器里打开刚导出的存档。
 // 只在主应用弹（查看器里再导出没有主应用的会话上下文，也没有交接通道）。
+// 2026-11-01：不再同时弹 toast（两者都在底部，toast 会压住卡片顶沿）；
+// 60 秒后自动收起，鼠标悬停/键盘聚焦时暂停计时。
 var _utopiaCardTimer = null;
+var UTOPIA_CARD_MS = 60000;
 
 function _utopiaIsViewer() {
   return typeof window.__UTOPIA__ !== 'undefined';
+}
+
+// 文件体积按 Blob 实际字节显示（旧实现用 json.length，把 UTF-16 字符数当字节，
+// 中文内容会少报 2–3 倍）
+function _utopiaFmtSize(bytes) {
+  var n = Number(bytes) || 0;
+  if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
+  return Math.max(1, Math.round(n / 1024)) + ' KB';
+}
+
+function _utopiaArmCardTimer(card) {
+  clearTimeout(_utopiaCardTimer);
+  _utopiaCardTimer = setTimeout(function () {
+    if (card.isConnected) card.remove();
+  }, UTOPIA_CARD_MS);
 }
 
 function showUtopiaExportCard(summary) {
@@ -181,11 +199,18 @@ function showUtopiaExportCard(summary) {
   var card = document.createElement('div');
   card.id = 'utopiaExportCard';
   card.className = 'aurora-glass aurora-glass--dialog';
-  card.innerHTML = '<div class="utopia-export-card-title">Utopia 快照已导出</div>'
+  card.setAttribute('role', 'status');
+  var htmlRow = (typeof window.exportUtopiaStandaloneHtml === 'function')
+    ? '<button type="button" class="utopia-export-card-btn" id="utopiaExportHtmlBtn">再存网页版</button>'
+    : '';
+  card.innerHTML = '<div class="utopia-export-card-title">存档已保存</div>'
     + '<div class="utopia-export-card-sub">' + summary.nodes + ' 节点 · ' + summary.edges + ' 连线 · '
-    + summary.messages + ' 条会话消息（' + Math.max(1, Math.round(summary.bytes / 1024)) + ' KB）</div>'
+    + summary.messages + ' 条会话消息 · ' + _utopiaFmtSize(summary.bytes) + '</div>'
+    + '<div class="utopia-export-card-hint">已存到「下载」：<b>' + String(summary.fileName || '') + '</b><br>'
+    + '拖回 PhyMathia 可继续编辑；发给别人建议用单文件网页</div>'
     + '<div class="utopia-export-card-actions">'
     + '<button type="button" class="utopia-export-card-btn primary" id="utopiaOpenViewerBtn">在查看器中打开</button>'
+    + htmlRow
     + '<button type="button" class="utopia-export-card-btn" id="utopiaDismissCardBtn">知道了</button>'
     + '</div>';
   document.body.appendChild(card);
@@ -198,9 +223,18 @@ function showUtopiaExportCard(summary) {
     clearTimeout(_utopiaCardTimer);
     _utopiaOpenHandoffViewer();
   });
-  _utopiaCardTimer = setTimeout(function () {
-    if (card.isConnected) card.remove();
-  }, 20000);
+  var htmlBtn = card.querySelector('#utopiaExportHtmlBtn');
+  if (htmlBtn) htmlBtn.addEventListener('click', function () {
+    card.remove();
+    clearTimeout(_utopiaCardTimer);
+    window.exportUtopiaStandaloneHtml();
+  });
+  // 悬停/聚焦暂停自动收起，避免用户正要点击时卡片消失
+  card.addEventListener('mouseenter', function () { clearTimeout(_utopiaCardTimer); });
+  card.addEventListener('mouseleave', function () { _utopiaArmCardTimer(card); });
+  card.addEventListener('focusin', function () { clearTimeout(_utopiaCardTimer); });
+  card.addEventListener('focusout', function () { _utopiaArmCardTimer(card); });
+  _utopiaArmCardTimer(card);
 }
 
 function _utopiaOpenHandoffViewer(snapshot) {
@@ -255,20 +289,26 @@ function exportUtopiaSnapshot() {
   const json = JSON.stringify(snapshot, null, 2);
   const blob = new Blob([json], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
+  const fileName = utopiaSnapshotFilename(snapshot.title);
   const a = document.createElement('a');
   a.href = url;
-  a.download = utopiaSnapshotFilename(snapshot.title);
+  a.download = fileName;
   document.body.appendChild(a);
   a.click();
   a.remove();
   setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
   const sum = utopiaSnapshotSummary(snapshot);
-  sum.bytes = json.length;
-  if (typeof showToast === 'function') {
-    showToast('已导出 Utopia 快照 ' + sum.nodes + ' 节点 / ' + sum.edges + ' 连线 / '
-      + sum.messages + ' 条会话消息——用查看器打开可滚动看长内容');
+  sum.bytes = blob.size;
+  sum.fileName = fileName;
+  // 浮卡本身已经交代了节点数/体积/文件名，再弹一条 toast 会在底部互相压住
+  if (_utopiaIsViewer()) {
+    if (typeof showToast === 'function') {
+      showToast('已导出 Utopia 存档 ' + sum.nodes + ' 节点 / ' + sum.edges + ' 连线 / '
+        + sum.messages + ' 条会话消息');
+    }
+  } else {
+    showUtopiaExportCard(sum);
   }
-  showUtopiaExportCard(sum);
   return true;
 }
 

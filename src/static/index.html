@@ -36,7 +36,7 @@
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
   <link rel="stylesheet" href="/css/styles.min.css?v=fb89eae3">
-  <link rel="stylesheet" href="/css/styles-panels.min.css?v=d36bb950">
+  <link rel="stylesheet" href="/css/styles-panels.min.css?v=f274d67b">
   <link rel="stylesheet" href="/css/graph-override.min.css?v=16842049">
   <link rel="stylesheet" href="/phi/phi-pet.min.css?v=259b0ac7">
   <script defer src="/vendor/katex/katex.min.js"></script>
@@ -256,7 +256,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=cb019b95" defer></script>
+  <script src="/js/app.js?v=2e50b2eb" defer></script>
   <script>
     // app.js 改 defer 后本脚本先于它执行，而 APP_VERSION 是 config.js 的顶层
     // const——内联脚本无法加 defer，只能等 DOMContentLoaded：所有 defer 脚本
@@ -793,7 +793,7 @@
       </div>
       <div style="display:flex;gap:8px;margin-top:8px;">
         <button onclick="utopiaImportPick()" style="flex:1;padding:8px;border:1px solid color-mix(in srgb, var(--accent) 40%, var(--border));border-radius:8px;background:color-mix(in srgb, var(--accent) 10%, var(--surface-container));color:var(--text-primary);cursor:pointer;font-size:13px;">导入 .pmu 快照为新画布</button>
-        <input type="file" id="utopiaImportFileInput" accept=".pmu,.json,application/json" style="display:none;" onchange="if(this.files&&this.files[0])importUtopiaSnapshotFile(this.files[0])">
+        <input type="file" id="utopiaImportFileInput" accept=".pmu" style="display:none;" onchange="if(this.files&&this.files[0])importUtopiaSnapshotFile(this.files[0])">
       </div>
       <div id="dataStats" style="margin-top:12px;font-size:12px;color:var(--text-secondary);"></div>
       <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">

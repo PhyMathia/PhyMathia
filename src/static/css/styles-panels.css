@@ -3295,6 +3295,140 @@
   from { opacity: 0; transform: translateX(-50%) translateY(10px); }
   to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
+.utopia-export-card-hint {
+  margin-top: 7px;
+  font-size: var(--fs-2xs);
+  color: var(--text-secondary);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.utopia-export-card-hint b {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.utopia-export-card-actions { flex-wrap: wrap; }
+
+/* .pmu 导入确认卡（2026-11-01）：拖入/选文件后先确认，再新建画布 */
+.utopia-import-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-panel-top, 900);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: var(--overlay-bg);
+  -webkit-backdrop-filter: blur(10px) saturate(1.04);
+  backdrop-filter: blur(10px) saturate(1.04);
+}
+.utopia-import-card {
+  width: min(430px, calc(100vw - 32px));
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  padding: 18px 20px;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--text-primary);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .38);
+}
+.utopia-import-card-title {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+}
+.utopia-import-card-sub {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+.utopia-import-label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+.utopia-import-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--fs-sm);
+}
+.utopia-import-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.utopia-import-meta {
+  font-size: var(--fs-2xs);
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+.utopia-import-warn {
+  font-size: var(--fs-2xs);
+  color: var(--warn-fg);
+  line-height: 1.6;
+}
+.utopia-import-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+.utopia-import-btn {
+  font: inherit;
+  font-size: var(--fs-sm);
+  padding: 7px 16px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: border-color .18s ease, transform .18s ease;
+}
+.utopia-import-btn:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+.utopia-import-btn.primary {
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 62%, #a78bfa));
+  color: #06101f;
+  border-color: transparent;
+  font-weight: 600;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/* 主应用拖入 .pmu 时的全屏提示（不挡鼠标，松手走既有 drop 逻辑） */
+.utopia-import-hint {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-panel-top, 900);
+  display: none;
+  place-items: center;
+  pointer-events: none;
+  background: rgba(6, 10, 22, .52);
+}
+.utopia-import-hint.show { display: grid; }
+.utopia-import-hint-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 22px 30px;
+  border-radius: var(--r-xl);
+  border: 2px dashed color-mix(in srgb, var(--accent) 62%, var(--border));
+  background: var(--panel-bg);
+  text-align: center;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .35);
+}
+.utopia-import-hint-card b { font-size: var(--fs-lg); }
+.utopia-import-hint-card span {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
 
 /* 导出快照内部净化：随页面样式一起内联进 SVG 生效 */
 .graph-export-root *,
