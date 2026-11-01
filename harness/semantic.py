@@ -6,7 +6,7 @@ search_nodes 节点召回、search_knowledge/search_formulas 知识资产召回�
 快照 user_recipes 名额按指令相关度重排（均由 review.py 调用，tools.py 只收
 组装好的命中列表，保持纯函数）。
 
-设计约束（docs/Φ智能体优化新路径-2026-10-09.md 路径三）：
+设计约束（docs/archive/Φ智能体优化新路径-2026-10-09.md 路径三）：
 - **字面优先、语义只补位**：调用方只在字面检索完全 miss 时来问；返回条数封顶、
   分数过门槛——向量质量差时最坏也只是几条带 semantic 标记的候选，绝不改变
   既有字面命中；

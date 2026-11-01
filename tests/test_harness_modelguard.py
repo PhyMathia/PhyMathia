@@ -1,6 +1,6 @@
 """T98（harness 模型目标域名守卫）+ T97（Φ 推理档位）回归。
 
-两条评审路线（docs/Φ智能体成熟度评审与改进路线-2026-09-30.md）的落点：
+两条评审路线（docs/archive/Φ智能体成熟度评审与改进路线-2026-09-30.md）的落点：
 - T98：_resolve_model 与主应用同口径调 validate_model_target（唯一实现已下沉
   llm_common），env 兜底密钥（含 deepseek 末位回退）不得发往非官方域名；
 - T97：thinking 档位经 model dict 透传到 _call_model，按相位给默认档，上游
