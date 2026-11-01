@@ -23,9 +23,10 @@
   var _menuEl = null;
   var _exporting = false;
   var _transparentBg = false;
-  // 「在查看器中预览」与「保存 .pmu」入口开关——2026-09-26 用户拍板：外发主推单文件网页，
-  // 这两个入口暂时关闭；恢复时改回 true（smoke 对入口的静态断言按源码存在校验，不受影响）
-  var UTOPIA_SHARE_ENTRIES = false;
+  // 「在查看器中预览」与「保存 .pmu」入口开关——2026-09-26 曾按用户要求暂时关闭；
+  // 2026-11-01 重开并改定位：.pmu = 本张画布＋完整对话的「存档/继续编辑」，
+  // 外发分享仍主推单文件网页（smoke 对入口的静态断言按源码存在校验，不受开关影响）
+  var UTOPIA_SHARE_ENTRIES = true;
   var _dataUrlCache = {};   // 绝对 url -> dataURL（跨导出复用，字体只抓一次）
   var _outsideCloser = null;
   var _escCloser = null;
@@ -736,9 +737,10 @@
     html += '</div>'
       + '<label class="graph-export-menu-opt"><input type="checkbox" id="graphExportTransparent"'
       + (_transparentBg ? ' checked' : '') + '>透明背景（无任何底图底色，用于贴图）</label>';
-    // 「查看与分享」段按需渲染：入口全关时不连段标题一起出（查看器包里单文件入口本就不渲染）
+    // 「分享与存档」段按需渲染：入口全关时不连段标题一起出（查看器包里单文件入口本就不渲染）
+    var inMainApp = typeof window.__UTOPIA__ === 'undefined';
     var shareRows = '';
-    // 预览：主应用里才有意义（查看器自己已经在看了）——暂时关闭（UTOPIA_SHARE_ENTRIES）
+    // 预览与存档：主应用里才有意义（查看器自己已经在看了，也不能再「导入」自己）
     if (UTOPIA_SHARE_ENTRIES && typeof window.__UTOPIA__ === 'undefined') {
       shareRows += '<button type="button" class="graph-export-scale-row graph-export-preview-row" id="graphExportPreview">'
         + '<b>在查看器中预览</b>'
@@ -751,20 +753,20 @@
         + '<span class="graph-export-res">外发首选 · 对方双击就能看，无需安装</span>'
         + '</button>';
     }
-    // .pmu 快照：暂时关闭（UTOPIA_SHARE_ENTRIES）
-    if (UTOPIA_SHARE_ENTRIES) {
+    // .pmu 存档：只在主应用出（查看器里 utopia.js 也在，不守卫就会多出一条「再导一次」）
+    if (UTOPIA_SHARE_ENTRIES && inMainApp) {
       shareRows += '<button type="button" class="graph-export-scale-row" id="graphExportUtopia">'
-        + '<b>保存 Utopia 快照 ' + UTOPIA_EXT + '</b>'
-        + '<span class="graph-export-res">完整会话 · 可拖回恢复编辑</span>'
+        + '<b>保存存档 ' + UTOPIA_EXT + '</b>'
+        + '<span class="graph-export-res">本张画布＋完整对话 · 拖回 PhyMathia 继续编辑</span>'
         + '</button>';
     }
     if (shareRows) {
-      html += '<div class="graph-export-section-title">查看与分享</div>' + shareRows
+      html += '<div class="graph-export-section-title">分享与存档</div>' + shareRows
         + '<div class="graph-export-menu-foot">'
-        + (UTOPIA_SHARE_ENTRIES ? '想先看效果？点「在查看器中预览」，不产生任何文件。' : '')
+        + (UTOPIA_SHARE_ENTRIES && inMainApp ? '想先看效果？点「在查看器中预览」，不产生任何文件。' : '')
         + '海报是<b>卡片式概览</b>；屏幕所见含 KaTeX 公式、Mermaid 图谱与分组框，可视化 iframe 以占位卡出现。'
-        + '发给没装 PhyMathia 的人选 <b>单文件网页</b>（双击即看，零依赖）'
-        + (UTOPIA_SHARE_ENTRIES ? '；要拖回 PhyMathia 继续编辑就存 <b>.pmu</b>' : '') + '。</div>';
+        + '发给没装 PhyMathia 的人选 <b>单文件网页</b>（双击即看，零依赖）；'
+        + (UTOPIA_SHARE_ENTRIES && inMainApp ? '要留底或换设备继续编辑就存 <b>.pmu</b>（只含本张画布和这场对话，不是整库备份）。' : '') + '</div>';
     }
     menu.innerHTML = html;
 
