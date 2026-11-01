@@ -45,6 +45,10 @@ const entries = [
   // 守卫调用，加载期零副作用；放 graph-custom 之后取其全屏/预览页挂接点
   'node-fs-toolbar.js',
   'graph-recipe-edit.js',
+  // 官方配方包（P4 生态，2026-11-01）：数据＋勾选清单弹窗，加载期零副作用；
+  // 依赖 graph-recipes.js 的导入核心与 graph-recipe-edit.js 的 _recipeRefreshAddPanel
+  // （都只运行期调用），排在 edit 之后同族归堆；viewer 不载（同 edit 口径）
+  'graph-recipe-pack.js',
   // 工作流族（2026-10-10 自 graph-workflow.js 拆出，T261 纯搬家；2026-10-24 T397 再拆
   // 流式/生成/执行/入口与 graph-events 五件，同为纯搬家）：主件留尾部——其尾部
   // window 导出块加载期执行、引用族内各件函数（同 graph-continent view 最后的先例）

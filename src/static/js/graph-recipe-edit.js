@@ -824,10 +824,13 @@ function openRecipeManage() {
           // 与旧表单并存到 P5；旧表单退为专家模式入口。
           + '<button class="recipe-manage-edit" onclick="openRecipeWorkshopForRecipe(\'' + recipe.id + '\')">工坊里改</button>'
           + '<button class="recipe-manage-edit" onclick="openRecipeFormById(\'' + recipe.id + '\')">编辑</button>'
+          + '<button class="recipe-manage-edit" onclick="exportRecipeById(\'' + recipe.id + '\')">导出</button>'
           + '<button class="recipe-manage-delete" onclick="deleteRecipeById(\'' + recipe.id + '\')">删除</button>'
           + '</div>';
       }).join('')
     : '<div class="recipe-manage-empty">还没有配方——从画布双击空白处打开添加节点面板，点「＋ 新建配方」。</div>';
+  const importExportButtons = '<button class="recipe-manage-edit" onclick="importRecipeFile()">导入配方</button>'
+    + (recipes.length ? '<button class="recipe-manage-edit" onclick="exportAllRecipes()">导出全部（' + recipes.length + '）</button>' : '');
   const overlay = document.createElement('div');
   overlay.className = 'graph-network-modal-overlay';
   overlay.innerHTML = '<div class="graph-network-modal aurora-glass aurora-glass--dialog">'
@@ -835,6 +838,7 @@ function openRecipeManage() {
     + rows
     + '<div class="graph-network-modal-actions">'
     + '<button class="graph-network-modal-save" onclick="closeRecipeManage();openRecipeForm(null)">＋ 新建配方</button>'
+    + importExportButtons
     + '<button onclick="closeRecipeManage()">关闭</button>'
     + '</div>'
     + '</div>';
@@ -921,6 +925,76 @@ function recipeFromNode(nodeId) {
   }
 }
 
+// ---- 导入导出（P4 生态，2026-11-01）：解析/校验核心在 graph-recipes.js，这里只管 UI ----
+// 导出＝配方 JSON 落文件；导入＝选文件读文本过导入核心。删除配方的破坏性确认走原路径，
+// 导入只增不删（没有「清空库恢复」这类破坏性操作，2026-11-01 拍板）。
+
+function _recipeSanitizeFilename(name) {
+  return String(name || '配方').replace(/[\\/:*?"<>|]/g, '_').slice(0, 40) || '配方';
+}
+
+function _recipeDownloadJson(payload, filename) {
+  try {
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  } catch (e) {
+    toastMsg('导出失败：' + ((e && e.message) || e));
+  }
+}
+
+function exportRecipeById(recipeId) {
+  const recipe = getUserRecipes().find(item => item.id === recipeId);
+  if (!recipe) return;
+  _recipeDownloadJson(recipeExportPayload([recipe]), '配方-' + _recipeSanitizeFilename(recipe.name) + '.json');
+}
+
+function exportAllRecipes() {
+  const list = getUserRecipes();
+  if (!list.length) { toastMsg('还没有配方可导出'); return; }
+  _recipeDownloadJson(recipeExportPayload(list), '配方库备份-' + new Date().toISOString().slice(0, 10) + '.json');
+  toastMsg('已导出 ' + list.length + ' 条配方');
+}
+
+function importRecipeFile() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json,application/json';
+  input.style.display = 'none';
+  input.addEventListener('change', () => {
+    const file = input.files && input.files[0];
+    input.remove();
+    if (!file) return;
+    file.text().then(text => applyRecipeImportText(text)).catch(() => toastMsg('读文件失败，请重试'));
+  });
+  document.body.appendChild(input);
+  input.click();
+}
+
+// 导入落库（文件文本 → 配方库）：成功即存库＋刷新面板；失败的逐条给原因，
+// 不静默丢。管理弹窗开着时重开一遍让新条目现身。
+function applyRecipeImportText(text) {
+  const parsed = parseRecipeImportText(text);
+  if (!parsed.ok) { toastMsg(parsed.error); return; }
+  const existing = getUserRecipes();
+  const result = importRecipesFromList(parsed.recipes, existing);
+  if (result.added.length) {
+    setUserRecipes(existing.concat(result.added));
+    _recipeRefreshAddPanel();
+    if (recipeManageOverlay) openRecipeManage();
+  }
+  const parts = [];
+  if (result.added.length) parts.push('导入 ' + result.added.length + ' 条配方');
+  result.failed.forEach(f => parts.push('「' + f.name + '」没导入：' + f.reason));
+  toastMsg(parts.length ? parts.join('；') : '文件里没有可导入的配方');
+}
+
 // ---- 启动对账：服务端配方镜像合并回本地（localStorage 为主，服务端兜底跨浏览器）----
 
 (function initRecipeSync() {
@@ -958,3 +1032,8 @@ window.closeRecipeManage = closeRecipeManage;
 window.openRecipeFormById = openRecipeFormById;
 window.deleteRecipeById = deleteRecipeById;
 window.recipeFromNode = recipeFromNode;
+// 导入导出 UI（核心在 graph-recipes.js 的 window 导出区）
+window.exportRecipeById = exportRecipeById;
+window.exportAllRecipes = exportAllRecipes;
+window.importRecipeFile = importRecipeFile;
+window.applyRecipeImportText = applyRecipeImportText;
