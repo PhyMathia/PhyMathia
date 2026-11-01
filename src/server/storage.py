@@ -1,6 +1,7 @@
 """JSON 文件持久化工具与会话消息路径解析。"""
 
 import json
+import logging
 import os
 import re
 import threading
@@ -9,6 +10,8 @@ from pathlib import Path
 
 from . import accounts
 from .accounts import DEFAULT_ACCOUNT
+
+logger = logging.getLogger(__name__)
 
 # ====== JSON 文件持久化工具 ======
 _JSON_LOCK = threading.RLock()
@@ -194,6 +197,57 @@ def _kv_target_path(key: str, account: str = DEFAULT_ACCOUNT):
     return None
 
 
+# ====== T223 主文件膨胀守卫 ======
+# 拆分后主文件只该放全局小键（2026-11-01 实测 default 账号 55KB，最重合法键
+# tasks:global ≈25KB）；总大小或单键越过阈值，基本等于「名单外重键回落主文件」
+# ——T214 拆分要防的「任一写＝全量重写主文件」复发前兆。只告警不改行为：确属
+# 合法增长（如 tasks:global 随任务数变多）可拍板调阈值或补拆分路由。
+_KV_MAIN_BLOAT_TOTAL_BYTES = 128 * 1024
+_KV_MAIN_HEAVY_VALUE_BYTES = 64 * 1024
+_KV_BLOAT_WARNED: set = set()  # 已告警账号；每进程每账号至多一次，防日志刷屏
+
+
+def _kv_warn_main_bloat(account: str = DEFAULT_ACCOUNT, trigger_key: str = "") -> None:
+    """主文件体积守卫：总大小过 _KV_MAIN_BLOAT_TOTAL_BYTES，或单键序列化值过
+    _KV_MAIN_HEAVY_VALUE_BYTES 时告警一次（键数只进文案不做触发条件——键多而小
+    不加重「全量重写」成本，体积才是 T214 的痛点信号）。
+
+    触发点三处：kv_write 回落主文件时（当下就涨）、kv_restore_bulk（备份导入
+    可能整包落主文件）、kv_migrate_split_keys 尾部（兼作启动检查——迁移只搬
+    名单内键，名单外重键留守主文件正是它要抓的形态）。
+    """
+    if account in _KV_BLOAT_WARNED:
+        return
+    paths = accounts.resolve_paths(account)
+    try:
+        size = paths.kv_path.stat().st_size
+    except OSError:
+        return
+    data = _read_json(paths.kv_path, {})
+    heavy = []
+    if isinstance(data, dict):
+        for key, value in data.items():
+            try:
+                n = len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+            except (TypeError, ValueError):
+                n = len(str(value).encode("utf-8", "ignore"))
+            if n >= _KV_MAIN_HEAVY_VALUE_BYTES:
+                heavy.append((n, str(key)))
+    if size < _KV_MAIN_BLOAT_TOTAL_BYTES and not heavy:
+        return
+    _KV_BLOAT_WARNED.add(account)
+    heavy.sort(reverse=True)
+    top = "、".join(f"{key}≈{n // 1024}KB" for n, key in heavy[:3]) or "无单键过阈"
+    logger.warning(
+        "kv main file bloat (T223 guard): account=%s size=%dKB keys=%d "
+        "heaviest=[%s]%s -- unrouted heavy key in main file? add it to "
+        "_KV_SOLO_KEYS/_KV_FAMILY_PREFIXES split routing, or raise the "
+        "threshold if legitimate",
+        account, size // 1024, len(data) if isinstance(data, dict) else -1, top,
+        f" trigger_key={trigger_key}" if trigger_key else "",
+    )
+
+
 def kv_read(key: str, default=None, account: str = DEFAULT_ACCOUNT):
     """按键读 KV：会话键走 data/kv/<sid>.json，族/独键走 data/kv/meta/<族>.json，其余走主文件。"""
     paths = accounts.resolve_paths(account)
@@ -207,7 +261,8 @@ def kv_read(key: str, default=None, account: str = DEFAULT_ACCOUNT):
 def kv_write(key: str, value, account: str = DEFAULT_ACCOUNT) -> None:
     """按键写 KV（upsert），自动路由到会话文件、族文件或主文件。"""
     paths = accounts.resolve_paths(account)
-    path = _kv_target_path(key, account) or paths.kv_path
+    target = _kv_target_path(key, account)
+    path = target or paths.kv_path
 
     def updater(data):
         data = dict(data) if isinstance(data, dict) else {}
@@ -216,6 +271,8 @@ def kv_write(key: str, value, account: str = DEFAULT_ACCOUNT) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     _mutate_json(path, updater, default={})
+    if target is None:
+        _kv_warn_main_bloat(account, trigger_key=key)
 
 
 def kv_delete(key: str, account: str = DEFAULT_ACCOUNT) -> None:
@@ -292,10 +349,12 @@ def kv_migrate_split_keys(account: str = DEFAULT_ACCOUNT) -> int:
     """启动迁移：把主文件里的会话级键与族键搬进各自拆分文件，返回搬运键数。
 
     先写拆分文件、全部成功后才从主文件移除——中途失败下次启动幂等重跑。
+    迁移结束后跑一次主文件膨胀守卫（T223），兼作启动检查。
     """
     paths = accounts.resolve_paths(account)
     main = _read_json(paths.kv_path, {})
     if not isinstance(main, dict):
+        _kv_warn_main_bloat(account)
         return 0
     groups = {}  # 目标路径 → {键: 值}
     for key, value in main.items():
@@ -303,6 +362,7 @@ def kv_migrate_split_keys(account: str = DEFAULT_ACCOUNT) -> int:
         if path is not None:
             groups.setdefault(path, {})[key] = value
     if not groups:
+        _kv_warn_main_bloat(account)
         return 0
     for path, entries in groups.items():
         def updater(data, _entries=entries):
@@ -321,6 +381,7 @@ def kv_migrate_split_keys(account: str = DEFAULT_ACCOUNT) -> int:
         return remaining if len(remaining) != len(data) else None
 
     _mutate_json(paths.kv_path, remove_moved)
+    _kv_warn_main_bloat(account)
     return len(moved_keys)
 
 
@@ -361,6 +422,7 @@ def kv_restore_bulk(data, replace: bool, account: str = DEFAULT_ACCOUNT) -> int:
 
         path.parent.mkdir(parents=True, exist_ok=True)
         _mutate_json(path, updater, default={})
+    _kv_warn_main_bloat(account)
     return len(data)
 
 

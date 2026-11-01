@@ -6,7 +6,9 @@ data/kv/<sid>.json；socratic:<ref>/mem:<sid> 前缀族与 quiz/continent_* 独�
 socratic/滚动记忆读写已切族文件（测试锚点随迁，见 test_review_* 系列）。
 """
 
+import logging
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -157,6 +159,144 @@ class MigrationTest(KvSplitBase):
 
     def test_migration_no_main_file_is_noop(self):
         self.assertEqual(storage_mod.kv_migrate_split_keys(), 0)
+
+
+class _WarnCapture(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.records = []
+
+    def emit(self, record):
+        self.records.append(record)
+
+
+class MainFileBloatGuardTest(KvSplitBase):
+    """T223 守卫：名单外重键回落主文件时告警（每进程每账号至多一次）；
+    拆分层写入永不触发；阈值为模块常量，测试缩小到 KB 级。"""
+
+    def setUp(self):
+        super().setUp()
+        self._orig_thresholds = (storage_mod._KV_MAIN_BLOAT_TOTAL_BYTES,
+                                 storage_mod._KV_MAIN_HEAVY_VALUE_BYTES)
+        storage_mod._KV_MAIN_BLOAT_TOTAL_BYTES = 2048
+        storage_mod._KV_MAIN_HEAVY_VALUE_BYTES = 1024
+        storage_mod._KV_BLOAT_WARNED.clear()
+
+    def tearDown(self):
+        (storage_mod._KV_MAIN_BLOAT_TOTAL_BYTES,
+         storage_mod._KV_MAIN_HEAVY_VALUE_BYTES) = self._orig_thresholds
+        storage_mod._KV_BLOAT_WARNED.clear()
+        super().tearDown()
+
+    def test_write_unrouted_heavy_key_warns_once(self):
+        with self.assertLogs(storage_mod.logger, level="WARNING") as cm:
+            storage_mod.kv_write("big_stats", {"blob": "x" * 4096})
+        self.assertEqual(len(cm.records), 1)
+        self.assertIn("T223", cm.output[0])
+        self.assertIn("big_stats", cm.output[0])
+        # 每进程每账号至多一次：再写不重复告警
+        cap = _WarnCapture()
+        storage_mod.logger.addHandler(cap)
+        try:
+            storage_mod.kv_write("big_stats", {"blob": "y" * 4096})
+        finally:
+            storage_mod.logger.removeHandler(cap)
+        self.assertEqual(cap.records, [])
+
+    def test_heavy_single_value_triggers_below_total(self):
+        storage_mod._KV_MAIN_BLOAT_TOTAL_BYTES = 10 * 1024 * 1024  # 总量过不了，单键也能触发
+        with self.assertLogs(storage_mod.logger, level="WARNING"):
+            storage_mod.kv_write("mid_stats", {"blob": "x" * 2048})
+
+    def test_write_split_layer_never_warns(self):
+        cap = _WarnCapture()
+        storage_mod.logger.addHandler(cap)
+        try:
+            storage_mod.kv_write("graph:sess_big", {"blob": "x" * 4096})
+            storage_mod.kv_write("phymathia_quiz_bank", {"blob": "x" * 4096})
+            storage_mod.kv_write("continent_edges", {"blob": "x" * 4096})
+        finally:
+            storage_mod.logger.removeHandler(cap)
+        self.assertEqual(cap.records, [])
+        self.assertFalse(self.kv_path.exists())  # 主文件未因这些写而创建
+
+    def test_migrate_warns_on_unrouted_heavy_leftover(self):
+        # 启动检查：名单外重键留守主文件（迁移只搬名单内键）→ 告警点名
+        storage_mod._write_json(self.kv_path, {
+            "big_stats": {"blob": "x" * 4096},
+            "node_recipes": {"r": 1},
+        })
+        with self.assertLogs(storage_mod.logger, level="WARNING") as cm:
+            self.assertEqual(storage_mod.kv_migrate_split_keys(), 0)
+        self.assertIn("big_stats", cm.output[0])
+
+    def test_migrate_steady_state_no_warning(self):
+        storage_mod._write_json(self.kv_path, {"node_recipes": {"r": 1}})
+        cap = _WarnCapture()
+        storage_mod.logger.addHandler(cap)
+        try:
+            self.assertEqual(storage_mod.kv_migrate_split_keys(), 0)
+        finally:
+            storage_mod.logger.removeHandler(cap)
+        self.assertEqual(cap.records, [])
+
+    def test_restore_bulk_warns_on_heavy_global_keys(self):
+        with self.assertLogs(storage_mod.logger, level="WARNING") as cm:
+            storage_mod.kv_restore_bulk({"big_stats": {"blob": "x" * 4096}}, replace=False)
+        self.assertIn("big_stats", cm.output[0])
+
+
+class SplitRouteCoverageTest(unittest.TestCase):
+    """T223 覆盖断言：src/ 与 harness/ 里 kv_read/write/delete 的字面量键、
+    f-string/拼接的静态前缀、可同文件解析的全大写常量键，必须落在拆分层
+    （会话/前缀族/独键族）或登记进 MAIN_FILE_ALLOWLIST——让「新键留守主文件」
+    成为显式决定而非静默回落。漏网形态：变量传参的动态键与前端经通用 KV
+    接口写的键（Python 源码扫不到），由运行期 _kv_warn_main_bloat 兜底。"""
+
+    # 允许留守主文件的字面量键（2026-11-01 起为空：现有 Python 调用点全部已路由；
+    # tasks:global/node_recipes 等主文件常客由前端经通用接口写，不在扫描面内）。
+    MAIN_FILE_ALLOWLIST: set = set()
+
+    def _iter_sources(self):
+        for base in ("src", "harness"):
+            for p in sorted(Path(base).rglob("*.py")):
+                if "__pycache__" not in p.parts:
+                    yield p
+
+    def test_kv_call_site_keys_route_or_allowlisted(self):
+        call_re = re.compile(r'kv_(?:read|write|delete)\(\s*(f?)(["\'])([^"\'\n]+)\2\s*(\+?)')
+        const_re = re.compile(r'kv_(?:read|write|delete)\(\s*([A-Z][A-Z0-9_]{2,})\b')
+        bad = []
+        for path in self._iter_sources():
+            text = path.read_text(encoding="utf-8")
+            for m in call_re.finditer(text):
+                is_f, _quote, raw, concat = m.groups()
+                line = text[:m.start()].count("\n") + 1
+                if is_f or concat:
+                    # 静态前缀（f"graph:{sid}"、"graph:" + sid）：前缀须命中某个拆分层
+                    prefix = raw.split("{", 1)[0]
+                    routed = (storage_mod._kv_split_session(prefix + "x") is not None
+                              or any(prefix.startswith(fp) for fp in storage_mod._KV_FAMILY_PREFIXES)
+                              or prefix in storage_mod._KV_SOLO_KEYS)
+                    if not routed:
+                        bad.append(f"{path}:{line} unrouted prefix {prefix!r}")
+                    continue
+                if (storage_mod._kv_target_path(raw) is None
+                        and raw not in self.MAIN_FILE_ALLOWLIST):
+                    bad.append(f"{path}:{line} unrouted key {raw!r}")
+            for m in const_re.finditer(text):
+                name = m.group(1)
+                line = text[:m.start()].count("\n") + 1
+                dm = re.search(rf"^{name}\s*=\s*(f?)([\"'])([^\"'\n]+)\2", text, re.M)
+                if not dm:
+                    bad.append(f"{path}:{line} CONST {name} unresolvable in-file "
+                               f"(inline the literal or extend the scanner)")
+                    continue
+                key = dm.group(3)
+                if (storage_mod._kv_target_path(key) is None
+                        and key not in self.MAIN_FILE_ALLOWLIST):
+                    bad.append(f"{path}:{line} CONST {name}={key!r} unrouted")
+        self.assertEqual(bad, [])
 
 
 class AllDataAndRestoreTest(KvSplitBase):
