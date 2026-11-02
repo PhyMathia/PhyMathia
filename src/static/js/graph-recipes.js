@@ -492,8 +492,19 @@ function parseRecipeImportText(text) {
   }
   let list = null;
   if (Array.isArray(data)) list = data;
-  else if (data && typeof data === 'object' && data._format === RECIPE_EXPORT_FORMAT && Array.isArray(data.recipes)) list = data.recipes;
-  else if (data && typeof data === 'object' && (data.base || data.generate || data.ports)) list = [data];
+  else if (data && typeof data === 'object') {
+    if (data._format === RECIPE_EXPORT_FORMAT) {
+      if (!Array.isArray(data.recipes)) return { ok: false, error: '配方文件格式不完整' };
+      const version = Number(data.version);
+      if (Number.isFinite(version) && version > RECIPE_EXPORT_VERSION) {
+        return { ok: false, error: '配方文件版本过新（v' + version + '），请先升级 PhyMathia' };
+      }
+      if (!data.recipes.length) return { ok: false, error: '配方文件格式不完整' };
+      list = data.recipes;
+    } else if (data._format) {
+      return { ok: false, error: '不是 PhyMathia 配方文件' };
+    } else if (data.base || data.generate || data.ports) list = [data];
+  }
   if (!list || !list.length) return { ok: false, error: '文件里没有配方' };
   return { ok: true, recipes: list };
 }
