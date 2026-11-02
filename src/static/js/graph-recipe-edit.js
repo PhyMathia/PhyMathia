@@ -822,10 +822,10 @@ function openRecipeManage() {
           + '<span class="recipe-manage-meta">' + escapeHtml((meta.label || '').split('（')[0]) + ' · ' + ((recipe.ports && recipe.ports.inputs) ? recipe.ports.inputs.length : 0) + ' 入 / ' + recipe.ports.static.length + ' 出</span>'
           // 2026-10-20 创造模式重做：管理列表多一个「工坊里改」——新作者面（节点工坊）
           // 与旧表单并存到 P5；旧表单退为专家模式入口。
-          + '<button class="recipe-manage-edit" onclick="openRecipeWorkshopForRecipe(\'' + recipe.id + '\')">工坊里改</button>'
-          + '<button class="recipe-manage-edit" onclick="openRecipeFormById(\'' + recipe.id + '\')">编辑</button>'
-          + '<button class="recipe-manage-edit" onclick="exportRecipeById(\'' + recipe.id + '\')">导出</button>'
-          + '<button class="recipe-manage-delete" onclick="deleteRecipeById(\'' + recipe.id + '\')">删除</button>'
+          + '<button class="recipe-manage-edit" data-action="workshop" data-recipe-id="' + escapeHtml(recipe.id) + '">工坊里改</button>'
+          + '<button class="recipe-manage-edit" data-action="edit" data-recipe-id="' + escapeHtml(recipe.id) + '">编辑</button>'
+          + '<button class="recipe-manage-edit" data-action="export" data-recipe-id="' + escapeHtml(recipe.id) + '">导出</button>'
+          + '<button class="recipe-manage-delete" data-action="delete" data-recipe-id="' + escapeHtml(recipe.id) + '">删除</button>'
           + '</div>';
       }).join('')
     : '<div class="recipe-manage-empty">还没有配方——从画布双击空白处打开添加节点面板，点「＋ 新建配方」。</div>';
@@ -844,6 +844,15 @@ function openRecipeManage() {
     + '</div>';
   overlay.addEventListener('pointerdown', event => {
     if (event.target === overlay) closeRecipeManage();
+  });
+  overlay.addEventListener('click', event => {
+    const button = event.target && event.target.closest ? event.target.closest('[data-action][data-recipe-id]') : null;
+    if (!button || !overlay.contains(button)) return;
+    const recipeId = button.dataset.recipeId;
+    if (button.dataset.action === 'workshop') openRecipeWorkshopForRecipe(recipeId);
+    else if (button.dataset.action === 'edit') openRecipeFormById(recipeId);
+    else if (button.dataset.action === 'export') exportRecipeById(recipeId);
+    else if (button.dataset.action === 'delete') deleteRecipeById(recipeId);
   });
   document.body.appendChild(overlay);
   recipeManageOverlay = overlay;
@@ -955,10 +964,17 @@ function exportRecipeById(recipeId) {
   _recipeDownloadJson(recipeExportPayload([recipe]), '配方-' + _recipeSanitizeFilename(recipe.name) + '.json');
 }
 
+// 备份文件名用本地日期：toISOString 是 UTC，早上 8 点前会写成昨天
+function _recipeLocalDateStamp() {
+  const now = new Date();
+  const pad = n => (n < 10 ? '0' : '') + n;
+  return now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate());
+}
+
 function exportAllRecipes() {
   const list = getUserRecipes();
   if (!list.length) { toastMsg('还没有配方可导出'); return; }
-  _recipeDownloadJson(recipeExportPayload(list), '配方库备份-' + new Date().toISOString().slice(0, 10) + '.json');
+  _recipeDownloadJson(recipeExportPayload(list), '配方库备份-' + _recipeLocalDateStamp() + '.json');
   toastMsg('已导出 ' + list.length + ' 条配方');
 }
 
@@ -967,12 +983,20 @@ function importRecipeFile() {
   input.type = 'file';
   input.accept = '.json,application/json';
   input.style.display = 'none';
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    input.remove();
+  };
   input.addEventListener('change', () => {
     const file = input.files && input.files[0];
-    input.remove();
+    cleanup();
     if (!file) return;
     file.text().then(text => applyRecipeImportText(text)).catch(() => toastMsg('读文件失败，请重试'));
   });
+  // 点「取消」不触发 change；支持 cancel 的浏览器走同一 cleanup（只 remove 一次）
+  input.addEventListener('cancel', cleanup);
   document.body.appendChild(input);
   input.click();
 }
@@ -991,7 +1015,12 @@ function applyRecipeImportText(text) {
   }
   const parts = [];
   if (result.added.length) parts.push('导入 ' + result.added.length + ' 条配方');
-  result.failed.forEach(f => parts.push('「' + f.name + '」没导入：' + f.reason));
+  result.failed.slice(0, 3).forEach(f => parts.push('「' + f.name + '」没导入：' + f.reason));
+  if (result.failed.length > 3) parts.push('等 ' + (result.failed.length - 3) + ' 条');
+  if (result.failed.length) {
+    console.warn('配方导入失败清单（' + result.failed.length + ' 条）：'
+      + result.failed.map(f => '「' + f.name + '」' + f.reason).join('；'));
+  }
   toastMsg(parts.length ? parts.join('；') : '文件里没有可导入的配方');
 }
 
