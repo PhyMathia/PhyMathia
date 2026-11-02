@@ -477,7 +477,7 @@ function showToast(msg, duration = null, opts) {
     // 第 5 轮磨砂化：全局 toast 统一极光磨砂（--compact 胶囊档）——
     // 底色/阴影归玻璃类，内联样式里不能再写 background（会整块盖掉极光层）
     toast.className = 'aurora-glass aurora-glass--compact';
-    toast.style.cssText = 'position:fixed;bottom:120px;left:50%;transform:translateX(-50%) translateY(10px);color:var(--text-primary);border:1px solid var(--border-color);border-radius:10px;padding:10px 20px;font-size:13px;z-index:9999;opacity:0;transition:opacity 0.3s,transform 0.3s;pointer-events:none;white-space:nowrap;display:flex;align-items:center;gap:10px;';
+    toast.style.cssText = 'position:fixed;bottom:120px;left:50%;transform:translateX(-50%) translateY(10px);color:var(--text-primary);border:1px solid var(--border-color);border-radius:10px;padding:10px 20px;font-size:13px;z-index:9999;opacity:0;transition:opacity 0.3s,transform 0.3s;pointer-events:none;white-space:normal;max-width:min(92vw,560px);word-break:break-word;display:flex;align-items:center;gap:10px;';
     // 文案与复制钮每次整块重渲（innerHTML 拼），按钮显隐由 .toast-copyable 类驱动
     // （CSS 默认 display:none），避免持有子节点引用
     // 事件委托：点复制钮只认按钮自身，toast 其余区域不拦点击
@@ -500,6 +500,8 @@ function showToast(msg, duration = null, opts) {
   }
   toast.innerHTML = '<span class="toast-msg-text">' + escapeHtml(text)
     + '</span><button type="button" class="toast-copy-btn" title="复制" aria-label="复制">' + copyIcon + '</button>';
+  // T426①：CSS 只截显示到 3 行，完整文案仍在 .toast-msg-text 里供复制；悬停看全文
+  toast.title = text;
   toast.className = 'aurora-glass aurora-glass--compact' + (wantCopy ? ' toast-copyable' : '');
   // 有复制钮就整条 pill 可交互（非复制型保持 pointer-events:none 不挡点击）
   toast.style.pointerEvents = wantCopy ? 'auto' : 'none';

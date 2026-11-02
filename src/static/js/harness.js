@@ -123,13 +123,11 @@ let harnessLastAppliedReport = null;
     + '</div>'
     + '</div>';
 
+  // T222：转义单一事实源在 utils.js（build_frontend.mjs 里 utils.js 先于 harness.js；
+  // stage0/f3b 等回归夹具也都先载 utils.js，冒烟跑的是含 utils 的 app.js 包）。
+  // 这里只做委托，别再复制一份字符表——改转义口径只改 utils.escapeHtml。
   function _escapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
+    return escapeHtml(value);
   }
 
   function _sessionId() {
