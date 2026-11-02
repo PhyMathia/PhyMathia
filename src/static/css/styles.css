@@ -1996,6 +1996,19 @@
       opacity: 1;
     }
 
+    /* ====== 全局 toast 长文案（T426①）======
+       最长显示 3 行，超出省略；完整文本仍在 DOM 里供复制钮读取，
+       悬停 title 看全文（ui.js 写入）。换行/最大宽度由 ui.js 内联样式控制。 */
+    #phymathia_toast .toast-msg-text {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 3;
+      overflow: hidden;
+      min-width: 0;
+      word-break: break-word;
+      text-align: left;
+    }
+
     /* ====== 全局 toast 的复制钮（2026-10-13 加）=====
        报错 toast 尾部的小图标磁贴（ui.js 给 toast 挂 .toast-copyable 才显示），
        悬停才出底色，不抢文案的视觉重量。挂在 #phymathia_toast 上而不是裸类，

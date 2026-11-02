@@ -190,7 +190,7 @@
           // T204：与本地原串一致就不写盘、不计变化（{...local} 保序，稳态下逐字节相同）
           const mergedSessionsJson = JSON.stringify(merged);
           if (mergedSessionsJson !== localSessionsRaw) {
-            localStorage.setItem(STORAGE_KEY_SESSIONS, mergedSessionsJson);
+            safeLocalStorageSet(STORAGE_KEY_SESSIONS, mergedSessionsJson);
             changed = true;
           }
           mergedSessions = merged;
@@ -310,7 +310,7 @@
             // T204：与本地一致就不写盘、不计变化（此前每轮无条件全量写知识表）
             const mergedJson = JSON.stringify(merged);
             if (mergedJson !== JSON.stringify(localKnow || {})) {
-              localStorage.setItem(STORAGE_KEY_KNOWLEDGE, mergedJson);
+              safeLocalStorageSet(STORAGE_KEY_KNOWLEDGE, mergedJson);
               changed = true;
             }
           } else if (localCount > 0) {
@@ -327,7 +327,7 @@
           const localCurrent = localStorage.getItem(STORAGE_KEY_CURRENT);
           const localDangling = !localCurrent || (!!mergedSessions && !mergedSessions[localCurrent]);
           if (cv.value && localDangling) {
-            localStorage.setItem(STORAGE_KEY_CURRENT, cv.value);
+            safeLocalStorageSet(STORAGE_KEY_CURRENT, cv.value);
           }
         }
         // T348：同步尾部对本机会话缓存做一次 LRU——启动后台同步与 15 秒轮询都覆盖，
@@ -812,9 +812,8 @@
       const pending = _graphLocalSavePending;
       _graphLocalSavePending = null;
       if (!pending) return;
-      try {
-        localStorage.setItem('phymathia_graph_' + pending.sid, JSON.stringify(pending.snap));
-      } catch (e) { /* 配额满等写失败：缓存仍在，下次 save 重试 */ }
+      // 配额满/隐私模式由 safeLocalStorageSet 兜底（24h 提示一次），缓存仍在，下次 save 重试
+      safeLocalStorageSet('phymathia_graph_' + pending.sid, JSON.stringify(pending.snap));
     }
 
     function saveGraphState(sessionId, state, opts) {
@@ -841,9 +840,8 @@
         _graphLocalSaveTimer = null;
         _graphLocalSavePending = null;
       }
-      try {
-        localStorage.setItem('phymathia_graph_' + sid, JSON.stringify(snap));
-      } catch (e) { /* 本地写失败不阻断：服务端同步照常 */ }
+      // 本地写失败不阻断：safeLocalStorageSet 已吞异常并择机提示，服务端同步照常
+      safeLocalStorageSet('phymathia_graph_' + sid, JSON.stringify(snap));
     }
 
     async function _deleteGraphStateOnServer(sid) {
@@ -895,7 +893,7 @@
       return localStorage.getItem(STORAGE_KEY_CURRENT);
     }
     function setCurrentSessionId(id) {
-      localStorage.setItem(STORAGE_KEY_CURRENT, id);
+      safeLocalStorageSet(STORAGE_KEY_CURRENT, id);
       currentSessionId = id;
       // Φ 会话与画布解耦（2026-09-30）：切画布不再重置 Φ 对话，只轻量刷新 Φ 侧显示
       // （清旧画布预览/差异高亮、刷新绑定信息与菜单）
