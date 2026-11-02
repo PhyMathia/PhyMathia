@@ -3,8 +3,10 @@
 // 对齐模型预设侧「没主动添加的不进列表」哲学）。条目是完整八维度配方数据不是代码（D-R2），
 // 添加＝走 graph-recipes.js 的导入核心（importRecipesFromList：id 重生成、同名查重挡），
 // 入「我的配方」后就是普通用户配方，可编辑可删除——包本身不是第二个事实源。
-// packKey 只用于「已添加」标记（localStorage phymathia_recipe_pack_added），不落配方库
-// （normalizeRecipeInput 字段白名单剥除未知字段）。条目必须逐条过 validateRecipe，
+// packKey 只是包内条目的稳定标识（勾选/过滤用），不落配方库、不写 localStorage——
+// 「已添加」按配方库现状推导（库内有同名配方＝已添加；2026-11-01 复查拍板 T425：原
+// localStorage 标记只增不删，删掉包配方后勾选框永久禁用＝重加通道被掐死）。
+// 条目必须逐条过 validateRecipe，
 // 冒烟 recipes.mjs 有全包校验＋覆盖面断言（至少一条 html_iframe、一条动态出口）。
 // 只进主包（build_frontend.mjs），viewer 不加载——只读页没有添加面板与配方库。
 // 设计文档：docs/节点配方与创造模式-总体设计-2026-09-29.md 第 6 节 P4。
@@ -134,29 +136,11 @@ const OFFICIAL_RECIPE_PACK = [
   },
 ];
 
-// ---- 「已添加」标记（localStorage，config.js STORAGE_KEY_RECIPE_PACK_ADDED）----
-
-function _recipePackAddedKey() {
-  return typeof STORAGE_KEY_RECIPE_PACK_ADDED !== 'undefined'
-    ? STORAGE_KEY_RECIPE_PACK_ADDED : 'phymathia_recipe_pack_added';
-}
-
-function getRecipePackAddedKeys() {
-  try {
-    const raw = localStorage.getItem(_recipePackAddedKey());
-    const arr = raw ? JSON.parse(raw) : [];
-    return new Set(Array.isArray(arr) ? arr.map(String) : []);
-  } catch (e) {
-    return new Set();
-  }
-}
-
-function _markRecipePackAdded(packKey) {
-  const keys = getRecipePackAddedKeys();
-  keys.add(String(packKey));
-  try {
-    localStorage.setItem(_recipePackAddedKey(), JSON.stringify([...keys]));
-  } catch (e) { /* 标记写失败只影响「已添加」显示，不影响配方本体 */ }
+// ---- 「已添加」判定：按配方库现状推导（2026-11-01 复查拍板 T425，替代已退役的 localStorage 标记）----
+// 库里有同名配方＝已添加：禁勾的语义是「库里有同名，再加会被同名查重挡」；
+// 删掉包配方后自然恢复可勾、重加通道畅通。弹窗打开时现算，无缓存无落盘。
+function recipePackAddedNames() {
+  return new Set(getUserRecipes().map(item => item.name));
 }
 
 // ---- 添加核心：勾选的 packKey → 导入核心 → 落库＋打标记。返回 {added, failed} 供 UI/toast ----
@@ -169,11 +153,6 @@ function addOfficialRecipesFromPack(packKeys) {
   const result = importRecipesFromList(items.map(item => item.recipe), existing);
   if (result.added.length) {
     setUserRecipes(existing.concat(result.added));
-    // 按名字对回 packKey 打标记（导入核心不认识 packKey，配方库里也不存它）
-    const addedNames = new Set(result.added.map(item => item.name));
-    items.forEach(item => {
-      if (addedNames.has(item.recipe.name)) _markRecipePackAdded(item.packKey);
-    });
     _recipeRefreshAddPanel();
   }
   return result;
@@ -198,9 +177,9 @@ function _recipePackMetaLine(recipe) {
 function openRecipePackModal() {
   closeRecipePackModal();
   recipePackSelection = {};
-  const addedKeys = getRecipePackAddedKeys();
+  const addedNames = recipePackAddedNames();
   const rows = OFFICIAL_RECIPE_PACK.map(item => {
-    const isAdded = addedKeys.has(item.packKey);
+    const isAdded = addedNames.has(item.recipe.name);
     const disabledAttr = isAdded ? ' disabled' : '';
     const addedTag = isAdded ? '<span class="recipe-pack-added">已添加</span>' : '';
     return '<label class="recipe-pack-row">'
@@ -262,7 +241,7 @@ function addSelectedRecipePack() {
 }
 
 window.OFFICIAL_RECIPE_PACK = OFFICIAL_RECIPE_PACK;
-window.getRecipePackAddedKeys = getRecipePackAddedKeys;
+window.recipePackAddedNames = recipePackAddedNames;
 window.addOfficialRecipesFromPack = addOfficialRecipesFromPack;
 window.openRecipePackModal = openRecipePackModal;
 window.closeRecipePackModal = closeRecipePackModal;

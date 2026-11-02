@@ -2846,8 +2846,8 @@ check('Φ 建点内容回填（T74）：AI 底座批量送工作流、relation �
 
 // ===== 2026-11-01 P4 生态：配方导入导出＋官方配方包 =====
 // 与本域既有口径一致：全程同步（无 await），共享 phymathia_node_recipes 键的用例
-// 自带存/还原（_lsRecipeSeed/_lsRecipeRestore，本文件配方优化批次已定义）；pack
-// 标记键 phymathia_recipe_pack_added 同法自带存/还原。
+// 自带存/还原（_lsRecipeSeed/_lsRecipeRestore，本文件配方优化批次已定义）。
+// （2026-11-01 复查 T425：配方包 localStorage 标记键已退役，「已添加」按库推导，无额外键要存/还原。）
 
 check('配方导入导出核心（P4）：文件三形态解析＋id 重生成＋同名查重（含批内）＋脏数据剔除＋导出往返', () => {
   const parse = sandbox.window.parseRecipeImportText;
@@ -2899,7 +2899,10 @@ check('配方导入导出核心（P4）：文件三形态解析＋id 重生成�
 
 check('配方导入导出 UI（P4）：管理面板接线＋applyRecipeImportText 落库与逐条失败反馈', () => {
   const editSrc = fs.readFileSync('src/static/js/graph-recipe-edit.js', 'utf8');
-  if (!editSrc.includes('onclick="exportRecipeById(')) throw new Error('管理行缺导出按钮');
+  // f307d49（T427）起管理行按钮走 data-action＋overlay 事件委托，id 过 escapeHtml
+  if (!editSrc.includes('data-action="export" data-recipe-id')) throw new Error('管理行缺导出按钮（data-action 委托）');
+  if (!editSrc.includes('escapeHtml(recipe.id)')) throw new Error('管理行 id 未过 escapeHtml（T427）');
+  if (!editSrc.includes("button.dataset.action === 'export'")) throw new Error('导出未接事件委托');
   if (!editSrc.includes('onclick="importRecipeFile()"')) throw new Error('管理面板缺导入按钮');
   if (!editSrc.includes('exportAllRecipes()')) throw new Error('管理面板缺导出全部');
   if (!editSrc.includes('file.text()')) throw new Error('导入未走文件文本读取');
@@ -2933,7 +2936,7 @@ check('配方导入导出 UI（P4）：管理面板接线＋applyRecipeImportTex
   }
 });
 
-check('官方配方包（P4）：条目全过校验器＋覆盖面＋添加落库＋packKey 标记＋重复添加被挡＋默认全不勾', () => {
+check('官方配方包（P4）：条目全过校验器＋覆盖面＋添加落库＋已添加按库推导（删后可重加）＋重复添加被挡＋默认全不勾', () => {
   const pack = sandbox.window.OFFICIAL_RECIPE_PACK;
   if (!Array.isArray(pack) || pack.length < 5 || pack.length > 8) throw new Error('官方配方包应 5–8 条，实际 ' + (pack && pack.length));
   const normalize = sandbox.window.normalizeRecipeInput;
@@ -2948,32 +2951,39 @@ check('官方配方包（P4）：条目全过校验器＋覆盖面＋添加落�
     if (!normalized) throw new Error('包条目 normalize 失败：' + item.packKey);
     const verdict = validate(normalized, []);
     if (!verdict.ok) throw new Error('包条目未过校验器：' + item.packKey + ' → ' + verdict.errors.join('；'));
-    if (item.recipe.name !== normalized.name) throw new Error('包条目名会被 normalize 改写（packKey 对名打标记会失配）：' + item.packKey);
+    if (item.recipe.name !== normalized.name) throw new Error('包条目名会被 normalize 改写（「已添加」按库名推导会失配）：' + item.packKey);
   });
   // 覆盖面：包同时是 schema 的活教材，至少各一条 html_iframe 与动态出口示范
   if (!pack.some(item => item.recipe.content_kind === 'html_iframe')) throw new Error('包里应有一条 html_iframe 示范');
   if (!pack.some(item => item.recipe.ports && item.recipe.ports.dynamic)) throw new Error('包里应有一条动态出口示范');
-  // 添加核心行为：落库＋packKey 标记；重复添加被同名查重挡（UI 层「已添加」禁勾是第一道）
+  // 添加核心行为：落库＋「已添加」按库推导；重复添加被同名查重挡（UI 层「已添加」禁勾是第一道）
   const prevToast = sandbox.toastMsg;
   sandbox.toastMsg = () => {};
   const rawBefore = _lsRecipeRaw();
-  const packKeyBefore = localStorage.getItem('phymathia_recipe_pack_added');
   try {
     _lsRecipeSeed([]);
-    localStorage.removeItem('phymathia_recipe_pack_added');
     const first = sandbox.addOfficialRecipesFromPack(['official:feynman-restate', 'official:three-tier-probe']);
     if (first.added.length !== 2 || first.failed.length) throw new Error('两条应全加成：' + JSON.stringify(first.failed));
     if (sandbox.window.getUserRecipes().length !== 2) throw new Error('落库数不对');
-    const marked = JSON.parse(localStorage.getItem('phymathia_recipe_pack_added') || '[]');
-    if (!marked.includes('official:feynman-restate') || !marked.includes('official:three-tier-probe')) {
-      throw new Error('packKey 未标记：' + localStorage.getItem('phymathia_recipe_pack_added'));
+    // 「已添加」按库推导（T425，替代已退役的 localStorage 标记）：库里同名即已添加
+    const addedNamesFn = sandbox.window.recipePackAddedNames;
+    if (typeof addedNamesFn !== 'function') throw new Error('recipePackAddedNames 未挂 window');
+    if (!addedNamesFn().has('费曼复述') || !addedNamesFn().has('三级追问器')) {
+      throw new Error('添加后库名集合应含两条包配方：' + [...addedNamesFn()]);
     }
-    if (!sandbox.window.getRecipePackAddedKeys().has('official:feynman-restate')) throw new Error('getRecipePackAddedKeys 未反映标记');
     const second = sandbox.addOfficialRecipesFromPack(['official:feynman-restate']);
     if (second.added.length || !second.failed[0].reason.includes('同名')) {
       throw new Error('重复添加未被挡：' + JSON.stringify(second));
     }
     if (sandbox.window.getUserRecipes().length !== 2) throw new Error('重复添加不应改变库');
+    // 复查回归（T425）：删掉包配方后「已添加」随之消失、重加通道畅通
+    // （旧 localStorage 标记方案下标记不回收，勾选框永久禁用＝这条官方配方从 UI 拿不回）
+    sandbox.window.setUserRecipes(sandbox.window.getUserRecipes().filter(item => item.name !== '费曼复述'));
+    if (addedNamesFn().has('费曼复述')) throw new Error('删除后「已添加」应随之消失');
+    const readd = sandbox.addOfficialRecipesFromPack(['official:feynman-restate']);
+    if (readd.added.length !== 1 || readd.failed.length) throw new Error('删后重加应成功：' + JSON.stringify(readd.failed));
+    if (sandbox.window.getUserRecipes().length !== 2) throw new Error('重加后库应回到 2 条');
+    if (!addedNamesFn().has('费曼复述')) throw new Error('重加后「已添加」应恢复');
     // 入口与弹窗契约：添加面板有入口；勾选框默认全不勾（D-R7）；已添加条目禁勾
     const customSrc = fs.readFileSync('src/static/js/graph-custom.js', 'utf8');
     if (!customSrc.includes('openRecipePackModal()')) throw new Error('添加面板缺官方配方包入口');
@@ -2982,11 +2992,11 @@ check('官方配方包（P4）：条目全过校验器＋覆盖面＋添加落�
     // （这里不能宽正则扫 checked：模板里 this.checked 是事件参数，不是勾选属性）
     if (!packSrc.includes('\'<input type="checkbox"\' + disabledAttr')) throw new Error('配方包勾选框不许默认勾选（D-R7）');
     if (!packSrc.includes("disabledAttr = isAdded ? ' disabled' : ''")) throw new Error('已添加条目未禁勾');
+    // 标记退役负断言（T425）：「已添加」按库推导，localStorage 标记不许回流
+    if (packSrc.includes('recipe_pack_added')) throw new Error('localStorage 标记应已退役（T425）');
     return true;
   } finally {
     _lsRecipeRestore(rawBefore);
-    if (packKeyBefore == null) localStorage.removeItem('phymathia_recipe_pack_added');
-    else localStorage.setItem('phymathia_recipe_pack_added', packKeyBefore);
     sandbox.toastMsg = prevToast;
   }
 });
