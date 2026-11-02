@@ -44,74 +44,11 @@ from server import knowledge_routes as knowledge_routes_mod  # noqa: E402  T293 
 from server import session_routes as session_routes_mod  # noqa: E402  T378 /api/log 日志打桩位
 
 
-_MISSING = object()
-
-
-def _patched_paths(td):
-    """多账号 P1 夹具：patch config.DATA_DIR 一处（accounts.resolve_paths 调用期
-    读取它），路径值改为账号域布局下的真实路径（data/users/default/…），保证
-    「夹具写入的目标」与「路由经 resolve_paths 读到的目标」是同一份文件。
-    返回的 main/storage/backup/profile 常量补丁只是兼容既有夹具写法——路由
-    本体已不读这些常量。本函数必须无副作用（setUp 靠先后顺序捕获原值）。"""
-    td = Path(td)
-    root = td / "users" / "default"
-    return {
-        "DATA_DIR": td,
-        "MESSAGES_DIR": root / "messages",
-        "SESSIONS_PATH": root / "sessions.json",
-        "KNOWLEDGE_PATH": root / "knowledge.json",
-        "FORMULAS_PATH": root / "formulas.json",
-        "KV_PATH": root / "kv_store.json",
-        "KV_DIR": root / "kv",
-        "PROFILES_DIR": td / "profiles",
-    }
-
-
-class RouteTestBase(unittest.TestCase):
-    """把数据路径重定向到临时目录，测试后恢复。"""
-
-    def setUp(self):
-        self._td = tempfile.TemporaryDirectory()
-        paths = _patched_paths(self._td.name)
-        accounts_mod._ENSURED.clear()
-        paths["MESSAGES_DIR"].mkdir(parents=True, exist_ok=True)
-        # 画像写入走 storage 的临时文件落盘，父目录必须先存在
-        paths["PROFILES_DIR"].mkdir(parents=True, exist_ok=True)
-        # backup/profile 模块是 from-import，命名空间里有自己的路径引用，需一并补丁
-        self._orig_extra = {}
-        for mod in (backup_mod, profile_mod):
-            for name, value in paths.items():
-                self._orig_extra[(id(mod), name)] = getattr(mod, name, _MISSING)
-                setattr(mod, name, value)
-        self._orig = {}
-        for mod in (main_mod, storage_mod):
-            for name, value in paths.items():
-                self._orig[(id(mod), name)] = getattr(mod, name, None)
-                setattr(mod, name, value)
-        self._orig_config = {}
-        for name, value in paths.items():
-            self._orig_config[name] = getattr(config_mod, name, None)
-            setattr(config_mod, name, value)
-        storage_mod._JSON_READ_CACHE.clear()
-        self.client = TestClient(main_mod.app, base_url="http://127.0.0.1")
-
-    def tearDown(self):
-        for mod in (backup_mod, profile_mod):
-            for (mid, name), value in self._orig_extra.items():
-                if id(mod) == mid:
-                    if value is _MISSING:
-                        if hasattr(mod, name):
-                            delattr(mod, name)
-                    else:
-                        setattr(mod, name, value)
-        for mod in (main_mod, storage_mod):
-            for (mid, name), value in self._orig.items():
-                if id(mod) == mid:
-                    setattr(mod, name, value)
-        for name, value in self._orig_config.items():
-            setattr(config_mod, name, value)
-        storage_mod._JSON_READ_CACHE.clear()
-        self._td.cleanup()
+# 共享夹具收口（2026-11-02 T221）：原 _patched_paths＋RouteTestBase 手拷三份
+# （test_routes / test_review_backend_20260920 / test_health_fixes_t230_t234），
+# 统一住 tests/route_test_base.py；十余个 `from test_routes import RouteTestBase`
+# 的文件同样改指新址。语义＝三份超集（见该文件 docstring），行为不变。
+from route_test_base import RouteTestBase  # noqa: E402
 
 
 class PathTraversalTest(RouteTestBase):
@@ -1155,16 +1092,16 @@ class StaticCacheHeaderTest(RouteTestBase):
     各走各的路由。"""
 
     def test_static_js_carries_no_cache(self):
-        resp = self.client.get("/js/app.js")
+        resp = self.client.get("/dist/app.js")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.headers.get("cache-control"), "no-cache")
 
     def test_conditional_request_returns_304(self):
-        first = self.client.get("/js/app.js")
+        first = self.client.get("/dist/app.js")
         self.assertEqual(first.status_code, 200)
         etag = first.headers.get("etag")
         self.assertTrue(etag, "FileResponse 应自带 ETag")
-        second = self.client.get("/js/app.js", headers={"If-None-Match": etag})
+        second = self.client.get("/dist/app.js", headers={"If-None-Match": etag})
         self.assertEqual(second.status_code, 304)
         # 304 也必须带着缓存口径，否则浏览器拿不到协商指令
         self.assertEqual(second.headers.get("cache-control"), "no-cache")
@@ -1199,27 +1136,27 @@ class StaticCacheHeaderTest(RouteTestBase):
     # 内容寻址 URL（内容变＝哈希变＝URL 变），改走 immutable 一年长缓存——刷新
     # 不再对 app.js/三份 min.css 发条件请求；HTML 仍 no-cache，新构建普通刷新即达。
     def test_versioned_asset_gets_immutable(self):
-        resp = self.client.get("/js/app.js?v=2331bada")
+        resp = self.client.get("/dist/app.js?v=2331bada")
         self.assertEqual(resp.status_code, 200)
         cc = resp.headers.get("cache-control") or ""
         self.assertIn("immutable", cc)
         self.assertIn("max-age=31536000", cc)
 
     def test_versioned_css_gets_immutable(self):
-        resp = self.client.get("/css/styles.min.css?v=5fbda300")
+        resp = self.client.get("/dist/styles.min.css?v=5fbda300")
         self.assertEqual(resp.status_code, 200)
         self.assertIn("immutable", resp.headers.get("cache-control") or "")
 
     def test_non_hash_version_param_still_no_cache(self):
         # ?v= 不是内容哈希（手输任意串）不得误进 immutable——指纹格式校验兜底
-        resp = self.client.get("/js/app.js?v=latest")
+        resp = self.client.get("/dist/app.js?v=latest")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.headers.get("cache-control"), "no-cache")
 
     def test_304_negotiation_still_works_for_unversioned(self):
-        first = self.client.get("/js/app.js?v=2331bada")
+        first = self.client.get("/dist/app.js?v=2331bada")
         etag = first.headers.get("etag")
-        second = self.client.get("/js/app.js", headers={"If-None-Match": etag})
+        second = self.client.get("/dist/app.js", headers={"If-None-Match": etag})
         self.assertEqual(second.status_code, 304)
 
 
@@ -1531,7 +1468,7 @@ class ClientLogRouteTest(RouteTestBase):
         with mock.patch.object(session_routes_mod.logger, "warning") as lw:
             resp = self.client.post("/api/log", json={
                 "kind": "error", "msg": "x" * 900,
-                "src": "http://127.0.0.1:5050/js/app.js", "line": 143, "col": 5678,
+                "src": "http://127.0.0.1:5050/dist/app.js", "line": 143, "col": 5678,
                 "stack": "s" * 3000, "v": "abcd1234",
                 "href": "http://127.0.0.1:5050/", "ua": "pytest",
                 "not_in_whitelist": "dropped",

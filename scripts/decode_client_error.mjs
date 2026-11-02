@@ -81,7 +81,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     console.error('（行:列来自服务端日志 [client-js] 条目的 src/line/col 字段）');
     process.exit(1);
   }
-  const map = JSON.parse(await readFile(resolve(root, 'src/static/js/app.js.map'), 'utf8'));
+  const map = JSON.parse(await readFile(resolve(root, 'src/static/dist/app.js.map'), 'utf8'));
   const r = decodePosition(map, parseInt(m[1], 10), m[2] ? parseInt(m[2], 10) : 1);
   if (!r) {
     console.error('未找到 ≤ 该位置的映射段（可能落在拼接分隔符上，试试列号 ±1）');
