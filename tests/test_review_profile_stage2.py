@@ -1,7 +1,7 @@
 """Stage-2 injection budgets and candidate acceptance; temporary profiles only."""
 from unittest import mock
 
-from test_routes import RouteTestBase
+from route_test_base import RouteTestBase
 from server import profile
 
 

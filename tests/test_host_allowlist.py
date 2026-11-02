@@ -9,7 +9,7 @@ Run: python3 -m pytest tests/test_host_allowlist.py -q
 
 import unittest
 
-from test_routes import RouteTestBase
+from route_test_base import RouteTestBase
 
 from main import _host_hostname
 

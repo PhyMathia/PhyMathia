@@ -12,7 +12,7 @@ from unittest import mock
 
 import httpx
 
-from test_routes import RouteTestBase
+from route_test_base import RouteTestBase
 from server import context, http_client as http_client_mod
 
 SESSION_ID = "sess_socraticinstr001"

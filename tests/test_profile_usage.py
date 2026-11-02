@@ -11,7 +11,7 @@ import httpx
 import pytest
 from unittest import mock
 
-from test_routes import RouteTestBase
+from route_test_base import RouteTestBase
 import main as main_mod
 from server import profile as profile_mod
 from server import http_client as http_client_mod  # 出网口补丁单点（T163）

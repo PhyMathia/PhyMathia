@@ -15,7 +15,7 @@ for p in (ROOT, SRC):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from test_routes import RouteTestBase  # noqa: E402
+from route_test_base import RouteTestBase  # noqa: E402
 
 from server import profile as profile_mod  # noqa: E402
 

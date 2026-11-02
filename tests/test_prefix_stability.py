@@ -32,7 +32,7 @@ from server import context as context_mod  # noqa: E402
 import main as main_mod  # noqa: E402
 from server import storage as storage_mod  # noqa: E402
 from server import http_client as http_client_mod  # noqa: E402  出网口补丁单点（T163）
-from test_routes import RouteTestBase  # noqa: E402
+from route_test_base import RouteTestBase  # noqa: E402
 
 
 def _rounds(n, prefix="round"):
