@@ -44,7 +44,7 @@ try {
   check('APP_VERSION 常量可用（defer 脚本先于 DOMContentLoaded 执行完）', type === 'string', 'typeof=' + type);
 
   const appTag = await page.evaluate(() => {
-    const s = [...document.querySelectorAll('script[src]')].find(el => /\/js\/app\.js/.test(el.getAttribute('src') || ''));
+    const s = [...document.querySelectorAll('script[src]')].find(el => /\/dist\/app\.js/.test(el.getAttribute('src') || ''));
     return s ? { src: s.getAttribute('src'), defer: s.defer } : null;
   });
   check('浏览器眼中 app.js 标签带 defer', !!appTag && appTag.defer, appTag ? JSON.stringify(appTag) : '标签不存在');

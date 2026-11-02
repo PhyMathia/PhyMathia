@@ -8,13 +8,13 @@
 1. **启动**：`python3 src/main.py -p 5050`（Windows 上若提示找不到命令，改用 `python`）。
    服务**不带 `--reload`**，改完 `src/main.py` 或 `src/system prompt.md` 要杀掉旧进程重启。
    冒烟：`curl -s localhost:5050/health`。
-2. **前端是打包产物**：页面只加载 `/js/app.js`。改 `src/static/js/*.js` 后
+2. **前端是打包产物**：页面只加载 `/dist/app.js`。改 `src/static/js/*.js` 后
    `npm install && npm run build:js` 再刷新页面（服务端已发 no-cache + ETag，普通刷新即得新 JS，
    硬刷新兜底）；只改查看器子集（`viewer-*.js` 及其 entries）另跑 `npm run build:viewer`。
    **改 CSS 或 `/phi/phi-pet.*` 后同样要跑一次 `npm run build:js`**——页面实际加载的是构建压出的
-   `*.min.css`（`index.html` / `viewer.html` 的链接由构建改写指向 min 版），源 CSS 的注释是设计文档，
-   **绝不原地压缩**；`?v=` 缓存版本号由构建按压缩产物内容哈希自动刷新。
-   `app.js` / `viewer.js` / `*.min.css` 都是产物，**不要手改**；
+   `src/static/dist/*.min.css`（`index.html` / `viewer.html` 的链接由构建改写指向 min 版），源 CSS
+   的注释是设计文档，**绝不原地压缩**；`?v=` 缓存版本号由构建按压缩产物内容哈希自动刷新。
+   `dist/` 下的 `app.js` / `viewer.js` / `*.min.css` 都是产物，**不要手改**；
    `scripts/build_frontend.mjs` 里的文件顺序 = 脚本加载顺序，改组必改它。
 3. **localStorage 键统一 `phymathia_` 前缀**（常量集中在 `config.js`）。带会话后缀的键
    （`msgs_` / `graph_` / `graph_history_` / `harness_history_` + sid）按会话隔离，切会话时别混用。

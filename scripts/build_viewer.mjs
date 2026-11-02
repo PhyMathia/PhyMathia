@@ -1,16 +1,19 @@
 #!/usr/bin/env node
-// Utopia 查看器打包：只取画布渲染子系统 + 只读桩，产出 src/static/js/viewer.js。
+// Utopia 查看器打包：只取画布渲染子系统 + 只读桩，产出 src/static/dist/viewer.js。
 // 与 build_frontend.mjs 同机制（逐文件 esbuild minify 后按顺序拼接），但 entries 是子集：
 // 会话/AI/知识检测/Φ 全不进包——查看器是只读产物，不需要也不该带这些能力。
 import { build } from 'esbuild';
 import { createHash } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const jsDir = resolve(root, 'src', 'static', 'js');
-const outFile = resolve(jsDir, 'viewer.js');
+// T64（2026-11-02）：产物与源码分居——viewer.js 与 app.js/min.css 同住 src/static/dist/
+const distDir = resolve(root, 'src', 'static', 'dist');
+await mkdir(distDir, { recursive: true });
+const outFile = resolve(distDir, 'viewer.js');
 const viewerHtml = resolve(root, 'src', 'static', 'viewer.html');
 
 // 顺序即加载序：桩在最前（函数声明已提升，赋值不会被后续文件覆盖），主程序在最后。

@@ -4,11 +4,11 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 
-export const code = fs.readFileSync('src/static/js/app.js', 'utf8');
+export const code = fs.readFileSync('src/static/dist/app.js', 'utf8');
 
 // 知识大陆源码 2026-10-04（T36）自单文件拆六：静态契约检查一律读拼接全集，
 // 防止「符号搬去了兄弟文件、单文件 contains 断言假红/假绿」。
-const CONTINENT_SRC_FILES = [
+export const CONTINENT_SRC_FILES = [
   'graph-continent.js',
   'graph-continent-layout.js',
   'graph-continent-edges.js',
@@ -17,6 +17,42 @@ const CONTINENT_SRC_FILES = [
   'graph-continent-view.js',
 ];
 const readContinentSrc = () => CONTINENT_SRC_FILES.map(f => fs.readFileSync('src/static/js/' + f, 'utf8')).join('\n');
+
+// ===== 构建产物读取口（T64＋T221，2026-11-02 收口）=====
+// app.js.map 的 sourcesContent 是「拼接源全文」：注册在场/块边界类静态契约从它取
+// （产物本身被 minify 剥掉了 banner）。此前 continent-core×2/quiz/load-order 四处
+// 各自 readFileSync＋切片＋剥注释，产物路径散落四份——统一从这里走，只此一份。
+const BUNDLE_MAP_PATH = 'src/static/dist/app.js.map';
+let _bundleMapCache;
+export function bundleMap() {
+  if (!_bundleMapCache) _bundleMapCache = JSON.parse(fs.readFileSync(BUNDLE_MAP_PATH, 'utf8'));
+  return _bundleMapCache;
+}
+export function bundleSource() {
+  const joined = bundleMap().sourcesContent && bundleMap().sourcesContent[0];
+  if (!joined) throw new Error(BUNDLE_MAP_PATH + ' 缺 sourcesContent（先跑 npm run build:js）');
+  return joined;
+}
+const _BANNER = (f) => '/* ===== source: ' + f + ' ===== */';
+// 取一或多个连续源文件块（须按打包顺序相邻），默认剥注释——sourcesContent 带注释，
+// 首行设计说明里的词会误伤词表类断言（continent 先例）
+export function bundleChunk(files, { stripComments = true } = {}) {
+  const list = Array.isArray(files) ? files : [files];
+  const joined = bundleSource();
+  let start = -1;
+  let cursor = 0;
+  for (const f of list) {
+    const at = joined.indexOf(_BANNER(f), cursor);
+    if (at < 0) throw new Error('app.js 打包未含 ' + f + '（build_frontend.mjs 未注册？）');
+    if (start < 0) start = at;
+    cursor = at + _BANNER(f).length;
+  }
+  let end = joined.indexOf('\n/* ===== source: ', cursor);
+  if (end < 0) end = joined.length;
+  let chunk = joined.slice(start, end);
+  if (stripComments) chunk = chunk.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  return chunk;
+}
 
 // 宽松对象：任意属性访问返回同款代理；可调用；可赋值。不用 has/trap 避免死循环。
 // loose 的 get 有固化副作用（读 window.X 就把假函数写进 target）——由此引出

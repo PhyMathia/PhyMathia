@@ -6,7 +6,7 @@
 // 覆盖不到（沙箱不读 index.html、不跑浏览器），由 scripts/verify_load_defer.mjs
 // 真机验。
 // 不碰共享 localStorage 键；纯同步段，注册在薄壳尾部（token-usage 之后）。
-import { check, fs } from './_runner.mjs';
+import { check, fs, code, bundleMap } from './_runner.mjs';
 import { decodePosition } from '../decode_client_error.mjs';
 
 const readIndex = () => fs.readFileSync('src/static/index.html', 'utf8');
@@ -14,7 +14,7 @@ const readIndex = () => fs.readFileSync('src/static/index.html', 'utf8');
 export function run() {
   check('load-order：app.js 标签带 defer（不得回退同步阻塞）', () => {
     const html = readIndex();
-    const m = html.match(/<script[^>]*src="\/js\/app\.js[^"]*"[^>]*>/);
+    const m = html.match(/<script[^>]*src="\/dist\/app\.js[^"]*"[^>]*>/);
     if (!m) throw new Error('index.html 里找不到 app.js 的 script 标签');
     if (!/\bdefer\b/.test(m[0])) throw new Error('app.js 缺 defer（同步脚本会阻断后半页解析）：' + m[0]);
     return true;
@@ -47,7 +47,7 @@ export function run() {
 
   check('load-order：app.js 仍带 ?v= 内容哈希（缓存失效机制没被抹掉）', () => {
     const html = readIndex();
-    const m = html.match(/src="\/js\/app\.js(\?v=[0-9A-Za-z]+)?[^"]*"/);
+    const m = html.match(/src="\/dist\/app\.js(\?v=[0-9A-Za-z]+)?[^"]*"/);
     if (!m) throw new Error('找不到 app.js 的 script 标签');
     if (!m[1]) throw new Error('app.js 的 URL 上没有 ?v=<哈希>——改了 JS 浏览器不换新包');
     return true;
@@ -57,9 +57,9 @@ export function run() {
   // 往返自检：产物里找字面量 → 算产物行:列 → 解码 → 必须落在对应源文件非空行。
   // 纯同步（readFileSync＋纯函数），不碰沙箱与共享键。
   check('load-order：app.js.map sourcemap 往返（T378）——产物坐标解回源文件', () => {
-    const bundle = fs.readFileSync('src/static/js/app.js', 'utf8');
+    const bundle = code;
     if (!/sourceMappingURL=app\.js\.map/.test(bundle.slice(-300))) throw new Error('产物尾部缺 sourceMappingURL 引用');
-    const map = JSON.parse(fs.readFileSync('src/static/js/app.js.map', 'utf8'));
+    const map = bundleMap();
     if (!map.sourcesContent || !map.sourcesContent[0]) throw new Error('map 缺 sourcesContent（离线解码依赖它）');
     if (!/source: config\.js =====/.test(map.sourcesContent[0])) throw new Error('拼接源缺文件边界 banner（解码无法归到源文件）');
     for (const [lit, file] of [['_VIZ_MOUNT_ROOT_MARGIN', 'render.js'], ['_reportClientError', 'utils.js'], ['WALLPAPER_SETS', 'config.js']]) {

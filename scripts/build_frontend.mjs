@@ -1,12 +1,16 @@
 import { transform } from 'esbuild';
 import { createHash } from 'node:crypto';
-import { readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const jsDir = resolve(root, 'src', 'static', 'js');
-const outFile = resolve(jsDir, 'app.js');
+// 产物目录（T64，2026-11-02）：源码与构建产物分居——app.js/app.js.map 一律落
+// src/static/dist/（static 内子目录，服务端 catch-all 原样可发，不需要第二静态根）
+const distDir = resolve(root, 'src', 'static', 'dist');
+await mkdir(distDir, { recursive: true });
+const outFile = resolve(distDir, 'app.js');
 
 // 顺序必须与 index.html 原脚本加载顺序一致。
 const entries = [
@@ -126,8 +130,8 @@ const entries = [
 // 这里强扫目录：目录里每个 .js 必须在 entries、或属 viewer 家族（build_viewer.mjs
 // 自己的名单与产物）、或在下方豁免清单里，否则硬失败并列出名单。
 const nonAppEntries = new Set([
-  'app.js',          // 本脚本的构建产物
-  'viewer.js',       // build_viewer.mjs 的构建产物
+  // app.js/viewer.js 已随 T64 迁去 src/static/dist/——js/ 里再出现产物文件即属
+  // 放错位置，不豁免、当场红（漏注册守卫顺手兼任产物误放哨兵）
   'viewer-main.js',  // viewer 家族源文件（归 build_viewer.mjs 的 entries 管）
   'viewer-shims.js',
 ]);
@@ -172,7 +176,7 @@ const mapObj = JSON.parse(minified.map);
 mapObj.sources = ['app.bundle.src.js'];
 mapObj.sourcesContent = [sourcesJoined];
 await writeFile(outFile, bundle, 'utf8');
-await writeFile(resolve(jsDir, 'app.js.map'), JSON.stringify(mapObj), 'utf8');
+await writeFile(resolve(distDir, 'app.js.map'), JSON.stringify(mapObj), 'utf8');
 console.log(`[build_frontend] ${entries.length} files -> ${outFile}`);
 console.log(`[build_frontend] ${totalIn} bytes -> ${Buffer.byteLength(bundle)} bytes (+app.js.map ${Buffer.byteLength(JSON.stringify(mapObj))} bytes)`);
 
@@ -213,15 +217,15 @@ try {
   console.warn('[build_frontend] static asset version bump skipped:', e.message);
 }
 
-// CSS 压缩产物：源 CSS 的注释是设计文档，绝不原地压缩——esbuild 压成同目录 *.min.css
-// （与 app.js 同为「产物勿手改」的入库产物），index.html 的链接与 ?v=（按压缩产物内容哈希）
-// 由本脚本改写；viewer.html 的链接不带 ?v=（服务端 no-cache+ETag 兜底），同样改指 min 版。
-// 正则同时匹配旧 `styles.css?v=` 与已改写的 `styles.min.css?v=`，重复构建幂等。
+// CSS 压缩产物：源 CSS 的注释是设计文档，绝不原地压缩——esbuild 压成 src/static/dist/
+// 下的 *.min.css（与 app.js 同为「产物勿手改」的入库产物），index.html 的链接与 ?v=
+// （按压缩产物内容哈希）由本脚本改写；viewer.html 的链接不带 ?v=（服务端 no-cache+ETag
+// 兜底），同样改指 dist 的 min 版。正则同时匹配裸 .css 与已改写的 .min.css，重复构建幂等。
 const cssAssets = [
-  ['css/styles.css', 'css/styles.min.css', /href="\/css\/styles(?:\.min)?\.css(\?v=)[0-9A-Za-z]+"/],
-  ['css/styles-panels.css', 'css/styles-panels.min.css', /href="\/css\/styles-panels(?:\.min)?\.css(\?v=)[0-9A-Za-z]+"/],
-  ['css/graph-override.css', 'css/graph-override.min.css', /href="\/css\/graph-override(?:\.min)?\.css(\?v=)[0-9A-Za-z]+"/],
-  ['phi/phi-pet.css', 'phi/phi-pet.min.css', /href="\/phi\/phi-pet(?:\.min)?\.css(\?v=)[0-9A-Za-z]+"/],
+  ['css/styles.css', 'dist/styles.min.css', /href="\/dist\/styles(?:\.min)?\.css(\?v=)[0-9A-Za-z]+"/],
+  ['css/styles-panels.css', 'dist/styles-panels.min.css', /href="\/dist\/styles-panels(?:\.min)?\.css(\?v=)[0-9A-Za-z]+"/],
+  ['css/graph-override.css', 'dist/graph-override.min.css', /href="\/dist\/graph-override(?:\.min)?\.css(\?v=)[0-9A-Za-z]+"/],
+  ['phi/phi-pet.css', 'dist/phi-pet.min.css', /href="\/dist\/phi-pet(?:\.min)?\.css(\?v=)[0-9A-Za-z]+"/],
 ];
 try {
   const html = await readFile(indexFile, 'utf8');
@@ -239,10 +243,14 @@ try {
   }
   const viewerFile = resolve(root, 'src', 'static', 'viewer.html');
   const vhtml = await readFile(viewerFile, 'utf8');
+  // 六条两两兜底：裸源链接与旧 /css/ 下的 min 链接（T64 迁 dist 前的存量）都归一到 /dist/
   const vupdated = vhtml
-    .replace('href="/css/styles.css"', 'href="/css/styles.min.css"')
-    .replace('href="/css/styles-panels.css"', 'href="/css/styles-panels.min.css"')
-    .replace('href="/css/graph-override.css"', 'href="/css/graph-override.min.css"');
+    .replace('href="/css/styles.css"', 'href="/dist/styles.min.css"')
+    .replace('href="/css/styles-panels.css"', 'href="/dist/styles-panels.min.css"')
+    .replace('href="/css/graph-override.css"', 'href="/dist/graph-override.min.css"')
+    .replace('href="/css/styles.min.css"', 'href="/dist/styles.min.css"')
+    .replace('href="/css/styles-panels.min.css"', 'href="/dist/styles-panels.min.css"')
+    .replace('href="/css/graph-override.min.css"', 'href="/dist/graph-override.min.css"');
   if (vupdated !== vhtml) {
     await writeFile(viewerFile, vupdated, 'utf8');
     console.log('[build_frontend] viewer.html css links -> *.min.css');
