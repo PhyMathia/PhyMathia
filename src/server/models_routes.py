@@ -584,6 +584,8 @@ async def api_models_chat(request: Request):
             streamed_content = []
             streamed_len = 0
             last_usage = None
+            bad_frame_count = 0
+            bad_frame_logged = False
             # 注入快照先于正文下发：角标在正文渲染前就能拿到「本次实际注入」，
             # 且协议向后兼容——不认识该字段的客户端只会当作无 delta 的帧跳过
             if profile_usage is not None:
@@ -604,9 +606,20 @@ async def api_models_chat(request: Request):
                                 # 仅用于结束后提取苏格拉底状态，封顶防止超长流式回复无上限累积
                                 streamed_content.append(delta_text)
                                 streamed_len += len(delta_text)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            # 解析失败照常透传原帧，仅补可观测：每条流最多一条
+                            # warning（含截断样本），避免坏帧刷屏/泄露完整回复
+                            bad_frame_count += 1
+                            if not bad_frame_logged:
+                                bad_frame_logged = True
+                                logger.warning(
+                                    f"AI proxy: 上游返回了无法解析的 SSE 帧 "
+                                    f"provider={provider} model={model_name} "
+                                    f"data={data_str[:80]!r} error={type(e).__name__}")
                     yield line + "\n\n"
+            if bad_frame_count > 1:
+                logger.warning(f"AI proxy stream: 本次流共 {bad_frame_count} 个坏帧 "
+                               f"provider={provider} model={model_name}")
             if last_usage:
                 logger.info(f"AI proxy usage: {last_usage}")
                 usage_stats.record_usage(provider, model_name,
