@@ -128,6 +128,36 @@ export const sandbox = {
 };
 sandbox.window = loose('window');
 sandbox.document = loose('document');
+// ── T431：escapeHtml（utils.js；2026-11-02 4852c01 起 harness.js 也委托它）依赖
+// textContent→innerHTML 的真实 DOM 往返。loose 桩取 innerHTML 出来是松代理，一进
+// 字符串拼接就被 Symbol.toPrimitive 归成 0——被转义的正文静默变「0」（阶段1 复述
+// 确认卡、体检芯片两红＋芯片标题计数的共同根因）。createElement 给混合桩：
+// textContent 赋值后 innerHTML 按浏览器文本节点口径转义（& < >，引号仍由
+// utils.escapeHtml 自补）；其余成员照旧走 loose 不收窄既有桩行为；对 innerHTML
+// 的直接赋值原样读回。
+function _stubElement(tag) {
+  const t = function () {};
+  t.tagName = String(tag == null ? 'div' : tag).toUpperCase();
+  return new Proxy(t, {
+    get(target, p) {
+      if (p === 'textContent') return target._textContent == null ? '' : String(target._textContent);
+      if (p === 'innerHTML') {
+        if (Object.prototype.hasOwnProperty.call(target, 'innerHTML')) return target.innerHTML;
+        return String(target._textContent == null ? '' : target._textContent)
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      }
+      if (!(p in target)) target[p] = loose('element.' + String(p));
+      return target[p];
+    },
+    set(target, p, v) {
+      if (p === 'textContent') { target._textContent = v; return true; }
+      target[p] = v; return true;
+    },
+    apply: () => loose('element()'),
+    construct: () => loose('new element()'),
+  });
+}
+sandbox.document.createElement = (tag) => _stubElement(tag);
 sandbox.globalThis = sandbox;
 sandbox.self = sandbox;
 

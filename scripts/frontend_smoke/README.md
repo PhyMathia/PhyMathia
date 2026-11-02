@@ -22,3 +22,5 @@
 ## window.* 桩位铁则（T411，2026-10-28）
 
 loose 代理读属性即固化假函数且 typeof 恒 'function'（源码兜底失效），桩位还原/清桩一律走 `_runner.mjs` 的 `restoreWindowStub`/`fillNeutralGraphStubs` 回填中性桩——裸赋回 loose 会跨域传染、裸 delete 留空位下一位读者一读又固化，两者都会让落图链炸 `"undefined" is not valid JSON`；`graph-stub-sentinel.mjs` 两探针站岗，别在用例里手抓手还 window 桩。
+
+createElement 是例外（T431，2026-11-02）：loose 桩下 utils.escapeHtml 的 textContent→innerHTML 往返取到的是松代理、一进字符串拼接被 Symbol.toPrimitive 归成 0＝被转义正文静默变「0」。_runner.mjs 的 `document.createElement` 已改**混合桩**——textContent 赋值后 innerHTML 按浏览器文本节点口径转义（& < >，引号由 utils.escapeHtml 自补），其余成员照旧走 loose；写涉 DOM 渲染断言的用例可依赖这一往返，但别指望真实 DOM 的其余行为。
