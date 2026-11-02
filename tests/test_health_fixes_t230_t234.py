@@ -37,22 +37,10 @@ from server import http_client as http_client_mod  # noqa: E402  出网口补丁
 from server import profile_implicit as profile_mod  # noqa: E402
 from server import storage as storage_mod  # noqa: E402
 
-
-def _patched_paths(td):
-    """同 tests/test_routes._patched_paths：账号域布局下的真实路径（storage/
-    concept 均经 accounts.resolve_paths 调用期读取 DATA_DIR）。"""
-    td = Path(td)
-    root = td / "users" / "default"
-    return {
-        "DATA_DIR": td,
-        "MESSAGES_DIR": root / "messages",
-        "SESSIONS_PATH": root / "sessions.json",
-        "KNOWLEDGE_PATH": root / "knowledge.json",
-        "FORMULAS_PATH": root / "formulas.json",
-        "KV_PATH": root / "kv_store.json",
-        "KV_DIR": root / "kv",
-        "PROFILES_DIR": td / "profiles",
-    }
+# 共享夹具收口（2026-11-02 T221）：_patched_paths 与 test_routes 手拷合体住
+# tests/route_test_base.py；本文件 GraphPathItemGuardTest 原自写 setUp 只补
+# main 模块，现继承超集基类（多补的 storage/backup/profile 值同源无害）
+from route_test_base import RouteTestBase  # noqa: E402
 
 
 class _DataDirBase(unittest.TestCase):
@@ -78,36 +66,9 @@ class _DataDirBase(unittest.TestCase):
         return path
 
 
-class GraphPathItemGuardTest(unittest.TestCase):
+class GraphPathItemGuardTest(RouteTestBase):
     """T231：graph_path 项非 dict 时路由守卫必须 400（此前是 _graph_path_instruction
     里 item.get 的 500）。"""
-
-    def setUp(self):
-        self._td = tempfile.TemporaryDirectory()
-        paths = _patched_paths(self._td.name)
-        accounts_mod._ENSURED.clear()
-        paths["MESSAGES_DIR"].mkdir(parents=True, exist_ok=True)
-        paths["PROFILES_DIR"].mkdir(parents=True, exist_ok=True)
-        self._orig = {}
-        self._orig_config = {}
-        for mod in (main_mod,):
-            for name, value in paths.items():
-                self._orig[(id(mod), name)] = getattr(mod, name, None)
-                setattr(mod, name, value)
-        for name, value in paths.items():
-            self._orig_config[name] = getattr(config_mod, name, None)
-            setattr(config_mod, name, value)
-        storage_mod._JSON_READ_CACHE.clear()
-        self.client = TestClient(main_mod.app, base_url="http://127.0.0.1")
-
-    def tearDown(self):
-        for (mid, name), value in self._orig.items():
-            setattr(main_mod, name, value)
-        for name, value in self._orig_config.items():
-            setattr(config_mod, name, value)
-        accounts_mod._ENSURED.clear()
-        storage_mod._JSON_READ_CACHE.clear()
-        self._td.cleanup()
 
     def _post(self, payload):
         return self.client.post("/api/models/chat", json={

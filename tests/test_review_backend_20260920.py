@@ -60,67 +60,9 @@ from server import knowledge as knowledge_mod  # noqa: E402
 from server import profile as profile_mod  # noqa: E402
 from server import storage as storage_mod  # noqa: E402
 
-_MISSING = object()
-
-
-def _patched_paths(td):
-    """与 test_routes.py 同一套补丁口径（2026-10-11 T271 对齐）：patch
-    config.DATA_DIR 一处（accounts.resolve_paths 调用期读取它），路径值改为
-    账号域布局（data/users/default/…），保证「夹具写入的目标」与「路由经
-    resolve_paths 读到的目标」是同一份文件。此前缺 DATA_DIR，本文件的账号域
-    路由全部解析到真实 data 目录——pytest 全量跑会把真实用户会话删进真机
-    回收站并在 T271 登记表留墓碑（当日日志「夹具缺口插曲」节）。"""
-    td = Path(td)
-    root = td / "users" / "default"
-    return {
-        "DATA_DIR": td,
-        "MESSAGES_DIR": root / "messages",
-        "SESSIONS_PATH": root / "sessions.json",
-        "KNOWLEDGE_PATH": root / "knowledge.json",
-        "FORMULAS_PATH": root / "formulas.json",
-        "KV_PATH": root / "kv_store.json",
-        "KV_DIR": root / "kv",
-        "PROFILES_DIR": td / "profiles",
-    }
-
-
-class RouteTestBase(unittest.TestCase):
-    """数据路径重定向到临时目录（与 test_routes.py 同一套补丁口径）。"""
-
-    def setUp(self):
-        self._td = tempfile.TemporaryDirectory()
-        paths = _patched_paths(self._td.name)
-        paths["MESSAGES_DIR"].mkdir(parents=True, exist_ok=True)
-        paths["PROFILES_DIR"].mkdir(parents=True, exist_ok=True)
-        self._orig_modules = {}
-        for mod in (main_mod, storage_mod, backup_mod, profile_mod):
-            for name, value in paths.items():
-                self._orig_modules[(id(mod), name)] = getattr(mod, name, _MISSING)
-                setattr(mod, name, value)
-        self._orig_config = {}
-        for name, value in paths.items():
-            self._orig_config[name] = getattr(config_mod, name, _MISSING)
-            setattr(config_mod, name, value)
-        storage_mod._JSON_READ_CACHE.clear()
-        self.client = TestClient(main_mod.app, base_url="http://127.0.0.1")
-
-    def tearDown(self):
-        for (mid, name), value in self._orig_modules.items():
-            for mod in (main_mod, storage_mod, backup_mod, profile_mod):
-                if id(mod) == mid:
-                    if value is _MISSING:
-                        if hasattr(mod, name):
-                            delattr(mod, name)
-                    else:
-                        setattr(mod, name, value)
-        for name, value in self._orig_config.items():
-            if value is _MISSING:
-                if hasattr(config_mod, name):
-                    delattr(config_mod, name)
-            else:
-                setattr(config_mod, name, value)
-        storage_mod._JSON_READ_CACHE.clear()
-        self._td.cleanup()
+# 共享夹具收口（2026-11-02 T221）：_patched_paths＋RouteTestBase 与 test_routes
+# 的手拷合体住 tests/route_test_base.py（T271 夹具缺口的历史教训记在其 docstring）
+from route_test_base import RouteTestBase  # noqa: E402
 
 
 # ====== A. main.py / config.py ======

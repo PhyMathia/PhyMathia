@@ -11,7 +11,7 @@ import pathlib
 import unittest
 
 from test_models_config import BLOB
-from test_routes import RouteTestBase
+from route_test_base import RouteTestBase
 
 from server import models_routes as mr
 

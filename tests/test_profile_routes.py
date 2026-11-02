@@ -7,7 +7,7 @@
 import json
 import time
 
-from test_routes import RouteTestBase
+from route_test_base import RouteTestBase
 import main as main_mod
 from server import profile as profile_mod
 from server import knowledge as knowledge_mod  # _ai_extract_knowledge 属主（T163）

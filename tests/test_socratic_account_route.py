@@ -17,7 +17,7 @@ from unittest import mock
 
 import httpx
 
-from test_routes import RouteTestBase
+from route_test_base import RouteTestBase
 from server import accounts as accounts_mod
 from server import http_client as http_client_mod
 from server import storage as storage_mod

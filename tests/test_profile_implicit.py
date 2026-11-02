@@ -587,7 +587,7 @@ def test_eval_script_prefers_jsonl_exact(tmp_path):
 
 import unittest  # noqa: E402
 
-from test_routes import RouteTestBase  # noqa: E402
+from route_test_base import RouteTestBase  # noqa: E402
 import main as main_mod  # noqa: E402
 
 

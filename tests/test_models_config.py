@@ -7,7 +7,7 @@
 Run: python3 -m pytest tests/test_models_config.py -q
 """
 
-from test_routes import RouteTestBase
+from route_test_base import RouteTestBase
 from server import accounts as accounts_mod
 
 
