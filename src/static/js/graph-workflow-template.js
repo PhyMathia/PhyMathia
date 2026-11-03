@@ -349,6 +349,14 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
     return;
   }
   const options = opts || {};
+  // T313：先钉世界再建点。工作流所属画布从这一刻起固定——问题分析、建模块点、
+  // 模块生成、知识提取全部对着它读写，人切到别的画布不再换世界观（T313 三个窗口
+  // 的总根：画布工作流的世界观过去＝当前显示的画布，切画布即换）。
+  // 钉世界必须在第一个 await 之前（2026-11-03 审查修复）：auto 追问的分类要挂最长
+  // 15s，worldSid 若留到分类之后再取，判断窗口里切画布会把问题/连线/会话标题全落
+  // 到切换后的画布（旧版点击发送到建点全程同步，没有这个窗口）。
+  const worldSid = ((typeof getCurrentSessionId === 'function' && getCurrentSessionId())
+    || (typeof currentSessionId !== 'undefined' ? currentSessionId : '') || '');
   // 追问自动选路（2026-11-03）：只有追问草稿的调用方带 followupRoute（submitDraftQuestion 传）。
   // auto 先调模型判断；手动 direct/analysis 直接跳过判断、不烧模型调用；没带（方向钮/
   // 苏格拉底闭环/首问等）一律 analysis＝旧行为。
@@ -391,8 +399,9 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
   }
   if (options.draftNodeId && typeof removeDraftNode === 'function') removeDraftNode(options.draftNodeId);
 
-  if (typeof sessions !== 'undefined' && sessions && currentSessionId && sessions[currentSessionId]) {
-    const s = sessions[currentSessionId];
+  // 会话标题/时间戳也用钉死的 worldSid——分类窗口里切画布后 currentSessionId 已是新画布
+  if (typeof sessions !== 'undefined' && sessions && worldSid && sessions[worldSid]) {
+    const s = sessions[worldSid];
     if (!s.title || ['新对话', '新画布', '未命名对话', '未命名画布'].includes(s.title)) {
       s.title = question.substring(0, 30) + (question.length > 30 ? '...' : '');
     }
@@ -400,11 +409,6 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
     if (typeof saveSessions === 'function') saveSessions();
   }
 
-  // T313：先钉世界再建点。工作流所属画布从这一刻起固定——问题分析、建模块点、
-  // 模块生成、知识提取全部对着它读写，人切到别的画布不再换世界观（T313 三个窗口
-  // 的总根：画布工作流的世界观过去＝当前显示的画布，切画布即换）。
-  const worldSid = ((typeof getCurrentSessionId === 'function' && getCurrentSessionId())
-    || (typeof currentSessionId !== 'undefined' ? currentSessionId : '') || '');
   // T265：新根问题开工前看一眼上一簇模块是否零点开，没发现过深入内容就指一次路
   if (!options.sourceNodeId) _maybeHintUnreadModules(worldSid);
   // 3.1 事件点（2026-10-24）：提问在建节点之前落一个历史点——撤销粒度＝一整次提问
