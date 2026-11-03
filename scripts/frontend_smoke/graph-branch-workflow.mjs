@@ -731,6 +731,71 @@ export async function run() {
         sandbox._graphHistoryLiveEventDone = prevDone4;
         sandbox.localStorage.removeItem('phymathia_current_session');
       }
+
+      // ===== ⑤ 审查回归（2026-11-03 独立审查）：auto 判断窗口里切画布，问题必须仍建在
+      //        发起画布——钉世界（worldSid）在第一个 await 之前取，分类挂最长 15s 也不能漂移
+      _seed();
+      sandbox.localStorage.setItem('phymathia_current_session', 'sess_branch_wf');
+      vm.runInContext('currentSessionId = "sess_branch_wf"; SESSION_ID = "rsess_branch_wf";'
+        + ' sessions = { sess_branch_wf: { title: "", updatedAt: 1 }, sess_other_wf: { title: "", updatedAt: 1 } };'
+        + ' chatHistory = []; workflowRunActive = false; workflowLastAborted = false;'
+        // 浏览器里 window.getCurrentSessionId 挂载后裸标识符可解析（window 属性＝全局变量）；
+        // vm 沙箱的 window 是 loose 代理、挂不上全局——补挂到 globalThis，
+        // _graphStateFor 的世界寻址分支（getCurrentSessionId() !== sid）才与真实环境同路
+        + ' globalThis.getCurrentSessionId = function () { return currentSessionId; };', sandbox);
+      const mem5 = sandbox.window.getGraphState();
+      const states5 = { sess_branch_wf: mem5, sess_other_wf: { customNodes: [], connections: [] } };
+      const prevGet5 = sandbox.window.getGraphState, prevSave5 = sandbox.window.saveGraphState;
+      const prevSid5 = sandbox.window.getCurrentSessionId, prevExec5 = sandbox._executeParallelWorkflow;
+      const prevExtract5 = sandbox._extractKnowledgeFromWorkflow, prevPush5 = sandbox._pushGraphUndo;
+      const prevModel5 = sandbox.getActiveModelForRole, prevProxy5 = sandbox.proxyChatWithModel;
+      const prevToast5 = sandbox.showToast, prevDone5 = sandbox._graphHistoryLiveEventDone;
+      sandbox.window.getGraphState = sid => states5[sid] || null;
+      sandbox.window.saveGraphState = (sid, st) => { states5[sid] = st; };
+      sandbox.window.getCurrentSessionId = () => vm.runInContext('currentSessionId', sandbox);
+      let releaseClassify = null;
+      const gate5 = new Promise(res => { releaseClassify = res; });
+      const calls5 = { extract: 0 };
+      sandbox.getActiveModelForRole = () => ({ provider: 'mock', model: 'mock-model', apiKey: 'k' });
+      sandbox.proxyChatWithModel = async () => {
+        await gate5;
+        return { json: async () => ({ choices: [{ message: { content: '{"route":"direct"}' } }] }) };
+      };
+      sandbox._executeParallelWorkflow = async () => {};
+      sandbox._extractKnowledgeFromWorkflow = async () => { calls5.extract += 1; };
+      sandbox._pushGraphUndo = () => {};
+      sandbox._graphHistoryLiveEventDone = () => {};
+      sandbox.showToast = () => {};
+      try {
+        // 不 await：让 startQuestionWorkflow 同步跑到分类的 await（gate 挂起）——这正是
+        // 「判断窗口」。此刻模拟用户切到另一张画布，再放行分类
+        const run5 = sandbox.startQuestionWorkflow('判断期间切走画布', { sourceNodeId: 'lm1', sourcePort: 'out-0', followupRoute: 'auto' });
+        vm.runInContext('currentSessionId = "sess_other_wf"; SESSION_ID = "rsess_other_wf";', sandbox);
+        releaseClassify();
+        await run5;
+        const homeUsers = (states5.sess_branch_wf.customNodes || []).filter(n => n.kind === 'user');
+        const otherUsers = (states5.sess_other_wf.customNodes || []).filter(n => n.kind === 'user');
+        if (!homeUsers.length) throw new Error('判断窗口切画布后，问题节点没建在发起画布');
+        if (otherUsers.length) throw new Error('判断窗口切画布后，问题节点漂到了切换后的画布');
+        const titles5 = vm.runInContext('JSON.stringify([sessions.sess_branch_wf.title, sessions.sess_other_wf.title])', sandbox);
+        if (titles5 !== JSON.stringify(['判断期间切走画布', ''])) {
+          throw new Error('会话标题写错了画布：' + titles5);
+        }
+        if (calls5.extract !== 1) throw new Error('direct 收尾知识提取应恰好跑一次（跑了 ' + calls5.extract + ' 次）');
+      } finally {
+        restoreWindowStub('getGraphState', prevGet5);
+        restoreWindowStub('saveGraphState', prevSave5);
+        restoreWindowStub('getCurrentSessionId', prevSid5);
+        sandbox._executeParallelWorkflow = prevExec5;
+        sandbox._extractKnowledgeFromWorkflow = prevExtract5;
+        sandbox._pushGraphUndo = prevPush5;
+        sandbox.getActiveModelForRole = prevModel5;
+        sandbox.proxyChatWithModel = prevProxy5;
+        sandbox._graphHistoryLiveEventDone = prevDone5;
+        sandbox.showToast = prevToast5;
+        vm.runInContext('delete globalThis.getCurrentSessionId;', sandbox);
+        sandbox.localStorage.removeItem('phymathia_current_session');
+      }
       return true;
     });
 
