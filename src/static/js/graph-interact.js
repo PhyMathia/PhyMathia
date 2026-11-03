@@ -796,13 +796,20 @@ function draftInputChanged(nodeId, value) {
   if (node && node.kind === 'draft') node.draftInput = String(value == null ? '' : value);
 }
 
-// 追问自动选路（2026-11-03）：回答方式下拉回写。auto＝发送时让模型判断；
+// 追问自动选路（2026-11-03）：回答方式胶囊回写。auto＝发送时让模型判断；
 // direct/analysis＝用户手动定死，跳过判断。非 auto 值一律归一到 auto，防脏值进对象。
-function draftRouteChanged(nodeId, value) {
+function draftRouteChanged(nodeId, value, btn) {
   const node = _findDraftNode(nodeId);
   if (!node || node.kind !== 'draft') return;
   const next = String(value || '').toLowerCase();
   node.routeMode = (next === 'direct' || next === 'analysis') ? next : 'auto';
+  const group = btn && typeof btn.closest === 'function' ? btn.closest('.graph-draft-route') : null;
+  if (!group || typeof group.querySelectorAll !== 'function') return;
+  group.querySelectorAll('.graph-draft-route-btn').forEach(item => {
+    const current = item.getAttribute('data-route') === node.routeMode;
+    item.classList.toggle('is-current', current);
+    item.setAttribute('aria-pressed', current ? 'true' : 'false');
+  });
 }
 
 // T152：全量重建前收集现存草稿（只收本会话的，切会话不跟人）；

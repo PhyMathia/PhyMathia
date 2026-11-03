@@ -1167,14 +1167,38 @@
   min-width: 340px !important;
   max-width: 420px !important;
   border-color: var(--accent) !important;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, rgba(14, 22, 44, 0.98)), rgba(14, 22, 44, 0.98)) !important;
+  background: linear-gradient(150deg, color-mix(in srgb, var(--accent) 14%, rgba(14, 22, 44, 0.98)), rgba(14, 22, 44, 0.98)) !important;
   box-shadow: 0 0 34px color-mix(in srgb, var(--accent) 22%, transparent), 0 18px 48px rgba(0, 0, 0, 0.42) !important;
+}
+
+.graph-node-draft .graph-input-col {
+  position: absolute !important;
+  left: -8px !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  align-items: center !important;
+  gap: 0 !important;
+  width: 16px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  z-index: 5 !important;
+}
+
+.graph-node-draft .graph-input-col .graph-port {
+  padding-left: 0 !important;
+}
+
+.graph-node-draft .graph-input-col .graph-port-label,
+.graph-node-draft .graph-input-col .graph-port-type,
+.graph-node-draft .graph-input-col .graph-port-remove,
+.graph-node-draft .graph-add-input-btn {
+  display: none !important;
 }
 
 .graph-draft-body {
   display: flex !important;
   flex-direction: column !important;
-  gap: 8px !important;
+  gap: 10px !important;
   width: 100% !important;
   margin-top: 8px !important;
 }
@@ -1218,39 +1242,55 @@
   opacity: 0.75 !important;
 }
 
-/* 追问自动选路（2026-11-03）：回答方式下拉——与输入框同款玻璃风格，一行排开 */
-.graph-draft-route {
+/* 追问自动选路（2026-11-03 改版）：回答方式胶囊三选一，跟发送键同一底栏 */
+.graph-draft-footer {
   display: flex !important;
   align-items: center !important;
   gap: 8px !important;
+  flex-wrap: wrap !important;
 }
 
-.graph-draft-route-label {
-  color: var(--text-secondary) !important;
-  font-size: var(--fs-sm) !important;
-  line-height: 1 !important;
-  flex-shrink: 0 !important;
-}
-
-.graph-draft-route-select {
-  flex: 1 1 auto !important;
+.graph-draft-route {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 2px !important;
   min-width: 0 !important;
-  box-sizing: border-box !important;
-  padding: 6px 8px !important;
+  padding: 2px !important;
   border: 1px solid var(--border) !important;
-  border-radius: var(--r-md) !important;
+  border-radius: var(--r-pill) !important;
   background: var(--input-bg) !important;
-  color: var(--text-primary) !important;
-  font-size: var(--fs-sm) !important;
-  line-height: 1.4 !important;
-  outline: none !important;
-  font-family: inherit !important;
-  cursor: pointer !important;
+  flex: 0 1 auto !important;
 }
 
-.graph-draft-route-select:focus {
-  border-color: var(--accent) !important;
-  box-shadow: 0 0 0 2px var(--btn-active-border) !important;
+.graph-draft-route-btn {
+  border: 1px solid transparent !important;
+  border-radius: var(--r-pill) !important;
+  background: transparent !important;
+  color: var(--text-secondary) !important;
+  padding: 4px 9px !important;
+  font-family: inherit !important;
+  font-size: var(--fs-xs) !important;
+  font-weight: 600 !important;
+  line-height: 1.4 !important;
+  white-space: nowrap !important;
+  cursor: pointer !important;
+  transition: background 0.15s, border-color 0.15s, color 0.15s !important;
+}
+
+.graph-draft-route-btn:hover {
+  color: var(--text-primary) !important;
+}
+
+.graph-draft-route-btn.is-current {
+  background: color-mix(in srgb, var(--accent) 14%, transparent) !important;
+  border-color: color-mix(in srgb, var(--accent) 36%, transparent) !important;
+  color: var(--accent) !important;
+  font-weight: 800 !important;
+}
+
+.graph-draft-route-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent) !important;
+  outline-offset: 1px !important;
 }
 
 .graph-draft-actions {
@@ -1317,9 +1357,9 @@
   margin-left: auto !important;
   width: 26px !important;
   height: 26px !important;
-  border: 1px solid var(--border) !important;
-  border-radius: var(--r-sm) !important;
-  background: var(--btn-bg) !important;
+  border: 1px solid transparent !important;
+  border-radius: 50% !important;
+  background: transparent !important;
   color: var(--text-secondary) !important;
   font-size: 15px !important;
   line-height: 1 !important;
@@ -1337,8 +1377,9 @@
 }
 
 [data-theme="light"] .graph-node-draft {
-  background: linear-gradient(135deg, rgba(224, 242, 254, 0.96), rgba(255, 253, 247, 0.98)) !important;
-  box-shadow: 0 0 28px color-mix(in srgb, var(--accent) 20%, transparent), 0 14px 36px rgba(90, 70, 40, 0.14) !important;
+  border-color: color-mix(in srgb, var(--accent) 44%, var(--border)) !important;
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.98), rgba(247, 250, 255, 0.98)) !important;
+  box-shadow: 0 0 28px color-mix(in srgb, var(--accent) 16%, transparent), 0 14px 36px rgba(70, 74, 92, 0.16) !important;
 }
 
 /* ---------- 12. ComfyUI 属性色与端口删除 ---------- */

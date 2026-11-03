@@ -44,8 +44,8 @@ check('追问草稿空发回落：框空着点发送＝采用建议问题（占�
   return true;
 });
 
-// ===== 串行边界追加：追问自动选路——回答方式下拉（2026-11-03）=====
-check('追问草稿卡「回答方式」：追问口有下拉、默认选「自动判断」，学习/苏格拉底口不显示', () => {
+// ===== 串行边界追加：追问自动选路——回答方式胶囊三选一（2026-11-03 改版）=====
+check('追问草稿卡「回答方式」：追问口有三枚胶囊、默认选中「自动判断」，学习/苏格拉底口不显示', () => {
   const realEsc = sandbox.escapeHtml;
   sandbox.escapeHtml = t => (t == null ? '' : String(t));
   try {
@@ -56,30 +56,31 @@ check('追问草稿卡「回答方式」：追问口有下拉、默认选「自�
       ...extra,
     }) + ')', sandbox);
     const followup = render({});
-    if (!followup.includes('class="graph-draft-route-select"')) throw new Error('追问草稿卡应有「回答方式」下拉');
-    if (!followup.includes('<option value="auto" selected>自动判断</option>')) throw new Error('默认应选中「自动判断」');
-    if (!followup.includes('<option value="analysis">拆分分析</option>')) throw new Error('应有「拆分分析」选项');
-    if (!followup.includes('<option value="direct">直接回答</option>')) throw new Error('应有「直接回答」选项');
-    if (!followup.includes('onchange="draftRouteChanged(\'draft-route\', this.value)"')) throw new Error('下拉没挂 draftRouteChanged');
+    if (!followup.includes('class="graph-draft-route" role="group" aria-label="回答方式"')) throw new Error('追问草稿卡应有「回答方式」胶囊组');
+    if (!followup.includes('class="graph-draft-route-btn is-current" data-route="auto" aria-pressed="true"')) throw new Error('默认应选中「自动判断」');
+    if (!followup.includes('data-route="analysis" aria-pressed="false"')) throw new Error('应有「拆分分析」选项');
+    if (!followup.includes('data-route="direct" aria-pressed="false"')) throw new Error('应有「直接回答」选项');
+    if (!followup.includes('onclick="draftRouteChanged(\'draft-route\',\'auto\',this)"')) throw new Error('自动判断没挂 draftRouteChanged');
+    if (!followup.includes('onclick="draftRouteChanged(\'draft-route\',\'direct\',this)"')) throw new Error('直接回答没挂 draftRouteChanged');
 
     const manual = render({ routeMode: 'direct' });
-    if (!manual.includes('<option value="direct" selected>直接回答</option>')) throw new Error('routeMode=direct 应选中「直接回答」');
+    if (!manual.includes('class="graph-draft-route-btn is-current" data-route="direct" aria-pressed="true"')) throw new Error('routeMode=direct 应选中「直接回答」');
     const manualAnalysis = render({ routeMode: 'analysis' });
-    if (!manualAnalysis.includes('<option value="analysis" selected>拆分分析</option>')) throw new Error('routeMode=analysis 应选中「拆分分析」');
+    if (!manualAnalysis.includes('class="graph-draft-route-btn is-current" data-route="analysis" aria-pressed="true"')) throw new Error('routeMode=analysis 应选中「拆分分析」');
     const junk = render({ routeMode: 'nonsense' });
-    if (!junk.includes('<option value="auto" selected>自动判断</option>')) throw new Error('非法 routeMode 应回落「自动判断」');
+    if (!junk.includes('class="graph-draft-route-btn is-current" data-route="auto" aria-pressed="true"')) throw new Error('非法 routeMode 应回落「自动判断」');
 
     const learn = render({ portMeta: { branchType: 'learn', question: 'q' } });
-    if (learn.includes('graph-draft-route-select')) throw new Error('进阶学习口不应显示回答方式下拉');
+    if (learn.includes('graph-draft-route')) throw new Error('进阶学习口不应显示回答方式胶囊');
     const socratic = render({ portMeta: { branchType: 'socratic', type: 'socratic', question: 'q' } });
-    if (socratic.includes('graph-draft-route-select')) throw new Error('苏格拉底口不应显示回答方式下拉');
+    if (socratic.includes('graph-draft-route')) throw new Error('苏格拉底口不应显示回答方式胶囊');
     const continuePort = render({ portMeta: { branchType: 'continue', question: 'q' } });
-    if (continuePort.includes('graph-draft-route-select')) throw new Error('直接问AI 口不应显示回答方式下拉（自动选路只挂追问口）');
+    if (continuePort.includes('graph-draft-route')) throw new Error('直接问AI 口不应显示回答方式胶囊（自动选路只挂追问口）');
     return true;
   } finally { sandbox.escapeHtml = realEsc; }
 });
 
-check('draftRouteChanged：回答方式回写，非法/空值归一 auto', () => {
+check('draftRouteChanged：回答方式回写 + 胶囊选中态同步，非法/空值归一 auto', () => {
   const out = vm.runInContext(`(() => {
     graphView.nodes = [{ id: 'draft-rc', kind: 'draft', x: 0, y: 0, portMeta: { branchType: 'followup' } }];
     graphView.nodeById = {}; graphView.nodeById['draft-rc'] = graphView.nodes[0];
@@ -91,10 +92,21 @@ check('draftRouteChanged：回答方式回写，非法/空值归一 auto', () =>
     const c = graphView.nodes[0].routeMode;
     draftRouteChanged('draft-rc', 'junk');
     const d = graphView.nodes[0].routeMode;
+    const seen = [];
+    const makeBtn = route => ({
+      getAttribute: () => route,
+      classList: { toggle: (cls, on) => seen.push(route + ':' + cls + ':' + on) },
+      setAttribute: (k, v) => seen.push(route + ':' + k + ':' + v),
+    });
+    const group = { querySelectorAll: () => [makeBtn('auto'), makeBtn('analysis'), makeBtn('direct')] };
+    draftRouteChanged('draft-rc', 'direct', { closest: () => group });
+    const toggle = seen.join(',');
     graphView.nodes = []; graphView.nodeById = {};
-    return [a, b, c, d].join(',');
+    return [a, b, c, d].join(',') + '|' + toggle;
   })()`, sandbox);
-  if (out !== 'direct,analysis,auto,auto') throw new Error('routeMode 回写口径不对：' + out);
+  if (!out.startsWith('direct,analysis,auto,auto|')) throw new Error('routeMode 回写口径不对：' + out);
+  if (!out.includes('auto:is-current:false') || !out.includes('direct:is-current:true')) throw new Error('胶囊选中态没同步：' + out);
+  if (!out.includes('direct:aria-pressed:true') || !out.includes('auto:aria-pressed:false')) throw new Error('aria-pressed 没同步：' + out);
   return true;
 });
 
