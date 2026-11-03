@@ -303,8 +303,20 @@ function _renderDraftNodeHtml(node) {
     // 不进 _draftSuggestionText（空发回落仍只认真实建议问题，不会把提示语发出去）
     const suggestion = _draftSuggestionText(node) || '输入你想追问的问题…';
     const value = typeof node.draftInput === 'string' ? node.draftInput : '';
+    // 追问自动选路（2026-11-03）：只有「追问」口拖出的卡显示「回答方式」；学习/苏格拉底/
+    // 人工内容口不显示（那些链路的生成口径固定）。默认自动＝模型判断，可手动改。
+    const routeMode = (node.routeMode === 'direct' || node.routeMode === 'analysis') ? node.routeMode : 'auto';
+    const routeRow = meta.branchType === 'followup'
+      ? '<div class="graph-draft-route"><span class="graph-draft-route-label">回答方式</span>'
+        + '<select class="graph-draft-route-select" aria-label="回答方式" onchange="draftRouteChanged(\'' + node.id + '\', this.value)">'
+        + '<option value="auto"' + (routeMode === 'auto' ? ' selected' : '') + '>自动判断</option>'
+        + '<option value="analysis"' + (routeMode === 'analysis' ? ' selected' : '') + '>拆分分析</option>'
+        + '<option value="direct"' + (routeMode === 'direct' ? ' selected' : '') + '>直接回答</option>'
+        + '</select></div>'
+      : '';
     body = '<div class="graph-draft-body">'
       + '<textarea class="graph-draft-input" rows="3" placeholder="' + escapeHtml(suggestion) + '" oninput="draftInputChanged(\'' + node.id + '\', this.value)">' + escapeHtml(value) + '</textarea>'
+      + routeRow
       + '<button class="graph-draft-btn graph-draft-send" onclick="submitDraftQuestion(\'' + node.id + '\')">发送提问</button>'
       + '</div>';
   }

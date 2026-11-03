@@ -1218,6 +1218,41 @@
   opacity: 0.75 !important;
 }
 
+/* 追问自动选路（2026-11-03）：回答方式下拉——与输入框同款玻璃风格，一行排开 */
+.graph-draft-route {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+.graph-draft-route-label {
+  color: var(--text-secondary) !important;
+  font-size: var(--fs-sm) !important;
+  line-height: 1 !important;
+  flex-shrink: 0 !important;
+}
+
+.graph-draft-route-select {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+  padding: 6px 8px !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--r-md) !important;
+  background: var(--input-bg) !important;
+  color: var(--text-primary) !important;
+  font-size: var(--fs-sm) !important;
+  line-height: 1.4 !important;
+  outline: none !important;
+  font-family: inherit !important;
+  cursor: pointer !important;
+}
+
+.graph-draft-route-select:focus {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px var(--btn-active-border) !important;
+}
+
 .graph-draft-actions {
   display: flex !important;
   flex-wrap: wrap !important;

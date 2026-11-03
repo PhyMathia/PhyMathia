@@ -796,6 +796,15 @@ function draftInputChanged(nodeId, value) {
   if (node && node.kind === 'draft') node.draftInput = String(value == null ? '' : value);
 }
 
+// 追问自动选路（2026-11-03）：回答方式下拉回写。auto＝发送时让模型判断；
+// direct/analysis＝用户手动定死，跳过判断。非 auto 值一律归一到 auto，防脏值进对象。
+function draftRouteChanged(nodeId, value) {
+  const node = _findDraftNode(nodeId);
+  if (!node || node.kind !== 'draft') return;
+  const next = String(value || '').toLowerCase();
+  node.routeMode = (next === 'direct' || next === 'analysis') ? next : 'auto';
+}
+
 // T152：全量重建前收集现存草稿（只收本会话的，切会话不跟人）；
 // 草稿边一并收集，草稿卡才会带着来源连线一起回来
 function _collectDraftCarry() {
@@ -829,7 +838,10 @@ function submitDraftQuestion(nodeId) {
   const meta = node.portMeta || {};
   const sourceNodeId = _findDraftSourceNodeId(nodeId);
   if (typeof window.startQuestionWorkflow === 'function') {
-    window.startQuestionWorkflow(text, { sourceNodeId: sourceNodeId || '', sourcePort: meta.fromPort || '', draftNodeId: nodeId });
+    const opts = { sourceNodeId: sourceNodeId || '', sourcePort: meta.fromPort || '', draftNodeId: nodeId };
+    // 只有「追问」口拖出的卡才带回答方式（默认自动）；其他草稿口不传，不进入自动选路
+    if (meta.branchType === 'followup') opts.followupRoute = node.routeMode || 'auto';
+    window.startQuestionWorkflow(text, opts);
   }
 }
 

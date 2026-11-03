@@ -506,6 +506,200 @@ export async function run() {
       return true;
     });
 
+    // ===== 追问自动选路（2026-11-03）：模型判断解析＋分类回落＋direct 模板与分支 =====
+    check('追问自动选路：回复解析（JSON / 代码围栏 / 中英文关键词 / 不可解析）', () => {
+      const parse = (s) => vm.runInContext('_parseFollowupRouteReply(' + JSON.stringify(s) + ')', sandbox);
+      if (parse('{"route": "direct"}') !== 'direct') throw new Error('纯 JSON 没解析出 direct');
+      if (parse('{"route":"analysis"}') !== 'analysis') throw new Error('纯 JSON 没解析出 analysis');
+      if (parse('```json\n{"route": "direct"}\n```') !== 'direct') throw new Error('代码围栏 JSON 没解析出 direct');
+      if (parse('判断：这次追问比较简单，直接回答即可') !== 'direct') throw new Error('中文「直接回答」没解析出 direct');
+      if (parse('这次追问比较复杂，建议拆分分析') !== 'analysis') throw new Error('中文「拆分分析」没解析出 analysis');
+      if (parse('DIRECT') !== 'direct') throw new Error('大写 DIRECT 没解析出 direct');
+      if (parse('analysis') !== 'analysis') throw new Error('裸 analysis 没解析出 analysis');
+      if (parse('{"route": "nonsense"}') !== '') throw new Error('非法 route 键值应返回空串');
+      if (parse('') !== '') throw new Error('空回复应返回空串');
+      if (parse('你好') !== '') throw new Error('无法解析的中文应返回空串');
+      return true;
+    });
+
+    check('追问自动选路：direct 模板＝「直接回答」点、问题节点走 out-2，问题分析不建', () => {
+      _seed();
+      sandbox.localStorage.setItem('phymathia_current_session', 'sess_branch_wf');
+      vm.runInContext('currentSessionId = "sess_branch_wf"; SESSION_ID = "rsess_branch_wf";'
+        + ' sessions = { sess_branch_wf: { title: "", updatedAt: 1 } }; chatHistory = []; workflowRunActive = false;', sandbox);
+      const prevPush = sandbox._pushGraphUndo;
+      sandbox._pushGraphUndo = () => {};
+      let report = null;
+      try {
+        report = JSON.parse(vm.runInContext('(function () {'
+          + '  var t = _createQuestionWorkflowTemplate("守恒是什么？", "lm1", "out-0", null, "sess_branch_wf", "direct");'
+          + '  var st = window.getGraphState("sess_branch_wf");'
+          + '  var work = (st.customNodes || []).filter(function (n) { return n.id === t.answerNode.id; })[0];'
+          + '  return JSON.stringify({'
+          + '    userKind: t.userNode.kind,'
+          + '    workKind: work ? work.kind : "MISSING",'
+          + '    workId: work ? work.id : "",'
+          + '    connUser: (st.connections || []).filter(function (c) { return c.from === t.userNode.id; }),'
+          + '    connSource: (st.connections || []).filter(function (c) { return c.to === t.userNode.id; }),'
+          + '    answerCount: (st.customNodes || []).filter(function (n) { return n.kind === "answer"; }).length,'
+          + '  });'
+          + '})()', sandbox));
+      } finally {
+        sandbox._pushGraphUndo = prevPush;
+        sandbox.localStorage.removeItem('phymathia_current_session');
+      }
+      if (report.userKind !== 'user') throw new Error('问题节点没建：' + report.userKind);
+      if (report.workKind !== 'direct') throw new Error('第二颗应是「直接回答」节点：' + report.workKind);
+      if (report.answerCount !== 0) throw new Error('direct 路线不应再建问题分析卡，实际答案卡数：' + report.answerCount);
+      if (!report.connUser.length || report.connUser[0].fromPort !== 'out-2') {
+        throw new Error('直接回答节点应连在问题节点 out-2「直接回答」口：' + JSON.stringify(report.connUser));
+      }
+      if (!report.connSource.length || report.connSource[0].from !== 'lm1') {
+        throw new Error('来源追问口连线没回来：' + JSON.stringify(report.connSource));
+      }
+      // 旧签名（不传 route）行为一字不变：仍建 answer＋out-0
+      _seed();
+      sandbox.localStorage.setItem('phymathia_current_session', 'sess_branch_wf');
+      vm.runInContext('currentSessionId = "sess_branch_wf"; SESSION_ID = "rsess_branch_wf";'
+        + ' sessions = { sess_branch_wf: { title: "", updatedAt: 1 } }; chatHistory = []; workflowRunActive = false;', sandbox);
+      sandbox._pushGraphUndo = () => {};
+      let legacy = null;
+      try {
+        legacy = JSON.parse(vm.runInContext('(function () {'
+          + '  var t = _createQuestionWorkflowTemplate("守恒是什么？", "lm1", "out-0", null, "sess_branch_wf");'
+          + '  var st = window.getGraphState("sess_branch_wf");'
+          + '  var work = (st.customNodes || []).filter(function (n) { return n.id === t.answerNode.id; })[0];'
+          + '  return JSON.stringify({'
+          + '    workKind: work ? work.kind : "MISSING",'
+          + '    connUser: (st.connections || []).filter(function (c) { return c.from === t.userNode.id; }),'
+          + '  });'
+          + '})()', sandbox));
+      } finally {
+        sandbox._pushGraphUndo = prevPush;
+        sandbox.localStorage.removeItem('phymathia_current_session');
+      }
+      if (legacy.workKind !== 'answer') throw new Error('旧调用（无 route）应仍建问题分析卡：' + legacy.workKind);
+      if (!legacy.connUser.length || legacy.connUser[0].fromPort !== 'out-0') {
+        throw new Error('旧调用应走 out-0「问题分析」口：' + JSON.stringify(legacy.connUser));
+      }
+      return true;
+    });
+
+    // 三段串行（同一夹具、同一次 await 序列）：异步用例与重置沙箱不可并排，
+    // 且上一段的桩/夹具必须完全还原后下一段才 _seed()——本域把三条自动选路链路
+    // 编进一条用例里（与 T361/T362 含 await 两条同款口径）。
+    check('追问自动选路：manual/auto/失败回落三段串起来跑（direct 执行·分类调用·回落分析）', async () => {
+      // ===== ① 手动「直接回答」：跳过模型判断、不跑问题分析，直接执行 direct 节点 =====
+      _seed();
+      sandbox.localStorage.setItem('phymathia_current_session', 'sess_branch_wf');
+      vm.runInContext('currentSessionId = "sess_branch_wf"; SESSION_ID = "rsess_branch_wf";'
+        + ' sessions = { sess_branch_wf: { title: "", updatedAt: 1 } }; chatHistory = []; workflowRunActive = false; workflowLastAborted = false;', sandbox);
+      const calls1 = { classify: 0, analysis: 0, exec: [], extract: 0 };
+      const prevGen1 = sandbox._generateAnalysis, prevExec1 = sandbox._executeParallelWorkflow;
+      const prevExtract1 = sandbox._extractKnowledgeFromWorkflow, prevPush1 = sandbox._pushGraphUndo;
+      const prevClassify1 = sandbox._classifyFollowupQuestion, prevDone1 = sandbox._graphHistoryLiveEventDone;
+      sandbox._generateAnalysis = async () => { calls1.analysis += 1; };
+      sandbox._executeParallelWorkflow = async (ids, force, meta) => { calls1.exec.push({ ids: (ids || []).slice(), force: !!force, meta: meta || {} }); };
+      sandbox._extractKnowledgeFromWorkflow = async () => { calls1.extract += 1; };
+      sandbox._pushGraphUndo = () => {};
+      sandbox._classifyFollowupQuestion = async () => { calls1.classify += 1; return 'analysis'; };
+      sandbox._graphHistoryLiveEventDone = () => {};
+      try {
+        await sandbox.startQuestionWorkflow('什么是动量守恒？', { sourceNodeId: 'lm1', sourcePort: 'out-0', followupRoute: 'direct' });
+      } finally {
+        sandbox._generateAnalysis = prevGen1;
+        sandbox._executeParallelWorkflow = prevExec1;
+        sandbox._extractKnowledgeFromWorkflow = prevExtract1;
+        sandbox._pushGraphUndo = prevPush1;
+        sandbox._classifyFollowupQuestion = prevClassify1;
+        sandbox._graphHistoryLiveEventDone = prevDone1;
+        sandbox.localStorage.removeItem('phymathia_current_session');
+      }
+      if (calls1.classify !== 0) throw new Error('手动 direct 不该调模型判断（调了 ' + calls1.classify + ' 次）');
+      if (calls1.analysis !== 0) throw new Error('direct 路径不该跑问题分析（跑了 ' + calls1.analysis + ' 次）');
+      if (calls1.exec.length !== 1) throw new Error('应恰好执行一次工作流：' + calls1.exec.length);
+      const target1 = String(calls1.exec[0].ids[0] || '');
+      if (target1.indexOf('direct-custom-') !== 0) throw new Error('执行目标不是「直接回答」节点：' + target1);
+      if (calls1.exec[0].force) throw new Error('direct 首跑不应带 force');
+      if (calls1.exec[0].meta.handoffTaskId !== '' && calls1.exec[0].meta.handoffTaskId != null) {
+        throw new Error('没有排队交接时 handoffTaskId 应为空：' + JSON.stringify(calls1.exec[0].meta));
+      }
+      if (calls1.extract !== 1) throw new Error('收尾知识提取应恰好跑一次（跑了 ' + calls1.extract + ' 次）');
+
+      // ===== ② auto＋模型判 direct → 直接执行 direct、不走问题分析 =====
+      _seed();
+      sandbox.localStorage.setItem('phymathia_current_session', 'sess_branch_wf');
+      vm.runInContext('currentSessionId = "sess_branch_wf"; SESSION_ID = "rsess_branch_wf";'
+        + ' sessions = { sess_branch_wf: { title: "", updatedAt: 1 } }; chatHistory = []; workflowRunActive = false; workflowLastAborted = false;', sandbox);
+      const calls2 = { analysis: 0, exec: [], model: 0 };
+      const prevGen2 = sandbox._generateAnalysis, prevExec2 = sandbox._executeParallelWorkflow;
+      const prevExtract2 = sandbox._extractKnowledgeFromWorkflow, prevPush2 = sandbox._pushGraphUndo;
+      const prevModel2 = sandbox.getActiveModelForRole, prevProxy2 = sandbox.proxyChatWithModel, prevDone2 = sandbox._graphHistoryLiveEventDone;
+      sandbox._generateAnalysis = async () => { calls2.analysis += 1; };
+      sandbox._executeParallelWorkflow = async (ids) => { calls2.exec.push((ids || []).slice()); };
+      sandbox._extractKnowledgeFromWorkflow = async () => {};
+      sandbox._pushGraphUndo = () => {};
+      sandbox.getActiveModelForRole = () => { calls2.model += 1; return { provider: 'mock', model: 'mock-model', apiKey: 'k' }; };
+      sandbox.proxyChatWithModel = async () => ({ json: async () => ({ choices: [{ message: { content: '{"route":"direct"}' } }] }) });
+      sandbox._graphHistoryLiveEventDone = () => {};
+      try {
+        await sandbox.startQuestionWorkflow('角动量守恒的适用条件是什么？', { sourceNodeId: 'lm1', sourcePort: 'out-0', followupRoute: 'auto' });
+      } finally {
+        sandbox._generateAnalysis = prevGen2;
+        sandbox._executeParallelWorkflow = prevExec2;
+        sandbox._extractKnowledgeFromWorkflow = prevExtract2;
+        sandbox._pushGraphUndo = prevPush2;
+        sandbox.getActiveModelForRole = prevModel2;
+        sandbox.proxyChatWithModel = prevProxy2;
+        sandbox._graphHistoryLiveEventDone = prevDone2;
+        sandbox.localStorage.removeItem('phymathia_current_session');
+      }
+      if (calls2.model !== 1) throw new Error('auto 应只调一次模型判断（调了 ' + calls2.model + ' 次）');
+      if (calls2.analysis !== 0) throw new Error('模型判 direct 却跑了问题分析');
+      if (calls2.exec.length !== 1 || String(calls2.exec[0][0] || '').indexOf('direct-custom-') !== 0) {
+        throw new Error('没落到「直接回答」节点：' + JSON.stringify(calls2.exec));
+      }
+
+      // ===== ③ auto＋分类失败 → 回落问题分析；手动「拆分分析」不调模型 =====
+      _seed();
+      sandbox.localStorage.setItem('phymathia_current_session', 'sess_branch_wf');
+      vm.runInContext('currentSessionId = "sess_branch_wf"; SESSION_ID = "rsess_branch_wf";'
+        + ' sessions = { sess_branch_wf: { title: "", updatedAt: 1 } }; chatHistory = []; workflowRunActive = false; workflowLastAborted = false;', sandbox);
+      const calls3 = { analysis: 0, exec: [], classify: 0 };
+      const prevGen3 = sandbox._generateAnalysis, prevExec3 = sandbox._executeParallelWorkflow;
+      const prevExtract3 = sandbox._extractKnowledgeFromWorkflow, prevPush3 = sandbox._pushGraphUndo;
+      const prevModel3 = sandbox.getActiveModelForRole, prevProxy3 = sandbox.proxyChatWithModel, prevDone3 = sandbox._graphHistoryLiveEventDone;
+      const prevToast3 = sandbox.showToast;
+      sandbox._generateAnalysis = async () => { calls3.analysis += 1; };
+      sandbox._executeParallelWorkflow = async (ids) => { calls3.exec.push((ids || []).slice()); };
+      sandbox._extractKnowledgeFromWorkflow = async () => {};
+      sandbox._pushGraphUndo = () => {};
+      sandbox.getActiveModelForRole = () => ({ provider: 'mock', model: 'mock-model', apiKey: 'k' });
+      sandbox.proxyChatWithModel = async () => { calls3.classify += 1; throw new Error('network down'); };
+      sandbox._graphHistoryLiveEventDone = () => {};
+      sandbox.showToast = () => {};
+      try {
+        await sandbox.startQuestionWorkflow('为什么动量守恒？', { sourceNodeId: 'lm1', sourcePort: 'out-0', followupRoute: 'auto' });
+        if (calls3.classify !== 1) throw new Error('auto 应先调模型判断');
+        if (calls3.analysis !== 1) throw new Error('分类失败应回落问题分析（跑了 ' + calls3.analysis + ' 次）');
+        if (calls3.exec.length !== 0) throw new Error('回落问题分析是分析停等口径，不应直接执行 direct 工作流');
+        await sandbox.startQuestionWorkflow('再追一句', { sourceNodeId: 'lm1', sourcePort: 'out-0', followupRoute: 'analysis' });
+        if (calls3.classify !== 1) throw new Error('手动 analysis 不该再次调模型（共 ' + calls3.classify + ' 次调用）');
+        if (calls3.analysis !== 2) throw new Error('手动 analysis 应走问题分析链');
+      } finally {
+        sandbox._generateAnalysis = prevGen3;
+        sandbox._executeParallelWorkflow = prevExec3;
+        sandbox._extractKnowledgeFromWorkflow = prevExtract3;
+        sandbox._pushGraphUndo = prevPush3;
+        sandbox.getActiveModelForRole = prevModel3;
+        sandbox.proxyChatWithModel = prevProxy3;
+        sandbox._graphHistoryLiveEventDone = prevDone3;
+        sandbox.showToast = prevToast3;
+        sandbox.localStorage.removeItem('phymathia_current_session');
+      }
+      return true;
+    });
+
     await drain();
   } finally {
     restoreWindowStub('getGraphState', prevGet);
