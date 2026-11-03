@@ -285,7 +285,6 @@ function _renderDraftNodeHtml(node) {
   const meta = node.portMeta || {};
   const attr = _nodeAttribute(node);
   const isSocratic = meta.type === 'socratic';
-  const isLearn = meta.type === 'learn';
   let body = '';
   if (isSocratic) {
     body = '<div class="graph-draft-body socratic">'
@@ -306,25 +305,24 @@ function _renderDraftNodeHtml(node) {
     // 追问自动选路（2026-11-03）：只有「追问」口拖出的卡显示「回答方式」；学习/苏格拉底/
     // 人工内容口不显示（那些链路的生成口径固定）。默认自动＝模型判断，可手动改。
     const routeMode = (node.routeMode === 'direct' || node.routeMode === 'analysis') ? node.routeMode : 'auto';
-    const routeRow = meta.branchType === 'followup'
-      ? '<div class="graph-draft-route"><span class="graph-draft-route-label">回答方式</span>'
-        + '<select class="graph-draft-route-select" aria-label="回答方式" onchange="draftRouteChanged(\'' + node.id + '\', this.value)">'
-        + '<option value="auto"' + (routeMode === 'auto' ? ' selected' : '') + '>自动判断</option>'
-        + '<option value="analysis"' + (routeMode === 'analysis' ? ' selected' : '') + '>拆分分析</option>'
-        + '<option value="direct"' + (routeMode === 'direct' ? ' selected' : '') + '>直接回答</option>'
-        + '</select></div>'
+    const routeBtn = (route, label, hint) => '<button type="button" class="graph-draft-route-btn' + (routeMode === route ? ' is-current' : '') + '" data-route="' + route + '" aria-pressed="' + (routeMode === route ? 'true' : 'false') + '" title="' + hint + '" onclick="draftRouteChanged(\'' + node.id + '\',\'' + route + '\',this)">' + label + '</button>';
+    const routeSwitch = meta.branchType === 'followup'
+      ? '<div class="graph-draft-route" role="group" aria-label="回答方式">'
+        + routeBtn('auto', '自动判断', '由 AI 判断：一句话能答清就直接回答，否则拆分分析')
+        + routeBtn('analysis', '拆分分析', '先拆成子问题、铺开分析，步骤更多')
+        + routeBtn('direct', '直接回答', '一次成文，不铺模块')
+        + '</div>'
       : '';
     body = '<div class="graph-draft-body">'
       + '<textarea class="graph-draft-input" rows="3" placeholder="' + escapeHtml(suggestion) + '" oninput="draftInputChanged(\'' + node.id + '\', this.value)">' + escapeHtml(value) + '</textarea>'
-      + routeRow
+      + '<div class="graph-draft-footer">' + routeSwitch
       + '<button class="graph-draft-btn graph-draft-send" onclick="submitDraftQuestion(\'' + node.id + '\')">发送提问</button>'
-      + '</div>';
+      + '</div></div>';
   }
-  const label = isSocratic ? '苏格拉底问题' : isLearn ? '进阶学习' : '提问节点';
   return '<div class="graph-node graph-node-draft graph-node-branch graph-attr-' + attr.key + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';">'
     + _renderInputPorts(node)
     + '<div class="graph-node-main">'
-    + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span><span class="graph-node-badge">' + label + '</span>'
+    + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span>'
     + '<button class="graph-draft-close" onclick="removeDraftNode(\'' + node.id + '\')" title="取消">×</button></div>'
     + body
     + '</div></div>';
