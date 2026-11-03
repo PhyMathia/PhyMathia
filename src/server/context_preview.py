@@ -27,6 +27,7 @@ async def preview_context(
     parent_id: str = "",
     graph_path: str = "",
     workflow: int = 0,
+    node_kind: str = "",
     model_name: str = "",
     device_id: str = "",
 ):
@@ -50,7 +51,10 @@ async def preview_context(
         workflow_field="workflow",
     )
     if workflow:
-        system_content = MODULE_SYSTEM_PROMPT
+        # 2026-11-03 起工作流底座按节点类型分叉：预览要复现真机选的那一份，
+        # 否则「预览里看到的是增量底座、真机发的是独立底座」。node_kind 缺省
+        # 仍按局部节点——与拆分前一致，旧的 workflow=1 调用不受影响。
+        system_content = context_mod.workflow_system_prompt({"target": {"kind": node_kind}})
     else:
         system_content = BRANCH_SYSTEM_PROMPT
     budget = context_mod.resolve_context_budget(model_name)

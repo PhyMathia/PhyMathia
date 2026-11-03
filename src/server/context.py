@@ -921,6 +921,32 @@ def _graph_path_instruction(graph_path: list, source_module: str = "") -> str:
 _UPSTREAM_FULL_MAX_CHARS = 6000
 
 
+def workflow_targets_direct(workflow_context) -> bool:
+    """该工作流请求是否落在「直接回答」节点上（2026-11-03：system 底座分叉的判据）。
+
+    mode 与 target.kind 任一亮 direct 即算——首发生成带 mode，重新生成/深链请求
+    只带 target，两处都要认，否则同一节点换个入口就换底座。
+    """
+    if not isinstance(workflow_context, dict):
+        return False
+    if str(workflow_context.get("mode") or "") == "direct":
+        return True
+    target = workflow_context.get("target") or {}
+    return isinstance(target, dict) and str(target.get("kind") or "") == "direct"
+
+
+def workflow_system_prompt(workflow_context) -> str:
+    """工作流请求该用的系统底座（2026-11-03）：direct 独立成文，其余节点增量正文。
+
+    选哪一份只由工作流上下文决定，models_routes 与 context_preview 共用这一个入口，
+    避免「预览里是增量底座、真机发的是独立底座」。
+    """
+    from .prompts import DIRECT_SYSTEM_PROMPT, MODULE_SYSTEM_PROMPT
+    if workflow_targets_direct(workflow_context):
+        return DIRECT_SYSTEM_PROMPT
+    return MODULE_SYSTEM_PROMPT
+
+
 def _workflow_context_parts(workflow_context) -> tuple:
     """拆分工作流上下文：(shared, target)，shared 为兄弟模块公共前缀段。"""
     if not isinstance(workflow_context, dict):

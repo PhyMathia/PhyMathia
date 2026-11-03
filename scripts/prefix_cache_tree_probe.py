@@ -104,8 +104,10 @@ def _post_chat(client, session_id, prompt, graph_path, workflow_context=None):
 def _stream_of(captured):
     """取最近一次「聊天」请求的消息流。历史攒到 15 条会触发滚动记忆压缩任务，
     它走同一个 http client（system 开头是「你是会话记忆压缩助手」），必须排除。
-    工作流请求（2026-09-25 新增场景 F/G）的 system 是 MODULE_SYSTEM_PROMPT，同样认。"""
-    prefixes = ("# 角色定义", "你是 PhyMathia 的知识网络节点内容生成器")
+    工作流请求（2026-09-25 新增场景 F/G）的 system 是工作流底座，同样认——
+    2026-11-03 起分两份：模块/分析/总结走 MODULE_SYSTEM_PROMPT，direct 走
+    DIRECT_SYSTEM_PROMPT，两份都以「你是 PhyMathia 的工作流节点生成器」开头。"""
+    prefixes = ("# 角色定义", "你是 PhyMathia 的工作流节点生成器")
     for body in reversed(captured):
         msgs = body.get("messages") or []
         if msgs and str((msgs[0] or {}).get("content") or "").startswith(prefixes):

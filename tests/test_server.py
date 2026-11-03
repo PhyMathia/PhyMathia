@@ -832,6 +832,50 @@ class ContextOptimizationTest(unittest.TestCase):
         self.assertIn("HTML 可视化", prompts_mod.MODULE_SYSTEM_PROMPT)
         self.assertLess(len(prompts_mod.MODULE_SYSTEM_PROMPT), 1200)
 
+    def test_direct_system_prompt_is_standalone(self):
+        """direct 底座独立成文，且不夹带「增量正文/不重复上游」两条反向口径（2026-11-03 拆分）。"""
+        from server import prompts as prompts_mod
+        direct = prompts_mod.DIRECT_SYSTEM_PROMPT
+        self.assertIn("独立答完", direct)
+        self.assertIn("<formula>", direct)
+        self.assertIn("不生成完整学习卡片", direct)
+        self.assertNotIn("增量正文", direct)
+        self.assertNotIn("不重复上游已经充分说明", direct)
+        self.assertLess(len(direct), 1200)
+        # 拆分不许改动其他节点的身份：模块底座仍是「增量正文 + 不重复上游」
+        self.assertIn("增量正文", prompts_mod.MODULE_SYSTEM_PROMPT)
+        self.assertIn("不重复上游已经充分说明", prompts_mod.MODULE_SYSTEM_PROMPT)
+
+
+class WorkflowSystemPromptTest(unittest.TestCase):
+    """系统底座的分叉判据：direct 走独立底座，其余节点保持增量底座。"""
+
+    def test_direct_contexts_get_direct_base(self):
+        from server.prompts import DIRECT_SYSTEM_PROMPT
+        self.assertEqual(
+            context_mod.workflow_system_prompt({"mode": "direct", "target": {"kind": "direct"}}),
+            DIRECT_SYSTEM_PROMPT,
+        )
+        # 重新生成/深链只带 target 不带 mode，也必须认
+        self.assertEqual(
+            context_mod.workflow_system_prompt({"target": {"kind": "direct"}}),
+            DIRECT_SYSTEM_PROMPT,
+        )
+
+    def test_other_nodes_keep_module_base(self):
+        from server.prompts import MODULE_SYSTEM_PROMPT
+        cases = [
+            {"mode": "module", "target": {"kind": "module", "module": "physics"}},
+            {"mode": "analysis", "target": {"kind": "answer"}},
+            {"target": {"kind": "summary"}},
+            {"target": {"kind": "blank"}},
+            {},
+            None,
+        ]
+        for ctx in cases:
+            with self.subTest(ctx=ctx):
+                self.assertEqual(context_mod.workflow_system_prompt(ctx), MODULE_SYSTEM_PROMPT)
+
 
 
 
