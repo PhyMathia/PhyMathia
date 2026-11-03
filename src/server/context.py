@@ -979,11 +979,15 @@ def _workflow_context_parts(workflow_context) -> tuple:
         target_lines.append("- 概要末尾单独一行列出建议生成的知识网络模块方向，格式：建议模块：物理视角、数学视角（候选：物理视角/数学视角/知识图谱/交互可视化/苏格拉底追问/进阶学习；追问等场景按实际需要选择，不必全部列出，也不要超出候选）。")
     if mode == "direct":
         # 直接回答（2026-10-24）：与 analysis 相反——成品答案，不是概要、不拆模块。
+        # 2026-11-03 默认自适应：篇幅由问题体量决定，短问题不再要求写全；
+        # 与前端 graph-workflow-prompt.js 的 direct 分支、graph-interact 修订提示同口径。
         # 这段必须在 target 段之前：target 段末尾那句「只生成当前目标节点内容」对
         # direct 会改成完整作答口径（见下方 else）
-        target_lines.append("- 当前为直接回答模式：为原始问题生成一份完整、可直接阅读的答案，不是问题概要，也不要拆成多个模块节点。")
-        target_lines.append("- 允许把上游要点完整展开作为论证基础；「只补充上游缺失内容」的通用规则在本模式不适用。")
-        target_lines.append("- 先结论后推导，兼顾物理直觉与数学本质；信息不足时写明假设与适用条件，不要编造数据、历史或结论。")
+        target_lines.append("- 当前为直接回答模式：直接回答原始问题，篇幅由问题本身决定，不写问题概要，也不要拆成多个模块节点。")
+        target_lines.append("- 先判断问题类型：事实/定义/单值/单一结论 → 1~3 句或一小段；概念/原因/简单比较 → 1~3 段；推导/证明/多步计算/多方比较 → 先结论后展开必要步骤。拿不准时按更短的一档回答。")
+        target_lines.append("- 不强制「物理直觉＋数学本质」双段结构，也不强制小标题：问题涉及机制时补物理直觉，涉及公式或适用条件时补数学本质；问题不需要就不写。")
+        target_lines.append("- 直接回答要能独立读懂：上游的关键结论可以简要复述，不要因为上游讲过就跳过必要解释；也不要重复无关模块。")
+        target_lines.append("- 用户额外要求优先于以上默认篇幅与结构；难度档位只决定术语深度与数学工具上限，不决定答案篇幅或是否需要推导。")
         target_lines.append("- 不要输出完整学习卡片 XML，不要输出 physics/math/graph/viz/extend/summary/socratic_meta 容器标签，不要输出「建议模块：」行。")
     if target:
         target_label = target.get("label") or target.get("module") or target.get("kind") or "目标节点"
@@ -998,7 +1002,7 @@ def _workflow_context_parts(workflow_context) -> tuple:
         elif target.get("kind") == "answer":
             target_lines.append("- AI 回答节点是分发节点，不生成正文内容。")
         elif target.get("kind") == "direct":
-            target_lines.append("- 当前生成目标是「直接回答」节点：输出完整答案正文（先结论后推导，可展开上游要点）。")
+            target_lines.append("- 当前生成目标是「直接回答」节点：按上面的篇幅规则输出答案正文，不要改写成问题分析或模块正文。")
         elif target.get("kind") == "summary":
             target_lines.append("- 当前为 AI 总结节点：根据上游内容生成简明总结正文。")
             target_lines.append("- 只输出总结正文，可使用 Markdown/LaTeX；不要输出完整学习卡片 XML，不要输出 physics/math/graph/viz/extend/summary 标签，不要输出 socratic_meta。")

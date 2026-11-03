@@ -1207,10 +1207,16 @@ async function _regenWorkflowNodeContent(node, text, signal, oldContent) {
   // 修订底稿由调用方显式传入（T339：开跑前 content 已被版本账清空，不能再从节点上读）
   const old = String(oldContent != null ? oldContent : node.content || '').trim();
   if (!old) throw new Error('节点还没有内容，直接用「生成」即可');
+  // 2026-11-03 direct 默认自适应：修订路径不能把「保留 Markdown 结构」当铁律，
+  // 否则旧的长答案缩不下来。只对 direct 拼接，其他节点口径不动。
+  const directNote = node.kind === 'direct'
+    ? '这是「直接回答」节点：如果用户要求更短、只要结论，允许删掉小标题、推导和物理直觉/数学本质结构，按问题重新定篇幅；不要为了保留原有 Markdown 结构而保留。\n\n'
+    : '';
   const prompt = '用户对下面「' + label + '」节点的当前内容不满意，或对它有新的要求。请重写整份内容。\n'
     + '规则：用户指出了具体问题时，只针对该问题修改，没提到的部分尽量原样保留；'
     + '用户提出了新要求时，按要求调整；用户没有说明具体问题时，换一种讲法整体重写，不要原样照抄。'
     + '保留公式与 Markdown 结构，公式仍按 <formula> 规范标注。\n\n'
+    + directNote
     + '当前内容：\n' + old + '\n\n用户的反馈或要求：\n' + text;
   let model = null;
   let role = 'agent';

@@ -2142,6 +2142,9 @@ check('直接回答（2026-10-24）：问题第三出口＋direct 卡端口/渲�
     const prompt = String(sandbox._workflowPromptForNode(dn, ctx));
     if (!prompt.includes('请直接回答原始问题')) throw new Error('direct 提示词没走成品答案口径');
     if (!prompt.includes('不要拆成多个模块')) throw new Error('direct 提示词缺「不拆模块」约束');
+    // 2026-11-03 默认自适应：短问题短答，旧「完整讲义」措辞不得回潮
+    if (!prompt.includes('拿不准时')) throw new Error('direct 提示词缺「拿不准时按更短的一档」自适应口径');
+    if (prompt.includes('完整、可直接阅读的答案')) throw new Error('direct 提示词退回了「完整答案」旧口径');
     dn.requirements = '只给结论';
     if (!String(sandbox._workflowPromptForNode(dn, ctx)).includes('用户额外要求（优先满足）：只给结论')) {
       throw new Error('direct 提示词丢了 requirements 通道');
@@ -2162,6 +2165,14 @@ check('直接回答（2026-10-24）：问题第三出口＋direct 卡端口/渲�
     const guardAt = genBody.indexOf("node.kind === 'direct'");
     const cycleAt = genBody.indexOf('_beginWorkflowNodeVersionCycle(node);');
     if (guardAt < 0 || cycleAt < 0 || guardAt > cycleAt) throw new Error('direct 空输入守卫必须在版本账之前（否则拦截会清掉旧内容）');
+    // ⑦ 修订路径（2026-11-03 默认自适应）：direct 带字重生成允许删掉小标题/推导，
+    // 别让「保留 Markdown 结构」把旧长答案锁回去
+    const regenAt = interactSrc.indexOf('async function _regenWorkflowNodeContent');
+    const regenEnd = interactSrc.indexOf('async function _applyWorkflowNodeRegenerate', regenAt);
+    const regenBody = regenAt >= 0 && regenEnd > regenAt ? interactSrc.slice(regenAt, regenEnd) : '';
+    if (!regenBody.includes("node.kind === 'direct'") || !regenBody.includes('允许删掉小标题')) {
+      throw new Error('direct 带字重生成缺「允许删掉小标题/推导」的自适应提示');
+    }
   } finally {
     sandbox.escapeHtml = realEsc;
     sandbox.renderMarkdown = realRM;
