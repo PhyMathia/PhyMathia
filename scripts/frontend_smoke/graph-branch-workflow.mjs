@@ -697,6 +697,40 @@ export async function run() {
         sandbox.showToast = prevToast3;
         sandbox.localStorage.removeItem('phymathia_current_session');
       }
+
+      // ===== ④ 回归（2026-11-03 复核发现）：auto 追问在分类之后的步骤抛异常，不得把
+      //        workflowRunActive 永久留 true——过去页面从此只会静默排队、再发不出任何消息
+      _seed();
+      sandbox.localStorage.setItem('phymathia_current_session', 'sess_branch_wf');
+      vm.runInContext('currentSessionId = "sess_branch_wf"; SESSION_ID = "rsess_branch_wf";'
+        + ' sessions = { sess_branch_wf: { title: "", updatedAt: 1 } }; chatHistory = [];'
+        + ' workflowRunActive = false; workflowLastAborted = false;', sandbox);
+      const prevModel4 = sandbox.getActiveModelForRole, prevProxy4 = sandbox.proxyChatWithModel;
+      const prevPush4 = sandbox._pushGraphUndo, prevToast4 = sandbox.showToast, prevDone4 = sandbox._graphHistoryLiveEventDone;
+      sandbox.getActiveModelForRole = () => ({ provider: 'mock', model: 'mock-model', apiKey: 'k' });
+      sandbox.proxyChatWithModel = async () => ({ json: async () => ({ choices: [{ message: { content: '{"route":"analysis"}' } }] }) });
+      sandbox._pushGraphUndo = () => { throw new Error('boom-undo'); };
+      sandbox.showToast = () => {};
+      sandbox._graphHistoryLiveEventDone = () => {};
+      try {
+        let threw = '';
+        try {
+          await sandbox.startQuestionWorkflow('分类之后哪里会挂？', { sourceNodeId: 'lm1', sourcePort: 'out-0', followupRoute: 'auto' });
+        } catch (e) {
+          threw = (e && e.message) || String(e);
+        }
+        if (threw !== 'boom-undo') throw new Error('分类后的异常应继续抛出，别静默吞（实际：' + (threw || '没抛') + '）');
+        if (vm.runInContext('workflowRunActive', sandbox) !== false) {
+          throw new Error('分类之后异常中断不应把 workflowRunActive 永久留 true（所有发送只排队）');
+        }
+      } finally {
+        sandbox.getActiveModelForRole = prevModel4;
+        sandbox.proxyChatWithModel = prevProxy4;
+        sandbox._pushGraphUndo = prevPush4;
+        sandbox.showToast = prevToast4;
+        sandbox._graphHistoryLiveEventDone = prevDone4;
+        sandbox.localStorage.removeItem('phymathia_current_session');
+      }
       return true;
     });
 

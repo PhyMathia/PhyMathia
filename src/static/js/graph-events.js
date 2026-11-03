@@ -117,7 +117,7 @@ function _deleteSelectedGraphGroups(groupIds) {
 function _handleGraphKeydown(event) {
   const target = event.target;
   const inTextInput = target && typeof target.closest === 'function'
-    && target.closest('input, textarea, [contenteditable], iframe');
+    && target.closest('input, textarea, select, [contenteditable], iframe');
   if ((event.ctrlKey || event.metaKey) && event.shiftKey && (event.key === 'z' || event.key === 'Z')) {
     if (inTextInput) return;
     event.preventDefault();
@@ -208,13 +208,13 @@ function _initGraphCanvasEvents() {
     graphView.suppressClick = false;
     if (graphView.selectMode) {
       if (e.target.closest('.graph-canvas-toolbar')) return;
-      if (e.target.closest('button, a, input, textarea, iframe, .graph-port, .graph-add-port-btn, .graph-port-remove')) return;
+      if (e.target.closest('button, a, input, textarea, select, iframe, .graph-port, .graph-add-port-btn, .graph-port-remove')) return;
       if (e.target.closest('.graph-node, .graph-group, .graph-node-full-content, .graph-blank-content, .graph-node-label, .graph-node-sub, .graph-draft-body, .graph-regenerate-panel')) return;
       _clearGraphTextSelection();
       _startCanvasPan(e);
       return;
     }
-    if (!e.target.closest || !e.target.closest('input, textarea')) {
+    if (!e.target.closest || !e.target.closest('input, textarea, select')) {
       _clearGraphTextSelection();
     }
     if (e.target.closest('.graph-canvas-toolbar')) return;
@@ -224,7 +224,7 @@ function _initGraphCanvasEvents() {
       return;
     }
     if (e.target.closest('.graph-add-port-btn')) return;
-    if (e.target.closest('button, a, input, textarea, iframe, .graph-regen-btn')) return;
+    if (e.target.closest('button, a, input, textarea, select, iframe, .graph-regen-btn')) return;
     if (e.target.closest('.graph-group input, .graph-group button')) return;
     if (e.target.closest('.graph-node-full-content, .graph-blank-content, .graph-node-label, .graph-node-sub')) return;
     if (e.target.closest('.graph-group-resize-handle')) {
@@ -243,7 +243,7 @@ function _initGraphCanvasEvents() {
       return;
     }
     const nodeEl = e.target.closest('.graph-node');
-    if (nodeEl && !e.target.closest('button, a, input, textarea, iframe')) {
+    if (nodeEl && !e.target.closest('button, a, input, textarea, select, iframe')) {
       if (graphView.linkMode) return;
       _startNodeDrag(e, nodeEl);
     } else _startCanvasPan(e);
@@ -252,7 +252,7 @@ function _initGraphCanvasEvents() {
     // 自绘右键菜单（graph-contextmenu.js）。只在图谱画布内接管，画布外仍是浏览器原生菜单。
     // 1) 输入类元素放行：节点内 textarea/输入框保留粘贴、拼写等原生编辑菜单
     if (e.target && typeof e.target.closest === 'function'
-      && e.target.closest('input, textarea, [contenteditable], iframe')) return;
+      && e.target.closest('input, textarea, select, [contenteditable], iframe')) return;
     // 2) 文字选择模式放行：不与「选择文字/复制」抢交互
     if (graphView.selectMode) return;
     // 3) 拖动/框选过的手势不弹菜单（graphView.moved 由现有拖拽链路维护）
@@ -271,7 +271,7 @@ function _initGraphCanvasEvents() {
   });
   graphCanvas.addEventListener('selectstart', e => {
     if (graphView.selectMode) return;
-    if (e.target && typeof e.target.closest === 'function' && e.target.closest('input, textarea')) return;
+    if (e.target && typeof e.target.closest === 'function' && e.target.closest('input, textarea, select')) return;
     e.preventDefault();
   });
   if (!graphView.keyHandlerBound) {
@@ -285,7 +285,7 @@ function _initGraphCanvasEvents() {
     }
     if (graphView.selectMode) return;
     if (graphView.moved) return;
-    if (e.target.closest('button, a, input, textarea, iframe, .graph-port')) return;
+    if (e.target.closest('button, a, input, textarea, select, iframe, .graph-port')) return;
     const linkEdgeEl = e.target.closest('.graph-edge-link, .graph-edge-link-label');
     if (linkEdgeEl && linkEdgeEl.dataset.edgeKey) {
       // 单击联系线：进入手柄精调（钢笔式拖拽）。
