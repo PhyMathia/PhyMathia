@@ -485,10 +485,28 @@ check('graph-contextmenu: 画布事件接线（pointerdown 右键过滤 + contex
   if (cm < 0) throw new Error('contextmenu 监听未找到');
   const body = wf.slice(cm, cm + 900);
   for (const frag of [
-    "closest('input, textarea, [contenteditable], iframe')",
+    "closest('input, textarea, select, [contenteditable], iframe')",
     'graphView.selectMode', 'graphView.moved', 'e.preventDefault()', 'openGraphContextMenu(e)',
   ]) {
     if (!body.includes(frag)) throw new Error('contextmenu 三分支接线缺: ' + frag);
+  }
+  return true;
+});
+
+check('graph-canvas：草稿卡「回答方式」下拉（原生 <select>）不被节点拖拽接管', () => {
+  const wf = fs.readFileSync('src/static/js/graph-events.js', 'utf8');
+  const pdStart = wf.indexOf("graphCanvas.addEventListener('pointerdown'");
+  if (pdStart < 0) throw new Error('pointerdown 监听未找到');
+  const pdEnd = wf.indexOf("graphCanvas.addEventListener('contextmenu'", pdStart);
+  const head = wf.slice(pdStart, pdEnd < 0 ? pdStart + 2500 : pdEnd);
+  // 输入类元素放行链必须带 select——否则 pointerdown 落到节点上 _startNodeDrag 开局即 preventDefault，
+  // 原生下拉永远弹不开（实测报修：下拉「实测根本点不动」）
+  for (const frag of [
+    "'input, textarea, select'",                             // 文字选区清理
+    "'button, a, input, textarea, select, iframe, .graph-regen-btn'", // 手势放行
+    "'button, a, input, textarea, select, iframe'))",         // 节点拖拽放行（!closest(...)）
+  ]) {
+    if (!head.includes(frag)) throw new Error('pointerdown 放行缺 select（回答方式下拉点不开）：' + frag);
   }
   return true;
 });

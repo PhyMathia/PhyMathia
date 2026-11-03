@@ -358,8 +358,9 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
     if (requested === 'direct' || requested === 'analysis') {
       followupRoute = requested;
     } else if (requested === 'auto') {
-      // 判断期间先撑忙碌伞（_isSendBusy 认 workflowRunActive）：正式生成段靠它互斥，
-      // 否则同一张画布上的两条追问能在判断窗口里双双开跑
+      // 伞只盖住「模型判断」这一段：finally 归零，任何异常（含判断段本身）
+      // 都不会把 workflowRunActive 永久留在 true——那会让此后所有发送只排队不放行（须刷新页面）。
+      // 正式生成段各自撑伞（分析段自己置位、直接回答交给 _executeParallelWorkflow）。
       try {
         workflowRunActive = true;
         if (typeof showToast === 'function') showToast('正在判断回答方式…', 2000);
@@ -376,6 +377,8 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
       } catch (err) {
         console.warn('Followup route setup failed, fallback to analysis:', err);
         followupRoute = 'analysis';
+      } finally {
+        workflowRunActive = false;
       }
     }
   }
@@ -429,8 +432,8 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
     if (followupRoute === 'direct') {
       // 直接回答：不建问题分析、不建模块——把「直接回答」节点直接交给工作流执行，
       // 任务行/停止按钮/版本账/排队结账与模块路径共用 _executeParallelWorkflow。
-      // workflowRunActive 已由分类段撑起（auto）或由该函数自己撑起（手动）——
-      // 不在这儿再造第一把伞，避免两把伞打架。
+      // workflowRunActive 由 _executeParallelWorkflow 自己撑起（它自己的 finally 归零）；
+      // 分类段已在 finally 归零，不在这儿再造第一把伞
       await _executeParallelWorkflow([template.answerNode.id], false, { title: question, handoffTaskId: handoffTaskId || '' });
       // T285：被停掉的那轮不再做收尾提取——与分析路径同口径
       if (!workflowLastAborted) await _extractKnowledgeFromWorkflow(question, [template.answerNode.id], worldSid);
