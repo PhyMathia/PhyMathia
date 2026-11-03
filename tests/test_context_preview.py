@@ -39,7 +39,7 @@ import main as main_mod  # noqa: E402
 from server import context_preview as cp  # noqa: E402
 from server import http_client as http_client_mod  # noqa: E402  出网口补丁单点（T163）
 from server.config import LEVEL_PROMPTS  # noqa: E402
-from server.prompts import BRANCH_SYSTEM_PROMPT, MODULE_SYSTEM_PROMPT  # noqa: E402
+from server.prompts import BRANCH_SYSTEM_PROMPT, DIRECT_SYSTEM_PROMPT, MODULE_SYSTEM_PROMPT  # noqa: E402
 
 PREVIEW = "/api/context/preview"
 
@@ -161,6 +161,11 @@ class AssemblyTest(unittest.TestCase):
     def test_workflow_uses_module_system_prompt(self):
         out = _run(_call(prompt="讲讲梯度", workflow=1))
         self.assertEqual(out["messages"][0]["content"], MODULE_SYSTEM_PROMPT)
+
+    def test_direct_workflow_uses_direct_system_prompt(self):
+        """预览必须与真机同构：direct 节点看到的是独立底座（2026-11-03 拆分）。"""
+        out = _run(_call(prompt="简谐运动的周期由什么决定", workflow=1, node_kind="direct"))
+        self.assertEqual(out["messages"][0]["content"], DIRECT_SYSTEM_PROMPT)
 
     def test_non_workflow_uses_branch_system_prompt(self):
         out = _run(_call(prompt="讲讲梯度", branch_id="br_1"))

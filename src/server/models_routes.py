@@ -274,7 +274,9 @@ async def api_models_chat(request: Request):
         # quick 寒暄提示词分支已随退役门禁删除（QUICK_SYSTEM_PROMPT 同步移除）：
         # 能走到这里的 prompt 请求必带锚，只剩工作流与分支两条路径
         if workflow_context:
-            system_content = MODULE_SYSTEM_PROMPT
+            # 直接回答用「独立成文」底座，其余工作流节点用「增量正文」底座
+            # （2026-11-03 拆分，判据与预览共用 context.workflow_system_prompt）。
+            system_content = context.workflow_system_prompt(workflow_context)
         else:
             # 2026-10-11 退役 src/system prompt.md：分支/支线通道改用代码内常量
             system_content = BRANCH_SYSTEM_PROMPT
