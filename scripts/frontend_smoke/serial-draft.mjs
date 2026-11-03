@@ -2,7 +2,7 @@
 // T66（2026-10-08）拆分自 frontend_smoke.mjs 原 7965–8040 行，用例体逐字保留。
 // 执行顺序由 ../frontend_smoke.mjs 的调用序列决定；本文件只追加同域用例，
 // 改共享 localStorage 键且会 await 的用例须放 serial-*.mjs（串行边界契约，见 AGENTS.md）。
-import { check, drain, addFailed, code, sandbox, vm, fs, loose, localStorage, storageData, readContinentSrc, M2_TOPIC_KEY, M2_SESSION, m2SeedQuizStats, m2WrongQuestion } from './_runner.mjs';
+import { check, drain, addFailed, code, sandbox, vm, fs, loose, localStorage, storageData, readContinentSrc, M2_TOPIC_KEY, M2_SESSION, m2SeedQuizStats, m2WrongQuestion, restoreWindowStub, isLoose } from './_runner.mjs';
 
 export function run() {
 // ===== 串行边界追加：追问草稿卡重渲保字（T152，2026-10-05）=====
@@ -41,6 +41,100 @@ check('追问草稿空发回落：框空着点发送＝采用建议问题（占�
   const src = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
   if (!src.includes("_draftSuggestionText(node).trim()")) throw new Error('submitDraftQuestion 空值时应回落建议问题（_draftSuggestionText）');
   if (!/const text = \(input\?\.value \|\| ''\)\.trim\(\)\s*\n\s*\|\|/.test(src)) throw new Error('回落应拼在空值判断同一处，先取框内实文再回落');
+  return true;
+});
+
+// ===== 串行边界追加：追问自动选路——回答方式下拉（T?，2026-11-03）=====
+check('追问草稿卡「回答方式」：追问口有下拉、默认选「自动判断」，学习/苏格拉底口不显示', () => {
+  const realEsc = sandbox.escapeHtml;
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
+  try {
+    const render = (extra) => vm.runInContext('_renderDraftNodeHtml(' + JSON.stringify({
+      id: 'draft-route', kind: 'draft', x: 1, y: 2,
+      portMeta: { branchType: 'followup', question: 'q' },
+      draftInput: '',
+      ...extra,
+    }) + ')', sandbox);
+    const followup = render({});
+    if (!followup.includes('class="graph-draft-route-select"')) throw new Error('追问草稿卡应有「回答方式」下拉');
+    if (!followup.includes('<option value="auto" selected>自动判断</option>')) throw new Error('默认应选中「自动判断」');
+    if (!followup.includes('<option value="analysis">拆分分析</option>')) throw new Error('应有「拆分分析」选项');
+    if (!followup.includes('<option value="direct">直接回答</option>')) throw new Error('应有「直接回答」选项');
+    if (!followup.includes('onchange="draftRouteChanged(\'draft-route\', this.value)"')) throw new Error('下拉没挂 draftRouteChanged');
+
+    const manual = render({ routeMode: 'direct' });
+    if (!manual.includes('<option value="direct" selected>直接回答</option>')) throw new Error('routeMode=direct 应选中「直接回答」');
+    const manualAnalysis = render({ routeMode: 'analysis' });
+    if (!manualAnalysis.includes('<option value="analysis" selected>拆分分析</option>')) throw new Error('routeMode=analysis 应选中「拆分分析」');
+    const junk = render({ routeMode: 'nonsense' });
+    if (!junk.includes('<option value="auto" selected>自动判断</option>')) throw new Error('非法 routeMode 应回落「自动判断」');
+
+    const learn = render({ portMeta: { branchType: 'learn', question: 'q' } });
+    if (learn.includes('graph-draft-route-select')) throw new Error('进阶学习口不应显示回答方式下拉');
+    const socratic = render({ portMeta: { branchType: 'socratic', type: 'socratic', question: 'q' } });
+    if (socratic.includes('graph-draft-route-select')) throw new Error('苏格拉底口不应显示回答方式下拉');
+    const continuePort = render({ portMeta: { branchType: 'continue', question: 'q' } });
+    if (continuePort.includes('graph-draft-route-select')) throw new Error('直接问AI 口不应显示回答方式下拉（自动选路只挂追问口）');
+    return true;
+  } finally { sandbox.escapeHtml = realEsc; }
+});
+
+check('draftRouteChanged：回答方式回写，非法/空值归一 auto', () => {
+  const out = vm.runInContext(`(() => {
+    graphView.nodes = [{ id: 'draft-rc', kind: 'draft', x: 0, y: 0, portMeta: { branchType: 'followup' } }];
+    graphView.nodeById = {}; graphView.nodeById['draft-rc'] = graphView.nodes[0];
+    draftRouteChanged('draft-rc', 'direct');
+    const a = graphView.nodes[0].routeMode;
+    draftRouteChanged('draft-rc', 'ANALYSIS');
+    const b = graphView.nodes[0].routeMode;
+    draftRouteChanged('draft-rc', 'auto');
+    const c = graphView.nodes[0].routeMode;
+    draftRouteChanged('draft-rc', 'junk');
+    const d = graphView.nodes[0].routeMode;
+    graphView.nodes = []; graphView.nodeById = {};
+    return [a, b, c, d].join(',');
+  })()`, sandbox);
+  if (out !== 'direct,analysis,auto,auto') throw new Error('routeMode 回写口径不对：' + out);
+  return true;
+});
+
+check('追问草稿发送：追问口携带回答方式（默认 auto），其他口不带', () => {
+  const prevQwf = sandbox.window.startQuestionWorkflow;
+  // graphInner 前值若是 loose 代理（某域占位），restore 回 loose 会让后续域假绿——
+  // 记 null（等同「未渲染过画布」的干净环境语义）
+  const prevInner = vm.runInContext('graphInner', sandbox);
+  sandbox.__draftSendPrevInner = isLoose(prevInner) ? null : prevInner;
+  const prevNodes = vm.runInContext('JSON.stringify(graphView.nodes || [])', sandbox);
+  const prevEdges = vm.runInContext('JSON.stringify(graphView.edges || [])', sandbox);
+  const prevById = vm.runInContext('JSON.stringify(graphView.nodeById || {})', sandbox);
+  const calls = [];
+  sandbox.window.startQuestionWorkflow = (text, opts) => { calls.push({ text, opts }); };
+  try {
+    vm.runInContext('graphView.nodes = ['
+      + '{ id: "draft-send-auto", kind: "draft", x: 0, y: 0, portMeta: { branchType: "followup", fromPort: "out-1" } },'
+      + '{ id: "draft-send-manual", kind: "draft", x: 0, y: 0, routeMode: "direct", portMeta: { branchType: "followup", fromPort: "out-1" } },'
+      + '{ id: "draft-send-learn", kind: "draft", x: 0, y: 0, portMeta: { branchType: "learn", fromPort: "out-0" } }'
+      + '];'
+      + 'graphView.nodeById = {};'
+      + 'graphView.nodes.forEach(function (n) { graphView.nodeById[n.id] = n; });'
+      + 'graphView.edges = [{ from: "m-follow", fromPort: "out-1", to: "draft-send-auto", draft: true },'
+      + '  { from: "m-follow", fromPort: "out-1", to: "draft-send-manual", draft: true }];'
+      + 'graphInner = { querySelector: function () { return { value: "追问一句" }; } };', sandbox);
+    sandbox.submitDraftQuestion('draft-send-auto');
+    sandbox.submitDraftQuestion('draft-send-manual');
+    sandbox.submitDraftQuestion('draft-send-learn');
+  } finally {
+    vm.runInContext('graphView.nodes = ' + prevNodes + ';'
+      + 'graphView.edges = ' + prevEdges + ';'
+      + 'graphView.nodeById = ' + prevById + ';'
+      + 'graphInner = globalThis.__draftSendPrevInner; delete globalThis.__draftSendPrevInner;', sandbox);
+    restoreWindowStub('startQuestionWorkflow', prevQwf);
+  }
+  if (calls.length !== 3) throw new Error('应发出三次提问，实际 ' + calls.length);
+  if (calls[0].opts.followupRoute !== 'auto') throw new Error('未手动选择的草稿应默认 auto：' + JSON.stringify(calls[0].opts));
+  if (calls[0].opts.sourceNodeId !== 'm-follow' || calls[0].opts.sourcePort !== 'out-1') throw new Error('来源节点/端口没带上：' + JSON.stringify(calls[0].opts));
+  if (calls[1].opts.followupRoute !== 'direct') throw new Error('手动选「直接回答」的草稿应传 direct：' + JSON.stringify(calls[1].opts));
+  if (Object.prototype.hasOwnProperty.call(calls[2].opts, 'followupRoute')) throw new Error('进阶学习草稿不应带 followupRoute：' + JSON.stringify(calls[2].opts));
   return true;
 });
 

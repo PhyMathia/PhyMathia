@@ -26,9 +26,100 @@ function _parseSuggestedModules(analysisText) {
   return keys;
 }
 
-function _createQuestionWorkflowTemplate(questionText, sourceNodeId, sourcePort, placement, worldSid) {
+// ===== 追问自动选路（2026-11-03）=====
+// 从「追问」出口拖出的提问卡，先让模型判断走「问题分析＋模块」还是「直接回答」。
+// 本地规则判不准（用户已拍板不用规则），模型判断才是主路；超时/调用失败/未配置/
+// 模型没给出有效结论一律回落 analysis——问题分析多跑一遍仍能得到答案，静默少答不行。
+// 只有追问草稿的调用方（submitDraftQuestion 带 followupRoute）才走这条路，
+// 方向钮/进阶学习/苏格拉底闭环/首问的行为一字不变。
+const FOLLOWUP_ROUTE_TIMEOUT_MS = 15000;
+
+const FOLLOWUP_ROUTE_SYSTEM_PROMPT = '你是物理数学画布里的「回答方式」判断器。用户在某个节点的「追问」出口拖出了一张提问卡，判断这次追问适合哪种回答方式。\n'
+  + '两种方式：\n'
+  + '- direct：一个聚焦、可独立回答的问题。一段完整的话、几句解释、一个计算或一条推导就能答清，不需要拆成物理视角/数学视角等多个模块分别展开。\n'
+  + '- analysis：需要先梳理概念关系，再分物理视角/数学视角/知识图谱/可视化等多个方向分别展开；或者问题包含多个子问题；或者需要系统梳理一整块知识。\n'
+  + '只输出一个 JSON 对象，不要输出任何其他内容：{"route": "direct"} 或 {"route": "analysis"}';
+
+// 从模型回复里抠出路由结论：优先 JSON 对象（允许前后夹杂文字/代码围栏），
+// 抠不到再按中英文关键词兜底取最早出现的那个；都没有则返回 ''（上层回落 analysis）。
+function _parseFollowupRouteReply(reply) {
+  const raw = String(reply || '').trim();
+  if (!raw) return '';
+  try {
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (m) {
+      const obj = JSON.parse(m[0]);
+      const r = String((obj && (obj.route || obj.mode || obj.answer_mode || obj.way)) || '').trim().toLowerCase();
+      if (r === 'direct' || r.indexOf('direct') === 0) return 'direct';
+      if (r === 'analysis' || r.indexOf('analysis') === 0) return 'analysis';
+    }
+  } catch (err) { /* 回复根本不是 JSON，落到关键词兜底 */ }
+  const low = raw.toLowerCase();
+  const zh = raw;
+  const iDirect = low.indexOf('direct') >= 0 ? low.indexOf('direct') : zh.indexOf('直接');
+  const iAnalysis = low.indexOf('analysis') >= 0 ? low.indexOf('analysis') : zh.indexOf('分析');
+  if (iDirect >= 0 && (iAnalysis < 0 || iDirect < iAnalysis)) return 'direct';
+  if (iAnalysis >= 0) return 'analysis';
+  return '';
+}
+
+// 判断用的背景摘录：只取上游节点正文/概要/分析的前 limit 字，不把整卡问题大纲塞进判断请求。
+function _followupSourceExcerpt(sourceNodeId, limit) {
+  const node = sourceNodeId && typeof _findGraphNode === 'function' ? _findGraphNode(sourceNodeId) : null;
+  if (!node) return '';
+  let text = String(node.content || '').trim();
+  if (!text) text = String(node.analysis || '').trim();
+  if (!text) text = String(node.summary || '').trim();
+  if (!text && node.messageIndex >= 0 && typeof _getChatHistory === 'function') {
+    const history = _getChatHistory() || [];
+    const msg = history[node.messageIndex];
+    text = msg ? String(msg.content || '').trim() : '';
+  }
+  return text.slice(0, limit || 1200);
+}
+
+async function _classifyFollowupQuestion(question, sourceNodeId) {
+  const fallback = 'analysis';
+  const text = String(question || '').trim();
+  if (!text) return fallback;
+  if (typeof getActiveModelForRole !== 'function' || typeof proxyChatWithModel !== 'function') return fallback;
+  const model = getActiveModelForRole('agent');
+  if (!model) return fallback;
+  const excerpt = _followupSourceExcerpt(sourceNodeId, 1200);
+  const userContent = '这次追问：' + text
+    + (excerpt ? '\n\n背景（上游节点内容，仅供判断参考，判断对象是这次追问本身）：\n' + excerpt : '');
+  const controller = new AbortController();
+  const timer = setTimeout(function () { controller.abort(); }, FOLLOWUP_ROUTE_TIMEOUT_MS);
+  try {
+    const resp = await proxyChatWithModel(model, {
+      messages: [
+        { role: 'system', content: FOLLOWUP_ROUTE_SYSTEM_PROMPT },
+        { role: 'user', content: userContent },
+      ],
+      stream: false,
+      max_tokens: 64,
+      thinking: 'off',
+      session_bucket: 'phymathia-followup-route',
+    }, controller.signal);
+    const data = await resp.json();
+    const reply = data && data.choices && data.choices[0] && data.choices[0].message
+      ? data.choices[0].message.content
+      : '';
+    return _parseFollowupRouteReply(reply) || fallback;
+  } catch (err) {
+    console.warn('Followup route classification failed, fallback to analysis:', err);
+    return fallback;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function _createQuestionWorkflowTemplate(questionText, sourceNodeId, sourcePort, placement, worldSid, route) {
   // T313：worldSid＝工作流所属画布。提问入口建点是同步的（人必然还在那张画布上），
   // 传不传结果一样；统一走世界寻址的读写，后续建模块点（异步，人可能已切走）同款。
+  // route（2026-11-03 追问自动选路）：'direct' 时第二颗落「直接回答」节点（与问题节点
+  // 走 user out-2 → direct in-0 连线），不建问题分析卡；其余一律问题分析（answer）。
+  const isDirectRoute = String(route || '').toLowerCase() === 'direct';
   const state = _graphStateFor(worldSid);
   state.customNodes = state.customNodes || [];
   state.connections = state.connections || [];
@@ -59,8 +150,8 @@ function _createQuestionWorkflowTemplate(questionText, sourceNodeId, sourcePort,
     w: 0, h: 0, vx: 0, vy: 0,
   };
   const answerNode = {
-    id: 'answer-custom-' + now + '-' + uid(),
-    kind: 'answer', moduleKey: '', manual: false, nodeType: '', label: '', formula: '',
+    id: (isDirectRoute ? 'direct-custom-' : 'answer-custom-') + now + '-' + uid(),
+    kind: isDirectRoute ? 'direct' : 'answer', moduleKey: '', manual: false, nodeType: '', label: '', formula: '',
     source: 'ai', content: '', status: 'empty', summary: '', analysis: '',
     analysisHash: '', inputHash: '', generatedAt: 0, requirements: '', busy: false,
     generated: false, maxItems: 0, items: [], edges: [], fileId: '', fileName: '',
@@ -73,7 +164,8 @@ function _createQuestionWorkflowTemplate(questionText, sourceNodeId, sourcePort,
   if (sourceNodeId) {
     state.connections.push({ from: sourceNodeId, fromPort: sourcePort || 'out-0', to: userNode.id, toPort: 'in-0', type: 'custom', custom: true });
   }
-  state.connections.push({ from: userNode.id, fromPort: 'out-0', to: answerNode.id, toPort: 'in-0', type: 'custom', custom: true });
+  // direct 走问题节点 out-2「直接回答」口（存量图 out-0/out-1 语义不动），answer 仍走 out-0「问题分析」
+  state.connections.push({ from: userNode.id, fromPort: isDirectRoute ? 'out-2' : 'out-0', to: answerNode.id, toPort: 'in-0', type: 'custom', custom: true });
   _saveGraphStateFor(worldSid, state);
   renderGraphCanvas();
   return { userNode, answerNode };
@@ -257,6 +349,36 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
     return;
   }
   const options = opts || {};
+  // 追问自动选路（2026-11-03）：只有追问草稿的调用方带 followupRoute（submitDraftQuestion 传）。
+  // auto 先调模型判断；手动 direct/analysis 直接跳过判断、不烧模型调用；没带（方向钮/
+  // 苏格拉底闭环/首问等）一律 analysis＝旧行为。
+  let followupRoute = '';
+  if (options.followupRoute) {
+    const requested = String(options.followupRoute).trim().toLowerCase();
+    if (requested === 'direct' || requested === 'analysis') {
+      followupRoute = requested;
+    } else if (requested === 'auto') {
+      // 判断期间先撑忙碌伞（_isSendBusy 认 workflowRunActive）：正式生成段靠它互斥，
+      // 否则同一张画布上的两条追问能在判断窗口里双双开跑
+      try {
+        workflowRunActive = true;
+        if (typeof showToast === 'function') showToast('正在判断回答方式…', 2000);
+        let decided = 'analysis';
+        try {
+          decided = await _classifyFollowupQuestion(question, options.sourceNodeId || '');
+        } catch (classifyErr) {
+          console.warn('Followup route classification failed unexpectedly:', classifyErr);
+        }
+        followupRoute = decided === 'direct' ? 'direct' : 'analysis';
+        if (typeof showToast === 'function') {
+          showToast(followupRoute === 'direct' ? '自动判断：直接回答' : '自动判断：拆分分析', 2200);
+        }
+      } catch (err) {
+        console.warn('Followup route setup failed, fallback to analysis:', err);
+        followupRoute = 'analysis';
+      }
+    }
+  }
   let draftPlacement = null;
   if (options.draftNodeId && typeof _findDraftNode === 'function') {
     const draft = _findDraftNode(options.draftNodeId);
@@ -291,7 +413,7 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
       summary: '提问：' + (typeof _graphShorten === 'function' ? _graphShorten(question, 30) : String(question).slice(0, 30)),
     });
   }
-  const template = _createQuestionWorkflowTemplate(question, options.sourceNodeId || '', options.sourcePort || '', draftPlacement, worldSid);
+  const template = _createQuestionWorkflowTemplate(question, options.sourceNodeId || '', options.sourcePort || '', draftPlacement, worldSid, followupRoute);
   const liveAnswer = _findGraphNode(template.answerNode.id) || template.answerNode;
   // T299：问题分析这一段过去整段在停止伞之外——顶栏停止按钮要等 _executeParallelWorkflow
   // 开工才启用，而分析恰恰是全程最长的一段（免费模型动辄几十秒），用户点了没反应；
@@ -304,6 +426,16 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
     _taskBeginWorkflowWorld(worldSid, [template.userNode.id, template.answerNode.id]);
   }
   try {
+    if (followupRoute === 'direct') {
+      // 直接回答：不建问题分析、不建模块——把「直接回答」节点直接交给工作流执行，
+      // 任务行/停止按钮/版本账/排队结账与模块路径共用 _executeParallelWorkflow。
+      // workflowRunActive 已由分类段撑起（auto）或由该函数自己撑起（手动）——
+      // 不在这儿再造第一把伞，避免两把伞打架。
+      await _executeParallelWorkflow([template.answerNode.id], false, { title: question, handoffTaskId: handoffTaskId || '' });
+      // T285：被停掉的那轮不再做收尾提取——与分析路径同口径
+      if (!workflowLastAborted) await _extractKnowledgeFromWorkflow(question, [template.answerNode.id], worldSid);
+      return; // 跳过分析段，但不跳过 finally（收世界/事件收尾）
+    }
     workflowRunActive = true;
     workflowAbortController = new AbortController();
     _setWorkflowStopButton(true);
@@ -356,6 +488,11 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
     // 收世界：任务行已接手的话 ctx 已由 _tasksEndWorkflow 结掉，这里对 null 空转；
     // 分析阶段就早退（被停/分析为空）的世界 ctx 在这儿收掉，不外溢到下一轮。
     if (typeof _taskEndWorkflowWorld === 'function') _taskEndWorkflowWorld();
+    // 异常早退兜底：正常路径（分析段/工作流执行）都已归零，这里重复归零无害；
+    // 分类段撑起的忙碌伞若在早退里漏了，至少不会把页面卡成永远「忙」
+    workflowRunActive = false;
+    workflowAbortController = null;
+    if (typeof _setWorkflowStopButton === 'function') _setWorkflowStopButton(false);
     // 事件收尾（3.1）：给「当前状态」行补上这次提问的差异计数（+N −M ✎K），
     // 刷新后面板也能靠最后一条与当前状态的差异读出来。
     if (typeof _graphHistoryLiveEventDone === 'function') _graphHistoryLiveEventDone();
