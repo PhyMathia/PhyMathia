@@ -3193,6 +3193,25 @@
   cursor: pointer;
 }
 
+/* .pmu「包含完整对话」选项 + 轻量警告行（2026-11-04） */
+.graph-export-utopia-opt {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: var(--fs-sm);
+  opacity: 0.85;
+  cursor: pointer;
+  margin-top: 2px;
+}
+.graph-export-utopia-warn {
+  font-size: var(--fs-2xs);
+  color: var(--text-secondary);
+  opacity: 0.75;
+  line-height: 1.5;
+  padding-left: 22px;
+  margin-top: -2px;
+}
+
 .graph-export-menu-foot {
   font-size: var(--fs-2xs);
   opacity: 0.45;

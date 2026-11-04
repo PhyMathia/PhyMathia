@@ -1,10 +1,32 @@
 // 串行边界：utopia 快照导入（写共享 phymathia_sessions 键）
 // T66（2026-10-08）拆分自 frontend_smoke.mjs 原 5494–5662 行，用例体逐字保留。
-// 执行顺序由 ../frontend_smoke.mjs 的调用序列决定；本文件只追加同域用例，
-// 改共享 localStorage 键且会 await 的用例须放 serial-*.mjs（串行边界契约，见 AGENTS.md）。
+// 执行顺序由 ../frontend_smoke.mjs 的调用序列决定；本文件只追加同域用例。
+// 2026-11-04：导入用例全部替换同一组全局桩（window.switchToSession / syncFromServer /
+// fetch / toastMsg / safeLocalStorageSet）——同文件并排会互相换桩、恢复顺序错乱
+// （实踩：嵌套保存/恢复之后全局残留空桩，把后续域的真实 switchToSession 顶掉，
+// graph-history-batch4 ⑥分叉真跑当场红）。导入用例统一走 importTail 串行 await 队列，
+// 入口按 await 段调用（见 frontend_smoke.mjs），本段收口后才放行后续域。
 import { check, drain, addFailed, code, sandbox, vm, fs, loose, localStorage, storageData, readContinentSrc, M2_TOPIC_KEY, M2_SESSION, m2SeedQuizStats, m2WrongQuestion } from './_runner.mjs';
 
-export function run() {
+// 串行 await 队列：每个用例的异步体必须**整体执行完**（含 finally 恢复全局桩）才放行下一个，
+// 不能交给全局 pendingChecks——check() 不等异步体就会让四个用例的桩嵌套错位
+// （2026-11-04 实踩：后装的桩被所有导入共用，restore 又按注册序乱序，全局残留空桩，
+// 后续域的真实 switchToSession 被顶掉）。
+let importTail = Promise.resolve();
+const checkImport = (name, fn) => {
+  importTail = importTail.then(async () => {
+    try {
+      const r = await fn();
+      if (r === false) throw new Error('断言未通过');
+      console.log('✓', name);
+    } catch (e) {
+      addFailed();
+      console.error('❌', name, '->', (e && e.message) || e);
+    }
+  });
+};
+
+export async function run() {
 // ===== 串行边界追加：utopia 快照导入（写共享 phymathia_sessions 键 + await fetch）=====
 // 2026-09-27：只读外发页的右键菜单是**按标签文本**做白名单剪枝的
 // （viewer-main.js 的 READONLY_MENU_LABELS）。也就是说主应用那边一改菜单文案，
@@ -136,7 +158,7 @@ check('graph-workflow: 三个流式通道共用一份 SSE 读取（作用域限�
   }
 });
 
-check('utopia-import: .pmu 恢复成新画布（三写落位 + 永不覆盖现有会话）', async () => {
+checkImport('utopia-import: .pmu 恢复成新画布（三写落位 + 永不覆盖现有会话）', async () => {
   // 识别纯函数：.pmu 收、其它后缀放行
   const accept = sandbox.window.utopiaImportAccept;
   if (typeof accept !== 'function') throw new Error('utopiaImportAccept 未暴露');
@@ -144,7 +166,6 @@ check('utopia-import: .pmu 恢复成新画布（三写落位 + 永不覆盖现�
   if (accept({ name: 'a.json' })) throw new Error('.json 不应走快照导入（避免抢数据导入通道）');
   if (accept(null)) throw new Error('空文件应被拒绝');
   // 行为级：真实 parse + 三写 + 切换
-  const before = (() => { try { return JSON.parse(sandbox.localStorage.getItem('phymathia_sessions') || '{}'); } catch (e) { return {}; } })();
   const snapshot = {
     format: 'phymath-utopia/graph', version: 1,
     title: '导入测试网', graph: { pan: { x: 5, y: 6 }, zoom: 1 },
@@ -162,33 +183,186 @@ check('utopia-import: .pmu 恢复成新画布（三写落位 + 永不覆盖现�
     calls.push(String(url));
     return { ok: true, status: 200, json: async () => ({ value: [] }), text: async () => '' };
   };
+  // 用 onResult 指认自己新建的会话：本文件各用例与相邻域共享 phymathia_sessions 键，
+  // 用「前后键集合差」找自己的会话会把别人的并发写法算进来（2026-11-04 实踩假红）
   let ok = false;
+  let importResult = null;
   try {
-    ok = await sandbox.window.importUtopiaSnapshotText(JSON.stringify(snapshot), 'demo.pmu');
+    ok = await sandbox.window.importUtopiaSnapshotText(JSON.stringify(snapshot), 'demo.pmu', { onResult: (r) => { importResult = r; } });
   } finally {
     sandbox.window.switchToSession = prevSwitch;
     sandbox.window.syncFromServer = prevSync;
     sandbox.fetch = prevFetch;
   }
   if (ok !== true) throw new Error('导入应返回 true');
-  const after = (() => { try { return JSON.parse(sandbox.localStorage.getItem('phymathia_sessions') || '{}'); } catch (e) { return {}; } })();
-  const newIds = Object.keys(after).filter((k) => !(k in before));
-  if (newIds.length !== 1) throw new Error('应恰好新建一个会话：' + newIds.length);
-  const sid = newIds[0];
-  if (after[sid].title !== '导入测试网') throw new Error('会话标题应取快照标题');
-  const msgs = JSON.parse(sandbox.localStorage.getItem('phymathia_msgs_' + sid) || '[]');
-  if (msgs.length !== 2) throw new Error('消息应完整落位');
-  const gst = JSON.parse(sandbox.localStorage.getItem('phymathia_graph_' + sid) || 'null');
-  if (!gst || gst.pan.x !== 5) throw new Error('图状态应完整落位');
-  // 服务端三写 + 切换都发生
-  if (!calls.some((c) => c.includes('/api/sessions')) || !calls.some((c) => c.includes('/messages'))
-    || !calls.some((c) => c.includes('graph%3A') || c.includes('graph:'))) throw new Error('服务端三写缺失：' + JSON.stringify(calls));
-  if (!calls.includes('switch')) throw new Error('导入后应切换到新画布');
-  // 收尾：清掉测试会话，不污染后续用例
-  delete after[sid];
-  sandbox.localStorage.setItem('phymathia_sessions', JSON.stringify(after));
-  sandbox.localStorage.removeItem('phymathia_msgs_' + sid);
-  sandbox.localStorage.removeItem('phymathia_graph_' + sid);
+  const sid = importResult && importResult.id;
+  if (!sid) throw new Error('onResult 未回调或缺 id');
+  try {
+    const after = (() => { try { return JSON.parse(sandbox.localStorage.getItem('phymathia_sessions') || '{}'); } catch (e) { return {}; } })();
+    if (!after[sid]) throw new Error('应新建一个会话（' + sid + '）');
+    if (after[sid].title !== '导入测试网') throw new Error('会话标题应取快照标题');
+    const msgs = JSON.parse(sandbox.localStorage.getItem('phymathia_msgs_' + sid) || '[]');
+    if (msgs.length !== 2) throw new Error('消息应完整落位');
+    const gst = JSON.parse(sandbox.localStorage.getItem('phymathia_graph_' + sid) || 'null');
+    if (!gst || gst.pan.x !== 5) throw new Error('图状态应完整落位');
+    // 服务端三写 + 切换都发生
+    if (!calls.some((c) => c.includes('/api/sessions')) || !calls.some((c) => c.includes('/messages'))
+      || !calls.some((c) => c.includes('graph%3A') || c.includes('graph:'))) throw new Error('服务端三写缺失：' + JSON.stringify(calls));
+    if (!calls.includes('switch')) throw new Error('导入后应切换到新画布');
+  } finally {
+    // 收尾：清掉测试会话，不污染后续用例（断言成败都清）
+    const cur = (() => { try { return JSON.parse(sandbox.localStorage.getItem('phymathia_sessions') || '{}'); } catch (e) { return {}; } })();
+    delete cur[sid];
+    sandbox.localStorage.setItem('phymathia_sessions', JSON.stringify(cur));
+    sandbox.localStorage.removeItem('phymathia_msgs_' + sid);
+    sandbox.localStorage.removeItem('phymathia_graph_' + sid);
+  }
   return true;
 });
+
+// ===== 2026-11-04（.pmu 第二批）追加：轻量导入 / 服务端部分失败 / 两边都失败 =====
+checkImport('utopia-import: 轻量存档导入（meta 原样落位、消息只含文件内消息）', async () => {
+  const snapshot = {
+    format: 'phymath-utopia/graph', version: 1,
+    title: '轻量导入测试网',
+    meta: { messagesComplete: false, exportMode: 'light', omittedMessages: 7 },
+    graph: { pan: { x: 1, y: 2 }, zoom: 1 },
+    nodes: [], edges: [], groups: [],
+    messages: [{ role: 'user', content: '唯一引用消息', timestamp: 1 }],
+  };
+  const prevSwitch = sandbox.window.switchToSession;
+  const prevSync = sandbox.window.syncFromServer;
+  const prevFetch = sandbox.fetch;
+  sandbox.window.switchToSession = async () => {};
+  sandbox.window.syncFromServer = async () => {};
+  sandbox.fetch = async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => '' });
+  let ok = false;
+  let importResult = null;
+  try {
+    ok = await sandbox.window.importUtopiaSnapshotText(JSON.stringify(snapshot), 'light.pmu', { onResult: (r) => { importResult = r; } });
+  } finally {
+    sandbox.window.switchToSession = prevSwitch;
+    sandbox.window.syncFromServer = prevSync;
+    sandbox.fetch = prevFetch;
+  }
+  if (ok !== true) throw new Error('轻量快照导入应返回 true');
+  const sid = importResult && importResult.id;
+  if (!sid) throw new Error('onResult 未回调或缺 id');
+  try {
+    const msgs = JSON.parse(sandbox.localStorage.getItem('phymathia_msgs_' + sid) || '[]');
+    if (msgs.length !== 1 || msgs[0].content !== '唯一引用消息') throw new Error('轻量导入消息落位错误：' + JSON.stringify(msgs));
+  } finally {
+    // 收尾：清掉测试会话（断言成败都清）
+    const cur = (() => { try { return JSON.parse(sandbox.localStorage.getItem('phymathia_sessions') || '{}'); } catch (e) { return {}; } })();
+    delete cur[sid];
+    sandbox.localStorage.setItem('phymathia_sessions', JSON.stringify(cur));
+    sandbox.localStorage.removeItem('phymathia_msgs_' + sid);
+    sandbox.localStorage.removeItem('phymathia_graph_' + sid);
+  }
+  return true;
+});
+
+checkImport('utopia-import: 服务端部分失败仍切换并提示「云端同步失败」', async () => {
+  const snapshot = {
+    format: 'phymath-utopia/graph', version: 1,
+    title: '部分失败测试网',
+    graph: { pan: { x: 5, y: 6 }, zoom: 1 },
+    nodes: [], edges: [], groups: [],
+    messages: [{ role: 'user', content: 'q', timestamp: 1 }],
+  };
+  const prevSwitch = sandbox.window.switchToSession;
+  const prevSync = sandbox.window.syncFromServer;
+  const prevFetch = sandbox.fetch;
+  const prevToast = sandbox.toastMsg;
+  const toasts = [];
+  const calls = [];
+  sandbox.toastMsg = (m) => { toasts.push(String(m)); };
+  sandbox.window.switchToSession = async () => { calls.push('switch'); };
+  sandbox.window.syncFromServer = async () => {};
+  sandbox.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('/messages')) {
+      return { ok: false, status: 500, json: async () => ({}), text: async () => '' };
+    }
+    return { ok: true, status: 200, json: async () => ({}), text: async () => '' };
+  };
+  let ok = false;
+  let importResult = null;
+  try {
+    ok = await sandbox.window.importUtopiaSnapshotText(JSON.stringify(snapshot), 'partial.pmu', { onResult: (r) => { importResult = r; } });
+  } finally {
+    sandbox.window.switchToSession = prevSwitch;
+    sandbox.window.syncFromServer = prevSync;
+    sandbox.fetch = prevFetch;
+    if (prevToast === undefined) delete sandbox.toastMsg; else sandbox.toastMsg = prevToast;
+  }
+  if (ok !== true) throw new Error('服务端部分失败不应阻断导入');
+  if (!calls.includes('switch')) throw new Error('仍应切换到新画布');
+  if (!toasts.some((t) => t.includes('云端同步失败') && t.includes('messages'))) {
+    throw new Error('提示缺少「云端同步失败：messages」：' + JSON.stringify(toasts));
+  }
+  if (!importResult || !importResult.serverOk || importResult.serverOk.messages !== false || importResult.serverOk.sessions !== true) {
+    throw new Error('onResult 明细错误：' + JSON.stringify(importResult));
+  }
+  // 收尾：清掉测试会话（断言成败都清）
+  const sid = importResult && importResult.id;
+  if (sid) {
+    const cur = (() => { try { return JSON.parse(sandbox.localStorage.getItem('phymathia_sessions') || '{}'); } catch (e) { return {}; } })();
+    delete cur[sid];
+    sandbox.localStorage.setItem('phymathia_sessions', JSON.stringify(cur));
+    sandbox.localStorage.removeItem('phymathia_msgs_' + sid);
+    sandbox.localStorage.removeItem('phymathia_graph_' + sid);
+  }
+  return true;
+});
+
+checkImport('utopia-import: 本地与服务端都失败 → 不切换、不新增会话、提示可读', async () => {
+  const snapshot = {
+    format: 'phymath-utopia/graph', version: 1,
+    title: '双失败测试网',
+    nodes: [], edges: [], groups: [],
+    messages: [{ role: 'user', content: 'q', timestamp: 1 }],
+  };
+  const prevSafe = sandbox.safeLocalStorageSet;
+  const prevSwitch = sandbox.window.switchToSession;
+  const prevSync = sandbox.window.syncFromServer;
+  const prevFetch = sandbox.fetch;
+  const prevToast = sandbox.toastMsg;
+  const toasts = [];
+  const calls = [];
+  sandbox.safeLocalStorageSet = () => false;   // 模拟浏览器配额满（三写全失败）
+  sandbox.toastMsg = (m) => { toasts.push(String(m)); };
+  sandbox.window.switchToSession = async () => { calls.push('switch'); };
+  sandbox.window.syncFromServer = async () => {};
+  sandbox.fetch = async () => ({ ok: false, status: 500, json: async () => ({}), text: async () => '' });
+  let ok = null;
+  let importResult = null;
+  try {
+    ok = await sandbox.window.importUtopiaSnapshotText(JSON.stringify(snapshot), 'both-fail.pmu', { onResult: (r) => { importResult = r; } });
+  } finally {
+    sandbox.safeLocalStorageSet = prevSafe;
+    sandbox.window.switchToSession = prevSwitch;
+    sandbox.window.syncFromServer = prevSync;
+    sandbox.fetch = prevFetch;
+    if (prevToast === undefined) delete sandbox.toastMsg; else sandbox.toastMsg = prevToast;
+  }
+  if (ok !== false) throw new Error('两边都失败应返回 false');
+  if (calls.includes('switch')) throw new Error('两边都失败不应切换');
+  // 自己那个 id 绝不能落进名单（会话未创建——别人的并发写法不管）
+  const sid = importResult && importResult.id;
+  if (sid) {
+    const after = (() => { try { return JSON.parse(sandbox.localStorage.getItem('phymathia_sessions') || '{}'); } catch (e) { return null; } })();
+    if (after && after[sid]) throw new Error('两边都失败不应新增会话');
+  }
+  if (importResult && importResult.reason !== 'sessions-both-failed') {
+    throw new Error('reason 应为 sessions-both-failed：' + JSON.stringify(importResult));
+  }
+  if (!toasts.some((t) => t.includes('没有创建成功'))) {
+    throw new Error('提示不可读：' + JSON.stringify(toasts));
+  }
+  return true;
+});
+
+await importTail;
+await drain();
 }

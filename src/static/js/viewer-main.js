@@ -72,7 +72,7 @@
       var when = String(snapshot.exportedAt || '').replace('T', ' ').slice(0, 16);
       var m = snapshot.meta || {};
       meta.textContent = [
-        s ? (s.nodes + ' 节点 · ' + s.edges + ' 连线 · ' + s.groups + ' 分组') : '',
+        s ? (s.nodes + ' 节点 · ' + s.edges + ' 连线 · ' + s.groups + ' 分组' + (s.messages ? ' · ' + s.messages + ' 条消息' : '')) : '',
         m.level ? ('难度 ' + m.level) : '',
         when ? ('导出于 ' + when) : '',
       ].filter(Boolean).join(' · ');
@@ -416,9 +416,19 @@
     var msgs = messagesOfSnapshot();
     var snap = (window.__UTOPIA__ && window.__UTOPIA__.snapshot) || {};
     var complete = !!(snap.meta && snap.meta.messagesComplete);
+    var exportMode = snap.meta && snap.meta.exportMode;
+    var omitted = Number(snap.meta && snap.meta.omittedMessages) || 0;
     var count = el('utopiaMsgsCount');
     if (count) {
-      count.textContent = msgs.length ? (msgs.length + ' 条' + (complete ? '' : '（老快照：仅画布引用的消息）')) : '快照未携带会话消息';
+      if (!msgs.length) {
+        count.textContent = '快照未携带会话消息';
+      } else if (complete) {
+        count.textContent = msgs.length + ' 条';
+      } else if (exportMode === 'light') {
+        count.textContent = '轻量存档：仅画布引用的消息' + (omitted ? '（省略 ' + omitted + ' 条）' : '');
+      } else {
+        count.textContent = msgs.length + ' 条（老快照：仅画布引用的消息）';
+      }
     }
     list.textContent = '';
     msgs.forEach(function (msg, idx) {

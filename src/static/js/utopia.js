@@ -1,8 +1,9 @@
 // ===== PhyMathia Utopia 快照（.pmu）：单张探索网的可分享产物 =====
 // 命名：Physics + Mathematics + Utopia = PhyMath Utopia，扩展名取三元素首字母 .pmu。
 // 定位：PNG 是「一页概览图」，装不下长回答；.pmu 是「可交互快照」——节点内可滚动（翻页语义），
-//       由 viewer.html + js/viewer.js 只读打开，离线、不需要后端；携带完整会话消息（查看器
-//       「会话记录」面板渲染、拖回主应用恢复整场对话都靠它），meta.messagesComplete 标记口径。
+//       由 viewer.html + js/viewer.js 只读打开，离线、不需要后端；默认携带完整会话消息（查看器
+//       「会话记录」面板渲染、拖回主应用恢复整场对话都靠它），meta.messagesComplete 标记口径；
+//       2026-11-04 起可选「轻量存档」（只带画布引用的消息，meta.exportMode='light'＋omittedMessages）。
 // 格式：纯 JSON（可被人读、可被别的程序解析）
 //   { format:"phymath-utopia/graph", version:1, exportedAt, app, title,
 //     meta:{ sessionId, level, theme, messagesComplete, counts }, viewport:{ pan, zoom },
@@ -23,12 +24,13 @@ function _utopiaClone(value) {
   try { return JSON.parse(JSON.stringify(value)); } catch (e) { return null; }
 }
 
-// 摘要：给菜单/查看器头部显示（纯函数，便于断言）
+// 摘要：给菜单/查看器头部/导出浮卡显示（纯函数，便于断言）
 function utopiaSnapshotSummary(snapshot) {
   const nodes = Array.isArray(snapshot && snapshot.nodes) ? snapshot.nodes : [];
   const edges = Array.isArray(snapshot && snapshot.edges) ? snapshot.edges : [];
   const groups = Array.isArray(snapshot && snapshot.groups) ? snapshot.groups : [];
   const messages = Array.isArray(snapshot && snapshot.messages) ? snapshot.messages : [];
+  const meta = (snapshot && snapshot.meta && typeof snapshot.meta === 'object') ? snapshot.meta : {};
   let chars = 0;
   nodes.forEach(function (n) { chars += String((n && n.content) || '').length; });
   return {
@@ -38,25 +40,62 @@ function utopiaSnapshotSummary(snapshot) {
     groups: groups.length,
     messages: messages.length,
     chars: chars,
+    // 模式标识：轻量存档（只带画布引用的消息）走 'light'，其余按完整处理
+    mode: meta.exportMode === 'light' ? 'light' : 'full',
+    omittedMessages: Number(meta.omittedMessages) || 0,
   };
 }
 
-// 解析与校验：只认本格式；版本高于当前 → 明确报错（不猜）
+// 解析与校验：只认本格式；版本高于当前 → 明确报错（不猜）。
+// 加固口径（2026-11-04，.pmu 第二批）：坏文件必须在解析阶段被拒，错误文案可直接给用户看；
+// 合法老快照（缺 edges/groups/messages/graph/meta）补齐缺省后照常放行；不修改合法快照的字段。
 function parseUtopiaSnapshot(input) {
   let data = input;
   if (typeof input === 'string') {
+    if (!input.trim()) return { ok: false, error: '文件内容为空' };
     try { data = JSON.parse(input); } catch (e) { return { ok: false, error: '不是合法的 JSON 文件' }; }
   }
-  if (!data || typeof data !== 'object') return { ok: false, error: '文件内容为空' };
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return { ok: false, error: '文件内容为空或不是对象' };
   if (data.format !== UTOPIA_FORMAT) {
-    return { ok: false, error: '不是 PhyMath Utopia 快照（format=' + String(data.format || '缺失') + '）' };
+    return { ok: false, error: '不是 PhyMathia 存档（format=' + String(data.format || '缺失') + '）' };
   }
   const version = Number(data.version);
   if (!isFinite(version) || version < 1) return { ok: false, error: '缺少 version 字段' };
   if (version > UTOPIA_VERSION) {
     return { ok: false, error: '快照版本 v' + version + ' 高于当前查看器支持的 v' + UTOPIA_VERSION + '，请更新 PhyMathia' };
   }
+  // nodes：必须是数组；每项非 null 对象且有非空 id；重复 id 直接拒（查看器节点索引会错乱）
   if (!Array.isArray(data.nodes)) return { ok: false, error: '缺少 nodes 数组' };
+  const seenIds = {};
+  for (let i = 0; i < data.nodes.length; i++) {
+    const n = data.nodes[i];
+    if (!n || typeof n !== 'object' || Array.isArray(n)) {
+      return { ok: false, error: 'nodes 第 ' + (i + 1) + ' 项不是对象' };
+    }
+    const id = (n.id === undefined || n.id === null) ? '' : String(n.id).trim();
+    if (!id) return { ok: false, error: 'nodes 第 ' + (i + 1) + ' 项缺少 id' };
+    if (Object.prototype.hasOwnProperty.call(seenIds, id)) {
+      return { ok: false, error: '快照里有重复节点 id：' + id };
+    }
+    seenIds[id] = true;
+  }
+  // edges / groups / messages：缺省补 []，存在但不是数组 → 拒
+  for (const key of ['edges', 'groups', 'messages']) {
+    if (data[key] === undefined || data[key] === null) { data[key] = []; continue; }
+    if (!Array.isArray(data[key])) return { ok: false, error: key + ' 不是数组' };
+  }
+  // messages 里的非对象条目过滤并计数（渲染路径会读 msg.content，不能带坏条目进去）
+  const dropped = data.messages.filter(function (m) { return !m || typeof m !== 'object' || Array.isArray(m); }).length;
+  if (dropped) data.messages = data.messages.filter(function (m) { return m && typeof m === 'object' && !Array.isArray(m); });
+  // graph / meta：缺省补 {}，存在但不是对象 → 拒
+  for (const key of ['graph', 'meta']) {
+    if (data[key] === undefined || data[key] === null) { data[key] = {}; continue; }
+    if (typeof data[key] !== 'object' || Array.isArray(data[key])) return { ok: false, error: key + ' 不是对象' };
+  }
+  if (dropped) {
+    // 只增不改：记录被过滤的条数，供导入确认卡/日志排查用
+    data.meta.filteredMessages = dropped;
+  }
   return { ok: true, snapshot: data };
 }
 
@@ -114,22 +153,41 @@ function _utopiaGraphState() {
   };
 }
 
-function buildUtopiaSnapshot() {
+// options.includeAllMessages === false → 轻量存档：只带被节点 messageIndex 引用的消息（按原顺序去重，
+// 下标重映射；无有效引用的节点写 -1），meta.exportMode='light'、meta.messagesComplete=false、
+// meta.omittedMessages=省略条数。缺省（或 true）＝完整存档，与 2026-09-22 起的现状完全一致。
+// 为什么轻量也必须带「引用到的消息」而不是零消息：查看器走 _buildGraphData(messages, state)
+// 同一构建路径，模块节点正文要从消息复算，完全不带消息会只剩空画布（canvas-modules.md 硬约束）。
+function buildUtopiaSnapshot(options) {
+  const includeAll = !(options && options.includeAllMessages === false);
   const rawNodes = (typeof graphView !== 'undefined' && graphView && graphView.nodes) || [];
   const rawEdges = (typeof graphView !== 'undefined' && graphView && graphView.edges) || [];
   const history = (typeof _getChatHistory === 'function' ? _getChatHistory() : []) || [];
 
-  // 完整会话随文件携带（2026-09-22 起）：查看器的「会话记录」面板按全量 messages 渲染，
-  // .pmu 拖回主应用也靠它恢复整场对话。老快照只带被节点引用的消息——查看器对两种都兼容
-  // （meta.messagesComplete 缺省视为按需子集），messageIndex 重映射逻辑保持不变：
-  // 全量时映射是恒等，将来若再裁剪（比如超大会话），映射自动回到「重排到新下标」。
   const messages = [];
   const indexMap = {};
-  history.forEach(function (msg, idx) {
-    const copy = (msg && typeof msg === 'object') ? _utopiaClone(msg) : null;
-    indexMap[idx] = messages.length;
-    if (copy) messages.push(copy);
-  });
+  if (includeAll) {
+    // 完整会话随文件携带：查看器的「会话记录」面板按全量 messages 渲染，
+    // .pmu 拖回主应用也靠它恢复整场对话。
+    history.forEach(function (msg, idx) {
+      const copy = (msg && typeof msg === 'object') ? _utopiaClone(msg) : null;
+      indexMap[idx] = messages.length;
+      if (copy) messages.push(copy);
+    });
+  } else {
+    // 轻量：先收集被节点引用的消息下标（唯一、升序），再逐条复制并建映射
+    const wanted = {};
+    rawNodes.forEach(function (n) {
+      const mi = Number(n && n.messageIndex);
+      if (isFinite(mi) && mi >= 0 && mi < history.length) wanted[mi] = true;
+    });
+    Object.keys(wanted).map(Number).sort(function (a, b) { return a - b; }).forEach(function (idx) {
+      const copy = (history[idx] && typeof history[idx] === 'object') ? _utopiaClone(history[idx]) : null;
+      if (!copy) return; // 坏条目不入文件，引用它的节点 messageIndex 落到 -1
+      indexMap[idx] = messages.length;
+      messages.push(copy);
+    });
+  }
 
   const nodes = [];
   rawNodes.forEach(function (n) {
@@ -150,7 +208,8 @@ function buildUtopiaSnapshot() {
       sessionId: (typeof window.getCurrentSessionId === 'function' ? window.getCurrentSessionId() : '') || '',
       level: (typeof currentLevel !== 'undefined' ? currentLevel : '') || '',
       theme: _utopiaTheme(),
-      messagesComplete: true,
+      messagesComplete: includeAll,
+      ...(includeAll ? {} : { exportMode: 'light', omittedMessages: history.length - messages.length }),
       counts: { nodes: nodes.length, edges: rawEdges.length, groups: ((graphView && graphView.groups) || []).length, messages: messages.length },
     },
     viewport: {
@@ -184,6 +243,40 @@ function _utopiaFmtSize(bytes) {
   return Math.max(1, Math.round(n / 1024)) + ' KB';
 }
 
+// 浮卡 innerHTML 里拼文件名/标题前的转义（主应用有 utils.js 的 escapeHtml，这里兜底一份）
+function _utopiaEsc(text) {
+  if (typeof escapeHtml === 'function') return escapeHtml(text);
+  return String(text == null ? '' : text).replace(/[&<>"']/g, function (c) {
+    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+  });
+}
+
+// 复制文件名：优先 clipboard API，失败退 execCommand（与项目现有复制兜底同口径）
+function _utopiaCopyText(text, done) {
+  var t = String(text || '');
+  var finish = function (ok) { if (typeof done === 'function') done(!!ok); };
+  var viaExec = function () {
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = t;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '0';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = document.execCommand('copy');
+      ta.remove();
+      finish(ok);
+    } catch (e) { finish(false); }
+  };
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    navigator.clipboard.writeText(t).then(function () { finish(true); }, viaExec);
+    return;
+  }
+  viaExec();
+}
+
 function _utopiaArmCardTimer(card) {
   clearTimeout(_utopiaCardTimer);
   _utopiaCardTimer = setTimeout(function () {
@@ -200,23 +293,39 @@ function showUtopiaExportCard(summary) {
   card.id = 'utopiaExportCard';
   card.className = 'aurora-glass aurora-glass--dialog';
   card.setAttribute('role', 'status');
+  var isLight = summary.mode === 'light';
   var htmlRow = (typeof window.exportUtopiaStandaloneHtml === 'function')
-    ? '<button type="button" class="utopia-export-card-btn" id="utopiaExportHtmlBtn">再存网页版</button>'
+    ? '<button type="button" class="utopia-export-card-btn" id="utopiaExportHtmlBtn">'
+      + (isLight ? '再存网页版（完整对话）' : '再存网页版') + '</button>'
     : '';
-  card.innerHTML = '<div class="utopia-export-card-title">存档已保存</div>'
-    + '<div class="utopia-export-card-sub">' + summary.nodes + ' 节点 · ' + summary.edges + ' 连线 · '
-    + summary.messages + ' 条会话消息 · ' + _utopiaFmtSize(summary.bytes) + '</div>'
-    + '<div class="utopia-export-card-hint">已存到「下载」：<b>' + String(summary.fileName || '') + '</b><br>'
-    + '拖回 PhyMathia 可继续编辑；发给别人建议用单文件网页</div>'
+  var subLine = summary.nodes + ' 节点 · ' + summary.edges + ' 连线 · '
+    + summary.messages + ' 条会话消息 · ' + _utopiaFmtSize(summary.bytes)
+    + (isLight && summary.omittedMessages ? ' · 省略 ' + summary.omittedMessages + ' 条未引用消息' : '');
+  card.innerHTML = '<div class="utopia-export-card-title">' + (isLight ? '轻量存档已保存' : '存档已保存') + '</div>'
+    + '<div class="utopia-export-card-sub">' + subLine + '</div>'
+    + '<div class="utopia-export-card-hint">已存到「下载」：<b>' + _utopiaEsc(summary.fileName) + '</b><br>'
+    + (isLight
+      ? '轻量存档只带画布引用的消息，拖回只能恢复这部分对话；'
+      : '拖回 PhyMathia 可继续编辑；')
+    + '发给别人建议用单文件网页</div>'
     + '<div class="utopia-export-card-actions">'
     + '<button type="button" class="utopia-export-card-btn primary" id="utopiaOpenViewerBtn">在查看器中打开</button>'
     + htmlRow
+    + '<button type="button" class="utopia-export-card-btn" id="utopiaCopyNameBtn">复制文件名</button>'
     + '<button type="button" class="utopia-export-card-btn" id="utopiaDismissCardBtn">知道了</button>'
     + '</div>';
   document.body.appendChild(card);
   card.querySelector('#utopiaDismissCardBtn').addEventListener('click', function () {
     card.remove();
     clearTimeout(_utopiaCardTimer);
+  });
+  var copyBtn = card.querySelector('#utopiaCopyNameBtn');
+  if (copyBtn) copyBtn.addEventListener('click', function () {
+    var fileName = String(summary.fileName || '');
+    _utopiaCopyText(fileName, function (ok) {
+      copyBtn.textContent = ok ? '已复制' : '复制失败';
+      if (ok) setTimeout(function () { if (copyBtn.isConnected) copyBtn.textContent = '复制文件名'; }, 1600);
+    });
   });
   card.querySelector('#utopiaOpenViewerBtn').addEventListener('click', function () {
     card.remove();
@@ -275,13 +384,15 @@ function previewUtopiaInViewer() {
   return _utopiaOpenHandoffViewer(null);
 }
 
-function exportUtopiaSnapshot() {
+// options 透传给 buildUtopiaSnapshot（目前只有 includeAllMessages）；
+// 「在查看器中预览」不受影响（永远完整快照，零文件成本）。
+function exportUtopiaSnapshot(options) {
   if (typeof graphView === 'undefined' || !graphView || !(graphView.nodes || []).length) {
     if (typeof showToast === 'function') showToast('画布还没有内容，先提问生成一张探索网吧');
     return false;
   }
   let snapshot;
-  try { snapshot = buildUtopiaSnapshot(); } catch (e) {
+  try { snapshot = buildUtopiaSnapshot(options); } catch (e) {
     if (typeof showToast === 'function') showToast('快照生成失败：' + (e && e.message ? e.message : e));
     return false;
   }
@@ -303,7 +414,8 @@ function exportUtopiaSnapshot() {
   // 浮卡本身已经交代了节点数/体积/文件名，再弹一条 toast 会在底部互相压住
   if (_utopiaIsViewer()) {
     if (typeof showToast === 'function') {
-      showToast('已导出 Utopia 存档 ' + sum.nodes + ' 节点 / ' + sum.edges + ' 连线 / '
+      showToast((snapshot.meta && snapshot.meta.exportMode === 'light' ? '已导出 Utopia 轻量存档 ' : '已导出 Utopia 存档 ')
+        + sum.nodes + ' 节点 / ' + sum.edges + ' 连线 / '
         + sum.messages + ' 条会话消息');
     }
   } else {
