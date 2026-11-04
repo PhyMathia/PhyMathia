@@ -112,7 +112,7 @@ await _continent_core();
 _serial_quiz_retest();
 _memory_v2();
 await _design_ruler();
-_serial_utopia();
+await _serial_utopia();
 _continent_v8();
 await _serial_canvas_answer();
 await _serial_quiz_opt();

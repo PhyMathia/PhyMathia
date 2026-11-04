@@ -75,7 +75,12 @@
     ].filter(Boolean);
     var warns = [];
     if (bytes > 4 * 1024 * 1024) warns.push('文件较大，浏览器本地缓存可能放不下；会优先保存在服务端。');
-    if (meta.messagesComplete !== true) warns.push('这份快照没有标记「完整会话」，导入后对话记录可能不全。');
+    if (meta.exportMode === 'light') {
+      var omitted = Number(meta.omittedMessages) || 0;
+      warns.push('轻量存档：对话不完整' + (omitted ? '（省略 ' + omitted + ' 条未被画布引用的消息）' : '') + '，导入后只能恢复这部分对话。');
+    } else if (meta.messagesComplete !== true) {
+      warns.push('这份快照没有标记「完整会话」，导入后对话记录可能不全。');
+    }
 
     var overlay = document.createElement('div');
     overlay.className = 'utopia-import-overlay';
@@ -140,6 +145,8 @@
 
   async function importUtopiaSnapshotText(text, fileName, options) {
     var opts = options || {};
+    // 写前检查：空文件/解析失败/流式生成中 → 直接返回，不写任何数据
+    if (!text || !String(text).trim()) { toastMsg('快照文件为空'); return false; }
     var parse = opts.snapshot
       ? { ok: true, snapshot: opts.snapshot }
       : ((typeof window.parseUtopiaSnapshot === 'function')
@@ -169,37 +176,82 @@
     var state = (snap.graph && typeof snap.graph === 'object') ? snap.graph : {};
     state.updatedAt = Date.now();
 
-    // 本地三写（读改写 sessions 列表 + 消息 + 图状态）
+    // 本地三写（读改写 sessions 列表 + 消息 + 图状态）——逐项记录成败；
+    // 单项失败不中断整体（服务端仍可能成功），失败明细汇总到导入结果与提示
+    var localOk = { sessions: false, msgs: false, graph: false };
     try {
       var all = {};
       try { all = JSON.parse(localStorage.getItem(SESSIONS_KEY) || '{}') || {}; } catch (e) { all = {}; }
       all[id] = meta;
+      var allJson = JSON.stringify(all);
+      var msgsJson = JSON.stringify(msgs);
+      var graphJson = JSON.stringify(state);
       if (typeof safeLocalStorageSet === 'function') {
-        safeLocalStorageSet(SESSIONS_KEY, JSON.stringify(all));
-        safeLocalStorageSet('phymathia_msgs_' + id, JSON.stringify(msgs));
-        safeLocalStorageSet('phymathia_graph_' + id, JSON.stringify(state));
+        localOk.sessions = safeLocalStorageSet(SESSIONS_KEY, allJson) === true;
+        localOk.msgs = safeLocalStorageSet('phymathia_msgs_' + id, msgsJson) === true;
+        localOk.graph = safeLocalStorageSet('phymathia_graph_' + id, graphJson) === true;
       } else {
-        localStorage.setItem(SESSIONS_KEY, JSON.stringify(all));
-        localStorage.setItem('phymathia_msgs_' + id, JSON.stringify(msgs));
-        localStorage.setItem('phymathia_graph_' + id, JSON.stringify(state));
+        try { localStorage.setItem(SESSIONS_KEY, allJson); localOk.sessions = true; } catch (e) {}
+        try { localStorage.setItem('phymathia_msgs_' + id, msgsJson); localOk.msgs = true; } catch (e) {}
+        try { localStorage.setItem('phymathia_graph_' + id, graphJson); localOk.graph = true; } catch (e) {}
       }
-    } catch (e) { /* 本地写失败不阻断：服务端为主，切换时服务端兜底 */ }
+    } catch (e) { /* 本地写整体异常：三项按未成功计入 localFailed */ }
+    var localFailed = ['sessions', 'msgs', 'graph']
+      .filter(function (k) { return !localOk[k]; })
+      .map(function (k) { return k === 'msgs' ? 'messages' : k; });
 
-    // 服务端三写（全部 fire-and-forget，失败时本地仍在）
+    // 服务端三写——逐个检查 res.ok（allSettled 之外还要看响应状态，不能假装成功）
     var jsonHead = { 'Content-Type': 'application/json' };
-    await Promise.allSettled([
-      fetch('/api/sessions', { method: 'POST', headers: jsonHead, body: JSON.stringify({ ...meta, id: id }) }),
-      fetch('/api/sessions/' + encodeURIComponent(id) + '/messages', { method: 'POST', headers: jsonHead, body: JSON.stringify({ messages: msgs }) }),
-      fetch('/api/kv/' + encodeURIComponent('graph:' + id), { method: 'POST', headers: jsonHead, body: JSON.stringify({ value: state }) }),
-    ]);
+    var serverReqs = [
+      { key: 'sessions', req: fetch('/api/sessions', { method: 'POST', headers: jsonHead, body: JSON.stringify({ ...meta, id: id }) }) },
+      { key: 'messages', req: fetch('/api/sessions/' + encodeURIComponent(id) + '/messages', { method: 'POST', headers: jsonHead, body: JSON.stringify({ messages: msgs }) }) },
+      { key: 'graph', req: fetch('/api/kv/' + encodeURIComponent('graph:' + id), { method: 'POST', headers: jsonHead, body: JSON.stringify({ value: state }) }) },
+    ];
+    var serverOk = { sessions: false, messages: false, graph: false };
+    var serverResults = await Promise.allSettled(serverReqs.map(function (r) { return r.req; }));
+    serverResults.forEach(function (r, i) {
+      serverOk[serverReqs[i].key] = r.status === 'fulfilled' && !!(r.value && r.value.ok);
+    });
+    var serverFailed = ['sessions', 'messages', 'graph'].filter(function (k) { return !serverOk[k]; });
+
+    // 决定是否切换：本地 sessions 或服务端 sessions 至少一处成功才切；都失败则不切换、不留空画布
+    var result = {
+      ok: false, id: id, title: meta.title,
+      localOk: localOk, serverOk: serverOk,
+      localFailed: localFailed, serverFailed: serverFailed,
+    };
+    var finish = function (value) {
+      result.ok = value;
+      window.__lastUtopiaImportResult = result;
+      if (typeof opts.onResult === 'function') { try { opts.onResult(result); } catch (e) {} }
+      return value;
+    };
+    if (!localOk.sessions && !serverOk.sessions) {
+      toastMsg('画布没有创建成功：本机浏览器存储失败，服务端也写不进去（请检查浏览器存储空间或服务是否在运行）', TOAST_MS_LONG);
+      result.reason = 'sessions-both-failed';
+      return finish(false);
+    }
 
     // 刷新会话内存（loadSessions 重读 localStorage）再切换
     try { if (typeof window.syncFromServer === 'function') await window.syncFromServer(); } catch (e) {}
-    if (typeof window.switchToSession !== 'function') { toastMsg('导入完成，但切换模块未加载——请刷新页面查看新画布'); return true; }
+    if (typeof window.switchToSession !== 'function') {
+      toastMsg('导入完成，但切换模块未加载——请刷新页面查看新画布');
+      result.switched = false;
+      return finish(true);
+    }
     await window.switchToSession(id);
+    result.switched = true;
     var sum = (typeof window.utopiaSnapshotSummary === 'function') ? window.utopiaSnapshotSummary(snap) : { nodes: '?', edges: '?' };
-    toastMsg('快照已恢复为新画布「' + meta.title + '」：' + sum.nodes + ' 节点 / ' + sum.edges + ' 连线 / ' + msgs.length + ' 条消息', TOAST_MS_LONG);
-    return true;
+    var suffix = '';
+    if (serverFailed.length && localFailed.length) {
+      suffix = '（云端同步失败：' + serverFailed.join('/') + '；本机缓存失败：' + localFailed.join('/') + '）';
+    } else if (serverFailed.length) {
+      suffix = '（已保存在本机，云端同步失败：' + serverFailed.join('/') + '）';
+    } else if (localFailed.length) {
+      suffix = '（已保存在服务端，本机缓存失败：' + localFailed.join('/') + '）';
+    }
+    toastMsg('快照已恢复为新画布「' + meta.title + '」：' + sum.nodes + ' 节点 / ' + sum.edges + ' 连线 / ' + msgs.length + ' 条消息' + suffix, TOAST_MS_LONG);
+    return finish(true);
   }
 
   // ---------- 拖放：全屏提示 + 只收 .pmu，其余放行 ----------

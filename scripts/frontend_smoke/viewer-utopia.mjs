@@ -296,4 +296,123 @@ check('graph-contextmenu: 打包注册与产物符号（静态断言）', () => 
   const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
   return css.includes('.graph-context-menu');
 });
+
+// ===== 2026-11-04（.pmu 第二批）追加：轻量存档 / 解析加固 / 浮卡与查看器静态契约 =====
+check('utopia: 轻量存档（只带引用消息 + 下标重映射 + omittedMessages 计数）', () => {
+  const history = [
+    { role: 'user', content: 'q0', timestamp: 1 },
+    { role: 'assistant', content: 'a1', timestamp: 2 },
+    { role: 'user', content: '未被引用', timestamp: 3 },
+    { role: 'assistant', content: '也未被引用', timestamp: 4 },
+  ];
+  const prevChat = sandbox._getChatHistory;
+  const prevState = sandbox._graphState;
+  sandbox._getChatHistory = () => history;
+  sandbox._graphState = () => ({ pan: { x: 0, y: 0 }, zoom: 1 });
+  vm.runInContext("graphView.nodes = [{ id: 'a', kind: 'user', messageIndex: 0, label: 'q' },"
+    + "{ id: 'm', kind: 'module', messageIndex: 1, label: '物理' },"
+    + "{ id: 'ghost', kind: 'module', messageIndex: 99, label: '坏引用' },"
+    + "{ id: 'none', kind: 'manual', label: '无引用' }];"
+    + "graphView.edges = []; graphView.groups = [];", sandbox);
+  let snap;
+  try {
+    snap = sandbox.buildUtopiaSnapshot({ includeAllMessages: false });
+  } finally {
+    sandbox._getChatHistory = prevChat;
+    sandbox._graphState = prevState;
+    vm.runInContext('graphView.nodes = []; graphView.edges = []; graphView.groups = [];', sandbox);
+  }
+  if (snap.messages.length !== 2) throw new Error('轻量应只带引用到的 2 条消息：' + snap.messages.length);
+  if (snap.messages[0].content !== 'q0' || snap.messages[1].content !== 'a1') throw new Error('引用消息应按原顺序携带');
+  if (snap.meta.messagesComplete !== false) throw new Error('messagesComplete 应为 false');
+  if (snap.meta.exportMode !== 'light') throw new Error('exportMode 应为 light');
+  if (snap.meta.omittedMessages !== 2) throw new Error('omittedMessages 应为 2，实际 ' + snap.meta.omittedMessages);
+  const byId = {};
+  snap.nodes.forEach((n) => { byId[n.id] = n; });
+  if (byId.a.messageIndex !== 0 || byId.m.messageIndex !== 1) throw new Error('下标重映射错误');
+  if (byId.ghost.messageIndex !== -1) throw new Error('越界引用应落 -1');
+  // 无引用消息：messages 为空数组，画布字段完整、meta 计数正确
+  sandbox._getChatHistory = () => history;
+  sandbox._graphState = () => ({ pan: { x: 0, y: 0 }, zoom: 1 });
+  vm.runInContext("graphView.nodes = [{ id: 'n1', kind: 'manual', label: '无引用' }]; graphView.edges = [{ from: 'n1', to: 'n1' }]; graphView.groups = [{ id: 'g1', name: '组' }];", sandbox);
+  let empty;
+  try {
+    empty = sandbox.buildUtopiaSnapshot({ includeAllMessages: false });
+  } finally {
+    sandbox._getChatHistory = prevChat;
+    sandbox._graphState = prevState;
+    vm.runInContext('graphView.nodes = []; graphView.edges = []; graphView.groups = [];', sandbox);
+  }
+  if (!Array.isArray(empty.messages) || empty.messages.length !== 0) throw new Error('无引用时 messages 应为空数组');
+  if (empty.meta.omittedMessages !== 4) throw new Error('omittedMessages 应为 4，实际 ' + empty.meta.omittedMessages);
+  if (!empty.graph || typeof empty.graph !== 'object') throw new Error('graph 字段缺失');
+  if (!Array.isArray(empty.edges) || empty.edges.length !== 1) throw new Error('edges 应随文件携带');
+  if (!Array.isArray(empty.groups) || empty.groups.length !== 1) throw new Error('groups 应随文件携带');
+  return true;
+});
+
+check('utopia: parseUtopiaSnapshot 加固（重复 id / 非对象节点 / 非数组字段 / 缺省补齐 / 坏消息过滤）', () => {
+  const parse = sandbox.parseUtopiaSnapshot;
+  const base = { format: 'phymath-utopia/graph', version: 1, nodes: [{ id: 'a' }] };
+  // 合法最简快照：缺省补齐（edges/groups/messages → []，graph/meta → {}）
+  const ok = parse(JSON.stringify(base));
+  if (!ok.ok) throw new Error('合法快照被拒：' + ok.error);
+  if (!Array.isArray(ok.snapshot.edges) || !Array.isArray(ok.snapshot.groups) || !Array.isArray(ok.snapshot.messages)) {
+    throw new Error('缺省数组未补齐');
+  }
+  if (!ok.snapshot.graph || typeof ok.snapshot.graph !== 'object' || Array.isArray(ok.snapshot.graph)) throw new Error('graph 缺省未补齐');
+  if (!ok.snapshot.meta || typeof ok.snapshot.meta !== 'object' || Array.isArray(ok.snapshot.meta)) throw new Error('meta 缺省未补齐');
+  // 重复 id：拒绝且文案带 id
+  const dup = parse(JSON.stringify({ format: base.format, version: 1, nodes: [{ id: 'x' }, { id: 'x' }] }));
+  if (dup.ok !== false || !/重复节点 id/.test(dup.error || '')) throw new Error('重复 id 未被拒或文案不对');
+  // 非对象节点 / 缺 id / 空白 id
+  if (parse(JSON.stringify({ format: base.format, version: 1, nodes: [null] })).ok !== false) throw new Error('null 节点应被拒');
+  if (parse(JSON.stringify({ format: base.format, version: 1, nodes: [42] })).ok !== false) throw new Error('数字节点应被拒');
+  if (parse(JSON.stringify({ format: base.format, version: 1, nodes: [{}] })).ok !== false) throw new Error('缺 id 应被拒');
+  if (parse(JSON.stringify({ format: base.format, version: 1, nodes: [{ id: '   ' }] })).ok !== false) throw new Error('空白 id 应被拒');
+  // edges / groups / messages 存在但非数组 → 拒
+  for (const key of ['edges', 'groups', 'messages']) {
+    const bad = JSON.parse(JSON.stringify(base));
+    bad[key] = {};
+    if (parse(JSON.stringify(bad)).ok !== false) throw new Error(key + ' 非数组应被拒');
+  }
+  // graph / meta 存在但非对象 → 拒
+  const badGraph = JSON.parse(JSON.stringify(base)); badGraph.graph = [];
+  if (parse(JSON.stringify(badGraph)).ok !== false) throw new Error('graph 数组应被拒');
+  const badMeta = JSON.parse(JSON.stringify(base)); badMeta.meta = [];
+  if (parse(JSON.stringify(badMeta)).ok !== false) throw new Error('meta 数组应被拒');
+  // 坏消息过滤并计数，合法条目保留
+  const mixed = parse(JSON.stringify({ format: base.format, version: 1, nodes: [{ id: 'a' }],
+    messages: [{ role: 'user', content: 'ok' }, 42, null, 'x', { role: 'assistant', content: 'ok2' }] }));
+  if (!mixed.ok) throw new Error('含坏消息的快照应过滤后放行');
+  if (mixed.snapshot.messages.length !== 2) throw new Error('坏消息未过滤干净：' + mixed.snapshot.messages.length);
+  if (mixed.snapshot.meta.filteredMessages !== 3) throw new Error('filteredMessages 应为 3，实际 ' + mixed.snapshot.meta.filteredMessages);
+  // 不替合法快照补 messagesComplete（老快照口径由查看器自己判）
+  if (mixed.snapshot.meta.messagesComplete !== undefined) throw new Error('filteredMessages 路径不应擅自补 messagesComplete');
+  // 空文件
+  if (parse('   ').ok !== false) throw new Error('纯空白文件应被拒');
+  return true;
+});
+
+check('utopia: 第二批静态契约（浮卡模式标识/复制文件名/轻量警告/导入失败可见/查看器文案）', () => {
+  const u = fs.readFileSync('src/static/js/utopia.js', 'utf8');
+  for (const need of ['轻量存档已保存', 'utopiaCopyNameBtn', '复制文件名', "summary.mode === 'light'", '_utopiaCopyText', 'omittedMessages', 'exportMode']) {
+    if (!u.includes(need)) throw new Error('utopia.js 缺：' + need);
+  }
+  if (!u.includes('_utopiaEsc(summary.fileName)')) throw new Error('浮卡文件名未转义');
+  if (!/isLight \? '轻量存档已保存' : '存档已保存'/.test(u)) throw new Error('浮卡标题未按模式切换');
+  const ge = fs.readFileSync('src/static/js/graph-export.js', 'utf8');
+  for (const need of ['graphExportUtopiaFull', 'graphExportUtopiaLightWarn', 'includeAllMessages']) {
+    if (!ge.includes(need)) throw new Error('graph-export.js 缺：' + need);
+  }
+  const vmSrc = fs.readFileSync('src/static/js/viewer-main.js', 'utf8');
+  for (const need of ['exportMode', '轻量存档：仅画布引用的消息', '快照未携带会话消息', '条消息']) {
+    if (!vmSrc.includes(need)) throw new Error('viewer-main.js 缺：' + need);
+  }
+  const imp = fs.readFileSync('src/static/js/utopia-import.js', 'utf8');
+  for (const need of ['__lastUtopiaImportResult', 'serverFailed', 'localFailed', '云端同步失败', '本机缓存失败', 'sessions-both-failed', 'exportMode']) {
+    if (!imp.includes(need)) throw new Error('utopia-import.js 缺：' + need);
+  }
+  return true;
+});
 }

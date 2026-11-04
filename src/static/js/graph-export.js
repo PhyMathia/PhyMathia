@@ -23,6 +23,8 @@
   var _menuEl = null;
   var _exporting = false;
   var _transparentBg = false;
+  // .pmu 导出选项：默认勾选「包含完整对话」；不持久化（每次打开页面默认完整，避免用户忘记上次选了轻量）
+  var _utopiaIncludeAllMessages = true;
   // 「在查看器中预览」与「保存 .pmu」入口开关——2026-09-26 曾按用户要求暂时关闭；
   // 2026-11-01 重开并改定位：.pmu = 本张画布＋完整对话的「存档/继续编辑」，
   // 外发分享仍主推单文件网页（smoke 对入口的静态断言按源码存在校验，不受开关影响）
@@ -755,9 +757,11 @@
     }
     // .pmu 存档：只在主应用出（查看器里 utopia.js 也在，不守卫就会多出一条「再导一次」）
     if (UTOPIA_SHARE_ENTRIES && inMainApp) {
-      shareRows += '<button type="button" class="graph-export-scale-row" id="graphExportUtopia">'
+      shareRows += '<label class="graph-export-utopia-opt" for="graphExportUtopiaFull"><input type="checkbox" id="graphExportUtopiaFull" checked>包含完整对话（推荐）</label>'
+        + '<div class="graph-export-utopia-warn" id="graphExportUtopiaLightWarn" hidden>轻量存档只带画布引用的消息；查看器会话记录会不全，拖回也不能恢复整场对话。</div>'
+        + '<button type="button" class="graph-export-scale-row" id="graphExportUtopia">'
         + '<b>保存存档 ' + UTOPIA_EXT + '</b>'
-        + '<span class="graph-export-res">本张画布＋完整对话 · 拖回 PhyMathia 继续编辑</span>'
+        + '<span class="graph-export-res">本张画布＋对话 · 拖回 PhyMathia 继续编辑</span>'
         + '</button>';
     }
     if (shareRows) {
@@ -781,7 +785,7 @@
       var utopiaBtn = event.target.closest ? event.target.closest('#graphExportUtopia') : null;
       if (utopiaBtn) {
         _closeGraphExportMenu();
-        if (typeof window.exportUtopiaSnapshot === 'function') window.exportUtopiaSnapshot();
+        if (typeof window.exportUtopiaSnapshot === 'function') window.exportUtopiaSnapshot({ includeAllMessages: _utopiaIncludeAllMessages });
         else toastMsg('快照模块未加载（请硬刷新页面）');
         return;
       }
@@ -806,6 +810,12 @@
     menu.addEventListener('change', function (event) {
       if (event.target && event.target.id === 'graphExportTransparent') {
         _transparentBg = !!event.target.checked;
+        return;
+      }
+      if (event.target && event.target.id === 'graphExportUtopiaFull') {
+        _utopiaIncludeAllMessages = !!event.target.checked;
+        var lightWarn = menu.querySelector('#graphExportUtopiaLightWarn');
+        if (lightWarn) lightWarn.hidden = _utopiaIncludeAllMessages;
       }
     });
 
