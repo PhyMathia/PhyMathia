@@ -157,3 +157,12 @@ data/embedding_cache.json
 # （T64 起产物住 src/static/dist/）
 src/static/dist/app.js.map
 *.kate-swp
+
+# 评测集报告产物（2026-11-05：题库与运行器入库，报告每次 run 生成不入库）
+# （evals/graders.py 的 __pycache__ 字节码缓存已被上方全局条目覆盖）
+evals/reports/
+
+# WorkBuddy 会话记忆与项目数据（2026-11-05：本地留存，不入库）
+# 该目录是持久数据而非临时缓存，仅忽略、不要删除。
+/.workbuddy/
+
