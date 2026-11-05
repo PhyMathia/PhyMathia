@@ -1,15 +1,17 @@
-# PhyMathia 物理数学评测集（v0）
+# PhyMathia 物理数学评测集
 
-给「改提示词 / 换模型 / 改发送链」提供可回归的质量标准：同一套题反复跑、同一把尺子评分，把「体感变好/变差」变成数字。本目录自包含（题库＋评分器＋运行器＋报告）；口径、踩坑与路线图见 `docs/dev/eval-harness.md`。
+给「改提示词 / 换模型 / 改发送链」提供可回归的质量标准：同一套题反复跑、同一把尺子评分，把「体感变好/变差」变成数字。本目录自包含（题库＋评分器＋判卷器＋运行器＋报告）；口径、踩坑与路线图见 `docs/dev/eval-harness.md`。
 
 ## 目录
 
 | 文件 | 说明 |
 |---|---|
-| `questions/core-v0.jsonl` | 首批 20 题（5 域 × 4 题），每行一个 JSON |
+| `questions/*.jsonl` | 题库 200 题：按域 5 个文件（高数/线代/概率/力学/电磁各 40） |
 | `graders.py` | 规则评分器（被 run_eval.py 调用） |
+| `judge.py` | model-judge 语义判卷（`--judge` 开启；五维度＋磁盘缓存） |
 | `run_eval.py` | 运行器 CLI |
-| `reports/` | 评测报告（已 gitignore，不入库） |
+| `check_questions.py` | 题库红线检查器（写题/改题必跑；`--two-way --verify --final`） |
+| `reports/` | 评测报告与判卷缓存（已 gitignore，不入库） |
 
 ## 跑法
 
@@ -17,9 +19,18 @@
 python3 evals/run_eval.py --selftest        # 评分器自检（不联网）
 python3 evals/run_eval.py --adapter mock    # 离线演示：假学生作答，验证管道与报告
 python3 evals/run_eval.py --adapter mock --only calculus,mechanics   # 按域/按 id 过滤
+
+python3 evals/check_questions.py --two-way --verify --final  # 题库红线全检
+
+# 真机（工作流 direct 通道，模型三来源任选其一）：
+python3 evals/run_eval.py --adapter server                       # ①服务端已配 agent 槽
+python3 evals/run_eval.py --adapter server --model deepseek-chat # ②按 id/模型名直取（A/B 用）
+python3 evals/run_eval.py --adapter server \                     # ③手动直连（mock 上游口径）
+    --provider opencode-go --model-name mock-1 --api-key mock \
+    --upstream-base-url http://127.0.0.1:5065/v1
 ```
 
-真机适配器（server）待接入：见手册「接入真机」节。
+真机口径与验收记录见手册「接入真机」节；题库结构、verify 红线与抽查方法见「题库 v1」节（docs/dev/eval-harness.md）。
 
 ## 题目 schema（每行一个 JSON）
 

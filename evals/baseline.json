@@ -1,0 +1,3421 @@
+{
+ "saved_at": "2026-11-05 20:42:03",
+ "meta": {
+  "time": "20261105-204203",
+  "adapter": "server",
+  "questions_file": "/media/sample/3T硬盘/PhyMathia1.4.1/PhyMathia/evals/questions",
+  "total": 200,
+  "adapter_desc": "server（真机工作流 direct 通道；模型 --model 指定：deepseek/deepseek-flash；难度档 university）",
+  "model": {
+   "provider": "deepseek",
+   "model": "deepseek-flash",
+   "baseUrl": "https://api.deepseek.com",
+   "apiKey": "<REDACTED>"
+  },
+  "level": "university",
+  "sent_ok": 200,
+  "sent_fail": 0,
+  "judge": {
+   "model": "zhipu/glm-5.3",
+   "prompt_version": "v1",
+   "new": 184,
+   "cache_hit": 0,
+   "error": 16
+  }
+ },
+ "summary": {
+  "total": 200,
+  "passed": 126,
+  "by_domain": {
+   "calculus": {
+    "total": 40,
+    "pass": 19
+   },
+   "electromagnetism": {
+    "total": 40,
+    "pass": 26
+   },
+   "linear_algebra": {
+    "total": 40,
+    "pass": 22
+   },
+   "mechanics": {
+    "total": 40,
+    "pass": 28
+   },
+   "probability": {
+    "total": 40,
+    "pass": 31
+   }
+  },
+  "dimensions": {
+   "final_answer": {
+    "applicable": 130,
+    "pass": 119
+   },
+   "key_steps": {
+    "applicable": 130,
+    "pass": 128
+   },
+   "error_catch": {
+    "applicable": 50,
+    "pass": 40
+   },
+   "concept": {
+    "applicable": 20,
+    "pass": 13
+   }
+  },
+  "known_wrong_echoed": 57,
+  "judge": {
+   "judged": 200,
+   "overall": {
+    "pass": 181,
+    "fail": 3,
+    "error": 16
+   },
+   "dims": {
+    "final_answer": {
+     "pass": 184,
+     "applicable": 184
+    },
+    "derivation": {
+     "pass": 182,
+     "applicable": 184
+    },
+    "formula": {
+     "pass": 184,
+     "applicable": 184
+    },
+    "hallucination": {
+     "pass": 184,
+     "applicable": 184
+    },
+    "contradiction": {
+     "pass": 183,
+     "applicable": 184
+    }
+   }
+  }
+ },
+ "results": [
+  {
+   "id": "calc-001",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-002",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-003",
+   "domain": "calculus",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-004",
+   "domain": "calculus",
+   "kind": "concept",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "可以用来"
+    ],
+    "error_catch": "na",
+    "concept": "corrected"
+   },
+   "sent_ok": true,
+   "judge_overall": "error"
+  },
+  {
+   "id": "calc-005",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-006",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "1/3",
+    "known_wrong_echo": [
+     "=1"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-007",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-008",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": [
+     "2e^2",
+     "e^2-1"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-009",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-010",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "4/3"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-011",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "=2"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "error"
+  },
+  {
+   "id": "calc-012",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-013",
+   "domain": "calculus",
+   "kind": "error_catch",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "partial",
+    "steps_hit": "1/2",
+    "known_wrong_echo": null,
+    "error_catch": "missed",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-014",
+   "domain": "calculus",
+   "kind": "error_catch",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "partial",
+    "steps_hit": "1/2",
+    "known_wrong_echo": [
+     "极限不存在"
+    ],
+    "error_catch": "missed",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-015",
+   "domain": "calculus",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-016",
+   "domain": "calculus",
+   "kind": "concept",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "missed"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-017",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "6"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-018",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": [
+     "=5(2x+1)^4"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-019",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-020",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "fail",
+    "key_steps": "partial",
+    "steps_hit": "1/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-021",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "=0",
+     "极限为1"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-022",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-023",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-024",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-025",
+   "domain": "calculus",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-026",
+   "domain": "calculus",
+   "kind": "error_catch",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "partial",
+    "steps_hit": "1/2",
+    "known_wrong_echo": null,
+    "error_catch": "missed",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-027",
+   "domain": "calculus",
+   "kind": "error_catch",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "partial",
+    "steps_hit": "1/2",
+    "known_wrong_echo": null,
+    "error_catch": "missed",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-028",
+   "domain": "calculus",
+   "kind": "concept",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "corrected"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-029",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "fail",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-030",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "error"
+  },
+  {
+   "id": "calc-031",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-032",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-033",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "fail",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-034",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "fail",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-035",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-036",
+   "domain": "calculus",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "fail",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-037",
+   "domain": "calculus",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-038",
+   "domain": "calculus",
+   "kind": "error_catch",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "partial",
+    "steps_hit": "1/2",
+    "known_wrong_echo": [
+     "=0"
+    ],
+    "error_catch": "missed",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "error"
+  },
+  {
+   "id": "calc-039",
+   "domain": "calculus",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": [
+     "=2"
+    ],
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "calc-040",
+   "domain": "calculus",
+   "kind": "concept",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "corrected"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-001",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-002",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-003",
+   "domain": "electromagnetism",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-004",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "error"
+  },
+  {
+   "id": "em-005",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-006",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-007",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-008",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "fail",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "100"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-009",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-010",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-011",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-012",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-013",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-014",
+   "domain": "electromagnetism",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-015",
+   "domain": "electromagnetism",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": [
+     "做正功"
+    ],
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-016",
+   "domain": "electromagnetism",
+   "kind": "concept",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "就是轨迹"
+    ],
+    "error_catch": "na",
+    "concept": "corrected"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-017",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-018",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-019",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-020",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "1/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-021",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-022",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-023",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "error"
+  },
+  {
+   "id": "em-024",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-025",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-026",
+   "domain": "electromagnetism",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": [
+     "电压不变"
+    ],
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-027",
+   "domain": "electromagnetism",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "可以不为零"
+    ],
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-028",
+   "domain": "electromagnetism",
+   "kind": "concept",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "有起点和终点"
+    ],
+    "error_catch": "na",
+    "concept": "corrected"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-029",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-030",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-031",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-032",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-033",
+   "domain": "electromagnetism",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-034",
+   "domain": "electromagnetism",
+   "kind": "error_catch",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "partial",
+    "steps_hit": "1/2",
+    "known_wrong_echo": null,
+    "error_catch": "missed",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-035",
+   "domain": "electromagnetism",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "成反比"
+    ],
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-036",
+   "domain": "electromagnetism",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": [
+     "总是相反"
+    ],
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-037",
+   "domain": "electromagnetism",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "完全错误"
+    ],
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-038",
+   "domain": "electromagnetism",
+   "kind": "error_catch",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "partial",
+    "steps_hit": "1/2",
+    "known_wrong_echo": [
+     "是纵波"
+    ],
+    "error_catch": "missed",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "fail"
+  },
+  {
+   "id": "em-039",
+   "domain": "electromagnetism",
+   "kind": "concept",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": [
+     "创造了电荷"
+    ],
+    "error_catch": "na",
+    "concept": "corrected"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "em-040",
+   "domain": "electromagnetism",
+   "kind": "concept",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": [
+     "需要介质"
+    ],
+    "error_catch": "na",
+    "concept": "missed"
+   },
+   "sent_ok": true,
+   "judge_overall": "fail"
+  },
+  {
+   "id": "la-001",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-002",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-003",
+   "domain": "linear_algebra",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-004",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-005",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "error"
+  },
+  {
+   "id": "la-006",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "1/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-007",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-008",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "fail",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-009",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "0"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "error"
+  },
+  {
+   "id": "la-010",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-011",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "fail",
+    "steps_hit": "0/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-012",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "1/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-013",
+   "domain": "linear_algebra",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-014",
+   "domain": "linear_algebra",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-015",
+   "domain": "linear_algebra",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-016",
+   "domain": "linear_algebra",
+   "kind": "concept",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "missed"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-017",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-018",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-019",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-020",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-021",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-022",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-023",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "fail",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": [
+     "无特征值"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-024",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-025",
+   "domain": "linear_algebra",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": [
+     "零向量是特征向量"
+    ],
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-026",
+   "domain": "linear_algebra",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": [
+     "则无解"
+    ],
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-027",
+   "domain": "linear_algebra",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-028",
+   "domain": "linear_algebra",
+   "kind": "concept",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "missed"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-029",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "fail",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-030",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "fail",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-031",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "1/2",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-032",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-033",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-034",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-035",
+   "domain": "linear_algebra",
+   "kind": "error_catch",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "partial",
+    "steps_hit": "1/2",
+    "known_wrong_echo": null,
+    "error_catch": "missed",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-036",
+   "domain": "linear_algebra",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-037",
+   "domain": "linear_algebra",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": [
+     "不改变特征值"
+    ],
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-038",
+   "domain": "linear_algebra",
+   "kind": "concept",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "没有特征值"
+    ],
+    "error_catch": "na",
+    "concept": "corrected"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-039",
+   "domain": "linear_algebra",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "1/2",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "la-040",
+   "domain": "linear_algebra",
+   "kind": "concept",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "partial",
+    "steps_hit": "1/3",
+    "known_wrong_echo": [
+     "一定是对角"
+    ],
+    "error_catch": "na",
+    "concept": "missed"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-001",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "12.5"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-002",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-003",
+   "domain": "mechanics",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-004",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "动能守恒"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "error"
+  },
+  {
+   "id": "mech-005",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-006",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": [
+     "2"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-007",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-008",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "error"
+  },
+  {
+   "id": "mech-009",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-010",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-011",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-012",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": [
+     "1"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-013",
+   "domain": "mechanics",
+   "kind": "error_catch",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "partial",
+    "steps_hit": "1/3",
+    "known_wrong_echo": null,
+    "error_catch": "missed",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "error"
+  },
+  {
+   "id": "mech-014",
+   "domain": "mechanics",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": [
+     "合力为零"
+    ],
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-015",
+   "domain": "mechanics",
+   "kind": "error_catch",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "missed",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-016",
+   "domain": "mechanics",
+   "kind": "concept",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "corrected"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-017",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-018",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": [
+     "9.8"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-019",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "error"
+  },
+  {
+   "id": "mech-020",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "error"
+  },
+  {
+   "id": "mech-021",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "error"
+  },
+  {
+   "id": "mech-022",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "1/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-023",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-024",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-025",
+   "domain": "mechanics",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-026",
+   "domain": "mechanics",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "相互抵消"
+    ],
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-027",
+   "domain": "mechanics",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-028",
+   "domain": "mechanics",
+   "kind": "concept",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "corrected"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-029",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-030",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "fail",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": [
+     "2000"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-031",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "1000"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-032",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "588"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-033",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-034",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-035",
+   "domain": "mechanics",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "5.1"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-036",
+   "domain": "mechanics",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-037",
+   "domain": "mechanics",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-038",
+   "domain": "mechanics",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "必不守恒"
+    ],
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-039",
+   "domain": "mechanics",
+   "kind": "concept",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "不受重力"
+    ],
+    "error_catch": "na",
+    "concept": "corrected"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "mech-040",
+   "domain": "mechanics",
+   "kind": "concept",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "任何参考系"
+    ],
+    "error_catch": "na",
+    "concept": "corrected"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-001",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-002",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "0.95"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-003",
+   "domain": "probability",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-004",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "1/3",
+    "known_wrong_echo": [
+     "=0.8413"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-005",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-006",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-007",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-008",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "1/2",
+     "1/6"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-009",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-010",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "0.216"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-011",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-012",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "0.4"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "error"
+  },
+  {
+   "id": "prob-013",
+   "domain": "probability",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": [
+     "直接相加"
+    ],
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-014",
+   "domain": "probability",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": [
+     "一定相互独立"
+    ],
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-015",
+   "domain": "probability",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-016",
+   "domain": "probability",
+   "kind": "concept",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "不可能发生"
+    ],
+    "error_catch": "na",
+    "concept": "corrected"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-017",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "fail",
+    "steps_hit": "0/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-018",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-019",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-020",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-021",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-022",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "error"
+  },
+  {
+   "id": "prob-023",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "0.9",
+     "0.08"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-024",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "fail"
+  },
+  {
+   "id": "prob-025",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-026",
+   "domain": "probability",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": [
+     "直接相加"
+    ],
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-027",
+   "domain": "probability",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "任何随机变量"
+    ],
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-028",
+   "domain": "probability",
+   "kind": "concept",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "corrected"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-029",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-030",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-031",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "1/2",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-032",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": [
+     "7"
+    ],
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-033",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-034",
+   "domain": "probability",
+   "kind": "solve",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "pass",
+    "key_steps": "partial",
+    "steps_hit": "2/3",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-035",
+   "domain": "probability",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-036",
+   "domain": "probability",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "2/2",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-037",
+   "domain": "probability",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-038",
+   "domain": "probability",
+   "kind": "error_catch",
+   "verdict": "pass",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "pass",
+    "steps_hit": "3/3",
+    "known_wrong_echo": null,
+    "error_catch": "caught",
+    "concept": "na"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-039",
+   "domain": "probability",
+   "kind": "concept",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "partial",
+    "steps_hit": "1/2",
+    "known_wrong_echo": null,
+    "error_catch": "na",
+    "concept": "missed"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  },
+  {
+   "id": "prob-040",
+   "domain": "probability",
+   "kind": "concept",
+   "verdict": "fail",
+   "dimensions": {
+    "final_answer": "na",
+    "key_steps": "partial",
+    "steps_hit": "1/3",
+    "known_wrong_echo": [
+     "恒等于x"
+    ],
+    "error_catch": "na",
+    "concept": "missed"
+   },
+   "sent_ok": true,
+   "judge_overall": "pass"
+  }
+ ]
+}

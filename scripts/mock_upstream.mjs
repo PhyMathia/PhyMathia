@@ -453,6 +453,21 @@ function replyOf(body) {
       ],
     };
   }
+  // —— 评测判卷剧本（evals/judge.py，2026-11-05）：系统提示词含「判卷老师」是该
+  // 通道独有锚（/api/models/chat messages 直传）。回固定五维度 JSON 供双轨管道
+  // 离线验证（判卷解析/缓存/报告两列）；作答里带「坏样本」标记时回 fail 维度，
+  // 供两向验证（好作答 pass、坏作答 fail）。
+  if (!j.tools.length && j.systemText.includes('判卷老师')) {
+    const bad = j.userText.includes('坏样本');
+    const v = bad ? 'fail' : 'pass';
+    return text(JSON.stringify({
+      final_answer: { verdict: v, evidence: bad ? '最终答案与参考答案不一致（坏样本标记）' : '最终答案与参考答案一致' },
+      derivation: { verdict: v, evidence: bad ? '关键步骤缺失，只有结论（坏样本标记）' : '关键步骤覆盖且推导能走通' },
+      formula: { verdict: 'pass', evidence: '未发现公式/符号/单位错误' },
+      hallucination: { verdict: 'pass', evidence: '未发现编造概念或结论' },
+      contradiction: { verdict: 'pass', evidence: '作答内部前后一致' },
+    }));
+  }
   // —— 主链路（verify_send_channels）：问题概要 / 模块 XML / 苏格拉底编号行 ——
   if (t.includes('只输出简洁的问题概要')) {
     return text('### 问题概要 ' + sfx + '\n核心概念：简谐运动；数学结构：二阶常系数线性微分方程；关系：回复力线性化导出振动方程。');
