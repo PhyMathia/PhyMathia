@@ -89,12 +89,17 @@ function _graphHistoryVersionOf(versionIndex) {
 
 // 事件点收尾（3.1/3.4）：提问/重生成跑完后，把「当前状态」行的差异计数补上。
 // 摘要仍是「提问：…」（动作名），计数告诉用户这一次到底加了/改了多少。
+// T432（2026-11-05）：只在「内存账本＝当前视图」时结算——人切走了的话 last 与
+// _graphLiveProjection() 根本不是同一张画布，diff 出来的计数是垃圾；此时什么都不动，
+// 发起会话槽里的挂起元数据原样保留（人回来后面板照样读得到，计数晚一步无妨）。
 function _graphHistoryLiveEventDone() {
-  if (!graphPendingLiveMeta) return;
+  if (graphHistorySession && _currentSessionId() && graphHistorySession !== _currentSessionId()) return;
+  const pending = _graphPendingLiveMetaOf(graphHistorySession);
+  if (!pending) return;
   const last = graphUndoStack[graphUndoStack.length - 1];
   if (last) {
     const diff = _graphDiffFromProjections(_graphVersionProjection(last), _graphLiveProjection());
-    if (!diff.layoutOnly) graphPendingLiveMeta = Object.assign({}, graphPendingLiveMeta, { counts: diff.counts });
+    if (!diff.layoutOnly) _graphPendingLiveMetaSet(graphHistorySession, Object.assign({}, pending, { counts: diff.counts }));
   }
   graphHistoryLiveDirty = true;
   graphHistoryLiveMetaCache = null;
@@ -518,7 +523,7 @@ async function _settleGraphHistoryToLive() {
   if (!live || !live.state) return false; // 回不到最新就不清（宁可留着）
   graphHistoryCursor = graphUndoStack.length;
   graphHistoryLive = null;
-  graphPendingLiveMeta = null;
+  _graphPendingLiveMetaSet(graphHistorySession, null);
   graphHistoryLiveDirty = true;
   graphHistoryLiveMetaCache = null;
   graphHistoryPreviewing = -1;
@@ -541,7 +546,7 @@ function _settleClearGraphHistory(reason) {
     graphHistoryLive = null;
     try { localStorage.removeItem(_graphHistoryKey(sid)); } catch (e) { /* 同上 */ }
   }
-  graphPendingLiveMeta = null;
+  _graphPendingLiveMetaSet(sid, null);
   graphHistoryLiveDirty = true;
   graphHistoryLiveMetaCache = null;
   graphHistoryPreviewing = -1;

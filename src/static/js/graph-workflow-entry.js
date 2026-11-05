@@ -127,6 +127,12 @@ async function runAllWorkflowNodes() {
 }
 
 function stopWorkflowRun() {
+  // T433（2026-11-05）：追问自动判断挂起期间（≤15s）总闸/在飞控制器都还空着，不接
+  // 这条就是死按钮。取消判断≠中止提问：请求被掐断后回落默认「拆分分析」继续走，
+  // 下游生成段自己另撑伞，这里不碰它们。
+  if (typeof followupClassifyController !== 'undefined' && followupClassifyController) {
+    followupClassifyController.abort();
+  }
   if (workflowAbortController) workflowAbortController.abort();
   // T299：在跑的节点一起掐断。总闸只断自己的话，这最多 6 颗并行节点会各自把当前这
   // 一流式跑完（免费模型一颗几十秒到几分钟），用户点了「停止生成」还在出字——

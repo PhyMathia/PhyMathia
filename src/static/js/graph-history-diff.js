@@ -379,10 +379,11 @@ function _pushGraphUndo(withMessages, meta) {
   const explicitMeta = (meta && typeof meta === "object" && (meta.summary || meta.source))
     ? { source: meta.source || "user", summary: String(meta.summary || "修改"), ts: now, pushedAt: now }
     : null;
-  const carried = graphPendingLiveMeta; // 上一个动作（提问/重生成/Φ）的描述
+  const carried = _graphPendingLiveMetaOf(graphHistorySession); // 上一个动作（提问/重生成/Φ）的描述
   // 本次动作的描述挂在「当前状态」行（3.1）：动作才开始，还没形成新版本；条目自己的
   // 摘要仍由自动差异生成。早退分支也先挂上——点了提问至少当前行能看到「提问：…」。
-  graphPendingLiveMeta = explicitMeta;
+  // T432：按会话分账（键＝graphHistorySession），别的画布的挂起描述不再串台。
+  _graphPendingLiveMetaSet(graphHistorySession, explicitMeta);
   const snapshot = {
     sessionId: sid,
     state: JSON.parse(JSON.stringify(state)),
@@ -566,7 +567,7 @@ async function _undoGraphAction() {
   if (target.sessionId && currentSessionId && target.sessionId !== currentSessionId) return;
   if (graphHistoryCursor >= graphUndoStack.length) _captureGraphLive(currentSessionId);
   graphHistoryCursor--;
-  graphPendingLiveMeta = null;
+  _graphPendingLiveMetaSet(graphHistorySession, null);
   graphHistoryPendingTruncate = false;
   graphHistoryLiveDirty = true;
   graphHistoryLiveMetaCache = null;
@@ -586,7 +587,7 @@ async function _redoGraphAction() {
   if (!target) return;
   if (target.sessionId && currentSessionId && target.sessionId !== currentSessionId) return;
   graphHistoryCursor = next;
-  graphPendingLiveMeta = null;
+  _graphPendingLiveMetaSet(graphHistorySession, null);
   graphHistoryPendingTruncate = false;
   graphHistoryLiveDirty = true;
   graphHistoryLiveMetaCache = null;
@@ -633,8 +634,10 @@ function _graphVersions() {
   }
   // 当前状态行：T219/R9——过去每 800ms 做一次全图深比较。现在只有图真被写过
   // （_saveGraphState / 推送 / 时间旅行）才重算，其余时候吃缓存。
-  let liveMeta = graphPendingLiveMeta;
-  let liveCounts = (graphPendingLiveMeta && graphPendingLiveMeta.counts) || null;
+  // T432：挂起元数据按会话分账——这里读的必须是本账本（graphHistorySession）那一条，
+  // 别的画布动作留下的描述不再挂到本画布「当前状态」行上。
+  let liveMeta = _graphPendingLiveMetaOf(graphHistorySession);
+  let liveCounts = (liveMeta && liveMeta.counts) || null;
   if (!liveMeta) {
     if (graphHistoryLiveDirty || !graphHistoryLiveMetaCache) {
       graphHistoryLiveDirty = false;
@@ -685,7 +688,7 @@ async function _jumpGraphVersion(versionIndex) {
   if (goingBack && graphHistoryCursor >= graphUndoStack.length) _captureGraphLive(currentSessionId);
   graphHistoryCursor = versionIndex;
   if (!goingBack) graphHistoryLive = null; // 回到最新＝锚点消费掉
-  graphPendingLiveMeta = null;
+  _graphPendingLiveMetaSet(graphHistorySession, null);
   graphHistoryLiveDirty = true;
   graphHistoryLiveMetaCache = null;
   graphHistoryPreviewing = -1;

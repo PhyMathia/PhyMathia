@@ -317,7 +317,7 @@ function discardGraphHistoryForSession(sid) {
     graphUndoStack = [];
     graphHistoryCursor = 0;
     graphHistoryLive = null;
-    graphPendingLiveMeta = null;
+    _graphPendingLiveMetaSet(sid, null);
     graphHistoryPendingTruncate = false;
     graphHistoryDropped = 0;
     graphHistoryLastEffect = { op: "", touch: "", at: 0 };

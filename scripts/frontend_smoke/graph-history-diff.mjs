@@ -97,7 +97,7 @@ export async function run() {
     runCtx('graphCanvas = null; graphInner = null;'
       + 'graphHistorySession = ' + JSON.stringify(SID) + '; graphUndoStack = [];'
       + ' graphHistoryCursor = 0; graphHistoryLive = null;'
-      + ' graphPendingLiveMeta = null; graphHistoryPendingTruncate = false;'
+      + ' _graphPendingLiveMetaSet(graphHistorySession, null); graphHistoryPendingTruncate = false;'
       + ' graphHistoryPreviewing = -1; graphHistoryDiffModel = null; graphHistoryCompareDir = "back";'
       + ' graphHistoryLiveDirty = true;');
     delete storageData[HIST_KEY];

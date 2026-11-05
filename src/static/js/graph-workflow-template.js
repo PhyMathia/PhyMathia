@@ -34,6 +34,11 @@ function _parseSuggestedModules(analysisText) {
 // 方向钮/进阶学习/苏格拉底闭环/首问的行为一字不变。
 const FOLLOWUP_ROUTE_TIMEOUT_MS = 15000;
 
+// 判断段（≤15s）的取消口（T433，2026-11-05）：auto 判断挂起期间置位，顶部「停止」
+// （stopGeneration → stopWorkflowRun）优先 abort 它——取消判断≠中止提问，回落默认
+// 「拆分分析」继续走。挂起期间点亮停止按钮当取消入口；finally 归零，别让取消口挂空。
+let followupClassifyController = null;
+
 const FOLLOWUP_ROUTE_SYSTEM_PROMPT = '你是物理数学画布里的「回答方式」判断器。用户在某个节点的「追问」出口拖出了一张提问卡，判断这次追问适合哪种回答方式。\n'
   + '两种方式：\n'
   + '- direct：一个聚焦、可独立回答的问题。一段完整的话、几句解释、一个计算或一条推导就能答清，不需要拆成物理视角/数学视角等多个模块分别展开。\n'
@@ -78,7 +83,7 @@ function _followupSourceExcerpt(sourceNodeId, limit) {
   return text.slice(0, limit || 1200);
 }
 
-async function _classifyFollowupQuestion(question, sourceNodeId) {
+async function _classifyFollowupQuestion(question, sourceNodeId, externalSignal) {
   const fallback = 'analysis';
   const text = String(question || '').trim();
   if (!text) return fallback;
@@ -89,6 +94,17 @@ async function _classifyFollowupQuestion(question, sourceNodeId) {
   const userContent = '这次追问：' + text
     + (excerpt ? '\n\n背景（上游节点内容，仅供判断参考，判断对象是这次追问本身）：\n' + excerpt : '');
   const controller = new AbortController();
+  // 外部取消口（T433）：stopWorkflowRun abort 外部信号 → 链动内部控制器掐断请求；
+  // 15s 超时仍由内部 timer 自己走，两条路互不抢（超时≠用户取消，回落文案不同）。
+  // addEventListener 缺席时静默降级为不可外部取消（真 AbortSignal 恒有该 API；
+  // 测试沙箱的哑桩 signal 是空对象，不能在这里炸出假回落）。
+  let onExternalAbort = null;
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else if (typeof externalSignal.addEventListener === 'function') {
+      externalSignal.addEventListener('abort', onExternalAbort = function () { controller.abort(); });
+    }
+  }
   const timer = setTimeout(function () { controller.abort(); }, FOLLOWUP_ROUTE_TIMEOUT_MS);
   try {
     const resp = await proxyChatWithModel(model, {
@@ -111,6 +127,9 @@ async function _classifyFollowupQuestion(question, sourceNodeId) {
     return fallback;
   } finally {
     clearTimeout(timer);
+    if (externalSignal && onExternalAbort && typeof externalSignal.removeEventListener === 'function') {
+      externalSignal.removeEventListener('abort', onExternalAbort);
+    }
   }
 }
 
@@ -357,6 +376,20 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
   // 到切换后的画布（旧版点击发送到建点全程同步，没有这个窗口）。
   const worldSid = ((typeof getCurrentSessionId === 'function' && getCurrentSessionId())
     || (typeof currentSessionId !== 'undefined' ? currentSessionId : '') || '');
+  // 3.1 事件点（2026-10-24）：提问在建节点之前落一个历史点——撤销粒度＝一整次提问
+  // （问题＋回答＋模块一起退）。摘要挂在「当前状态」行；条目自己的摘要仍由自动差异
+  // 生成（见 graph-history-diff.js _pushGraphUndo 的口径说明）。
+  // T432（2026-11-05）：这笔推送必须赶在第一个 await（auto 分类，最长 15s）之前——
+  // 推送全程当前视图寻址（_graphState/_currentSessionId/挂起元数据账本），过去放在
+  // 分类之后，判断窗口里切画布整笔账（含快照与投影聊天）会落到切换后的画布。挪到
+  // 钉世界之后、分类之前，此刻人必然还站在发起画布上；草稿卡是视图件（draft 不入
+  // 持久 state），先推后移除草稿不影响快照内容。
+  if (typeof _pushGraphUndo === 'function') {
+    _pushGraphUndo(false, {
+      source: 'ai',
+      summary: '提问：' + (typeof _graphShorten === 'function' ? _graphShorten(question, 30) : String(question).slice(0, 30)),
+    });
+  }
   // 追问自动选路（2026-11-03）：只有追问草稿的调用方带 followupRoute（submitDraftQuestion 传）。
   // auto 先调模型判断；手动 direct/analysis 直接跳过判断、不烧模型调用；没带（方向钮/
   // 苏格拉底闭环/首问等）一律 analysis＝旧行为。
@@ -371,21 +404,36 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
       // 正式生成段各自撑伞（分析段自己置位、直接回答交给 _executeParallelWorkflow）。
       try {
         workflowRunActive = true;
-        if (typeof showToast === 'function') showToast('正在判断回答方式…', 2000);
+        // T433（2026-11-05）：判断期间点亮顶部停止按钮当取消口；进度文案占满整个判断
+        // 窗口（过去 2s 就消失，之后用户只看到发送被排队、以为页面卡死）。点停止＝
+        // 取消判断、回落默认「拆分分析」继续，不是中止整次提问。
+        followupClassifyController = new AbortController();
+        _setWorkflowStopButton(true);
+        if (typeof showToast === 'function') {
+          showToast('正在判断回答方式…点顶部「停止」可取消（取消后按拆分分析继续）', FOLLOWUP_ROUTE_TIMEOUT_MS);
+        }
         let decided = 'analysis';
         try {
-          decided = await _classifyFollowupQuestion(question, options.sourceNodeId || '');
+          decided = await _classifyFollowupQuestion(question, options.sourceNodeId || '', followupClassifyController.signal);
         } catch (classifyErr) {
           console.warn('Followup route classification failed unexpectedly:', classifyErr);
         }
         followupRoute = decided === 'direct' ? 'direct' : 'analysis';
+        // 用户取消只在「请求真被掐断、回落 analysis」时成立：abort 与响应赛跑、结果
+        // 先回来时照常采用结果（直接回答照走 direct，不谎报已取消）；15s 超时掐的是
+        // 内部控制器、外部信号干净，照旧报「自动判断：拆分分析」。
+        const classifyCancelled = !!(followupClassifyController
+          && followupClassifyController.signal.aborted) && followupRoute !== 'direct';
+        followupClassifyController = null;
         if (typeof showToast === 'function') {
-          showToast(followupRoute === 'direct' ? '自动判断：直接回答' : '自动判断：拆分分析', 2200);
+          if (classifyCancelled) showToast('已取消判断，按「拆分分析」继续', 2600);
+          else showToast(followupRoute === 'direct' ? '自动判断：直接回答' : '自动判断：拆分分析', 2200);
         }
       } catch (err) {
         console.warn('Followup route setup failed, fallback to analysis:', err);
         followupRoute = 'analysis';
       } finally {
+        followupClassifyController = null;
         workflowRunActive = false;
       }
     }
@@ -411,15 +459,6 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
 
   // T265：新根问题开工前看一眼上一簇模块是否零点开，没发现过深入内容就指一次路
   if (!options.sourceNodeId) _maybeHintUnreadModules(worldSid);
-  // 3.1 事件点（2026-10-24）：提问在建节点之前落一个历史点——撤销粒度＝一整次提问
-  // （问题＋回答＋模块一起退）。摘要挂在「当前状态」行；条目自己的摘要仍由自动差异
-  // 生成（见 graph-history-diff.js _pushGraphUndo 的口径说明）。
-  if (typeof _pushGraphUndo === 'function') {
-    _pushGraphUndo(false, {
-      source: 'ai',
-      summary: '提问：' + (typeof _graphShorten === 'function' ? _graphShorten(question, 30) : String(question).slice(0, 30)),
-    });
-  }
   const template = _createQuestionWorkflowTemplate(question, options.sourceNodeId || '', options.sourcePort || '', draftPlacement, worldSid, followupRoute);
   const liveAnswer = _findGraphNode(template.answerNode.id) || template.answerNode;
   // T299：问题分析这一段过去整段在停止伞之外——顶栏停止按钮要等 _executeParallelWorkflow

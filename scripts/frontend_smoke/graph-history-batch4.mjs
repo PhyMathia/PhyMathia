@@ -74,7 +74,7 @@ export async function run() {
     runCtx('graphCanvas = null; graphInner = null; graphHistoryPanel = null;'
       + 'graphHistorySession = ' + JSON.stringify(SID) + '; graphUndoStack = [];'
       + ' graphHistoryCursor = 0; graphHistoryLive = null;'
-      + ' graphPendingLiveMeta = null; graphHistoryPendingTruncate = false;'
+      + ' _graphPendingLiveMetaSet(graphHistorySession, null); graphHistoryPendingTruncate = false;'
       + ' graphHistoryPreviewing = -1; graphHistoryDiffModel = null; graphHistoryLiveDirty = true;'
       + ' graphHistoryLiveMetaCache = null; graphHistorySavedAt = 0; graphHistoryDropped = 0;'
       + ' graphHistoryLastEffect = { op: "", touch: "", at: 0 }; graphHistoryLastSignature = "";');
