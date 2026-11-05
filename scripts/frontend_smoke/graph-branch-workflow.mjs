@@ -8,12 +8,13 @@
 // ⑤ T364（2026-10-18）：闭环链上下文语义——「向前找问题节点」跳过作答卡（作答是
 //    kind:'user' 但内容是 [苏格拉底回答] 定稿，不是问题）；标签分设「我的作答/
 //    苏格拉底反馈」；最近反馈卡给 6000 全文额度（作答卡正文剥机器前缀）。
-// 本域全部同步用例在前、唯一一条 async 用例殿后把两条含 await 的用例串起来跑
-//（硬规则 4：异步用例的让出窗口里别的用例若重置共享沙箱会假红——见 graph-human-finalize
-// 的同款说明；这里 2026-10-17 实踩过一次：多选删除的 await 让出时后一条同步用例
-// _seed() 重置了图，恢复后读到空夹具假红）。
+// 本域全部同步用例在前、async 用例殿后逐条串行跑（硬规则 4：异步用例的让出窗口里
+// 别的用例若重置共享沙箱会假红——见 graph-human-finalize 的同款说明；这里
+// 2026-10-17 实踩过一次：多选删除的 await 让出时后一条同步用例
+// _seed() 重置了图，恢复后读到空夹具假红）。async 用例现有三条：T361/T362 合串、
+// 追问自动选路五段合串（2026-11-03）、T432/T433 判断窗口两回归（2026-11-05）。
 import fs from 'node:fs';
-import { check, drain, sandbox, vm, restoreWindowStub } from './_runner.mjs';
+import { check, drain, sandbox, vm, storageData, restoreWindowStub } from './_runner.mjs';
 
 function _emptyState() {
   return { collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9,
@@ -585,10 +586,12 @@ export async function run() {
       return true;
     });
 
-    // 三段串行（同一夹具、同一次 await 序列）：异步用例与重置沙箱不可并排，
-    // 且上一段的桩/夹具必须完全还原后下一段才 _seed()——本域把三条自动选路链路
-    // 编进一条用例里（与 T361/T362 含 await 两条同款口径）。
-    check('追问自动选路：manual/auto/失败回落三段串起来跑（direct 执行·分类调用·回落分析）', async () => {
+    // 串行段（同一夹具、同一次 await 序列）：异步用例与重置沙箱不可并排，
+    // 且上一段的桩/夹具必须完全还原后下一段才 _seed()——本域把自动选路链路
+    // 五段（manual/auto/失败回落/T432 切画布落账/T433 取消判断）编进一条用例里
+    //（与 T361/T362 含 await 两条同款口径；2026-11-05 实测两条独立 async 用例并排
+    // 互抢桩——六段各自的 proxyChatWithModel/分类桩把先注册段当场换掉，假红）。
+    check('追问自动选路：manual/auto/失败回落＋T432/T433 判断窗口五段串起来跑', async () => {
       // ===== ① 手动「直接回答」：跳过模型判断、不跑问题分析，直接执行 direct 节点 =====
       _seed();
       sandbox.localStorage.setItem('phymathia_current_session', 'sess_branch_wf');
@@ -793,6 +796,212 @@ export async function run() {
         sandbox.proxyChatWithModel = prevProxy5;
         sandbox._graphHistoryLiveEventDone = prevDone5;
         sandbox.showToast = prevToast5;
+        vm.runInContext('delete globalThis.getCurrentSessionId;', sandbox);
+        sandbox.localStorage.removeItem('phymathia_current_session');
+      }
+
+      // ===== ⑥ T432（2026-11-05）：判断窗口切画布，「提问」撤销历史点落回发起画布账本。
+      // 真跑 _pushGraphUndo（不桩掉，只包一层记推送时刻的视图）：推送在分类 await 之前
+      // 执行，此刻 currentSessionId 还没被切走——账本位置、快照内容、投影聊天一起回到
+      // 发起画布；切换后画布的账本与挂起元数据分账一字不沾。
+      _seed();
+      sandbox.localStorage.setItem('phymathia_current_session', 'sess_branch_wf');
+      vm.runInContext('currentSessionId = "sess_branch_wf"; SESSION_ID = "rsess_branch_wf";'
+        + ' sessions = { sess_branch_wf: { title: "", updatedAt: 1 }, sess_other_wf: { title: "", updatedAt: 1 } };'
+        + ' chatHistory = []; workflowRunActive = false; workflowLastAborted = false;'
+        + ' graphPendingLiveMetaBySid = Object.create(null);'
+        + ' globalThis.getCurrentSessionId = function () { return currentSessionId; };', sandbox);
+      const mem6 = sandbox.window.getGraphState();
+      const states6 = { sess_branch_wf: mem6, sess_other_wf: { customNodes: [], connections: [] } };
+      const prevGet6 = sandbox.window.getGraphState, prevSave6 = sandbox.window.saveGraphState;
+      const prevSid6 = sandbox.window.getCurrentSessionId;
+      const prevExec6 = sandbox._executeParallelWorkflow, prevExtract6 = sandbox._extractKnowledgeFromWorkflow;
+      const prevPush6 = sandbox._pushGraphUndo, prevDone6 = sandbox._graphHistoryLiveEventDone;
+      const prevPanel6 = sandbox._refreshGraphHistoryPanel;
+      const prevModel6 = sandbox.getActiveModelForRole, prevProxy6 = sandbox.proxyChatWithModel;
+      const prevToast6 = sandbox.showToast;
+      sandbox.window.getGraphState = sid => states6[sid] || null;
+      sandbox.window.saveGraphState = (sid, st) => { states6[sid] = st; };
+      sandbox.window.getCurrentSessionId = () => vm.runInContext('currentSessionId', sandbox);
+      sandbox._executeParallelWorkflow = async () => {};
+      sandbox._extractKnowledgeFromWorkflow = async () => {};
+      sandbox._graphHistoryLiveEventDone = () => {};
+      sandbox._refreshGraphHistoryPanel = () => {};
+      sandbox.showToast = () => {};
+      sandbox.getActiveModelForRole = () => ({ provider: 'mock', model: 'mock-model', apiKey: 'k' });
+      let releaseClassify6 = null;
+      const gate6 = new Promise(res => { releaseClassify6 = res; });
+      sandbox.proxyChatWithModel = async () => { await gate6; return { json: async () => ({ choices: [{ message: { content: '{"route":"direct"}' } }] }) }; };
+      const realPush6 = sandbox._pushGraphUndo;
+      if (typeof realPush6 !== 'function') throw new Error('拿不到真 _pushGraphUndo（前域没还原？）');
+      const pushLog6 = [];
+      sandbox._pushGraphUndo = (wm, meta) => {
+        pushLog6.push({
+          sidAtPush: vm.runInContext('currentSessionId', sandbox),
+          summary: (meta && meta.summary) || '',
+        });
+        realPush6(wm, meta); // 真跑：信封按推送时刻的会话落 localStorage
+      };
+      const histKey6a = 'phymathia_graph_history_sess_branch_wf';
+      const histKey6b = 'phymathia_graph_history_sess_other_wf';
+      try {
+        // 历史层复位（同 graph-history-diff 域 reset 的形状）：前面 T361/T362 用例的
+        // 真实删除链给本 sid 留过真账本——不复位的话，段⑥的真推送会撞上「内容投影
+        // 没变不记」契约被静默去重，信封永远落不下来，用例失真。
+        vm.runInContext('graphHistorySession = "sess_branch_wf"; graphUndoStack = []; graphHistoryCursor = 0;'
+          + ' graphHistoryLive = null; _graphPendingLiveMetaSet("sess_branch_wf", null); graphPendingLiveMetaBySid = Object.create(null);'
+          + ' graphHistorySavedAt = 0; graphHistoryPendingTruncate = false; graphHistoryLiveDirty = true;'
+          + ' graphHistoryLiveMetaCache = null; graphHistoryDropped = 0;'
+          + ' graphHistoryLastEffect = { op: "", touch: "", at: 0 }; graphHistoryLastSignature = "";', sandbox);
+        sandbox.localStorage.removeItem(histKey6a);
+        sandbox.localStorage.removeItem(histKey6b);
+        const run6 = sandbox.startQuestionWorkflow('判断期间切走画布T432', { sourceNodeId: 'lm1', sourcePort: 'out-0', followupRoute: 'auto' });
+        await Promise.resolve();
+        await Promise.resolve();
+        if (pushLog6.length !== 1) throw new Error('提问历史点没在判断窗口开始前推送（条数 ' + pushLog6.length + '）');
+        if (pushLog6[0].sidAtPush !== 'sess_branch_wf') throw new Error('推送时视图已不在发起画布：' + pushLog6[0].sidAtPush);
+        if (pushLog6[0].summary.indexOf('提问：') !== 0) throw new Error('历史点摘要不是提问：' + pushLog6[0].summary);
+        // 判断窗口里切画布，再放行分类
+        vm.runInContext('currentSessionId = "sess_other_wf"; SESSION_ID = "rsess_other_wf";', sandbox);
+        releaseClassify6();
+        await run6;
+        const env6 = JSON.parse(storageData[histKey6a] || 'null');
+        if (!env6 || !Array.isArray(env6.e) || !env6.e.length) throw new Error('发起画布账本没有收到提问历史点');
+        if (env6.e[env6.e.length - 1].sessionId !== 'sess_branch_wf') {
+          throw new Error('历史点 sessionId 不是发起画布：' + env6.e[env6.e.length - 1].sessionId);
+        }
+        if (storageData[histKey6b] != null) throw new Error('切换后的画布账本不该有任何写入');
+        const pendKeys6 = vm.runInContext('Object.keys(graphPendingLiveMetaBySid).join(",")', sandbox);
+        if (pendKeys6 !== 'sess_branch_wf') throw new Error('挂起元数据分账不对：' + pendKeys6);
+        const homeUsers6 = (states6.sess_branch_wf.customNodes || []).filter(n => n.kind === 'user');
+        if (!homeUsers6.length) throw new Error('问题节点没建在发起画布（18c0181 口径回退？）');
+      } finally {
+        restoreWindowStub('getGraphState', prevGet6);
+        restoreWindowStub('saveGraphState', prevSave6);
+        restoreWindowStub('getCurrentSessionId', prevSid6);
+        sandbox._executeParallelWorkflow = prevExec6;
+        sandbox._extractKnowledgeFromWorkflow = prevExtract6;
+        sandbox._pushGraphUndo = prevPush6;
+        sandbox._graphHistoryLiveEventDone = prevDone6;
+        sandbox._refreshGraphHistoryPanel = prevPanel6;
+        sandbox.getActiveModelForRole = prevModel6;
+        sandbox.proxyChatWithModel = prevProxy6;
+        sandbox.showToast = prevToast6;
+        vm.runInContext('delete globalThis.getCurrentSessionId;', sandbox);
+        sandbox.localStorage.removeItem('phymathia_current_session');
+        sandbox.localStorage.removeItem(histKey6a);
+        sandbox.localStorage.removeItem(histKey6b);
+      }
+
+      // ===== ⑦ T433（2026-11-05）：判断伞期间停止按钮亮、进度文案占满窗口；点停止＝
+      // 取消判断（请求真被掐断）、回落默认「拆分分析」继续，不是中止整次提问。
+      _seed();
+      sandbox.localStorage.setItem('phymathia_current_session', 'sess_branch_wf');
+      vm.runInContext('currentSessionId = "sess_branch_wf"; SESSION_ID = "rsess_branch_wf";'
+        + ' sessions = { sess_branch_wf: { title: "", updatedAt: 1 } };'
+        + ' chatHistory = []; workflowRunActive = false; workflowLastAborted = false;'
+        + ' graphPendingLiveMetaBySid = Object.create(null);'
+        + ' globalThis.getCurrentSessionId = function () { return currentSessionId; };', sandbox);
+      const mem7 = sandbox.window.getGraphState();
+      const states7 = { sess_branch_wf: mem7 };
+      const prevGet7 = sandbox.window.getGraphState, prevSave7 = sandbox.window.saveGraphState;
+      const prevSid7 = sandbox.window.getCurrentSessionId;
+      const prevExec7 = sandbox._executeParallelWorkflow, prevExtract7 = sandbox._extractKnowledgeFromWorkflow;
+      const prevGen7 = sandbox._generateAnalysis;
+      const prevPush7 = sandbox._pushGraphUndo, prevDone7 = sandbox._graphHistoryLiveEventDone;
+      const prevModel7 = sandbox.getActiveModelForRole, prevProxy7 = sandbox.proxyChatWithModel;
+      const prevToast7 = sandbox.showToast;
+      const prevAbort7 = sandbox.AbortController;
+      const prevGetEl7 = sandbox.document.getElementById;
+      // 沙箱 AbortController 是哑桩（signal 空对象、abort 无操作）——本用例换成带
+      // aborted/addEventListener 语义的最小真实现，否则取消链接不动、用例失真
+      sandbox.AbortController = class {
+        constructor() {
+          this.signal = {
+            aborted: false, _ls: [],
+            addEventListener(_t, f) { this._ls.push(f); },
+            removeEventListener(_t, f) { this._ls = this._ls.filter(x => x !== f); },
+          };
+        }
+        abort() {
+          if (this.signal.aborted) return;
+          this.signal.aborted = true;
+          this.signal._ls.slice().forEach(f => { try { f(); } catch (e) { /* 监听器异常不阻断 */ } });
+        }
+      };
+      // document.getElementById 是 loose 代理：每次调用返回全新对象，置过 disabled 读
+      // 不回来——换共享表桩，按钮状态才可断言
+      const els7 = {};
+      sandbox.document.getElementById = (id) => (els7[id] || (els7[id] = { disabled: undefined, title: '', hidden: false }));
+      sandbox.window.getGraphState = sid => states7[sid] || null;
+      sandbox.window.saveGraphState = (sid, st) => { states7[sid] = st; };
+      sandbox.window.getCurrentSessionId = () => vm.runInContext('currentSessionId', sandbox);
+      const calls7 = { analysis: 0, exec: 0, extract: 0 };
+      sandbox._executeParallelWorkflow = async () => { calls7.exec += 1; };
+      sandbox._generateAnalysis = async () => { calls7.analysis += 1; };
+      sandbox._extractKnowledgeFromWorkflow = async () => { calls7.extract += 1; };
+      sandbox._graphHistoryLiveEventDone = () => {};
+      sandbox._pushGraphUndo = () => {};
+      sandbox.getActiveModelForRole = () => ({ provider: 'mock', model: 'mock-model', apiKey: 'k' });
+      const toasts7 = [];
+      sandbox.showToast = (msg, duration) => { toasts7.push({ msg: String(msg), duration: duration }); };
+      let releaseClassify7 = null;
+      const gate7 = new Promise(res => { releaseClassify7 = res; });
+      let signal7 = null;
+      // 仿真 fetch：abort 即 reject（真 AbortError 路径），放行且未被掐断才交 direct 结论
+      sandbox.proxyChatWithModel = (model, payload, signal) => new Promise((resolve, reject) => {
+        signal7 = signal;
+        const onAbort7 = () => reject(new Error('AbortError'));
+        if (signal && signal.aborted) { onAbort7(); return; }
+        signal.addEventListener('abort', onAbort7);
+        gate7.then(() => {
+          signal.removeEventListener('abort', onAbort7);
+          resolve({ json: async () => ({ choices: [{ message: { content: '{"route":"direct"}' } }] }) });
+        }, () => {});
+      });
+      try {
+        const run7 = sandbox.startQuestionWorkflow('判断期间要能取消', { sourceNodeId: 'lm1', sourcePort: 'out-0', followupRoute: 'auto' });
+        await Promise.resolve();
+        await Promise.resolve();
+        if (vm.runInContext('document.getElementById("stopBtn").disabled', sandbox) !== false) {
+          throw new Error('判断伞期间顶部停止按钮没有亮');
+        }
+        if (vm.runInContext('document.getElementById("statusStopBtn").disabled', sandbox) !== false) {
+          throw new Error('判断伞期间迷你停止按钮没有亮');
+        }
+        if (!vm.runInContext('followupClassifyController', sandbox)) throw new Error('判断取消口没有挂上');
+        const progressToast7 = toasts7.find(t => t.msg.indexOf('正在判断') >= 0);
+        if (!progressToast7) throw new Error('判断窗口没有进度文案：' + JSON.stringify(toasts7));
+        if (!(progressToast7.duration >= 14000)) throw new Error('进度文案没有占满判断窗口：' + progressToast7.duration);
+        // 点停止（stopWorkflowRun 是顶部/迷你两条停止按钮的共同执行链）＝取消判断
+        vm.runInContext('stopWorkflowRun()', sandbox);
+        if (!signal7 || !signal7.aborted) throw new Error('停止没有掐断判断请求');
+        releaseClassify7();
+        await run7;
+        if (calls7.analysis !== 1) throw new Error('取消判断后应回落问题分析（跑了 ' + calls7.analysis + ' 次）');
+        if (calls7.exec !== 0) throw new Error('回落分析不应直接执行 direct 工作流');
+        if (vm.runInContext('workflowRunActive', sandbox) !== false) throw new Error('取消后忙碌伞没归零');
+        if (vm.runInContext('followupClassifyController', sandbox) !== null) throw new Error('取消口用完没归零');
+        if (!toasts7.some(t => t.msg.indexOf('已取消判断') >= 0)) {
+          throw new Error('取消后没有说明去向：' + JSON.stringify(toasts7));
+        }
+        if (toasts7.some(t => t.msg.indexOf('自动判断：') === 0)) {
+          throw new Error('取消路径不该再报「自动判断：…」结论');
+        }
+      } finally {
+        restoreWindowStub('getGraphState', prevGet7);
+        restoreWindowStub('saveGraphState', prevSave7);
+        restoreWindowStub('getCurrentSessionId', prevSid7);
+        sandbox._executeParallelWorkflow = prevExec7;
+        sandbox._extractKnowledgeFromWorkflow = prevExtract7;
+        sandbox._generateAnalysis = prevGen7;
+        sandbox._pushGraphUndo = prevPush7;
+        sandbox._graphHistoryLiveEventDone = prevDone7;
+        sandbox.getActiveModelForRole = prevModel7;
+        sandbox.proxyChatWithModel = prevProxy7;
+        sandbox.showToast = prevToast7;
+        sandbox.AbortController = prevAbort7;
+        sandbox.document.getElementById = prevGetEl7;
         vm.runInContext('delete globalThis.getCurrentSessionId;', sandbox);
         sandbox.localStorage.removeItem('phymathia_current_session');
       }

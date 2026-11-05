@@ -310,7 +310,19 @@ let _graphHistoryWipeEpoch = 0;
 let graphHistoryPanel = null;
 let graphHistoryPreviewing = -1;
 let graphHistoryDiffSummary = "";
-let graphPendingLiveMeta = null;
+// 挂起元数据（「上一个动作（提问/重生成/Φ）」的描述）按会话分账（T432，2026-11-05）：
+// 过去是全局单槽——判断窗口/长生成里切画布，新画布的「当前状态」行会把别的画布的
+// 提问摘要挂在自己头上，下一笔编辑还会把它当 carried 消费掉（来源误标 ai）。
+// 键＝graphHistorySession（内存账本所属会话）；读写一律走下面两个助手，别裸摸 map。
+let graphPendingLiveMetaBySid = Object.create(null);
+function _graphPendingLiveMetaOf(sid) {
+  return (sid && graphPendingLiveMetaBySid[sid]) || null;
+}
+function _graphPendingLiveMetaSet(sid, value) {
+  if (!sid) return;
+  if (value == null) delete graphPendingLiveMetaBySid[sid];
+  else graphPendingLiveMetaBySid[sid] = value;
+}
 let graphHistoryTimer = null;
 let graphHistoryLastSignature = "";
 // ===== 2026-10-24 修改历史增强（R1–R9）＋同日简化批次 =====

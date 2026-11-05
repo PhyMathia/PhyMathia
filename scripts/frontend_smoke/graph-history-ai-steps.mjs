@@ -74,7 +74,7 @@ export async function run() {
     runCtx('graphCanvas = null; graphInner = null; graphHistoryPanel = null;'
       + 'graphHistorySession = ' + JSON.stringify(SID) + '; graphUndoStack = [];'
       + ' graphHistoryCursor = 0; graphHistoryLive = null;'
-      + ' graphPendingLiveMeta = null; graphHistoryPendingTruncate = false;'
+      + ' _graphPendingLiveMetaSet(graphHistorySession, null); graphHistoryPendingTruncate = false;'
       + ' graphHistoryPreviewing = -1; graphHistoryDiffModel = null; graphHistoryLiveDirty = true;'
       + ' graphHistoryLiveMetaCache = null; graphHistorySavedAt = 0;');
     delete storageData[HIST_KEY];
@@ -90,7 +90,7 @@ export async function run() {
       reset();
       pushState([_note('n1')]);                       // 第一次编辑前的空状态
       runCtx('_pushGraphUndo(false, { source: "ai", summary: "提问：为什么会这样" });');
-      const pending = JSON.parse(runCtx('JSON.stringify(graphPendingLiveMeta)'));
+      const pending = JSON.parse(runCtx('JSON.stringify(_graphPendingLiveMetaOf(graphHistorySession))'));
       if (!pending || pending.source !== 'ai' || !/^提问：/.test(pending.summary)) {
         throw new Error('提问事件没挂到当前行：' + JSON.stringify(pending));
       }
@@ -98,7 +98,7 @@ export async function run() {
       // 提问跑完（问题＋回答＋模块落进图）→ 事件收尾补计数
       mem = _state([_note('n1'), _note('q1'), _note('a1'), _note('m1')]);
       runCtx('_graphHistoryLiveEventDone();');
-      const live = JSON.parse(runCtx('JSON.stringify(graphPendingLiveMeta)'));
+      const live = JSON.parse(runCtx('JSON.stringify(_graphPendingLiveMetaOf(graphHistorySession))'));
       if (!live || !live.counts || live.counts.vanish !== 3) throw new Error('事件收尾没给当前行补计数：' + JSON.stringify(live));
       // 下一次推送把提问结果记成条目：AI 来源 + 差异摘要 + 计数 + 投影
       runCtx('_pushGraphUndo();');

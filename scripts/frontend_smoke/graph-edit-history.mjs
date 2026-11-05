@@ -161,7 +161,7 @@ export async function run() {
       { role: 'assistant', content: '<viz>\n## 交互探索\n\n```html\n' + FULL_HTML + '\n```\n</viz>', timestamp: 2 },
     ];
     const _histBackup = () => ({
-      h: JSON.parse(runCtx('JSON.stringify({ s: graphHistorySession, u: graphUndoStack, c: graphHistoryCursor, l: graphHistoryLive, m: graphPendingLiveMeta })')),
+      h: JSON.parse(runCtx('JSON.stringify({ s: graphHistorySession, u: graphUndoStack, c: graphHistoryCursor, l: graphHistoryLive, m: _graphPendingLiveMetaOf(graphHistorySession) })')),
       chat: JSON.parse(JSON.stringify(sandbox.__fx.chat())),
     });
     const _histRestore = (b, rawKey) => {
@@ -169,13 +169,13 @@ export async function run() {
         + 'graphUndoStack = ' + JSON.stringify(b.h.u) + ';'
         + 'graphHistoryCursor = ' + JSON.stringify(b.h.c) + ';'
         + 'graphHistoryLive = ' + JSON.stringify(b.h.l === undefined ? null : b.h.l) + ';'
-        + 'graphPendingLiveMeta = ' + JSON.stringify(b.h.m) + ';'
+        + '_graphPendingLiveMetaSet(graphHistorySession, ' + JSON.stringify(b.h.m) + ');'
         + '_graphHistoryMirrorPending = null;', sandbox);
       sandbox.window.replaceChatHistory(b.chat);   // chatHistory 也得还回去：撤销链用例按它断言
       if (rawKey === undefined) delete storageData[histKey]; else storageData[histKey] = rawKey;
     };
     const _histStart = () => {  // 每例从确定状态起步：空栈＋确定性消息＋无本地存档
-      runCtx('graphHistorySession = "sess_edit_history"; graphUndoStack = []; graphHistoryCursor = 0; graphHistoryLive = null; graphPendingLiveMeta = null;');
+      runCtx('graphHistorySession = "sess_edit_history"; graphUndoStack = []; graphHistoryCursor = 0; graphHistoryLive = null; _graphPendingLiveMetaSet(graphHistorySession, null);');
       delete storageData[histKey];
       sandbox.window.replaceChatHistory(_baseMsgs());
     };

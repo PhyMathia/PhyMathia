@@ -48,7 +48,7 @@ export async function run() {
     mem = { customNodes: [], marker: '' };
     chatHistory = [];
     runCtx('graphHistorySession = ' + JSON.stringify(SID) + '; graphUndoStack = [];'
-      + ' graphHistoryCursor = 0; graphHistoryLive = null; graphPendingLiveMeta = null;');
+      + ' graphHistoryCursor = 0; graphHistoryLive = null; _graphPendingLiveMetaSet(graphHistorySession, null);');
     delete storageData[HIST_KEY];
   };
   const edit = (nodes) => { mem.customNodes = nodes; };
