@@ -1,0 +1,40 @@
+{
+  "generated_at": "2026-11-08T14:03:12.819Z",
+  "label": "good-a",
+  "score": {
+    "passed": 30,
+    "total": 30
+  },
+  "pass_map": {
+    "gg-001": true,
+    "gg-002": true,
+    "gg-003": true,
+    "gg-004": true,
+    "gg-005": true,
+    "gg-006": true,
+    "gg-007": true,
+    "gg-008": true,
+    "gg-009": true,
+    "gg-010": true,
+    "gg-011": true,
+    "gg-012": true,
+    "gg-013": true,
+    "gg-014": true,
+    "gg-015": true,
+    "gg-016": true,
+    "gg-017": true,
+    "gg-018": true,
+    "gg-019": true,
+    "gg-020": true,
+    "gg-021": true,
+    "gg-022": true,
+    "gg-023": true,
+    "gg-024": true,
+    "gg-025": true,
+    "gg-026": true,
+    "gg-027": true,
+    "gg-028": true,
+    "gg-029": true,
+    "gg-030": true
+  }
+}
