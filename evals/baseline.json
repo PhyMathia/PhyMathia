@@ -3,7 +3,7 @@
  "meta": {
   "time": "20261105-204203",
   "adapter": "server",
-  "questions_file": "/media/sample/3T硬盘/PhyMathia1.4.1/PhyMathia/evals/questions",
+  "questions_file": "evals/questions",
   "total": 200,
   "adapter_desc": "server（真机工作流 direct 通道；模型 --model 指定：deepseek/deepseek-flash；难度档 university）",
   "model": {
