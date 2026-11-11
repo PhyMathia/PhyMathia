@@ -123,6 +123,9 @@ const entries = [
   'quiz-ui.js',
   'quiz-render.js',
   'quiz-relearn.js',
+  // 统一设置面板（2026-11-11）：只做分组导航与轻量控件，全部写入都调用前面各文件的
+  // 顶层函数或 config.js 的存储键；加载期仅挂 document 监听与 window 导出，故排最后。
+  'settings.js',
 ];
 
 // ===== 漏注册守卫（T215）：entries 是手工维护的有序名单，js/ 新增源文件忘登记时
