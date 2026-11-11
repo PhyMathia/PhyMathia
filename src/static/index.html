@@ -36,7 +36,7 @@
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
   <link rel="stylesheet" href="/dist/styles.min.css?v=64da8359">
-  <link rel="stylesheet" href="/dist/styles-panels.min.css?v=c281c0a5">
+  <link rel="stylesheet" href="/dist/styles-panels.min.css?v=836f5d0b">
   <link rel="stylesheet" href="/dist/graph-override.min.css?v=8712d28d">
   <link rel="stylesheet" href="/dist/phi-pet.min.css?v=259b0ac7">
   <script defer src="/vendor/katex/katex.min.js"></script>
@@ -877,7 +877,8 @@
   <!-- 统一设置面板（2026-11-11）：右侧抽屉＋左栏分组导航；
        内容由 settings.js 渲染，复杂表单仍由原有面板承载。 -->
   <div class="settings-overlay" id="settingsOverlay" role="dialog" aria-modal="false" aria-label="设置">
-    <div class="settings-drawer">
+    <!-- 底色/磨砂/极光归 .aurora-glass--panel（全高 chrome 档），组件规则禁写 background 简写 -->
+    <div class="settings-drawer aurora-glass aurora-glass--panel">
       <div class="settings-drawer-head">
         <span class="settings-drawer-title">设置</span>
         <button type="button" class="settings-drawer-close" onclick="closeSettingsDrawer()" title="关闭设置" aria-label="关闭设置">✕</button>

@@ -6582,10 +6582,15 @@ html[data-theme="light"][data-panel-skin="candy"] .thinking-slider {
 /* ====== 统一设置面板（2026-11-11，收编式）======
    右侧抽屉 + 左栏分组导航，视觉沿用截图的信息层级（分组小标题／线性图标／选中高亮／
    底部关于）。所有控件走现有 CSS 变量，深浅两主题自动跟随；只读查阅态只禁内容区，
-   导航仍可点（能看不能改）。z-index 9000 高于仓内现有弹层（最高 201）。 */
+   导航仍可点（能看不能改）。z-index 9000 高于仓内现有弹层（最高 201）。
+   抽屉底色/磨砂/极光归 index.html 挂的 .aurora-glass--panel（全高 chrome 档，tint .70 /
+   blur 14px）——这里禁写 background：初版写的 `var(--surface-container)` 实为 --surface-1
+   （6% 白的次级薄层色），整块面板近乎全透（2026-11-11 用户实拍）；且本表在
+   styles-panels.min.css（后加载），background 简写会把 .aurora-glass 的极光
+   background-image 一并重置。 */
 .settings-overlay { position: fixed; inset: 0; z-index: 9000; background: rgba(0, 0, 0, .45); opacity: 0; pointer-events: none; transition: opacity .18s ease; }
 .settings-overlay.show { opacity: 1; pointer-events: auto; }
-.settings-drawer { position: absolute; top: 0; right: 0; height: 100%; width: min(720px, 94vw); display: flex; flex-direction: column; background: var(--surface-container); border-left: 1px solid var(--border); color: var(--text-primary); transform: translateX(102%); transition: transform .22s ease; }
+.settings-drawer { position: absolute; top: 0; right: 0; height: 100%; width: min(720px, 94vw); display: flex; flex-direction: column; border-left: 1px solid var(--border); color: var(--text-primary); transform: translateX(102%); transition: transform .22s ease; }
 .settings-overlay.show .settings-drawer { transform: none; }
 .settings-drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 15px 20px; border-bottom: 1px solid var(--border); flex: none; }
 .settings-drawer-title { font-size: var(--fs-xl); font-weight: 500; }
