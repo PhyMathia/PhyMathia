@@ -32,6 +32,8 @@ python3 evals/run_eval.py --adapter server \                     # ③手动直�
 
 真机口径与验收记录见手册「接入真机」节；题库结构、verify 红线与抽查方法见「题库 v1」节（docs/dev/eval-harness.md）。
 
+> `baseline.json` 是入库的基线快照，其中 `apiKey` 与本机绝对路径已脱敏。复现真机评测时请用 `--api-key` 或服务端模型配置传入自己的密钥，**不要把真实密钥写回该文件**。
+
 ## 题目 schema（每行一个 JSON）
 
 | 字段 | 说明 |
