@@ -332,15 +332,15 @@ check('T95 401 醒目提示：通用文案（含密钥/模型配置）＋结果�
   return true;
 });
 
-check('T97 深度思考档位：四档循环回自动＋菜单行/Payload/存储键接线', () => {
+check('T97 深度思考档位：五档循环回自动＋菜单行/Payload/存储键接线', () => {
   if (typeof sandbox._cycleHarnessThinking !== 'function' || typeof sandbox._harnessThinkingLevel !== 'function') {
     throw new Error('档位函数未暴露');
   }
   sandbox.localStorage.removeItem('phymathia_harness_thinking');
   if (sandbox._harnessThinkingLevel() !== '') throw new Error('默认档位应为自动（空值）');
   const seen = [];
-  for (let i = 0; i < 4; i++) seen.push(sandbox._cycleHarnessThinking());
-  if (seen.join(',') !== 'low,high,max,') throw new Error('四档循环不对：' + seen.join(','));
+  for (let i = 0; i < 5; i++) seen.push(sandbox._cycleHarnessThinking());
+  if (seen.join(',') !== 'low,medium,high,max,') throw new Error('五档循环不对：' + seen.join(','));
   if (sandbox._harnessThinkingLevel() !== '') throw new Error('循环一圈应回自动');
   const hSrc = fs.readFileSync('src/static/js/harness.js', 'utf8');
   if (!hSrc.includes('graphHarnessThinkingBtn')) throw new Error('模式菜单缺深度思考行');

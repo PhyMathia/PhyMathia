@@ -563,4 +563,36 @@ check('模型向导：样式契约', () => {
   }
   return true;
 });
+
+// ===== 模型启用/停用开关（2026-11-11 三轮；设置抽屉模型行右侧，用户截图红箭头）=====
+check('model-switch：停用写同一份配置 + 清槽位引用 + 重新启用', () => {
+  const keys = ['phymathia_user_models', 'phymathia_model_group_keys', 'phymathia_active_models'];
+  for (const k of keys) sandbox.localStorage.removeItem(k);
+  sandbox.loadUserModels();
+  sandbox.reloadModelsFromStorage();
+  const preset = sandbox.window.MODEL_PRESETS.deepseek;
+  const entries = preset.models.slice(0, 2).map(m => ({ model: m.id, label: m.label }));
+  sandbox.addModelsForProvider('deepseek', '', preset.baseUrl, entries);
+  const rows = sandbox.getAllModels().filter(m => m.provider === 'deepseek');
+  if (rows.length !== 2) throw new Error('准备数据失败');
+  if (!rows.every(m => m.enabled === true)) throw new Error('旧配置无 enabled 字段应默认启用');
+  const id = rows[0].id;
+  sandbox.localStorage.setItem('phymathia_active_models', JSON.stringify({ agent_model: id }));
+  sandbox.reloadModelsFromStorage();
+  if (sandbox.setModelEnabled(id, false) !== true) throw new Error('停用应返回 true');
+  const off = sandbox.getAllModels().find(m => m.id === id);
+  if (!off || off.enabled !== false) throw new Error('停用未写进同一份配置');
+  const stored = JSON.parse(sandbox.localStorage.getItem('phymathia_user_models') || '[]');
+  if (stored.find(m => m.id === id)?.enabled !== false) throw new Error('本地镜像未带 enabled（服务端整包同步会丢字段）');
+  const active = JSON.parse(sandbox.localStorage.getItem('phymathia_active_models') || '{}');
+  if (active.agent_model) throw new Error('停用未清掉指向它的槽位引用');
+  if (sandbox.getAllModels().find(m => m.id === rows[1].id).enabled !== true) throw new Error('停用不得影响同组其它模型');
+  if (sandbox.setModelEnabled(id, true) !== true) throw new Error('重新启用应返回 true');
+  if (sandbox.getAllModels().find(m => m.id === id).enabled !== true) throw new Error('重新启用未生效');
+  if (sandbox.setModelEnabled('no-such-id', false) !== false) throw new Error('不存在的 id 应返回 false');
+  for (const k of keys) sandbox.localStorage.removeItem(k);
+  sandbox.loadUserModels();
+  sandbox.reloadModelsFromStorage();
+  return true;
+});
 }

@@ -6649,3 +6649,140 @@ html[data-theme="light"][data-panel-skin="candy"] .thinking-slider {
   .settings-theme-card { width: 76px; }
 }
 
+/* ====== 设置抽屉「模型设置」页（2026-11-11 用户截图：左供应商 / 右详情）======
+   布局与信息层级模仿截图；内容全部来自 models.js 同一份配置、编辑走原弹窗，
+   故不实现截图里的配额／升级（项目无该数据源）。底色沿用玻璃抽屉上的次级薄层，
+   深浅主题与风格家族靠 CSS 变量自动跟随；圆角／字号只用 --r-* / --fs-* 令牌。 */
+.settings-content.is-model-page { padding: 18px 18px 28px; }
+.settings-model-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+.settings-model-top h3 { font-size: var(--fs-xl); font-weight: 500; margin: 0 0 6px; }
+.settings-model-top p { font-size: var(--fs-md); color: var(--text-secondary); margin: 0; line-height: 1.6; }
+.settings-model-primary { flex: none; padding: 8px 13px; border: 1px solid var(--border); border-radius: var(--r-md); background: color-mix(in srgb, var(--text-primary) 10%, transparent); color: var(--text-primary); font-size: var(--fs-md); font-family: inherit; cursor: pointer; white-space: nowrap; }
+.settings-model-primary:hover { border-color: var(--accent); }
+.settings-model-board { display: grid; grid-template-columns: 176px minmax(0, 1fr); gap: 14px; min-height: 320px; padding: 14px; border: 1px solid var(--border); border-radius: var(--r-lg); background: color-mix(in srgb, var(--text-primary) 4%, transparent); }
+.settings-model-side { min-width: 0; padding-right: 12px; border-right: 1px solid var(--border); overflow-y: auto; }
+.settings-model-group-label { font-size: var(--fs-xs); color: var(--text-secondary); padding: 8px 8px 6px; letter-spacing: .4px; }
+.settings-model-vendor { display: flex; align-items: center; gap: 7px; width: 100%; padding: 8px; border: 1px solid transparent; border-radius: var(--r-md); background: transparent; color: var(--text-secondary); font-size: var(--fs-sm); font-family: inherit; text-align: left; cursor: pointer; }
+.settings-model-vendor:hover { color: var(--text-primary); background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.settings-model-vendor.active { color: var(--text-primary); background: color-mix(in srgb, var(--text-primary) 11%, transparent); border-color: var(--border); }
+.settings-model-vendor-icon { display: inline-flex; flex: none; }
+.settings-model-vendor-icon svg { width: 14px; height: 14px; }
+.settings-model-vendor-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-model-vendor-count { flex: none; font-size: var(--fs-xs); color: var(--text-secondary); }
+.settings-model-dot { flex: none; width: 7px; height: 7px; border-radius: var(--r-pill); background: var(--warn); }
+.settings-model-dot.ok { background: var(--success); }
+.settings-model-detail { min-width: 0; }
+.settings-model-card { padding: 13px 14px; border: 1px solid var(--border); border-radius: var(--r-md); background: color-mix(in srgb, var(--text-primary) 5%, transparent); }
+.settings-model-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.settings-model-card-title { font-size: var(--fs-lg); font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-model-count { margin-left: 8px; font-size: var(--fs-xs); font-weight: 400; color: var(--text-secondary); }
+.settings-model-card-ops { display: flex; flex: none; gap: 6px; }
+.settings-model-mini { padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--r-sm); background: transparent; color: var(--text-secondary); font-size: var(--fs-xs); font-family: inherit; cursor: pointer; white-space: nowrap; }
+.settings-model-mini:hover { color: var(--text-primary); border-color: var(--accent); }
+.settings-model-card-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.settings-model-badge { padding: 3px 8px; border: 1px solid var(--border); border-radius: var(--r-pill); font-size: var(--fs-xs); color: var(--text-secondary); }
+.settings-model-badge.ok { color: var(--success); border-color: color-mix(in srgb, var(--success) 45%, transparent); }
+.settings-model-badge.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.settings-model-baseurl { font-size: var(--fs-xs); color: var(--text-secondary); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-model-subhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 18px 0 8px; font-size: var(--fs-sm); color: var(--text-secondary); }
+.settings-model-rows { display: flex; flex-direction: column; gap: 7px; }
+.settings-model-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--r-md); background: color-mix(in srgb, var(--text-primary) 4%, transparent); }
+.settings-model-row-main { min-width: 0; display: flex; flex-direction: column; }
+.settings-model-row-name { font-size: var(--fs-md); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-model-row-sub { font-size: var(--fs-xs); color: var(--text-secondary); margin-top: 2px; }
+.settings-model-row-ops { display: flex; flex: none; gap: 4px; }
+.settings-model-icon-btn { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: var(--r-sm); background: transparent; color: var(--text-secondary); cursor: pointer; }
+.settings-model-icon-btn:hover { color: var(--text-primary); border-color: var(--accent); }
+.settings-model-icon-btn svg { width: 14px; height: 14px; }
+/* 模型行启用/停用开关：复用设置抽屉同一套轨道/滑块，只把 checked 状态作用域收到行内 */
+.settings-model-row.is-off .settings-model-row-name { color: var(--text-secondary); }
+.settings-model-switch { position: relative; display: inline-flex; flex: none; margin-left: 4px; cursor: pointer; }
+.settings-model-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.settings-model-switch input:checked + .settings-switch-track { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 28%, transparent); }
+.settings-model-switch input:checked + .settings-switch-track .settings-switch-knob { transform: translateX(15px); background: var(--accent); }
+.settings-model-switch input:disabled + .settings-switch-track { opacity: .45; cursor: not-allowed; }
+.settings-model-switch input:focus-visible + .settings-switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+.settings-model-empty { padding: 24px 16px; border: 1px solid var(--border); border-radius: var(--r-lg); color: var(--text-secondary); font-size: var(--fs-md); line-height: 1.7; text-align: center; }
+/* 只读查阅态：左栏只切选中项、不写入，仍允许点 */
+.settings-overlay.is-readonly .settings-model-side { pointer-events: auto; }
+@media (max-width: 640px) {
+  .settings-content.is-model-page { padding: 14px 12px 24px; }
+  .settings-model-board { grid-template-columns: 1fr; }
+  .settings-model-side { border-right: 0; border-bottom: 1px solid var(--border); padding: 0 0 10px; max-height: 150px; }
+}
+
+/* ====== 设置抽屉「复杂表单内嵌」（2026-11-11 四轮）======
+   数据／记忆／账号／回收站四页把原面板的同一个节点临时挂进 #settingsContent
+   （settings.js 的 _settingsMountEmbedded / _settingsRestoreEmbedded）。本节只负责
+   卸掉它们的浮层外观：定位、遮罩、玻璃磨砂、尺寸上限、内部滚动全归内容流，
+   由 .settings-content 统一滚动。节点归位后 .settings-embedded 被摘掉，原样式
+   自动恢复——顶栏按钮与侧栏磁贴一个没改，抽屉关掉后旧面板照常弹出。
+   .aurora-glass 的极光靠伪元素画，光把 background 置空不够，伪元素也要关。
+   这里刻意不写 pointer-events / opacity：只读查阅态靠 .settings-content 的
+   pointer-events:none 继承下来把内嵌面板一起禁点，写 auto 会把这道闸门捅穿。 */
+.settings-embed { display: block; }
+.settings-content .settings-embedded {
+  position: static !important;
+  display: block !important;
+  inset: auto !important;
+  top: auto !important; right: auto !important; bottom: auto !important; left: auto !important;
+  transform: none !important;
+  width: 100% !important;
+  min-width: 0 !important; max-width: none !important;
+  height: auto !important; min-height: 0 !important; max-height: none !important;
+  margin: 0 !important; padding: 0 !important;
+  border: 0 !important; border-radius: 0 !important;
+  box-shadow: none !important;
+  background: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  overflow: visible !important;
+  z-index: auto !important;
+}
+.settings-content .settings-embedded::before,
+.settings-content .settings-embedded::after,
+.settings-content .settings-embedded .model-dialog::before,
+.settings-content .settings-embedded .model-dialog::after { display: none !important; }
+.settings-content .settings-embedded .model-dialog {
+  width: 100% !important; min-width: 0 !important; max-width: none !important;
+  padding: 0 !important; border: 0 !important; border-radius: 0 !important;
+  /* 显式让位（background: none）是玻璃语言守卫认可的写法，别加 !important 后缀：
+     continent-core.mjs 的「载体全覆盖」只放行精确的 transparent/none 两个值。
+     本选择器特指度高于 .aurora-glass--dialog，不加 !important 也压得住玻璃底。 */
+  background: none;
+  backdrop-filter: none !important; box-shadow: none !important;
+}
+/* 原面板自带的标题与「关闭」在抽屉里是多余的：页头已有标题、右上角统一关闭 */
+.settings-content .settings-embedded .kp-header,
+.settings-content .settings-embedded .md-actions,
+.settings-content .settings-embedded .model-dialog > h3,
+.settings-content .settings-embedded .model-section-title { display: none !important; }
+/* 内部滚动交给抽屉内容区；记忆面板的 .memory-body 原本是 flex:1 + 自带 padding */
+.settings-content .settings-embedded .memory-body { padding: 0 !important; overflow: visible !important; flex: none !important; }
+.settings-content .settings-embedded .accounts-list { max-height: none !important; overflow: visible !important; }
+.settings-content .settings-embedded .model-section { margin-bottom: 0 !important; }
+/* 从内嵌记忆面板点「清除记忆」弹出的确认框：原 --z-overlay=300，会被抽屉 9000 盖住 */
+body:has(.settings-overlay.show) .memory-dialog-overlay { z-index: calc(var(--z-float) + 1) !important; }
+
+/* ====== 设置抽屉五轮增补（2026-11-11）：深浅图标钮 / 卡片选择 / 关于 GitHub ======
+   深浅模式选择改月／日图标钮（用户「不要文字」，文案退到 title/aria-label）；难度与
+   检测的裸按钮升级成「标题＋说明」整宽卡片补空感；关于页加 GitHub 仓库行（实心章鱼猫
+   标，config.js 的 UI_ICON_SVG.github）。仍只用 --r-* / --fs-* 令牌与状态变量，
+   深浅主题与风格家族自动跟随。 */
+.settings-choice--icon { width: 44px; height: 36px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+.settings-choice--icon svg { width: 18px; height: 18px; }
+.settings-cards { display: flex; flex-direction: column; gap: 8px; }
+.settings-card { display: flex; flex-direction: column; gap: 3px; padding: 11px 13px; border: 1px solid var(--border); border-radius: var(--r-md); background: transparent; color: var(--text-secondary); font-family: inherit; text-align: left; cursor: pointer; }
+.settings-card:hover { border-color: var(--accent); color: var(--text-primary); }
+.settings-card.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--text-primary); }
+.settings-card-label { font-size: var(--fs-md); }
+.settings-card-desc { font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.55; }
+.settings-github-link { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--r-md); color: var(--text-primary); text-decoration: none; }
+.settings-github-link:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.settings-github-icon { display: inline-flex; flex: none; }
+.settings-github-icon svg { width: 22px; height: 22px; }
+.settings-github-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.settings-github-repo { font-size: var(--fs-md); }
+.settings-github-desc { font-size: var(--fs-sm); color: var(--text-secondary); margin-top: 2px; line-height: 1.5; }
+.settings-github-link .settings-action-arrow { flex: none; }
+

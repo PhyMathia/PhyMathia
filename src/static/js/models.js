@@ -686,6 +686,21 @@ function deleteUserModel(id) {
   saveUserModels();
 }
 
+// 单个模型启用/停用（2026-11-11 设置抽屉「模型设置」页每行右侧开关）：条目新增
+// 可选字段 enabled，undefined/true＝启用，false＝停用；旧配置无该字段一律按启用，
+// 不需要迁移。停用＝从所有槽位下拉里隐藏，并清掉指向它的槽位引用——引用不清的话
+// 发送链仍会按 activeModels 拿到它，开关就成了摆设。写出口复用 updateUserModel
+// （本地镜像＋服务端整包同步），不另造第二份状态；后端整包消毒收标量，bool 原样落盘。
+function setModelEnabled(id, enabled) {
+  const cfg = userModelConfigs.find(m => m.id === id);
+  if (!cfg) return false;
+  const on = !!enabled;
+  updateUserModel(id, { enabled: on });
+  if (!on) _clearActiveModelRefs([id]);
+  try { renderModelList(); renderModelSelects(); } catch (e) {}
+  return true;
+}
+
 // 整组删除：清理旧版自动预置的大分组（如 37 个 OpenCode Go 条目）的出口
 function deleteModelGroup(provider) {
   const ids = userModelConfigs.filter(m => m.provider === provider).map(m => m.id);
@@ -714,7 +729,8 @@ function getAllModels() {
   for (const cfg of userModelConfigs) {
     const preset = MODEL_PRESETS[cfg.provider];
     const display = cfg.label || cfg.model;
-    result.push({ id: cfg.id, name: (preset?.name || cfg.provider) + ' · ' + display, desc: preset?.name || cfg.provider, tags: [display], provider: cfg.provider, hasKey: !!(cfg.apiKey || getGroupKey(cfg.provider)) });
+    // enabled 带出给设置抽屉的开关与槽位下拉共用；undefined（旧配置）按启用处理
+    result.push({ id: cfg.id, name: (preset?.name || cfg.provider) + ' · ' + display, desc: preset?.name || cfg.provider, tags: [display], provider: cfg.provider, hasKey: !!(cfg.apiKey || getGroupKey(cfg.provider)), enabled: cfg.enabled !== false });
   }
   return result;
 }
@@ -797,7 +813,9 @@ async function fetchModels() {
 }
 
 function renderModelSelects() {
-  const allModels = getAllModels();
+  // 停用的模型不进聊天模型选择下拉（页头口径「配置后可在聊天时选择使用」）；
+  // 设置抽屉的「模型设置」页仍展示全部条目，好让开关能重新启用。
+  const allModels = getAllModels().filter(m => m.enabled !== false);
   const agentSelect = document.getElementById('agentModelSelect');
   const htmlSelect = document.getElementById('htmlModelSelect');
   const descriptorSelect = document.getElementById('descriptorModelSelect');
@@ -1092,6 +1110,14 @@ window._positionPanelBelowBtn = _positionPanelBelowBtn;
 // level/data 面板 + renderModelSelects）；此处不再重复定义，避免两份实现漂移
 
 function renderModelList() {
+  // 配置变更信号：所有增删改（saveModelConfig / confirmDeleteModel / saveNewModel /
+  // confirmDeleteModelGroup / applyModelListUpdate）最后都会走到这里，统一设置抽屉的
+  // 「模型设置」页据此重画。两者读同一份 userModelConfigs，不复制表单、不会两处不同步。
+  try {
+    if (typeof document !== 'undefined' && document.dispatchEvent && typeof CustomEvent === 'function') {
+      document.dispatchEvent(new CustomEvent('phymathia:models-changed'));
+    }
+  } catch (e) {}
   const container = document.getElementById('modelList');
   if (!container) return;
   if (userModelConfigs.length === 0) {
@@ -1123,7 +1149,7 @@ function renderModelList() {
       return `<div class="model-item">
         <div class="model-item-info">
           <div class="model-item-name">${escapeHtml(m.label || m.model)}</div>
-          <div class="model-item-key">${hasKey ? UI_ICON_SVG.check + ' 密钥已配置' : UI_ICON_SVG.key + ' 密钥可留空（后端环境变量）'}</div>
+          <div class="model-item-key">${hasKey ? UI_ICON_SVG.check + ' 密钥已配置' : UI_ICON_SVG.key + ' 密钥可留空（后端环境变量）'}${m.enabled === false ? ' · 已停用（设置→模型 里可重新启用）' : ''}</div>
         </div>
         <div class="model-item-actions">
           <button class="model-item-btn" onclick="openModelConfig('${jsId}')" title="配置">${UI_ICON_SVG.sliders}</button>

@@ -1218,10 +1218,12 @@ let harnessLastAppliedReport = null;
 
   // ===== T97 深度思考档位 / T95 失败换备用模型开关（2026-09-30）=====
   // 两行都活在模式菜单底部：点击只更新自身文案＋toast（不收菜单），状态落 localStorage。
-  // 档位是 ''/low/high/max 四档循环（显示：自动/浅/深/最深），参数映射同模型条目上的
-  // thinking 字段，由后端按供应商族做；备用模型开关默认关（兜底是用户开关不是默认）。
-  const HARNESS_THINKING_LEVELS = ['', 'low', 'high', 'max'];
-  const HARNESS_THINKING_LABELS = { '': '自动', low: '浅', high: '深', max: '最深' };
+  // 档位 2026-11-11 五轮起是 ''/low/medium/high/max 五档循环（显示：自动/低/中/高/最高）。
+  // medium 后端 effort 族同名直发（llm_common.thinking_request_params），布尔开关族退化＝
+  // 默认档（不发参数）；参数映射同模型条目上的 thinking 字段，由后端按供应商族做。
+  // 备用模型开关默认关（兜底是用户开关不是默认）。
+  const HARNESS_THINKING_LEVELS = ['', 'low', 'medium', 'high', 'max'];
+  const HARNESS_THINKING_LABELS = { '': '自动', low: '低', medium: '中', high: '高', max: '最高' };
 
   function _harnessThinkingLevel() {
     try {
@@ -1237,7 +1239,7 @@ let harnessLastAppliedReport = null;
     return '深度思考：' + (HARNESS_THINKING_LABELS[_harnessThinkingLevel()] || '自动');
   }
 
-  // 自动 → 浅 → 深 → 最深 → 自动；返回新档位（纯逻辑，smoke 直接调）
+  // 自动 → 低 → 中 → 高 → 最高 → 自动；返回新档位（纯逻辑，smoke 直接调）
   function _cycleHarnessThinking() {
     const current = _harnessThinkingLevel();
     const next = HARNESS_THINKING_LEVELS[(HARNESS_THINKING_LEVELS.indexOf(current) + 1) % HARNESS_THINKING_LEVELS.length];
