@@ -351,6 +351,12 @@
       --node-color: var(--accent);
       --group-color: #38bdf8;
       --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      /* 字族两档（2026-11-12 主题分层）：--font-ui 是正文字族（永远系统黑体，
+         可读性优先）；--font-display 只给标题类，默认＝UI 字族故零差异，只有显式
+         覆盖它的风格家族才变（素纸＝宋体）。 */
+      --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      --font-serif: "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", SimSun, "STSong", serif;
+      --font-display: var(--font-ui);
       --harness-msg-bg: rgba(15, 23, 42, 0.65);
       --harness-msg-user-bg: rgba(56, 189, 248, 0.10);
       --harness-msg-user-border: rgba(56, 189, 248, 0.35);
@@ -688,7 +694,15 @@
       border-radius: var(--r-xs);
     }
 
-    html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+    html, body { height: 100%; overflow: hidden; font-family: var(--font-ui); }
+    /* 标题随风格家族换字族（2026-11-12）：AI 回答里的 h1–h4 此前全走浏览器默认样式，
+       既无字族也无节奏——这条把它们接上 --font-display，默认 inherit 时零变化。
+       面板/品牌类标题是 div，另在下方面板标题组里挂同一令牌。 */
+    h1, h2, h3, h4 { font-family: var(--font-display); letter-spacing: .01em; }
+    /* 面板/品牌类标题是 div，不受 h1–h4 覆盖，单列一组挂同一令牌 */
+    .brand-title, .bg-panel-title, .theme-style-title, .task-panel-title,
+    .model-section-title, .session-group-title, .trash-section-title,
+    .um-section-title, .completion-card-title { font-family: var(--font-display); }
 
     /* ====== 全屏背景壁纸 ====== */
     .bg-layer {
@@ -2927,94 +2941,122 @@
      * alpha 微差），属可接受的换族损耗。深色族底一律保持暗底（面板文字色跟深浅模式
      * 走、不跟家族走——亮底会白字白底，节点皮肤同款禁区）。 */
 
-    /* ---------- 家族：blueprint 蓝图制图（素纸主题默认） ----------
-     * 深色＝工程蓝图纸（深靛纸面＋细网格＋加粗主网格＋蓝图蓝描边）；浅色＝米黄绘图纸
-     * ＋淡蓝网格。纸不漂移（animation: none）；色斑归零，材质由网格＋veil 承载。 */
+    /* ---------- 家族：blueprint 炭纸·稿本（素纸主题默认）----------
+     * 2026-11-12 视觉重构（用户拍板「主题同质化、审美不够」）：这张纸不再画工程蓝图，
+     * 改成「炭纸」——暖炭纸面＋方格稿线＋硬边＋偏移实影，是五套里唯一不开玻璃的家族
+     * （backdrop-filter: none，反而比模糊更省），签名元素＝方角＋实影＋宋体标题。
+     * 深色＝炭纸（近黑暖褐，网格极淡）；浅色＝米黄稿纸（同构，纸更白、墨更淡）。
+     *
+     * 键名仍是 blueprint：config.js/ui.js 双注册表、graph-override.css、theme-wallpaper
+     * 冒烟、老用户 localStorage 里全是这个键，改键＝一次迁移事故，语义交给本注释。 */
     html[data-panel-skin="blueprint"] {
-      --accent: #4a8fe0;
-      --bg-panel: #0c1934;
-      /* T157：--bg-dark 跟族（candy 同款机制、无掺粉；:root 默认冷藏青与本族面板色温不符），浅色块回填 */
+      --accent: #c9963f;
+      /* 2026-11-12 二改（用户「深色可见度差、不清晰」）：炭纸从 #1a1613 提到 #322a22。
+         量过：paper 壁纸平均亮度 12.8%，再经深色遮罩压到 5% 上下，而旧纸面只有 8.5%
+         ——两者差 3 个百分点、中间又没有可辨的边，面板和底图糊成一坨，就是「看不清」。
+         现在纸面 16%，明显浮在桌面上；真正的分界仍由 1px 暖描边＋偏移实影承担。 */
+      --bg-panel: #322a22;
+      /* T157：--bg-dark 跟族（candy 同款机制），浅色块回填 */
       --bg-dark: color-mix(in srgb, var(--bg-panel) 82%, transparent);
-      --accent-hover: #6cabf2;
-      --field-bg: rgba(14, 27, 54, 0.46);
-      --field-bg-strong: rgba(14, 27, 54, 0.78);
+      --accent-hover: #dfae5c;
+      /* 输入框要「切口」：比纸更深的底，否则贴在纸面上等于没画 */
+      --field-bg: rgba(14, 11, 9, 0.50);
+      --field-bg-strong: rgba(14, 11, 9, 0.80);
+      /* 侧栏是整块大面：底子还是藏青 #1a1d2e 的话，炭纸面板贴上去就是色温打架 */
+      --sidebar-bg: #241e18;
+      /* 描边与次要文字必须跟暖：全局那套是冷蓝（100,130,200），在暖纸上又糊又脏，
+         25% 透明度压在 16% 的纸面上基本看不见——这是「不清晰」的第二来源。 */
+      --border: rgba(222, 194, 148, 0.30);
+      --text-secondary: #c6b7a0;
+      /* 主文字也去冷：全局 #f0f4f8 是偏蓝的冷白，压在暖褐纸上会有脏色边，
+         读起来「不锐利」。暖白在暖底上更干净，对比度仍 >13:1。 */
+      --text-primary: #f5efe4;
+      /* 几何随族收方：五套圆角尺度从此不再是同一个 4/6/8/12/16 */
+      --r-xs: 1px; --r-sm: 2px; --r-md: 2px; --r-lg: 3px; --r-xl: 4px; --r-2xl: 6px;
+      --font-display: var(--font-serif);
     }
     html[data-theme="light"][data-panel-skin="blueprint"] {
-      --accent: #2f5fae;
-      --bg-panel: #f9f5ea;
+      --accent: #8a5d1f;
+      --bg-panel: #f7f1e4;
       --bg-dark: color-mix(in srgb, var(--bg-panel) 90%, transparent);
-      --accent-hover: #4470c0;
-      --field-bg: rgba(238, 243, 251, 0.55);
-      --field-bg-strong: rgba(238, 243, 251, 0.78);
+      --accent-hover: #a2702b;
+      --field-bg: rgba(246, 239, 226, 0.62);
+      --field-bg-strong: rgba(246, 239, 226, 0.88);
+      --sidebar-bg: #f8f2e6;
+      /* 同一条原则：暖纸配暖描边/暖次要文字（浅色默认那套是灰蓝） */
+      --border: rgba(120, 100, 70, 0.34);
+      --text-secondary: #6a5b45;
     }
     html[data-panel-skin="blueprint"] .aurora-glass {
       --aurora-1: transparent;
       --aurora-2: transparent;
       --aurora-3: transparent;
-      --bp-grid: rgba(122, 162, 235, 0.08);
-      --bp-grid-strong: rgba(122, 162, 235, 0.15);
-      --glass-tint: rgba(12, 25, 52, 0.58);
-      --glass-veil: linear-gradient(180deg, rgba(158, 190, 246, 0.04), rgba(3, 9, 24, 0.14) 84%);
-      --glass-inner-line: rgba(152, 186, 246, 0.15);
-      --glass-shadow: rgba(3, 8, 22, 0.50);
+      --pp-grid: rgba(232, 206, 165, 0.070);
+      --pp-grid-strong: rgba(232, 206, 165, 0.110);
+      --pp-fibre: rgba(255, 246, 228, 0.012);
+      --glass-tint: rgba(50, 42, 34, 0.95);
+      --glass-veil: none;
+      --glass-inner-line: rgba(232, 206, 165, 0.22);
+      --glass-shadow: rgba(0, 0, 0, 0.40);
       background-image:
-        repeating-linear-gradient(0deg, var(--bp-grid) 0 1px, transparent 1px 26px),
-        repeating-linear-gradient(90deg, var(--bp-grid) 0 1px, transparent 1px 26px),
-        repeating-linear-gradient(0deg, var(--bp-grid-strong) 0 1px, transparent 1px 130px),
-        repeating-linear-gradient(90deg, var(--bp-grid-strong) 0 1px, transparent 1px 130px),
-        var(--glass-veil);
-      background-size: 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%;
-      background-position: 0 0, 0 0, 0 0, 0 0, 0 0;
+        repeating-linear-gradient(91deg, var(--pp-fibre) 0 1px, transparent 1px 3px),
+        repeating-linear-gradient(0deg, var(--pp-grid) 0 1px, transparent 1px 26px),
+        repeating-linear-gradient(90deg, var(--pp-grid) 0 1px, transparent 1px 26px),
+        repeating-linear-gradient(0deg, var(--pp-grid-strong) 0 1px, transparent 1px 130px),
+        repeating-linear-gradient(90deg, var(--pp-grid-strong) 0 1px, transparent 1px 130px);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
       box-shadow:
-        0 18px 44px var(--glass-shadow),
-        inset 0 1px 0 var(--glass-inner-line),
-        inset 0 0 0 1px rgba(122, 162, 235, 0.22);
+        3px 3px 0 0 rgba(0, 0, 0, 0.45),
+        inset 0 0 0 1px var(--glass-inner-line);
       animation: none;
     }
     html[data-theme="light"][data-panel-skin="blueprint"] .aurora-glass {
       --aurora-1: transparent;
       --aurora-2: transparent;
       --aurora-3: transparent;
-      --bp-grid: rgba(74, 104, 168, 0.10);
-      --bp-grid-strong: rgba(74, 104, 168, 0.18);
-      --glass-tint: rgba(249, 245, 234, 0.76);
-      --glass-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.40), rgba(246, 242, 230, 0.12) 72%);
-      --glass-inner-line: rgba(255, 253, 248, 0.90);
-      --glass-shadow: rgba(96, 88, 62, 0.18);
+      --pp-grid: rgba(120, 100, 70, 0.075);
+      --pp-grid-strong: rgba(120, 100, 70, 0.12);
+      --pp-fibre: rgba(90, 70, 40, 0.022);
+      --glass-tint: rgba(249, 244, 233, 0.96);
+      --glass-veil: none;
+      --glass-inner-line: rgba(120, 100, 70, 0.22);
+      --glass-shadow: rgba(96, 84, 58, 0.20);
       background-image:
-        repeating-linear-gradient(0deg, var(--bp-grid) 0 1px, transparent 1px 26px),
-        repeating-linear-gradient(90deg, var(--bp-grid) 0 1px, transparent 1px 26px),
-        repeating-linear-gradient(0deg, var(--bp-grid-strong) 0 1px, transparent 1px 130px),
-        repeating-linear-gradient(90deg, var(--bp-grid-strong) 0 1px, transparent 1px 130px),
-        var(--glass-veil);
-      background-size: 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%;
-      background-position: 0 0, 0 0, 0 0, 0 0, 0 0;
+        repeating-linear-gradient(91deg, var(--pp-fibre) 0 1px, transparent 1px 3px),
+        repeating-linear-gradient(0deg, var(--pp-grid) 0 1px, transparent 1px 26px),
+        repeating-linear-gradient(90deg, var(--pp-grid) 0 1px, transparent 1px 26px),
+        repeating-linear-gradient(0deg, var(--pp-grid-strong) 0 1px, transparent 1px 130px),
+        repeating-linear-gradient(90deg, var(--pp-grid-strong) 0 1px, transparent 1px 130px);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
       box-shadow:
-        0 16px 36px var(--glass-shadow),
-        inset 0 1px 0 var(--glass-inner-line),
-        inset 0 0 0 1px rgba(74, 104, 168, 0.25);
+        3px 3px 0 0 rgba(120, 100, 70, 0.22),
+        inset 0 0 0 1px var(--glass-inner-line);
       animation: none;
     }
-    html[data-panel-skin="blueprint"] .aurora-glass--dialog { --glass-tint: rgba(12, 25, 52, 0.88); }
-    html[data-panel-skin="blueprint"] .aurora-glass--panel { --glass-tint: rgba(12, 25, 52, 0.70); }
-    html[data-theme="light"][data-panel-skin="blueprint"] .aurora-glass--dialog { --glass-tint: rgba(249, 246, 238, 0.94); }
-    html[data-theme="light"][data-panel-skin="blueprint"] .aurora-glass--panel { --glass-tint: rgba(249, 246, 238, 0.82); }
-    /* 纯玻璃档：网格一并收掉，只留烘焙过的纸色实底（与基础 --plain 同构） */
+    html[data-panel-skin="blueprint"] .aurora-glass--dialog { --glass-tint: rgba(60, 50, 40, 0.98); }
+    html[data-panel-skin="blueprint"] .aurora-glass--panel { --glass-tint: rgba(52, 44, 36, 0.96); }
+    html[data-theme="light"][data-panel-skin="blueprint"] .aurora-glass--dialog { --glass-tint: rgba(250, 246, 236, 0.98); }
+    html[data-theme="light"][data-panel-skin="blueprint"] .aurora-glass--panel { --glass-tint: rgba(249, 245, 235, 0.96); }
+    /* 纯玻璃档：方格一并收掉（整屏铺开时网格会变噪），只留纸色实底 */
     html[data-panel-skin="blueprint"] .aurora-glass--plain {
-      --bp-grid: transparent;
-      --bp-grid-strong: transparent;
-      --glass-tint: rgba(20, 36, 68, 0.58);
+      --pp-grid: transparent;
+      --pp-grid-strong: transparent;
+      --pp-fibre: transparent;
+      --glass-tint: rgba(46, 39, 32, 0.97);
       animation: none;
     }
     html[data-theme="light"][data-panel-skin="blueprint"] .aurora-glass--plain {
-      --bp-grid: transparent;
-      --bp-grid-strong: transparent;
-      --glass-tint: rgba(240, 236, 222, 0.76);
+      --pp-grid: transparent;
+      --pp-grid-strong: transparent;
+      --pp-fibre: transparent;
+      --glass-tint: rgba(249, 245, 235, 0.97);
       animation: none;
     }
     @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-      html[data-panel-skin="blueprint"] .aurora-glass { --glass-tint: rgba(8, 16, 36, 0.88); }
-      html[data-theme="light"][data-panel-skin="blueprint"] .aurora-glass { --glass-tint: rgba(246, 242, 232, 0.96); }
+      html[data-panel-skin="blueprint"] .aurora-glass { --glass-tint: rgba(50, 42, 34, 0.97); }
+      html[data-theme="light"][data-panel-skin="blueprint"] .aurora-glass { --glass-tint: rgba(249, 245, 235, 0.98); }
     }
 
     /* ---------- 家族：inkstone 砚石·墨韵（山影主题默认） ----------

@@ -7384,24 +7384,24 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
  * 浅色主题（2026-10-01）：暖米底（--bg-panel）会吃掉蓝相（黄＋蓝＝灰，实测渲成脏灰紫），
  * 浅色改从 --node-glass-base（白玻璃）起混、提高墨蓝配比，出干净的浅蓝图纸；投影换深墨派生。 */
 [data-node-skin="blueprint"] {
-  --bp-paper: color-mix(in srgb, var(--bg-panel) 86%, var(--ink-blue) 14%);
-  --bp-grid: color-mix(in srgb, var(--ink-blue) 12%, transparent);
-  --bp-line: color-mix(in srgb, var(--ink-blue) 58%, transparent);
-  --bp-line-hover: var(--ink-blue);
-  --bp-line-soft: color-mix(in srgb, var(--ink-blue) 45%, transparent);
+  --bp-paper: color-mix(in srgb, var(--bg-panel) 94%, #c9963f 6%);
+  --bp-grid: rgba(232, 206, 165, 0.06);
+  --bp-line: rgba(232, 206, 165, 0.32);
+  --bp-line-hover: rgba(230, 184, 106, 0.90);
+  --bp-line-soft: rgba(232, 206, 165, 0.22);
   --bp-accent: var(--text-primary);
-  --bp-shadow: color-mix(in srgb, var(--overlay-bg) 60%, transparent);
-  --bp-shadow-deep: color-mix(in srgb, var(--overlay-bg) 65%, transparent);
+  --bp-shadow: rgba(0, 0, 0, 0.34);
+  --bp-shadow-deep: rgba(0, 0, 0, 0.50);
 }
 [data-theme="light"][data-node-skin="blueprint"] {
-  --bp-paper: color-mix(in srgb, var(--node-glass-base) 76%, var(--ink-blue) 24%);
-  --bp-grid: color-mix(in srgb, var(--ink-blue) 14%, transparent);
-  --bp-line: color-mix(in srgb, var(--ink-blue) 52%, transparent);
-  --bp-line-hover: color-mix(in srgb, var(--ink-blue) 80%, transparent);
-  --bp-line-soft: color-mix(in srgb, var(--ink-blue) 42%, transparent);
-  --bp-accent: color-mix(in srgb, var(--ink-blue) 75%, var(--text-primary));
-  --bp-shadow: color-mix(in srgb, var(--text-primary) 14%, transparent);
-  --bp-shadow-deep: color-mix(in srgb, var(--text-primary) 16%, transparent);
+  --bp-paper: color-mix(in srgb, var(--node-glass-base) 88%, #c9a86a 12%);
+  --bp-grid: rgba(120, 100, 70, 0.06);
+  --bp-line: rgba(120, 100, 70, 0.32);
+  --bp-line-hover: rgba(138, 93, 31, 0.62);
+  --bp-line-soft: color-mix(in srgb, #8a5d1f 22%, transparent);
+  --bp-accent: #6b4a17;
+  --bp-shadow: rgba(96, 84, 58, 0.18);
+  --bp-shadow-deep: rgba(96, 84, 58, 0.26);
 }
 [data-node-skin="blueprint"] .graph-node {
   background:
@@ -7409,16 +7409,18 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
     repeating-linear-gradient(90deg, var(--bp-grid) 0 1px, transparent 1px 26px),
     var(--bp-paper) !important;
   border-color: var(--bp-line) !important;
-  border-style: dashed !important;
-  border-left-style: solid !important;
-  box-shadow: 0 10px 30px var(--bp-shadow) !important;
+  border-style: solid !important;
+  border-left-width: 2px !important;
+  box-shadow:
+    2px 2px 0 0 var(--bp-shadow),
+    0 6px 18px color-mix(in srgb, var(--bp-shadow) 60%, transparent) !important;
 }
 [data-node-skin="blueprint"] .graph-node:hover {
   border-color: var(--bp-line-hover) !important;
   border-style: solid !important;
   box-shadow:
-    0 14px 36px var(--bp-shadow-deep),
-    0 0 18px color-mix(in srgb, var(--ink-blue) 24%, transparent) !important;
+    3px 3px 0 0 var(--bp-shadow-deep),
+    0 10px 26px color-mix(in srgb, var(--bp-shadow-deep) 65%, transparent) !important;
 }
 [data-node-skin="blueprint"] .graph-node.selected {
   border-color: var(--node-attr) !important;
@@ -7449,16 +7451,18 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
     repeating-linear-gradient(90deg, var(--bp-grid) 0 1px, transparent 1px 26px),
     var(--bp-paper) !important;
   border-color: var(--node-attr) !important;
-  border-style: dashed !important;
-  border-left-style: solid !important;
-  box-shadow: 0 10px 30px var(--bp-shadow) !important;
+  border-style: solid !important;
+  border-left-width: 2px !important;
+  box-shadow:
+    2px 2px 0 0 var(--bp-shadow),
+    0 6px 18px color-mix(in srgb, var(--bp-shadow) 60%, transparent) !important;
 }
 [data-node-skin="blueprint"] .graph-node.graph-node-module:hover {
   border-color: var(--node-attr) !important;
   border-style: solid !important;
   box-shadow:
-    0 14px 36px var(--bp-shadow-deep),
-    0 0 18px color-mix(in srgb, var(--ink-blue) 24%, transparent) !important;
+    3px 3px 0 0 var(--bp-shadow-deep),
+    0 10px 26px color-mix(in srgb, var(--bp-shadow-deep) 65%, transparent) !important;
 }
 [data-node-skin="blueprint"] .graph-node.graph-node-module.selected {
   border-color: var(--node-attr) !important;
@@ -7470,7 +7474,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 }
 [data-node-skin="blueprint"] .graph-node textarea,
 [data-node-skin="blueprint"] .graph-node input {
-  background: color-mix(in srgb, var(--bg-panel) 86%, var(--ink-blue) 14%) !important;
+  background: color-mix(in srgb, var(--bg-panel) 92%, #c9963f 8%) !important;
   border-color: var(--bp-line-soft) !important;
 }
 [data-node-skin="blueprint"] .graph-node textarea:focus,
@@ -7487,7 +7491,9 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
     repeating-linear-gradient(0deg, var(--bp-grid) 0 1px, transparent 1px 26px),
     repeating-linear-gradient(90deg, var(--bp-grid) 0 1px, transparent 1px 26px),
     var(--bp-paper) !important;
-  box-shadow: 0 10px 30px var(--bp-shadow) !important;
+  box-shadow:
+    2px 2px 0 0 var(--bp-shadow),
+    0 6px 18px color-mix(in srgb, var(--bp-shadow) 60%, transparent) !important;
 }
 
 /* ---------- 皮肤 3：neon 霓虹夜光 ----------

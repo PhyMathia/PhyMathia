@@ -467,7 +467,7 @@ const WALLPAPER_SETS = [
 // 加新家族＝四处同步（css 两块 + 两个注册表 + 启动预置自动跟随）。
 const STYLE_FAMILIES = [
   { key: 'aurora', label: '极光磨砂', desc: '玻璃上的缓慢极光色斑（默认）' },
-  { key: 'blueprint', label: '蓝图制图', desc: '绘图纸面＋淡网格＋蓝图蓝（素纸主题默认）' },
+  { key: 'blueprint', label: '炭纸·稿本', desc: '炭纸方格林＋硬边实影＋宋体标题（素纸主题默认）' },
   { key: 'inkstone', label: '砚石·墨韵', desc: '青黑哑光石面＋石纹描边（山影主题默认）' },
   { key: 'neon', label: '霓虹夜光', desc: '近黑玻璃＋霓虹描边与流动光斑' },
   { key: 'candy', label: '糖果磨砂', desc: '暗面柔紫玻璃＋马卡龙柔光' },
