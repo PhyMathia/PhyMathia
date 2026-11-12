@@ -8174,3 +8174,32 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 .graph-harness-health-chip-close:hover {
   opacity: 1;
 }
+
+/* ============================================================
+   素纸·炭纸（blueprint）· Φ 面板去蓝收尾（2026-11-12）
+   ------------------------------------------------------------
+   素纸改暖把 accent 从蓝图蓝换成暖赭 #c9963f 之后，Φ 面板里还剩一小簇
+   2026-10 时期硬编码的「深蓝→天蓝」（#1d4ed8/#38bdf8/#2563eb）没跟上：
+   浅色版在同一次改暖里已经换成赭金（#8b6914/#d9a520），只剩深色这一半还
+   在发蓝——用户指着面板头徽标和「发送」报「这些蓝色有些刺眼」。
+   取色沿用同族调色板：黄铜 #c9963f（accent）/ #dfae5c（hover）/ 朱砂
+   #d9704f（hue-3，与思考滑块同源）。实测对比度：徽标墨字 8.3:1、
+   发送白字 4.6–6.9:1（原 #38bdf8 一端仅 2.1:1，白字本来就不够看）。
+   只挂 blueprint：其余四族的 accent 不是暖色，蓝色按钮在那边仍成立，
+   不跟着改（同「浅色只收窄要收窄的那一个属性」的级联原则）。
+   选择器比被覆盖的规则多一级特异性，且位于文件末尾，不靠 !important。
+   ============================================================ */
+html[data-panel-skin="blueprint"] .graph-harness-window .graph-harness-head::before {
+  background: linear-gradient(135deg, #d8a94e, #a5762a);
+  color: #1b1206;
+  box-shadow: 0 2px 8px rgba(201, 150, 63, 0.30);
+}
+html[data-panel-skin="blueprint"] .graph-harness-composer textarea:focus {
+  box-shadow: 0 0 0 3px rgba(201, 150, 63, 0.20);
+}
+html[data-panel-skin="blueprint"] #graphHarnessSendBtn,
+html[data-panel-skin="blueprint"] .graph-harness-apply-actions button:first-child {
+  background: linear-gradient(135deg, #9a6d26, #74511a);
+  color: var(--white);
+  box-shadow: 0 3px 12px rgba(201, 150, 63, 0.26);
+}
