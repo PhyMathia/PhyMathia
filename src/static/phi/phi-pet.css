@@ -19,8 +19,29 @@
 .phi-pet {
   position: absolute;
   inset: 0;
-  animation: phi-idle-float 3.2s ease-in-out infinite;
+  /* 4.6s 与身体起伏（3.2s）、小手（3.9/4.3s）、灯（4.9s）刻意错开周期：
+     几条循环的公倍数很大，画面才不会“整只同时呼吸”的机械感。 */
+  animation: phi-idle-float 4.6s ease-in-out infinite;
   transform-origin: 50% 82%;
+}
+
+/* 落地投影：与 .phi-pet 同级（不随漂浮上移），只随高度缩放/变淡。
+   由 phi-pet.js 在 init 时插入，避免动 harness.js 的内联模板。 */
+.phi-shadow {
+  position: absolute;
+  left: 33%;
+  bottom: 3.5%;
+  width: 34%;
+  height: 7%;
+  border-radius: 50%;
+  background: radial-gradient(50% 50% at 50% 50%, rgba(2, 6, 23, 0.5), rgba(2, 6, 23, 0.18) 58%, transparent 76%);
+  filter: blur(1.5px);
+  pointer-events: none;
+  opacity: 0.42; /* 减动效时动画被关掉，靠这条兜底保持与常态同深 */
+  animation: phi-shadow-breathe 4.6s ease-in-out infinite;
+}
+[data-theme="light"] .phi-shadow {
+  background: radial-gradient(50% 50% at 50% 50%, rgba(124, 45, 18, 0.34), rgba(124, 45, 18, 0.12) 58%, transparent 76%);
 }
 
 /* Φ 主题色板（深色=深蓝、浅色=暖橘；致敬 Claude Code buddy） */
@@ -117,7 +138,8 @@ html[data-panel-skin] .phi-pet {
 .phi-character {
   position: absolute;
   inset: 0;
-  animation: phi-bounce 3.2s ease-in-out infinite;
+  /* 两条动画各占不同属性：transform 起伏 + rotate 极慢的左右重心偏移 */
+  animation: phi-bounce 3.2s ease-in-out infinite, phi-idle-sway 7.9s ease-in-out infinite;
   transform-origin: 50% 82%;
   will-change: transform;
 }
@@ -146,7 +168,8 @@ html[data-panel-skin] .phi-pet {
   width: 11%;
   height: 14%;
   transform-origin: 100% 16%;
-  animation: phi-hand-sway-right 3.2s ease-in-out infinite; /* 随呼吸同频摆动 */
+  animation: phi-hand-sway-right 3.9s ease-in-out infinite; /* 随呼吸摆动，但与身体不同频 */
+  animation-delay: -1.1s;
 }
 
 /* 视觉右侧是角色的左手。 */
@@ -156,7 +179,30 @@ html[data-panel-skin] .phi-pet {
   width: 11%;
   height: 14%;
   transform-origin: 0% 16%;
-  animation: phi-hand-sway-left 3.2s ease-in-out infinite; /* 随呼吸同频摆动 */
+  animation: phi-hand-sway-left 4.3s ease-in-out infinite; /* 与右手再错开，避免镜像同步 */
+  animation-delay: -2.3s;
+}
+
+/* 眼睛拆两层：外层 .phi-eyes-wrap 只负责“看向哪里”（JS 逐帧写 --phi-gaze-*），
+   内层 .phi-eyes 保留眨眼/眯眼用的 scaleY，两层互不覆盖。外层由 phi-pet.js 在
+   init 时原地包上（不改 harness.js 的内联模板，preview 页同一套 JS 也自动生效）。 */
+.phi-eyes-wrap {
+  position: absolute;
+  left: 38.5%;
+  top: 45%;
+  width: 23%;
+  height: 12%;
+  pointer-events: none;
+  transform: translate(var(--phi-gaze-x, 0em), var(--phi-gaze-y, 0em));
+  transition: transform 90ms linear, scale 200ms ease;
+  will-change: transform;
+}
+
+.phi-eyes-wrap .phi-eyes {
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
 }
 
 .phi-eyes {
@@ -174,16 +220,6 @@ html[data-panel-skin] .phi-pet {
 .phi-eyes {
   transition: opacity 320ms ease, transform 240ms ease;
 }
-
-/* 随机“看”动作：8 方向，位移落在椭圆轨迹上（半长轴 h=4/3px 左右，半短轴 v=1px 上下；斜向 = (h/√2, v/√2)，非 x+y 简单叠加） */
-.phi-eyes.is-looking-up    { transform: translateY(-1px); }
-.phi-eyes.is-looking-down  { transform: translateY(1px); }
-.phi-eyes.is-looking-left  { transform: translateX(-1.3333px); }
-.phi-eyes.is-looking-right { transform: translateX(1.3333px); }
-.phi-eyes.is-looking-up-left    { transform: translate(-0.9428px, -0.7071px); }
-.phi-eyes.is-looking-up-right   { transform: translate(0.9428px, -0.7071px); }
-.phi-eyes.is-looking-down-left  { transform: translate(-0.9428px, 0.7071px); }
-.phi-eyes.is-looking-down-right { transform: translate(0.9428px, 0.7071px); }
 
 .phi-happy-eyes {
   position: absolute;
@@ -325,12 +361,12 @@ html[data-panel-skin] .phi-pet {
 }
 
 .phi-lamp-on {
-  animation: phi-lamp-on-state 3.8s ease-in-out infinite;
+  animation: phi-lamp-on-state 4.9s ease-in-out infinite;
 }
 
 .phi-lamp-off {
   opacity: 0;
-  animation: phi-lamp-off-state 3.8s ease-in-out infinite;
+  animation: phi-lamp-off-state 4.9s ease-in-out infinite;
 }
 
 .phi-celebrate {
@@ -482,6 +518,56 @@ html[data-panel-skin] .phi-pet {
   animation: none;
 }
 
+/* ===== 待机微行为与交互反应（phi-pet.js 挂类；每条动画各占不同 CSS 属性，
+   所以能和呼吸/漂浮并列而不互相覆盖——这层“错位的小动作”才是灵动的来源） ===== */
+.phi-pet.is-tilting {
+  animation: phi-idle-float 4.6s ease-in-out infinite, phi-tilt 1000ms cubic-bezier(0.34, 1.14, 0.5, 1) both;
+}
+
+.phi-pet.is-hopping .phi-character {
+  animation: phi-bounce 3.2s ease-in-out infinite, phi-idle-sway 7.9s ease-in-out infinite, phi-hop 700ms cubic-bezier(0.3, 1.2, 0.52, 1) both;
+}
+
+.phi-pet.is-perking .phi-character {
+  animation: phi-bounce 3.2s ease-in-out infinite, phi-idle-sway 7.9s ease-in-out infinite, phi-perk 500ms cubic-bezier(0.3, 1.3, 0.5, 1) both;
+}
+
+.phi-pet.is-poked .phi-character {
+  animation: phi-bounce 3.2s ease-in-out infinite, phi-idle-sway 7.9s ease-in-out infinite, phi-poke 600ms cubic-bezier(0.3, 1.18, 0.5, 1) both;
+}
+
+.phi-pet.is-landing .phi-character {
+  animation: phi-bounce 3.2s ease-in-out infinite, phi-idle-sway 7.9s ease-in-out infinite, phi-land 500ms cubic-bezier(0.3, 1.18, 0.5, 1) both;
+}
+
+.phi-pet.is-waving .phi-hand-right {
+  animation: phi-idle-wave 1.08s ease-in-out both;
+}
+
+.phi-pet.is-double-blink .phi-eyes {
+  animation: phi-double-blink 380ms ease-in-out both;
+}
+
+/* 被点一下：眼睛变弯，身体先压后弹（点击同时仍会开面板，不抢交互） */
+.phi-pet.is-poked .phi-eyes { opacity: 0; }
+.phi-pet.is-poked .phi-happy-eyes { opacity: 1; }
+
+/* 鼠标靠近：眼睛睁大一点，像注意到你了 */
+.phi-pet-root:hover .phi-pet:not(.is-working):not(.is-celebrating):not(.is-erroring) .phi-eyes-wrap {
+  scale: 1.06 1.1;
+}
+
+/* 拖拽：停掉漂浮、按拖动方向倾斜，松手落地压一下 */
+.phi-pet.is-dragging {
+  animation: none;
+  rotate: var(--phi-drag-tilt, 0deg);
+  transition: rotate 110ms ease-out;
+}
+
+.phi-pet.is-dragging .phi-character {
+  animation: phi-drag-stretch 760ms ease-in-out infinite;
+}
+
 .phi-pet.is-phi-mode-transitioning .phi-character {
   animation: phi-mode-transition 420ms ease both;
 }
@@ -500,8 +586,8 @@ html[data-panel-skin] .phi-pet {
 }
 
 @keyframes phi-shadow-breathe {
-  0%, 100% { transform: scaleX(1); opacity: 0.75; }
-  50% { transform: scaleX(0.86); opacity: 0.48; }
+  0%, 100% { transform: scaleX(1) scaleY(1); opacity: 0.42; }
+  50% { transform: scaleX(0.82) scaleY(0.88); opacity: 0.24; }
 }
 
 @keyframes phi-idle-float {
@@ -517,6 +603,73 @@ html[data-panel-skin] .phi-pet {
 @keyframes phi-hand-sway-left {
   0%, 100% { transform: rotate(0deg) translateY(0); }
   50% { transform: rotate(10deg) translateY(1%); }
+}
+
+/* ---- 待机微行为：位移/缩放/旋转各用独立属性，才能与呼吸叠着放 ---- */
+@keyframes phi-idle-sway {
+  0%, 100% { rotate: 0deg; }
+  26% { rotate: -0.75deg; }
+  54% { rotate: 0.6deg; }
+  78% { rotate: -0.35deg; }
+}
+
+@keyframes phi-tilt {
+  0% { rotate: 0deg; }
+  24% { rotate: 2.6deg; }
+  48% { rotate: 2.1deg; }
+  72% { rotate: -1.2deg; }
+  100% { rotate: 0deg; }
+}
+
+@keyframes phi-hop {
+  0% { translate: 0 0; scale: 1 1; }
+  14% { translate: 0 1.6%; scale: 1.05 0.94; }
+  40% { translate: 0 -9.5%; scale: 0.975 1.05; }
+  56% { translate: 0 0; scale: 1.06 0.93; }
+  70% { translate: 0 -2.4%; scale: 0.995 1.015; }
+  100% { translate: 0 0; scale: 1 1; }
+}
+
+@keyframes phi-perk {
+  0% { translate: 0 0; scale: 1 1; }
+  30% { translate: 0 -4.5%; scale: 0.99 1.02; }
+  62% { translate: 0 0; scale: 1.03 0.97; }
+  100% { translate: 0 0; scale: 1 1; }
+}
+
+@keyframes phi-poke {
+  0% { translate: 0 0; scale: 1 1; }
+  22% { translate: 0 2.6%; scale: 1.08 0.9; }
+  52% { translate: 0 -3.2%; scale: 0.97 1.03; }
+  100% { translate: 0 0; scale: 1 1; }
+}
+
+@keyframes phi-land {
+  0% { translate: 0 -2%; scale: 1.06 0.92; }
+  38% { translate: 0 0; scale: 1.09 0.88; }
+  62% { translate: 0 0; scale: 0.985 1.02; }
+  100% { translate: 0 0; scale: 1 1; }
+}
+
+@keyframes phi-double-blink {
+  0%, 100% { transform: scaleY(1); }
+  16%, 30% { transform: scaleY(0.06); }
+  46% { transform: scaleY(1); }
+  64%, 78% { transform: scaleY(0.06); }
+}
+
+/* 招手：手举到身侧来回摆两下（抬臂＝翻转，与庆祝态同一套画法） */
+@keyframes phi-idle-wave {
+  0%, 100% { transform: translateY(0) scaleY(1) rotate(0deg); }
+  16% { transform: translateY(-74%) scaleY(-1) rotate(-14deg); }
+  38% { transform: translateY(-74%) scaleY(-1) rotate(-30deg); }
+  58% { transform: translateY(-74%) scaleY(-1) rotate(-8deg); }
+  78% { transform: translateY(-74%) scaleY(-1) rotate(-26deg); }
+}
+
+@keyframes phi-drag-stretch {
+  0%, 100% { scale: 1.02 0.98; }
+  50% { scale: 1 1.01; }
 }
 
 @keyframes phi-blink {
@@ -689,6 +842,22 @@ html[data-theme="light"] .phi-pet-root {
 
   .phi-eyes {
     transition: none !important;
+  }
+
+  .phi-eyes-wrap {
+    transition: none !important;
+  }
+
+  /* 微行为/反应的动画特异性高于上面的 .phi-pet，需要单独关掉（JS 也不会挂这些类） */
+  .phi-pet.is-tilting,
+  .phi-pet.is-hopping .phi-character,
+  .phi-pet.is-perking .phi-character,
+  .phi-pet.is-poked .phi-character,
+  .phi-pet.is-landing .phi-character,
+  .phi-pet.is-waving .phi-hand-right,
+  .phi-pet.is-double-blink .phi-eyes,
+  .phi-pet.is-dragging .phi-character {
+    animation: none !important;
   }
 
   .phi-lamp-on {

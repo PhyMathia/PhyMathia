@@ -81,14 +81,40 @@
   @property --phi-lamp-on-dark { syntax: '<color>'; inherits: true; initial-value: #f59e0b; }
   @property --phi-lamp-off { syntax: '<color>'; inherits: true; initial-value: #94a3b8; }
   @property --phi-lamp-off-dark { syntax: '<color>'; inherits: true; initial-value: #475569; }
-  
+  @property --phi-kb-bg { syntax: '<color>'; inherits: true; initial-value: #1e293b; }
+  @property --phi-kb-border { syntax: '<color>'; inherits: true; initial-value: #475569; }
+  @property --phi-kb-key { syntax: '<color>'; inherits: true; initial-value: #334155; }
+  @property --phi-kb-key-border { syntax: '<color>'; inherits: true; initial-value: #0f172a; }
+  @property --phi-kb-shadow { syntax: '<color>'; inherits: true; initial-value: rgba(15, 23, 42, 0.6); }
+
   .phi-pet {
     position: absolute;
     inset: 0;
-    animation: phi-idle-float 3.2s ease-in-out infinite;
+    /* 4.6s 与身体起伏（3.2s）、小手（3.9/4.3s）、灯（4.9s）刻意错开周期：
+       几条循环的公倍数很大，画面才不会“整只同时呼吸”的机械感。 */
+    animation: phi-idle-float 4.6s ease-in-out infinite;
     transform-origin: 50% 82%;
   }
-  
+
+  /* 落地投影：与 .phi-pet 同级（不随漂浮上移），只随高度缩放/变淡。
+     由 phi-pet.js 在 init 时插入，避免动 harness.js 的内联模板。 */
+  .phi-shadow {
+    position: absolute;
+    left: 33%;
+    bottom: 3.5%;
+    width: 34%;
+    height: 7%;
+    border-radius: 50%;
+    background: radial-gradient(50% 50% at 50% 50%, rgba(2, 6, 23, 0.5), rgba(2, 6, 23, 0.18) 58%, transparent 76%);
+    filter: blur(1.5px);
+    pointer-events: none;
+    opacity: 0.42; /* 减动效时动画被关掉，靠这条兜底保持与常态同深 */
+    animation: phi-shadow-breathe 4.6s ease-in-out infinite;
+  }
+  [data-theme="light"] .phi-shadow {
+    background: radial-gradient(50% 50% at 50% 50%, rgba(124, 45, 18, 0.34), rgba(124, 45, 18, 0.12) 58%, transparent 76%);
+  }
+
   /* Φ 主题色板（深色=深蓝、浅色=暖橘；致敬 Claude Code buddy） */
   .phi-pet {
     --phi-outline: rgba(147, 197, 253, 0.85); /* 深色描边（朋友版）：浅蓝、更清晰 */
@@ -102,12 +128,20 @@
     --phi-lamp-on-dark: #f59e0b;
     --phi-lamp-off: var(--phi-body-hi);
     --phi-lamp-off-dark: var(--phi-body);
+    /* 桌宠“键盘”（工作状态）配色 */
+    --phi-kb-bg: #1e293b;
+    --phi-kb-border: #475569;
+    --phi-kb-key: #334155;
+    --phi-kb-key-border: #0f172a;
+    --phi-kb-shadow: rgba(15, 23, 42, 0.6);
     /* 主题切换渐变：与全局 0.35s ease 一致 */
     transition:
       --phi-outline 0.35s ease, --phi-body 0.35s ease, --phi-body-hi 0.35s ease,
       --phi-body-shadow 0.35s ease, --phi-eye 0.35s ease, --phi-eye-dark 0.35s ease,
       --phi-error 0.35s ease, --phi-lamp-on 0.35s ease, --phi-lamp-on-dark 0.35s ease,
-      --phi-lamp-off 0.35s ease, --phi-lamp-off-dark 0.35s ease;
+      --phi-lamp-off 0.35s ease, --phi-lamp-off-dark 0.35s ease,
+      --phi-kb-bg 0.35s ease, --phi-kb-border 0.35s ease, --phi-kb-key 0.35s ease,
+      --phi-kb-key-border 0.35s ease, --phi-kb-shadow 0.35s ease;
   }
   /* 浅色模式：暖橘+暖棕描边（朋友版）、柔和投影；眼睛浅蓝；熄灭灯泡保持原灰（深色模式则跟随身体上部颜色） */
   [data-theme="light"] .phi-pet {
@@ -122,8 +156,29 @@
     --phi-lamp-on-dark: #fbbf24; /* 浅色：灯亮暗部（亮琥珀） */
     --phi-lamp-off: #93c5fd;     /* 浅色：灯灭（浅蓝，再深一点点） */
     --phi-lamp-off-dark: #60a5fa; /* 浅色：灯灭暗部（再深一点点） */
+    /* 浅色模式键盘：浅灰底、浅描边、柔和投影（与旧版硬编码一致） */
+    --phi-kb-bg: #f1f5f9;
+    --phi-kb-border: #cbd5e1;
+    --phi-kb-key: #e2e8f0;
+    --phi-kb-key-border: #94a3b8;
+    --phi-kb-shadow: rgba(15, 23, 42, 0.12);
   }
-  
+
+  /* 风格家族联动（2026-10-02）：非默认家族时壳体取当前家族强调色派生——aurora 不挂属性＝
+     经典蓝橘宠物不动。块特异性 (0,2,0) 与浅色块同、源序在其后，浅色下也压得住默认壳色。
+     眼睛从「浅色蓝眼」改回琥珀并两模式固定：蓝眼在蓝图/青灰壳上会隐身，琥珀与四族壳色都拉开；
+     灯灭/键盘不改（灯灭原来在深色就跟随壳色，浅色的浅蓝灯灭换成跟随壳色保持一致）。 */
+  html[data-panel-skin] .phi-pet {
+    --phi-body: var(--accent);
+    --phi-body-hi: color-mix(in srgb, var(--accent) 68%, #fff);
+    --phi-body-shadow: color-mix(in srgb, var(--accent) 52%, #000);
+    --phi-outline: color-mix(in srgb, var(--accent) 58%, #fff);
+    --phi-eye: #fbbf24;
+    --phi-eye-dark: #d97706;
+    --phi-lamp-off: color-mix(in srgb, var(--accent) 68%, #fff);
+    --phi-lamp-off-dark: var(--accent);
+  }
+
   .phi-code-symbols {
     position: absolute;
     inset: 0;
@@ -132,11 +187,11 @@
     pointer-events: none;
     transition: opacity 420ms ease;
   }
-  
+
   .phi-pet.is-working .phi-code-symbols {
     opacity: 1;
   }
-  
+
   .phi-code-symbol {
     position: absolute;
     color: #fde047;
@@ -144,21 +199,22 @@
     text-shadow: 0 0 50px rgba(250, 204, 21, 0.62);
     animation: phi-code-float 1.6s ease-in-out infinite;
   }
-  
+
   .phi-code-symbol-1 { left: 11%; top: 31%; animation-delay: -0.3s; }
   .phi-code-symbol-2 { right: 9%; top: 43%; animation-delay: -0.9s; color: #93c5fd; text-shadow: 0 0 10px rgba(96, 165, 250, 0.62); }
   .phi-code-symbol-3 { left: 16%; top: 68%; animation-delay: -1.2s; color: #c4b5fd; text-shadow: 0 0 10px rgba(167, 139, 250, 0.62); }
   .phi-code-symbol-4 { right: 16%; top: 66%; animation-delay: -0.6s; }
   .phi-code-symbol-5 { right: 5%; top: 26%; animation-delay: -1.5s; color: #86efac; text-shadow: 0 0 10px rgba(74, 222, 128, 0.62); }
-  
+
   .phi-character {
     position: absolute;
     inset: 0;
-    animation: phi-bounce 3.2s ease-in-out infinite;
+    /* 两条动画各占不同属性：transform 起伏 + rotate 极慢的左右重心偏移 */
+    animation: phi-bounce 3.2s ease-in-out infinite, phi-idle-sway 7.9s ease-in-out infinite;
     transform-origin: 50% 82%;
     will-change: transform;
   }
-  
+
   .phi-part {
     position: absolute;
     display: block;
@@ -168,14 +224,14 @@
     user-select: none;
     pointer-events: none;
   }
-  
+
   .phi-body {
     left: 27%;
     top: 29%;
     width: 46%;
     height: 54%;
   }
-  
+
   /* 视觉左侧是角色的右手。 */
   .phi-hand-right {
     left: 20%;
@@ -183,9 +239,10 @@
     width: 11%;
     height: 14%;
     transform-origin: 100% 16%;
-    animation: phi-hand-sway-right 3.2s ease-in-out infinite; /* 随呼吸同频摆动 */
+    animation: phi-hand-sway-right 3.9s ease-in-out infinite; /* 随呼吸摆动，但与身体不同频 */
+    animation-delay: -1.1s;
   }
-  
+
   /* 视觉右侧是角色的左手。 */
   .phi-hand-left {
     left: 69%;
@@ -193,9 +250,32 @@
     width: 11%;
     height: 14%;
     transform-origin: 0% 16%;
-    animation: phi-hand-sway-left 3.2s ease-in-out infinite; /* 随呼吸同频摆动 */
+    animation: phi-hand-sway-left 4.3s ease-in-out infinite; /* 与右手再错开，避免镜像同步 */
+    animation-delay: -2.3s;
   }
-  
+
+  /* 眼睛拆两层：外层 .phi-eyes-wrap 只负责“看向哪里”（JS 逐帧写 --phi-gaze-*），
+     内层 .phi-eyes 保留眨眼/眯眼用的 scaleY，两层互不覆盖。外层由 phi-pet.js 在
+     init 时原地包上（不改 harness.js 的内联模板，preview 页同一套 JS 也自动生效）。 */
+  .phi-eyes-wrap {
+    position: absolute;
+    left: 38.5%;
+    top: 45%;
+    width: 23%;
+    height: 12%;
+    pointer-events: none;
+    transform: translate(var(--phi-gaze-x, 0em), var(--phi-gaze-y, 0em));
+    transition: transform 90ms linear, scale 200ms ease;
+    will-change: transform;
+  }
+
+  .phi-eyes-wrap .phi-eyes {
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+  }
+
   .phi-eyes {
     left: 38.5%;
     top: 45%;
@@ -203,25 +283,15 @@
     height: 12%;
     transform-origin: 50% 50%;
   }
-  
+
   .phi-eyes.is-blinking {
     animation: phi-blink 170ms steps(3, end) both;
   }
-  
+
   .phi-eyes {
     transition: opacity 320ms ease, transform 240ms ease;
   }
-  
-  /* 随机“看”动作：8 方向，位移落在椭圆轨迹上（半长轴 h=4/3px 左右，半短轴 v=1px 上下；斜向 = (h/√2, v/√2)，非 x+y 简单叠加） */
-  .phi-eyes.is-looking-up    { transform: translateY(-1px); }
-  .phi-eyes.is-looking-down  { transform: translateY(1px); }
-  .phi-eyes.is-looking-left  { transform: translateX(-1.3333px); }
-  .phi-eyes.is-looking-right { transform: translateX(1.3333px); }
-  .phi-eyes.is-looking-up-left    { transform: translate(-0.9428px, -0.7071px); }
-  .phi-eyes.is-looking-up-right   { transform: translate(0.9428px, -0.7071px); }
-  .phi-eyes.is-looking-down-left  { transform: translate(-0.9428px, 0.7071px); }
-  .phi-eyes.is-looking-down-right { transform: translate(0.9428px, 0.7071px); }
-  
+
   .phi-happy-eyes {
     position: absolute;
     left: 38.5%;
@@ -232,7 +302,7 @@
     pointer-events: none;
     transition: opacity 320ms ease, background-color 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease;
   }
-  
+
   .phi-happy-eye {
     position: absolute;
     top: 24%;
@@ -243,10 +313,10 @@
     border-radius: 100% 100% 0 0;
     box-shadow: 0 0 6px rgba(45, 50, 66, 0.35);
   }
-  
+
   .phi-happy-eye-left { left: 11%; }
   .phi-happy-eye-right { right: 11%; }
-  
+
   .phi-success-glow {
     position: absolute;
     left: 48.4%;
@@ -257,7 +327,7 @@
     pointer-events: none;
     transition: opacity 320ms ease;
   }
-  
+
   .phi-success-glow::before,
   .phi-success-glow::after {
     content: "";
@@ -265,7 +335,7 @@
     background: #fde047;
     box-shadow: 0 0 12px 4px rgba(253, 224, 71, 0.85);
   }
-  
+
   .phi-success-glow::before {
     left: 0;
     top: 50%;
@@ -273,7 +343,7 @@
     height: 34%;
     transform: translateY(-50%);
   }
-  
+
   .phi-success-glow::after {
     left: 50%;
     top: 0;
@@ -281,11 +351,11 @@
     height: 100%;
     transform: translateX(-50%);
   }
-  
+
   .phi-eyes-x {
     opacity: 0;
   }
-  
+
   .phi-keyboard {
     position: absolute;
     left: 14%;
@@ -297,34 +367,36 @@
     flex-direction: column;
     justify-content: space-between;
     gap: 2.4%;
-    background: #1e293b;
-    border: 2px solid #475569;
+    background: var(--phi-kb-bg);
+    border: 2px solid var(--phi-kb-border);
     border-radius: 10%;
-    box-shadow: 0 2px 0 rgba(15, 23, 42, 0.6);
+    box-shadow: 0 2px 0 var(--phi-kb-shadow);
     opacity: 0;
     pointer-events: none;
-    transition: opacity 320ms ease;
+    /* opacity 负责显示/隐藏；颜色/阴影随主题变量 0.35s 渐变（与 Φ 主体一致） */
+    transition: opacity 320ms ease,
+      background-color 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease;
   }
-  
+
   .phi-kb-row {
     display: flex;
     justify-content: space-between;
     gap: 3%;
     flex: 1;
   }
-  
+
   .phi-kb-row i {
     flex: 1;
-    background: #334155;
-    border: 1px solid #0f172a;
+    background: var(--phi-kb-key);
+    border: 1px solid var(--phi-kb-key-border);
     border-radius: 14%;
     transition: background-color 0.35s ease, border-color 0.35s ease;
   }
-  
+
   .phi-pet.is-working .phi-keyboard {
     opacity: 1;
   }
-  
+
   .phi-bubbles {
     position: absolute;
     inset: 0;
@@ -333,7 +405,7 @@
     pointer-events: none;
     transition: opacity 320ms ease;
   }
-  
+
   .phi-bubble {
     position: absolute;
     bottom: 10%;
@@ -342,14 +414,14 @@
     text-shadow: 0 0 6px rgba(17, 24, 39, 0.8);
     animation: phi-bubble-rise 1.1s ease-in infinite;
   }
-  
+
   .phi-bubble-1 { left: 26%; --phi-bubble-x: 7px;  animation-delay: -0.1s; }
   .phi-bubble-2 { left: 34%; --phi-bubble-x: -6px; animation-delay: -0.45s; }
   .phi-bubble-3 { left: 45%; --phi-bubble-x: 5px;  animation-delay: -0.8s; }
   .phi-bubble-4 { left: 56%; --phi-bubble-x: -7px; animation-delay: -0.3s; }
   .phi-bubble-5 { left: 64%; --phi-bubble-x: 4px;  animation-delay: -0.95s; }
   .phi-bubble-6 { left: 72%; --phi-bubble-x: -4px; animation-delay: -0.65s; }
-  
+
   .phi-lamp {
     left: 43%;
     top: 18%;
@@ -358,16 +430,16 @@
     transform-origin: 50% 100%;
     will-change: opacity;
   }
-  
+
   .phi-lamp-on {
-    animation: phi-lamp-on-state 3.8s ease-in-out infinite;
+    animation: phi-lamp-on-state 4.9s ease-in-out infinite;
   }
-  
+
   .phi-lamp-off {
     opacity: 0;
-    animation: phi-lamp-off-state 3.8s ease-in-out infinite;
+    animation: phi-lamp-off-state 4.9s ease-in-out infinite;
   }
-  
+
   .phi-celebrate {
     position: absolute;
     inset: 0;
@@ -376,7 +448,7 @@
     pointer-events: none;
     transition: opacity 320ms ease;
   }
-  
+
   .phi-confetti {
     position: absolute;
     left: var(--phi-confetti-x, 10%);
@@ -389,212 +461,329 @@
     animation-delay: var(--phi-confetti-delay, 0s);
     will-change: transform;
   }
-  
+
   /* 庆祝状态：工作成功，动作活泼欢快。 */
   .phi-pet.is-celebrating .phi-character {
     animation: phi-celebrate-body 2.6s ease-in-out infinite;
   }
-  
+
   .phi-pet.is-celebrating .phi-hand-right {
     animation: phi-celebrate-wave-right 560ms ease-in-out infinite;
   }
-  
+
   .phi-pet.is-celebrating .phi-hand-left {
     animation: phi-celebrate-wave-left 560ms ease-in-out infinite;
   }
-  
+
   .phi-pet.is-celebrating .phi-eyes {
     opacity: 0;
   }
-  
+
   .phi-pet.is-celebrating .phi-happy-eyes {
     opacity: 1;
   }
-  
+
   .phi-pet.is-celebrating .phi-lamp-on {
     opacity: 1;
     animation: phi-celebrate-lamp 640ms ease-in-out infinite;
   }
-  
+
   .phi-pet.is-celebrating .phi-lamp-off {
     opacity: 0;
     animation: none;
   }
-  
+
   .phi-pet.is-celebrating .phi-success-glow {
     opacity: 1;
     animation: phi-cross-glow 900ms ease-in-out infinite;
   }
-  
+
   .phi-pet.is-celebrating .phi-celebrate {
     opacity: 1;
   }
-  
+
   .phi-pet.is-celebrating .phi-code-symbols {
     opacity: 0;
   }
-  
+
   /* 报错状态：故障抖动，慌乱烦躁。 */
   .phi-pet.is-erroring .phi-character {
     animation: phi-error-shake 180ms linear infinite;
   }
-  
+
   .phi-pet.is-erroring .phi-hand-right {
     animation: phi-error-flail-right 240ms linear infinite;
   }
-  
+
   .phi-pet.is-erroring .phi-hand-left {
     animation: phi-error-flail-left 240ms linear infinite;
   }
-  
+
   .phi-pet.is-erroring .phi-eyes,
   .phi-pet.is-erroring .phi-happy-eyes {
     opacity: 0;
   }
-  
+
   .phi-pet.is-erroring .phi-eyes-x {
     opacity: 1;
   }
-  
+
   .phi-pet.is-erroring .phi-lamp-on {
     opacity: 0;
     animation: none;
   }
-  
+
   .phi-pet.is-erroring .phi-lamp-off {
     opacity: 1;
     animation: none;
   }
-  
+
   .phi-pet.is-erroring .phi-success-glow {
     opacity: 1;
     animation: phi-error-glow 420ms ease-in-out infinite;
   }
-  
+
   .phi-pet.is-erroring .phi-success-glow::before,
   .phi-pet.is-erroring .phi-success-glow::after {
     background: #4b5563;
     box-shadow: 0 0 8px 3px rgba(75, 85, 99, 0.7);
   }
-  
+
   .phi-pet.is-erroring .phi-bubbles {
     opacity: 1;
   }
-  
+
   .phi-pet.is-erroring .phi-code-symbols {
     opacity: 0;
   }
-  
+
   /* 工作状态：身体收紧，动作明显快于待机。 */
   .phi-pet.is-working .phi-character {
     animation: phi-work-body 720ms ease-in-out infinite;
   }
-  
+
   .phi-pet.is-working .phi-hand-right {
     animation: phi-work-tap-right 340ms ease-in-out infinite;
   }
-  
+
   .phi-pet.is-working .phi-hand-left {
     animation: phi-work-tap-left 340ms ease-in-out infinite;
   }
-  
+
   .phi-pet.is-working .phi-eyes {
     transform: scaleY(0.24);
     transition: transform 380ms ease;
   }
-  
+
   .phi-pet.is-working .phi-eyes.is-blinking {
     animation: phi-work-blink 170ms steps(3, end) both;
   }
-  
+
   .phi-pet.is-working .phi-lamp-on {
     opacity: 1;
     animation: phi-work-lamp-glow 900ms ease-in-out infinite;
   }
-  
+
   .phi-pet.is-working .phi-lamp-off {
     opacity: 0;
     animation: none;
   }
-  
+
+  /* ===== 待机微行为与交互反应（phi-pet.js 挂类；每条动画各占不同 CSS 属性，
+     所以能和呼吸/漂浮并列而不互相覆盖——这层“错位的小动作”才是灵动的来源） ===== */
+  .phi-pet.is-tilting {
+    animation: phi-idle-float 4.6s ease-in-out infinite, phi-tilt 1000ms cubic-bezier(0.34, 1.14, 0.5, 1) both;
+  }
+
+  .phi-pet.is-hopping .phi-character {
+    animation: phi-bounce 3.2s ease-in-out infinite, phi-idle-sway 7.9s ease-in-out infinite, phi-hop 700ms cubic-bezier(0.3, 1.2, 0.52, 1) both;
+  }
+
+  .phi-pet.is-perking .phi-character {
+    animation: phi-bounce 3.2s ease-in-out infinite, phi-idle-sway 7.9s ease-in-out infinite, phi-perk 500ms cubic-bezier(0.3, 1.3, 0.5, 1) both;
+  }
+
+  .phi-pet.is-poked .phi-character {
+    animation: phi-bounce 3.2s ease-in-out infinite, phi-idle-sway 7.9s ease-in-out infinite, phi-poke 600ms cubic-bezier(0.3, 1.18, 0.5, 1) both;
+  }
+
+  .phi-pet.is-landing .phi-character {
+    animation: phi-bounce 3.2s ease-in-out infinite, phi-idle-sway 7.9s ease-in-out infinite, phi-land 500ms cubic-bezier(0.3, 1.18, 0.5, 1) both;
+  }
+
+  .phi-pet.is-waving .phi-hand-right {
+    animation: phi-idle-wave 1.08s ease-in-out both;
+  }
+
+  .phi-pet.is-double-blink .phi-eyes {
+    animation: phi-double-blink 380ms ease-in-out both;
+  }
+
+  /* 被点一下：眼睛变弯，身体先压后弹（点击同时仍会开面板，不抢交互） */
+  .phi-pet.is-poked .phi-eyes { opacity: 0; }
+  .phi-pet.is-poked .phi-happy-eyes { opacity: 1; }
+
+  /* 鼠标靠近：眼睛睁大一点，像注意到你了 */
+  .phi-pet-root:hover .phi-pet:not(.is-working):not(.is-celebrating):not(.is-erroring) .phi-eyes-wrap {
+    scale: 1.06 1.1;
+  }
+
+  /* 拖拽：停掉漂浮、按拖动方向倾斜，松手落地压一下 */
+  .phi-pet.is-dragging {
+    animation: none;
+    rotate: var(--phi-drag-tilt, 0deg);
+    transition: rotate 110ms ease-out;
+  }
+
+  .phi-pet.is-dragging .phi-character {
+    animation: phi-drag-stretch 760ms ease-in-out infinite;
+  }
+
   .phi-pet.is-phi-mode-transitioning .phi-character {
     animation: phi-mode-transition 420ms ease both;
   }
-  
+
   .phi-pet.is-phi-mode-transitioning .phi-hand,
   .phi-pet.is-phi-mode-transitioning .phi-eyes,
   .phi-pet.is-phi-mode-transitioning .phi-lamp-on,
   .phi-pet.is-phi-mode-transitioning .phi-lamp-off {
     animation-play-state: paused;
   }
-  
-  
+
+
   @keyframes phi-bounce {
     0%, 100% { transform: translateY(0) scaleY(1); }
     50% { transform: translateY(-6%) scaleY(1.02); }
   }
-  
+
   @keyframes phi-shadow-breathe {
-    0%, 100% { transform: scaleX(1); opacity: 0.75; }
-    50% { transform: scaleX(0.86); opacity: 0.48; }
+    0%, 100% { transform: scaleX(1) scaleY(1); opacity: 0.42; }
+    50% { transform: scaleX(0.82) scaleY(0.88); opacity: 0.24; }
   }
-  
+
   @keyframes phi-idle-float {
     0%, 100% { transform: translateY(0); }
     50% { transform: translateY(-6px); }
   }
-  
+
   @keyframes phi-hand-sway-right {
     0%, 100% { transform: rotate(0deg) translateY(0); }
     50% { transform: rotate(-10deg) translateY(1%); }
   }
-  
+
   @keyframes phi-hand-sway-left {
     0%, 100% { transform: rotate(0deg) translateY(0); }
     50% { transform: rotate(10deg) translateY(1%); }
   }
-  
+
+  /* ---- 待机微行为：位移/缩放/旋转各用独立属性，才能与呼吸叠着放 ---- */
+  @keyframes phi-idle-sway {
+    0%, 100% { rotate: 0deg; }
+    26% { rotate: -0.75deg; }
+    54% { rotate: 0.6deg; }
+    78% { rotate: -0.35deg; }
+  }
+
+  @keyframes phi-tilt {
+    0% { rotate: 0deg; }
+    24% { rotate: 2.6deg; }
+    48% { rotate: 2.1deg; }
+    72% { rotate: -1.2deg; }
+    100% { rotate: 0deg; }
+  }
+
+  @keyframes phi-hop {
+    0% { translate: 0 0; scale: 1 1; }
+    14% { translate: 0 1.6%; scale: 1.05 0.94; }
+    40% { translate: 0 -9.5%; scale: 0.975 1.05; }
+    56% { translate: 0 0; scale: 1.06 0.93; }
+    70% { translate: 0 -2.4%; scale: 0.995 1.015; }
+    100% { translate: 0 0; scale: 1 1; }
+  }
+
+  @keyframes phi-perk {
+    0% { translate: 0 0; scale: 1 1; }
+    30% { translate: 0 -4.5%; scale: 0.99 1.02; }
+    62% { translate: 0 0; scale: 1.03 0.97; }
+    100% { translate: 0 0; scale: 1 1; }
+  }
+
+  @keyframes phi-poke {
+    0% { translate: 0 0; scale: 1 1; }
+    22% { translate: 0 2.6%; scale: 1.08 0.9; }
+    52% { translate: 0 -3.2%; scale: 0.97 1.03; }
+    100% { translate: 0 0; scale: 1 1; }
+  }
+
+  @keyframes phi-land {
+    0% { translate: 0 -2%; scale: 1.06 0.92; }
+    38% { translate: 0 0; scale: 1.09 0.88; }
+    62% { translate: 0 0; scale: 0.985 1.02; }
+    100% { translate: 0 0; scale: 1 1; }
+  }
+
+  @keyframes phi-double-blink {
+    0%, 100% { transform: scaleY(1); }
+    16%, 30% { transform: scaleY(0.06); }
+    46% { transform: scaleY(1); }
+    64%, 78% { transform: scaleY(0.06); }
+  }
+
+  /* 招手：手举到身侧来回摆两下（抬臂＝翻转，与庆祝态同一套画法） */
+  @keyframes phi-idle-wave {
+    0%, 100% { transform: translateY(0) scaleY(1) rotate(0deg); }
+    16% { transform: translateY(-74%) scaleY(-1) rotate(-14deg); }
+    38% { transform: translateY(-74%) scaleY(-1) rotate(-30deg); }
+    58% { transform: translateY(-74%) scaleY(-1) rotate(-8deg); }
+    78% { transform: translateY(-74%) scaleY(-1) rotate(-26deg); }
+  }
+
+  @keyframes phi-drag-stretch {
+    0%, 100% { scale: 1.02 0.98; }
+    50% { scale: 1 1.01; }
+  }
+
   @keyframes phi-blink {
     0%, 100% { transform: scaleY(1); }
     45%, 58% { transform: scaleY(0.08); }
   }
-  
+
   @keyframes phi-work-body {
     0%, 100% { transform: translateY(0.3%) scale(0.985, 0.975); }
     50% { transform: translateY(0) scale(0.97, 0.955); }
   }
-  
+
   @keyframes phi-work-tap-right {
     0%, 100% { transform: rotate(-2deg) translateY(0); }
     50% { transform: rotate(9deg) translateY(6%); }
   }
-  
+
   @keyframes phi-work-tap-left {
     0%, 100% { transform: rotate(2deg) translateY(0); }
     50% { transform: rotate(-9deg) translateY(6%); }
   }
-  
+
   @keyframes phi-work-blink {
     0%, 100% { transform: scaleY(0.24); }
     45%, 58% { transform: scaleY(0.06); }
   }
-  
+
   @keyframes phi-work-lamp-glow {
     0%, 100% { filter: brightness(1.05) saturate(1); }
     50% { filter: brightness(1.65) saturate(1.3); }
   }
-  
+
   @keyframes phi-code-float {
     0%, 100% { transform: translate(0, 3px) rotate(-4deg); opacity: 0.45; }
     50% { transform: translate(0, -10px) rotate(4deg); opacity: 1; }
   }
-  
+
   @keyframes phi-mode-transition {
     0% { transform: translateY(0) scale(1); }
     50% { transform: translateY(-1.2%) scale(0.975, 0.965); }
     100% { transform: translateY(0) scale(1); }
   }
-  
+
   @keyframes phi-celebrate-body {
     0%, 100% { transform: translateY(0) scale(1); }
     8% { transform: translateY(-1%) scale(0.985, 1.02); }
@@ -606,33 +795,33 @@
     70% { transform: translateY(0) scale(1.015, 0.99); }
     82% { transform: translateY(-0.4%) scale(1); }
   }
-  
+
   @keyframes phi-celebrate-wave-right {
     0%, 100% { transform: translateY(-72%) scaleY(-1) rotate(-10deg); }
     50% { transform: translateY(-136%) scaleY(-1) rotate(-25deg); }
   }
-  
+
   @keyframes phi-celebrate-wave-left {
     0%, 100% { transform: translateY(-72%) scaleY(-1) rotate(10deg); }
     50% { transform: translateY(-136%) scaleY(-1) rotate(25deg); }
   }
-  
+
   @keyframes phi-celebrate-lamp {
     0%, 100% { filter: brightness(1.25) saturate(1.2); }
     50% { filter: brightness(1.9) saturate(1.5); }
   }
-  
+
   @keyframes phi-cross-glow {
     0%, 100% { transform: scale(1); opacity: 0.85; }
     50% { transform: scale(1.25); opacity: 1; }
   }
-  
+
   @keyframes phi-confetti-rise {
     0% { transform: translateY(0) rotate(0) scale(0.4); opacity: 0; }
     15% { transform: translateY(-8px) rotate(8deg) scale(0.9); opacity: 1; }
     100% { transform: translateY(-92px) rotate(var(--phi-confetti-spin, 24deg)) scale(var(--phi-confetti-scale, 1.15)); opacity: 0; }
   }
-  
+
   @keyframes phi-error-shake {
     0%, 100% { transform: translateX(0) rotate(12deg); }
     10% { transform: translateX(-2.2%) rotate(11deg); }
@@ -645,7 +834,7 @@
     80% { transform: translateX(2%) rotate(13deg); }
     90% { transform: translateX(-1.2%) rotate(11.4deg); }
   }
-  
+
   @keyframes phi-error-flail-right {
     0% { transform: rotate(12deg); }
     20% { transform: rotate(-20deg); }
@@ -654,7 +843,7 @@
     80% { transform: rotate(16deg); }
     100% { transform: rotate(-14deg); }
   }
-  
+
   @keyframes phi-error-flail-left {
     0% { transform: rotate(-12deg); }
     20% { transform: rotate(20deg); }
@@ -663,28 +852,28 @@
     80% { transform: rotate(-16deg); }
     100% { transform: rotate(14deg); }
   }
-  
+
   @keyframes phi-error-glow {
     0%, 100% { transform: scale(0.88); opacity: 0.55; }
     50% { transform: scale(1.08); opacity: 1; }
   }
-  
+
   @keyframes phi-bubble-rise {
     0% { transform: translate(0, 0) scale(0.7); opacity: 0; }
     20% { transform: translate(calc(var(--phi-bubble-x, 6px) * 0.3), -10px) scale(0.9); opacity: 1; }
     100% { transform: translate(var(--phi-bubble-x, 6px), -88px) scale(1.1); opacity: 0; }
   }
-  
+
   @keyframes phi-lamp-on-state {
     0%, 36%, 82%, 100% { opacity: 1; }
     47%, 68% { opacity: 0; }
   }
-  
+
   @keyframes phi-lamp-off-state {
     0%, 36%, 82%, 100% { opacity: 0; }
     47%, 68% { opacity: 1; }
   }
-  
+
   /* 浅色主题适配：气泡/阴影/辉光更柔和，保证在浅色背景下可见 */
   [data-theme="light"] .phi-pet-root,
   html[data-theme="light"] .phi-pet-root {
@@ -710,16 +899,9 @@
     filter: brightness(1.25) saturate(1.15) drop-shadow(0 0 2px rgba(253, 224, 71, 0.9));
     transition: filter 0.35s ease;
   }
-  [data-theme="light"] .phi-keyboard {
-    background: #f1f5f9;
-    border-color: #cbd5e1;
-    box-shadow: 0 2px 0 rgba(15, 23, 42, 0.12);
-  }
-  [data-theme="light"] .phi-kb-row i {
-    background: #e2e8f0;
-    border-color: #94a3b8;
-  }
-  
+  /* 键盘浅色配色已统一收敛到 [data-theme="light"] .phi-pet 的 --phi-kb-* 变量，
+     由 @property + transition 驱动 0.35s 渐变（不再在元素上硬编码，避免切换跳变）。 */
+
   @media (prefers-reduced-motion: reduce) {
     .phi-pet,
     .phi-character,
@@ -728,39 +910,55 @@
       animation: none;
       transition: none !important;
     }
-  
+
     .phi-eyes {
       transition: none !important;
     }
-  
+
+    .phi-eyes-wrap {
+      transition: none !important;
+    }
+
+    /* 微行为/反应的动画特异性高于上面的 .phi-pet，需要单独关掉（JS 也不会挂这些类） */
+    .phi-pet.is-tilting,
+    .phi-pet.is-hopping .phi-character,
+    .phi-pet.is-perking .phi-character,
+    .phi-pet.is-poked .phi-character,
+    .phi-pet.is-landing .phi-character,
+    .phi-pet.is-waving .phi-hand-right,
+    .phi-pet.is-double-blink .phi-eyes,
+    .phi-pet.is-dragging .phi-character {
+      animation: none !important;
+    }
+
     .phi-lamp-on {
       animation: none;
       opacity: 1;
     }
-  
+
     .phi-lamp-off {
       animation: none;
       opacity: 0;
     }
-  
+
     .phi-code-symbols,
     .phi-keyboard,
     .phi-kb-row i,
     .mode-toggle {
       transition: none;
     }
-  
+
     .phi-pet.is-working .phi-code-symbol,
     .phi-pet.is-working .phi-lamp-on,
     .phi-pet.is-working .phi-hand,
     .phi-pet.is-working .phi-character {
       animation: none;
     }
-  
+
     .phi-pet.is-working .phi-eyes {
       transform: scaleY(0.24);
     }
-  
+
     .phi-pet.is-celebrating .phi-confetti,
     .phi-pet.is-celebrating .phi-lamp-on,
     .phi-pet.is-celebrating .phi-hand,
@@ -768,34 +966,33 @@
     .phi-pet.is-celebrating .phi-success-glow {
       animation: none;
     }
-  
+
     .phi-pet.is-celebrating .phi-eyes {
       opacity: 0;
     }
-  
+
     .phi-pet.is-celebrating .phi-happy-eyes,
     .phi-pet.is-celebrating .phi-success-glow {
       opacity: 1;
     }
-  
+
     .phi-pet.is-erroring .phi-character,
     .phi-pet.is-erroring .phi-hand,
     .phi-pet.is-erroring .phi-success-glow,
     .phi-pet.is-erroring .phi-bubble {
       animation: none;
     }
-  
+
     .phi-pet.is-erroring .phi-eyes,
     .phi-pet.is-erroring .phi-happy-eyes {
       opacity: 0;
     }
-  
+
     .phi-pet.is-erroring .phi-eyes-x,
     .phi-pet.is-erroring .phi-success-glow {
       opacity: 1;
     }
   }
-  
 </style>
 </head>
 <body>
@@ -808,178 +1005,426 @@
   </div>
   <div class="tip">可切换主题与状态（idle → working → celebrate → error），发送本文件给对方用浏览器打开即可查看</div>
 <script>
-// ===== Φ (Phi) 桌宠：四状态状态机 =====
-// 待机 idle / 工作 working / 庆祝 celebrate / 报错 error
-// 命名规范：CSS 类 .phi-*、data 属性 data-phi-*、API window.PhiPet
-(function () {
-  "use strict";
+  // ===== Φ (Phi) 桌宠：四状态状态机 + 待机微行为 + 视线跟随 =====
+  // 待机 idle / 工作 working / 庆祝 celebrate / 报错 error
+  // 命名规范：CSS 类 .phi-*、data 属性 data-phi-*、API window.PhiPet
+  (function () {
+    "use strict";
 
-  var MODES = ["idle", "working", "celebrate", "error"];
+    var MODES = ["idle", "working", "celebrate", "error"];
 
-  var MODE_TEXT = {
-    idle:      { status: "待机中",   detail: "随机眨眼已开启", toggle: "开始工作" },
-    working:   { status: "工作中",   detail: "快速敲代码",     toggle: "完成工作" },
-    celebrate: { status: "庆祝中",   detail: "工作成功",       toggle: "报错演示" },
-    error:     { status: "报错中",   detail: "故障抖动",       toggle: "返回待机" }
-  };
-
-  function getMode(root) {
-    return root.dataset.phiMode === "working" ? "working"
-         : root.dataset.phiMode === "celebrate" ? "celebrate"
-         : root.dataset.phiMode === "error" ? "error"
-         : "idle";
-  }
-
-  function updateModeText(root, mode) {
-    var card = root.closest(".phi-card");
-    if (!card) return;
-
-    var info = MODE_TEXT[mode] || MODE_TEXT.idle;
-    var status = card.querySelector("[data-phi-status]");
-    var detail = card.querySelector("[data-phi-detail]");
-    var toggle = card.querySelector("[data-phi-mode-toggle]");
-
-    if (status) status.textContent = info.status;
-    if (detail) detail.textContent = info.detail;
-    if (toggle) toggle.textContent = info.toggle;
-  }
-
-  var LOOK_DIRS = ["up", "down", "left", "right", "up-left", "up-right", "down-left", "down-right"];
-
-  var CONFETTI_COLORS = [
-    "#fde047", "#93c5fd", "#c4b5fd", "#86efac", "#fda4af", "#fbbf24", "#67e8f9"
-  ];
-
-  function randomizeConfetti(root) {
-    var items = root.querySelectorAll(".phi-confetti");
-    var bucket = 88 / items.length;
-    for (var i = 0; i < items.length; i++) {
-      var el = items[i];
-      var style = el.style;
-      style.setProperty("--phi-confetti-x", (4 + bucket * i + Math.random() * bucket * 0.8).toFixed(1) + "%");
-      style.setProperty("--phi-confetti-y", (8 + Math.random() * 48).toFixed(1) + "%");
-      style.setProperty("--phi-confetti-delay", (-Math.random() * 1.5).toFixed(2) + "s");
-      style.setProperty("--phi-confetti-size", (0.10 + Math.random() * 0.12).toFixed(2) + "em");
-      style.setProperty("--phi-confetti-spin", (Math.random() < 0.5 ? -1 : 1) * (20 + Math.random() * 40).toFixed(0) + "deg");
-      style.setProperty("--phi-confetti-scale", (1 + Math.random() * 0.5).toFixed(2));
-      style.setProperty("--phi-confetti-color", CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)]);
-    }
-  }
-
-  function setPhiPetMode(root, mode) {
-    var nextMode = MODES.indexOf(mode) !== -1 ? mode : "idle";
-
-    root.classList.add("is-mode-transitioning");
-    root.classList.toggle("is-working", nextMode === "working");
-    root.classList.toggle("is-celebrating", nextMode === "celebrate");
-    root.classList.toggle("is-erroring", nextMode === "error");
-    root.dataset.phiMode = nextMode;
-    if (nextMode === "celebrate") randomizeConfetti(root);
-    updateModeText(root, nextMode);
-
-    window.setTimeout(function () {
-      root.classList.remove("is-mode-transitioning");
-    }, 420);
-  }
-
-  function initPhiPet(root) {
-    if (!root || root.__phiInited) return function () {};
-    root.__phiInited = true;
-
-    var eyes = root.querySelector(".phi-eyes");
-    if (!eyes) return function () {};
-
-    var toggle = root.closest(".phi-card")?.querySelector("[data-phi-mode-toggle]");
-    var blinkTimer = 0;
-    var blinkEndTimer = 0;
-    var lookTimer = 0;
-    var lookEndTimer = 0;
-    var destroyed = false;
-
-    function scheduleBlink() {
-      if (destroyed) return;
-      var mode = getMode(root);
-      var delay;
-      if (mode === "working") {
-        delay = 3800 + Math.random() * 3000;
-      } else if (mode === "celebrate" || mode === "error") {
-        delay = 5000 + Math.random() * 3000;
-      } else {
-        delay = 2600 + Math.random() * 4300;
-      }
-
-      blinkTimer = window.setTimeout(function () {
-        if (document.visibilityState !== "hidden" && getMode(root) !== "celebrate" && getMode(root) !== "error") {
-          eyes.classList.remove("is-blinking");
-          void eyes.offsetWidth;
-          eyes.classList.add("is-blinking");
-          blinkEndTimer = window.setTimeout(function () {
-            eyes.classList.remove("is-blinking");
-          }, 190);
-        }
-        scheduleBlink();
-      }, delay);
-    }
-
-    // 随机“看”动作：与眨眼同机制，仅待机时轻微上下左右看，位移后随机停留
-    function scheduleLook() {
-      if (destroyed) return;
-      var mode = getMode(root);
-      var delay;
-      if (mode === "working") {
-        delay = 6000 + Math.random() * 5000;
-      } else if (mode === "celebrate" || mode === "error") {
-        delay = 9000 + Math.random() * 6000;
-      } else {
-        delay = 2800 + Math.random() * 5200;
-      }
-
-      lookTimer = window.setTimeout(function () {
-        if (document.visibilityState !== "hidden" && getMode(root) === "idle") {
-          var dir = LOOK_DIRS[Math.floor(Math.random() * LOOK_DIRS.length)];
-          eyes.classList.remove("is-looking-up", "is-looking-down", "is-looking-left", "is-looking-right", "is-looking-up-left", "is-looking-up-right", "is-looking-down-left", "is-looking-down-right");
-          eyes.classList.add("is-looking-" + dir);
-          lookEndTimer = window.setTimeout(function () {
-            eyes.classList.remove("is-looking-up", "is-looking-down", "is-looking-left", "is-looking-right", "is-looking-up-left", "is-looking-up-right", "is-looking-down-left", "is-looking-down-right");
-          }, 400 + Math.random() * 800);
-        }
-        scheduleLook();
-      }, delay);
-    }
-
-    function handleToggle() {
-      var order = { idle: "working", working: "celebrate", celebrate: "error", error: "idle" };
-      setPhiPetMode(root, order[getMode(root)]);
-    }
-
-    if (toggle) toggle.addEventListener("click", handleToggle);
-    updateModeText(root, getMode(root));
-    if (getMode(root) === "working") root.classList.add("is-working");
-    if (getMode(root) === "celebrate") root.classList.add("is-celebrating");
-    if (getMode(root) === "error") root.classList.add("is-erroring");
-    randomizeConfetti(root);
-    scheduleBlink();
-    scheduleLook();
-
-    return function destroy() {
-      destroyed = true;
-      window.clearTimeout(blinkTimer);
-      window.clearTimeout(blinkEndTimer);
-      window.clearTimeout(lookTimer);
-      window.clearTimeout(lookEndTimer);
-      if (toggle) toggle.removeEventListener("click", handleToggle);
-      eyes.classList.remove("is-blinking", "is-looking-up", "is-looking-down", "is-looking-left", "is-looking-right", "is-looking-up-left", "is-looking-up-right", "is-looking-down-left", "is-looking-down-right");
+    var MODE_TEXT = {
+      idle:      { status: "待机中",   detail: "会眨眼，也会看你", toggle: "开始工作" },
+      working:   { status: "工作中",   detail: "快速敲代码",       toggle: "完成工作" },
+      celebrate: { status: "庆祝中",   detail: "工作成功",         toggle: "报错演示" },
+      error:     { status: "报错中",   detail: "故障抖动",         toggle: "返回待机" }
     };
-  }
 
-  window.PhiPet = {
-    init: initPhiPet,
-    setMode: setPhiPetMode
-  };
+    var REDUCED_MOTION = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
 
-  document.querySelectorAll("[data-phi-pet]").forEach(initPhiPet);
-})();
+    // 视线位移上限（em，随桌宠字号缩放：100px 字号 ≈ 2.6px 横 / 1.8px 纵）
+    var GAZE_X = 0.026;
+    var GAZE_Y = 0.018;
 
+    // 待机微行为：cls 挂在 .phi-pet 上，ms 与 CSS 动画时长对齐（略长，含收势）
+    var BEHAVIORS = [
+      { cls: "is-tilting", ms: 1060, weight: 3 },
+      { cls: "is-hopping", ms: 760, weight: 3 },
+      { cls: "is-waving", ms: 1140, weight: 2 },
+      { cls: "is-double-blink", ms: 420, weight: 3 }
+    ];
+
+    var CONFETTI_COLORS = [
+      "#fde047", "#93c5fd", "#c4b5fd", "#86efac", "#fda4af", "#fbbf24", "#67e8f9"
+    ];
+
+    function getMode(root) {
+      return root.dataset.phiMode === "working" ? "working"
+           : root.dataset.phiMode === "celebrate" ? "celebrate"
+           : root.dataset.phiMode === "error" ? "error"
+           : "idle";
+    }
+
+    function updateModeText(root, mode) {
+      var card = root.closest(".phi-card");
+      if (!card) return;
+
+      var info = MODE_TEXT[mode] || MODE_TEXT.idle;
+      var status = card.querySelector("[data-phi-status]");
+      var detail = card.querySelector("[data-phi-detail]");
+      var toggle = card.querySelector("[data-phi-mode-toggle]");
+
+      if (status) status.textContent = info.status;
+      if (detail) detail.textContent = info.detail;
+      if (toggle) toggle.textContent = info.toggle;
+    }
+
+    function randomizeConfetti(root) {
+      var items = root.querySelectorAll(".phi-confetti");
+      var bucket = 88 / items.length;
+      for (var i = 0; i < items.length; i++) {
+        var el = items[i];
+        var style = el.style;
+        style.setProperty("--phi-confetti-x", (4 + bucket * i + Math.random() * bucket * 0.8).toFixed(1) + "%");
+        style.setProperty("--phi-confetti-y", (8 + Math.random() * 48).toFixed(1) + "%");
+        style.setProperty("--phi-confetti-delay", (-Math.random() * 1.5).toFixed(2) + "s");
+        style.setProperty("--phi-confetti-size", (0.10 + Math.random() * 0.12).toFixed(2) + "em");
+        style.setProperty("--phi-confetti-spin", (Math.random() < 0.5 ? -1 : 1) * (20 + Math.random() * 40).toFixed(0) + "deg");
+        style.setProperty("--phi-confetti-scale", (1 + Math.random() * 0.5).toFixed(2));
+        style.setProperty("--phi-confetti-color", CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)]);
+      }
+    }
+
+    function setPhiPetMode(root, mode) {
+      var nextMode = MODES.indexOf(mode) !== -1 ? mode : "idle";
+      var prevMode = getMode(root);
+      var changed = prevMode !== nextMode;
+
+      // 过渡脉冲必须挂在 .phi-pet 本体上：CSS 选择器是 .phi-pet.is-phi-mode-transitioning
+      // （挂在 .phi-pet-root 上永远匹配不到，这段动画此前是死的）。
+      // 只在模式真的变化时播放：harness 每个 running 状态事件都会调一次 working，
+      // 无条件重放会把 420ms 脉冲叠成持续抽搐。连切两次则先摘类再强制回流重放，
+      // 并清掉上一个收尾定时器，否则旧定时器会提前掐掉新脉冲。
+      if (changed && root.classList.contains("phi-pet")) {
+        root.classList.remove("is-phi-mode-transitioning");
+        void root.offsetWidth;
+        root.classList.add("is-phi-mode-transitioning");
+        window.clearTimeout(root.__phiTransitionTimer);
+        root.__phiTransitionTimer = window.setTimeout(function () {
+          root.classList.remove("is-phi-mode-transitioning");
+          root.__phiTransitionTimer = 0;
+        }, 460);
+      }
+      root.classList.toggle("is-working", nextMode === "working");
+      root.classList.toggle("is-celebrating", nextMode === "celebrate");
+      root.classList.toggle("is-erroring", nextMode === "error");
+      root.dataset.phiMode = nextMode;
+      if (nextMode === "celebrate") randomizeConfetti(root);
+      updateModeText(root, nextMode);
+      if (changed && typeof root.__phiModeChanged === "function") root.__phiModeChanged(nextMode);
+    }
+
+    function initPhiPet(root) {
+      if (!root || root.__phiInited) return function () {};
+      root.__phiInited = true;
+
+      var eyes = root.querySelector(".phi-eyes");
+      if (!eyes) return function () {};
+
+      var destroyed = false;
+      var toggle = root.closest(".phi-card")?.querySelector("[data-phi-mode-toggle]");
+      var blinkTimer = 0, blinkEndTimer = 0;
+      var saccadeTimer = 0, behaviorTimer = 0, behaviorEndTimer = 0;
+      var perkTimer = 0, pokeTimer = 0, landingTimer = 0;
+
+      // ---------- 结构补丁：眼睛外层（只负责视线位移）＋落地投影 ----------
+      // 在 JS 里补，而不是改 harness.js 的内联 SVG 模板：模板里那串像素路径太长，
+      // 且 preview 页共用同一份 phi-pet.js，补丁自动对两边生效。
+      var eyesWrap = root.querySelector(".phi-eyes-wrap");
+      if (!eyesWrap && eyes.parentNode) {
+        eyesWrap = document.createElement("div");
+        eyesWrap.className = "phi-eyes-wrap";
+        eyesWrap.setAttribute("aria-hidden", "true");
+        eyes.parentNode.insertBefore(eyesWrap, eyes);
+        eyesWrap.appendChild(eyes);
+      }
+
+      if (root.parentNode && !root.parentNode.querySelector(".phi-shadow")) {
+        var shadowEl = document.createElement("div");
+        shadowEl.className = "phi-shadow";
+        shadowEl.setAttribute("aria-hidden", "true");
+        root.parentNode.insertBefore(shadowEl, root);
+      }
+
+      // ---------- 视线：落在椭圆上，逐帧阻尼跟随 ----------
+      // 坐标写在 --phi-gaze-x/y（em），由 .phi-eyes-wrap 的 transform 消费；
+      // 眨眼/工作眯眼仍走 .phi-eyes 自己的 scaleY，两层互不打架。
+      var gaze = { x: 0, y: 0, tx: 0, ty: 0, raf: 0, rect: null, rectAt: 0, hovering: false };
+
+      function eyesCenter() {
+        var now = Date.now();
+        if (!gaze.rect || now - gaze.rectAt > 240) {
+          var target = eyesWrap || eyes;
+          var rect = target.getBoundingClientRect();
+          gaze.rect = { cx: rect.left + rect.width / 2, cy: rect.top + rect.height / 2 };
+          gaze.rectAt = now;
+        }
+        return gaze.rect;
+      }
+
+      function applyGaze() {
+        root.style.setProperty("--phi-gaze-x", gaze.x.toFixed(4) + "em");
+        root.style.setProperty("--phi-gaze-y", gaze.y.toFixed(4) + "em");
+      }
+
+      function stepGaze() {
+        gaze.raf = 0;
+        if (destroyed) return;
+        var ease = 0.2;
+        gaze.x += (gaze.tx - gaze.x) * ease;
+        gaze.y += (gaze.ty - gaze.y) * ease;
+        var settled = Math.abs(gaze.tx - gaze.x) < 0.0004 && Math.abs(gaze.ty - gaze.y) < 0.0004;
+        if (settled) {
+          gaze.x = gaze.tx;
+          gaze.y = gaze.ty;
+        }
+        applyGaze();
+        if (!settled) kickGaze();
+      }
+
+      function kickGaze() {
+        if (destroyed || gaze.raf) return;
+        gaze.raf = window.requestAnimationFrame ? window.requestAnimationFrame(stepGaze) : window.setTimeout(stepGaze, 16);
+      }
+
+      function aimAt(clientX, clientY) {
+        var c = eyesCenter();
+        var dx = clientX - c.cx;
+        var dy = clientY - c.cy;
+        var dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 6) {
+          gaze.tx = 0;
+          gaze.ty = 0;
+          kickGaze();
+          return;
+        }
+        // 近了看满、远了收一点：仍是那个方向，但不会“死死盯着”
+        var strength = 0.4 + 0.6 * Math.max(0, 1 - dist / 560);
+        gaze.tx = (dx / dist) * GAZE_X * strength;
+        gaze.ty = (dy / dist) * GAZE_Y * strength;
+        kickGaze();
+      }
+
+      function scheduleSaccade() {
+        if (destroyed) return;
+        saccadeTimer = window.setTimeout(function () {
+          if (!document.hidden && getMode(root) === "idle" && !gaze.hovering) {
+            var angle = Math.random() * Math.PI * 2;
+            var radius = 0.3 + Math.random() * 0.7;
+            gaze.tx = Math.cos(angle) * GAZE_X * radius;
+            gaze.ty = Math.sin(angle) * GAZE_Y * radius;
+            kickGaze();
+          }
+          scheduleSaccade();
+        }, 1500 + Math.random() * 3400);
+      }
+
+      // ---------- 待机微行为：歪头 / 蹦一下 / 招手 / 连眨两下 ----------
+      function pickBehavior() {
+        var total = 0, i;
+        for (i = 0; i < BEHAVIORS.length; i++) total += BEHAVIORS[i].weight;
+        var roll = Math.random() * total;
+        for (i = 0; i < BEHAVIORS.length; i++) {
+          roll -= BEHAVIORS[i].weight;
+          if (roll <= 0) return BEHAVIORS[i];
+        }
+        return BEHAVIORS[0];
+      }
+
+      function clearBehavior() {
+        for (var i = 0; i < BEHAVIORS.length; i++) root.classList.remove(BEHAVIORS[i].cls);
+      }
+
+      function scheduleBehavior(delay) {
+        if (destroyed || REDUCED_MOTION) return;
+        behaviorTimer = window.setTimeout(function () {
+          if (document.hidden || getMode(root) !== "idle" || root.classList.contains("is-dragging")) {
+            scheduleBehavior(2200);
+            return;
+          }
+          clearBehavior();
+          var behavior = pickBehavior();
+          root.classList.add(behavior.cls);
+          behaviorEndTimer = window.setTimeout(function () {
+            root.classList.remove(behavior.cls);
+            // 间隔本身也随机：同一套动作不会踩出可预期的节拍
+            scheduleBehavior(4200 + Math.random() * 7600);
+          }, behavior.ms);
+        }, typeof delay === "number" ? delay : 5200 + Math.random() * 7000);
+      }
+
+      // ---------- 交互反应 ----------
+      var suppressPoke = false;
+
+      function pulse(cls) {
+        root.classList.remove(cls);
+        void root.offsetWidth; // 同一类连续触发时也能重放动画
+        root.classList.add(cls);
+      }
+
+      function onPointerMove(event) {
+        if (event.pointerType === "touch") return;
+        if (getMode(root) !== "idle") return;
+        aimAt(event.clientX, event.clientY);
+      }
+
+      function onPointerEnter(event) {
+        gaze.hovering = true;
+        if (typeof event.clientX === "number") aimAt(event.clientX, event.clientY);
+        if (getMode(root) === "idle" && !REDUCED_MOTION) {
+          window.clearTimeout(perkTimer);
+          pulse("is-perking");
+          perkTimer = window.setTimeout(function () { root.classList.remove("is-perking"); }, 520);
+        }
+      }
+
+      function onPointerLeave() {
+        gaze.hovering = false;
+      }
+
+      function onClick() {
+        if (suppressPoke) return;
+        if (getMode(root) !== "idle" || REDUCED_MOTION) return;
+        window.clearTimeout(pokeTimer);
+        pulse("is-poked");
+        pokeTimer = window.setTimeout(function () { root.classList.remove("is-poked"); }, 620);
+      }
+
+      // 拖拽由 harness.js 负责位移（内联 left/top），这里只观察手势做姿态反应
+      var dragActive = false, dragMoved = false, dragStartX = 0, dragStartY = 0;
+
+      function onPointerDown(event) {
+        if (event.pointerType === "mouse" && event.button !== 0) return;
+        dragActive = true;
+        dragMoved = false;
+        dragStartX = event.clientX;
+        dragStartY = event.clientY;
+      }
+
+      function onDragMove(event) {
+        if (!dragActive) return;
+        var dx = event.clientX - dragStartX;
+        var dy = event.clientY - dragStartY;
+        if (!dragMoved && Math.abs(dx) + Math.abs(dy) > 5) {
+          dragMoved = true;
+          root.classList.add("is-dragging");
+        }
+        if (!dragMoved) return;
+        var tilt = Math.max(-8, Math.min(8, dx * 0.45));
+        root.style.setProperty("--phi-drag-tilt", tilt.toFixed(2) + "deg");
+      }
+
+      function onPointerUp() {
+        if (!dragActive) return;
+        dragActive = false;
+        if (!dragMoved) return;
+        suppressPoke = true;
+        window.setTimeout(function () { suppressPoke = false; }, 0);
+        root.classList.remove("is-dragging");
+        root.style.removeProperty("--phi-drag-tilt");
+        if (!REDUCED_MOTION) {
+          window.clearTimeout(landingTimer);
+          pulse("is-landing");
+          landingTimer = window.setTimeout(function () { root.classList.remove("is-landing"); }, 520);
+        }
+      }
+
+      function onWindowBlur() {
+        gaze.tx = 0;
+        gaze.ty = 0;
+        kickGaze();
+      }
+
+      // 模式切换时清掉待机类，避免「工作时还在招手」
+      root.__phiModeChanged = function (mode) {
+        clearBehavior();
+        window.clearTimeout(perkTimer);
+        window.clearTimeout(pokeTimer);
+        window.clearTimeout(landingTimer);
+        root.classList.remove("is-perking", "is-poked", "is-landing", "is-dragging");
+        if (mode !== "idle") {
+          gaze.tx = 0;
+          gaze.ty = 0;
+          kickGaze();
+        }
+      };
+
+      // ---------- 眨眼（原有逻辑，保留节奏） ----------
+      function scheduleBlink() {
+        if (destroyed) return;
+        var mode = getMode(root);
+        var delay;
+        if (mode === "working") {
+          delay = 3800 + Math.random() * 3000;
+        } else if (mode === "celebrate" || mode === "error") {
+          delay = 5000 + Math.random() * 3000;
+        } else {
+          delay = 2600 + Math.random() * 4300;
+        }
+
+        blinkTimer = window.setTimeout(function () {
+          if (document.visibilityState !== "hidden" && getMode(root) !== "celebrate" && getMode(root) !== "error") {
+            eyes.classList.remove("is-blinking");
+            void eyes.offsetWidth;
+            eyes.classList.add("is-blinking");
+            blinkEndTimer = window.setTimeout(function () {
+              eyes.classList.remove("is-blinking");
+            }, 190);
+          }
+          scheduleBlink();
+        }, delay);
+      }
+
+      function handleToggle() {
+        var order = { idle: "working", working: "celebrate", celebrate: "error", error: "idle" };
+        setPhiPetMode(root, order[getMode(root)]);
+      }
+
+      if (toggle) toggle.addEventListener("click", handleToggle);
+      updateModeText(root, getMode(root));
+      if (getMode(root) === "working") root.classList.add("is-working");
+      if (getMode(root) === "celebrate") root.classList.add("is-celebrating");
+      if (getMode(root) === "error") root.classList.add("is-erroring");
+      randomizeConfetti(root);
+      scheduleBlink();
+
+      if (!REDUCED_MOTION) {
+        window.addEventListener("pointermove", onPointerMove, { passive: true });
+        window.addEventListener("pointermove", onDragMove, { passive: true });
+        window.addEventListener("pointerup", onPointerUp);
+        window.addEventListener("pointercancel", onPointerUp);
+        window.addEventListener("blur", onWindowBlur);
+        root.addEventListener("pointerenter", onPointerEnter);
+        root.addEventListener("pointerleave", onPointerLeave);
+        root.addEventListener("pointerdown", onPointerDown);
+        root.addEventListener("click", onClick);
+        scheduleSaccade();
+        scheduleBehavior(2600 + Math.random() * 4200);
+        applyGaze();
+      }
+
+      return function destroy() {
+        destroyed = true;
+        var timers = [blinkTimer, blinkEndTimer, saccadeTimer, behaviorTimer, behaviorEndTimer, perkTimer, pokeTimer, landingTimer, root.__phiTransitionTimer];
+        for (var i = 0; i < timers.length; i++) window.clearTimeout(timers[i]);
+        root.__phiTransitionTimer = 0;
+        if (gaze.raf && window.cancelAnimationFrame) window.cancelAnimationFrame(gaze.raf);
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointermove", onDragMove);
+        window.removeEventListener("pointerup", onPointerUp);
+        window.removeEventListener("pointercancel", onPointerUp);
+        window.removeEventListener("blur", onWindowBlur);
+        root.removeEventListener("pointerenter", onPointerEnter);
+        root.removeEventListener("pointerleave", onPointerLeave);
+        root.removeEventListener("pointerdown", onPointerDown);
+        root.removeEventListener("click", onClick);
+        clearBehavior();
+        root.classList.remove("is-poked", "is-perking", "is-landing", "is-dragging", "is-blinking");
+        root.style.removeProperty("--phi-gaze-x");
+        root.style.removeProperty("--phi-gaze-y");
+        root.style.removeProperty("--phi-drag-tilt");
+        root.__phiModeChanged = null;
+        if (toggle) toggle.removeEventListener("click", handleToggle);
+      };
+    }
+
+    window.PhiPet = {
+      init: initPhiPet,
+      setMode: setPhiPetMode
+    };
+
+    document.querySelectorAll("[data-phi-pet]").forEach(initPhiPet);
+  })();
 </script>
 <script>
   (function () {
