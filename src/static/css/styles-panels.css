@@ -6482,22 +6482,23 @@ html[data-theme='light'] .thinking-slider {
   --ts-hue-3: #f9a884;
 }
 /* 家族适配（2026-10-25 五改，锚 styles.css 各家族块色斑/网格线/accent 满饱和版；
-   2026-10-26 六改按用户反馈重配三族）：blueprint 蓝图＝青→蓝图→靛（深浅同构、
-   浅色收敛——浅色右端弃 accent 深蓝改靛，用户判单调）；inkstone 砚石＝石绿→
+   2026-10-26 六改按用户反馈重配三族）：blueprint 炭纸＝墨褐→黄铜→朱砂（2026-11-12
+   随素纸改暖重配：原来是青→蓝图→靛，accent 换成暖赭后整条滑块与新配色打架，用户
+   报「色调不合时」）；inkstone 砚石＝石绿→
    石青→群青（青绿山水三色，同族饱和度拉开色相跨距——原全石青一条线用户判单调，
    hue-2 仍落 accent）；neon 霓虹＝青→紫→品红（经典霓虹管双色，近黑玻璃上最跳）；
    candy 糖果＝蜜桃粉→玫粉→香芋紫（深浅统一成浅色一套，用户判浅色版更好看；左端
    樱粉改带微橙调的蜜桃粉）。hue-2 尽量落 accent、hue-3＝招牌色（burst 光环/粒子
    辉光同取）。 */
 html[data-theme="dark"][data-panel-skin="blueprint"] .thinking-slider {
-  --ts-hue-1: #38c5e8;
-  --ts-hue-2: #4a8fe0;
-  --ts-hue-3: #7c66f0;
+  --ts-hue-1: #a08b6b;
+  --ts-hue-2: #c9963f;
+  --ts-hue-3: #d9704f;
 }
 html[data-theme="light"][data-panel-skin="blueprint"] .thinking-slider {
-  --ts-hue-1: #4fb9d6;
-  --ts-hue-2: #3d78cc;
-  --ts-hue-3: #6c5ecb;
+  --ts-hue-1: #b09a78;
+  --ts-hue-2: #8a5d1f;
+  --ts-hue-3: #b8503a;
 }
 html[data-theme="dark"][data-panel-skin="inkstone"] .thinking-slider {
   --ts-hue-1: #82cfa2;

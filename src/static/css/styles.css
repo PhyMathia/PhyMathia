@@ -2986,6 +2986,10 @@
       /* 同一条原则：暖纸配暖描边/暖次要文字（浅色默认那套是灰蓝） */
       --border: rgba(120, 100, 70, 0.34);
       --text-secondary: #6a5b45;
+      /* 深色块把 --text-primary 改成了暖白 #f5efe4，浅色块必须显式盖回深墨——
+         深色块的属性选择器 (0,1,1) 在浅色模式同样生效，漏盖＝浅色下标题白到看不见
+         （2026-11-12 用户实报）。凡是深色块里改过的文字/描边色，浅色块都要逐条回填。 */
+      --text-primary: #2a2418;
     }
     html[data-panel-skin="blueprint"] .aurora-glass {
       --aurora-1: transparent;
@@ -3272,6 +3276,149 @@
     @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
       html[data-panel-skin="candy"] .aurora-glass { --glass-tint: rgba(24, 18, 30, 0.88); }
       html[data-theme="light"][data-panel-skin="candy"] .aurora-glass { --glass-tint: rgba(252, 246, 244, 0.96); }
+    }
+
+    /* ====== 星夜专属材质（data-wallpaper="night" × 默认族）======
+     * 2026-11-12 主题分层三期（用户拍板「先做星夜」）：星夜不再走「极光磨砂」，
+     * 改「深空观测窗」——薄透镜 + 发丝银边 + 只从边缘渗进来的冷光。
+     *
+     * 与其余四族的分工（一套骨架、五种材质，颜色不算签名）：
+     *   星夜 = 光学件（薄透镜、冷光贴边、中圆角 6–22）
+     *   素纸 = 硬纸（无模糊、偏移实影、直角 1–6，已落地）
+     *   山影/霓虹/糖果仍走各自的家族块，本块不碰。
+     *
+     * ★ 为什么是 :not([data-panel-skin]) 而不是给 aurora 挂属性：
+     *   默认族的契约就是「不挂属性＝基础规则即默认」（ui.js applyStyleFamily 994–1000，
+     *   与 data-node-skin 同款）。给它挂属性会牵动 theme-wallpaper 冒烟的「每族材质齐备」
+     *   契约与全部基础规则的源序。这里用 (0,3,1) 的选择器只抓「星夜壁纸 + 默认族」一种组合：
+     *   用户把星夜壁纸配给炭纸/霓虹时（家族块 (0,2,1)），本块自动让位，不打架。
+     *
+     * ★ 位置必须在家族节之后：frontend_smoke「浅色极光纯暖调」按字符串切片扫浅色基础块，
+     *   本块含冷蓝（星夜本意），插进切片区间会被误判成「浅色里有蓝」。
+     *
+     * 三条改动＝素纸立住的那三条：
+     *   1) 材质：blur 18→10px、saturate 150→142%：从「磨砂」变「透镜」——背景形状仍可辨，
+     *      但被冷化。三团极光色斑归零（它们才是五套看起来同质的元凶），冷光改由 inset
+     *      阴影从四边渗入：位置固定在边上、不漂移，比 background-position 动画省一档。
+     *      ★ blur 不能压到 6px：星夜壁纸正中烤着书法标语与一条亮彩虹，压太狠会透出字的
+     *      轮廓（比模糊更难看）。10px 是这套底图的上限，靠 tint .78 与去色斑拿「锐」
+     *      而不是靠小模糊。
+     *   2) 几何：--r-* 抬到 6/8/10/14/18/22（整体上移一档，不是换形状）。舷窗不是直角，
+     *      也不能像糖果那样圆成一团；山影撤回后中间这段只有星夜在用。
+     *   3) 音色：只动品牌/面板标题（细体 + 字距 .10em），正文 h1–h4 一概不碰——
+     *      山影那轮的教训是「一套主题一次只改一到两个杠杆，三个一起动＝换了个东西」，
+     *      所以字族/字重/字距都只落在界面 chrome 上，内容排版保持原样。
+     *
+     * 深色＝夜面观测窗；浅色＝同构月白面（冷灰白，与糖果的奶白暖调正相反，两套都白但不同温）。
+     * 档位（dialog/panel/plain）必须逐条补，否则弹窗回落到基础 tint 会透得没法读。 */
+
+    html[data-wallpaper="night"]:not([data-panel-skin]) {
+      --r-xs: 6px;      /* 圆角是零成本指纹：素纸 1、霓虹 0、糖果 26，星夜占中圆档 */
+      --r-sm: 8px;
+      --r-md: 10px;
+      --r-lg: 14px;
+      --r-xl: 18px;
+      --r-2xl: 22px;
+    }
+
+    html[data-wallpaper="night"]:not([data-panel-skin]) .aurora-glass {
+      --aurora-1: transparent;
+      --aurora-2: transparent;
+      --aurora-3: transparent;
+      /* 旧 veil 是给「磨砂」准备的底部压暗层；透镜不需要，改由边缘渗光塑形 */
+      --glass-veil: none;
+      /* 底色抬到 .78：透镜要透的是「形状」不是「亮度」，太透就变回磨砂；
+         星夜底图的书法字是暖金高对比，.74 时轮廓会浮上来像脏点，.78 才压得住 */
+      --glass-tint: rgba(7, 11, 24, 0.78);
+      --glass-inner-line: rgba(186, 210, 255, 0.10);
+      --glass-shadow: rgba(0, 6, 22, 0.55);
+      background-color: var(--glass-tint);
+      -webkit-backdrop-filter: blur(10px) saturate(142%);
+      backdrop-filter: blur(10px) saturate(142%);
+      /* 五层：① 远距冷投影（真空里没有近影，所以大而淡）② 顶部高光 ③ 0.5px 发丝银边
+         ④⑤ 两层贴边内冷光——offset 0 + 负 spread 让光沿四边均匀渗入，这是「边缘渗光」
+         唯一稳的写法；用 background-position 画光会被 --compact 的 background-size 搅乱。 */
+      box-shadow:
+        0 30px 68px -26px var(--glass-shadow),
+        inset 0 1px 0 var(--glass-inner-line),
+        inset 0 0 0 0.5px rgba(176, 202, 255, 0.30),
+        inset 0 0 34px -18px rgba(112, 152, 240, 0.32),
+        inset 0 0 80px -46px rgba(56, 92, 176, 0.40);
+      animation: none;
+    }
+    html[data-theme="light"][data-wallpaper="night"]:not([data-panel-skin]) .aurora-glass {
+      --aurora-1: transparent;
+      --aurora-2: transparent;
+      --aurora-3: transparent;
+      --glass-veil: none;
+      --glass-tint: rgba(243, 247, 253, 0.82);
+      --glass-inner-line: rgba(255, 255, 255, 0.85);
+      --glass-shadow: rgba(70, 92, 132, 0.22);
+      background-color: var(--glass-tint);
+      -webkit-backdrop-filter: blur(8px) saturate(112%);
+      backdrop-filter: blur(8px) saturate(112%);
+      box-shadow:
+        0 26px 60px -28px var(--glass-shadow),
+        inset 0 1px 0 var(--glass-inner-line),
+        inset 0 0 0 0.5px rgba(120, 146, 192, 0.28),
+        inset 0 0 34px -18px rgba(150, 176, 220, 0.28);
+      animation: none;
+    }
+    /* 三档：深色逐档加实，浅色同构。别漏档——家族节头注释 2 的坑在这里同样成立：
+       深色块 (0,3,1) 在浅色模式也生效，浅色档位必须 (0,4,1) 逐条盖回。 */
+    html[data-wallpaper="night"]:not([data-panel-skin]) .aurora-glass--dialog { --glass-tint: rgba(6, 9, 20, 0.95); }
+    html[data-wallpaper="night"]:not([data-panel-skin]) .aurora-glass--panel { --glass-tint: rgba(6, 9, 20, 0.86); }
+    html[data-theme="light"][data-wallpaper="night"]:not([data-panel-skin]) .aurora-glass--dialog { --glass-tint: rgba(247, 250, 254, 0.95); }
+    html[data-theme="light"][data-wallpaper="night"]:not([data-panel-skin]) .aurora-glass--panel { --glass-tint: rgba(245, 249, 253, 0.90); }
+    /* 纯玻璃档（整屏铺开）：只留发丝边，渗光去掉——大面积上那圈光会变成四边脏晕 */
+    html[data-wallpaper="night"]:not([data-panel-skin]) .aurora-glass--plain {
+      --glass-tint: rgba(9, 13, 26, 0.94);
+      box-shadow:
+        inset 0 0 0 0.5px rgba(176, 202, 255, 0.22),
+        inset 0 1px 0 rgba(200, 222, 255, 0.08);
+      animation: none;
+    }
+    html[data-theme="light"][data-wallpaper="night"]:not([data-panel-skin]) .aurora-glass--plain {
+      --glass-tint: rgba(248, 251, 255, 0.95);
+      box-shadow:
+        inset 0 0 0 0.5px rgba(120, 146, 192, 0.20),
+        inset 0 1px 0 rgba(255, 255, 255, 0.80);
+      animation: none;
+    }
+    /* 停靠宿主（胶囊下沿挂任务面板）：必须补一条收投影——本块的 (0,3,1) 会压过
+       .aurora-glass--dock-host 的 (0,1,0)，那道 68px 远影会糊在面板顶边上一条
+       （2026-10-27 修过的坑，换材质时容易原样带回来）。只留发丝边和贴边冷光。 */
+    html[data-wallpaper="night"]:not([data-panel-skin]) .aurora-glass--dock-host {
+      box-shadow:
+        0 6px 16px var(--glass-shadow),
+        inset 0 1px 0 var(--glass-inner-line),
+        inset 0 0 0 0.5px rgba(176, 202, 255, 0.28),
+        inset 0 0 30px -18px rgba(112, 152, 240, 0.26);
+    }
+    html[data-theme="light"][data-wallpaper="night"]:not([data-panel-skin]) .aurora-glass--dock-host {
+      box-shadow:
+        0 6px 14px var(--glass-shadow),
+        inset 0 1px 0 var(--glass-inner-line),
+        inset 0 0 0 0.5px rgba(120, 146, 192, 0.26);
+    }
+    @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+      html[data-wallpaper="night"]:not([data-panel-skin]) .aurora-glass { --glass-tint: rgba(8, 12, 26, 0.92); }
+      html[data-theme="light"][data-wallpaper="night"]:not([data-panel-skin]) .aurora-glass { --glass-tint: rgba(246, 249, 253, 0.96); }
+    }
+
+    /* 音色：只落在品牌与面板标题（细体 + 字距 .10em＝观测站铭牌那种疏）。
+       正文 h1–h4 一概不碰——它们是内容排版，星夜的签名在材质，不该拿正文节奏去凑。 */
+    html[data-wallpaper="night"]:not([data-panel-skin]) .brand-title,
+    html[data-wallpaper="night"]:not([data-panel-skin]) .bg-panel-title,
+    html[data-wallpaper="night"]:not([data-panel-skin]) .theme-style-title,
+    html[data-wallpaper="night"]:not([data-panel-skin]) .task-panel-title,
+    html[data-wallpaper="night"]:not([data-panel-skin]) .model-section-title,
+    html[data-wallpaper="night"]:not([data-panel-skin]) .session-group-title,
+    html[data-wallpaper="night"]:not([data-panel-skin]) .trash-section-title,
+    html[data-wallpaper="night"]:not([data-panel-skin]) .um-section-title,
+    html[data-wallpaper="night"]:not([data-panel-skin]) .completion-card-title {
+      font-weight: 300;
+      letter-spacing: .10em;
     }
 
     /* ====== 进度指示器 ====== */

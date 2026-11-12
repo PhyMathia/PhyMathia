@@ -29,8 +29,16 @@
           document.documentElement.setAttribute('data-node-skin', fam);
           document.documentElement.setAttribute('data-panel-skin', fam);
         }
+        // 预置壁纸套 id（2026-11-12 主题分层三期）：星夜专属材质走
+        // html[data-wallpaper="night"] 命中，这个属性若等 app.js 起来才挂，
+        // 首屏会先按基础玻璃画一帧、再跳成透镜——所以要和 data-theme 同一批落地。
+        // 口径与 ui.js getWallpaperId 一致：缺失/非法回落首套（night）。
+        var wp = localStorage.getItem(p + (t === 'light' ? 'phymathia_bg_light' : 'phymathia_bg_dark'));
+        if (!/^(night|paper|mountain|neon|candy)$/.test(wp || '')) wp = 'night';
+        document.documentElement.setAttribute('data-wallpaper', wp);
       } catch (e) {
         document.documentElement.setAttribute('data-theme', 'dark');
+        document.documentElement.setAttribute('data-wallpaper', 'night');
       }
     })();
   </script>

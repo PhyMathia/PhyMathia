@@ -176,6 +176,23 @@ export function run() {
       if (!cssSrc.includes(`html[data-theme="light"][data-panel-skin="${k}"] {\n      --accent:`)) throw new Error(k + '：缺浅色强调色覆盖');
       if (!new RegExp(`html\\[data-panel-skin="${k}"\\] \\{[\\s\\S]*?--field-bg:`).test(cssSrc)) throw new Error(k + '：缺输入框底色覆盖（蓝图纸面贴墨蓝输入框）');
     }
+    // 深色块（html[data-panel-skin=k]，特异性 (0,1,1)）在浅色模式下同样生效——凡是它改过的
+    // 「文字/描边/侧栏」类令牌，浅色块必须逐条回填，否则浅色下会出现白字白底（2026-11-12
+    // 素纸实踩：--text-primary 改成暖白后没在浅色块盖回，用户报「标题是白色的看不清」）。
+    // 只查这四类；--r-*/--font-display 是有意深浅共用的，不在此列。
+    const INK_TOKENS = ['--text-primary', '--text-secondary', '--border', '--sidebar-bg'];
+    for (const k of fams) {
+      const dAt = cssSrc.indexOf(`html[data-panel-skin="${k}"] {`);
+      const lAt = cssSrc.indexOf(`html[data-theme="light"][data-panel-skin="${k}"] {`);
+      if (dAt < 0 || lAt < 0) continue;
+      const dBlk = cssSrc.slice(dAt, cssSrc.indexOf('}', dAt));
+      const lBlk = cssSrc.slice(lAt, cssSrc.indexOf('}', lAt));
+      for (const t of INK_TOKENS) {
+        if (dBlk.includes(t + ':') && !lBlk.includes(t + ':')) {
+          throw new Error(k + '：深色块改了 ' + t + ' 但浅色块没回填（浅色模式下会白字白底）');
+        }
+      }
+    }
     // 家族节必须待在 @supports 降级块之后：浅色极光切片（终点 @keyframes）不容家族冷色混入
     const famStart = cssSrc.indexOf('====== 风格家族面板质感');
     const keyframes = cssSrc.indexOf('@keyframes auroraDrift');
