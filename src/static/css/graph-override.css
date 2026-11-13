@@ -638,65 +638,14 @@
   .app-container .progress-status .elapsed-time { display: none; }
 }
 
-/* ---------- 糖果·深色：进度胶囊改节点卡质感（2026-11-13 用户拍板）----------
- * 用户指名白框里「粉色圆钮＋灰色方块」与旁边糖果磨砂节点不同类，拍板「整条胶囊连底
- * 一起改」：胶囊从极光药丸变成一张迷你糖果节点卡——同款磨砂渐变卡面、blur(16px)、
- * 细线描边＋6px 属性书脊（取 var(--accent) 粉：胶囊的主身份色）、--r-lg 圆角与柔光投影。
- * 配方逐项抄本文件 [data-node-skin="candy"] .graph-node（7597 段），attr 位置一律换
- * var(--accent)——--node-attr 只由渲染层逐节点内联注入，胶囊身上没有、引用即整条失效
- * （同段头注释 ★ 的坑）。深色限定：data-theme 由 ui.js applyTheme 显式设置（恒为
- * dark/light，ui.js:836），浅色糖果维持极光奶白药丸不动。选择器 (0,4,1) 压过上方
- * .app-container .progress-status (0,2,0) 与家族 .aurora-glass (0,2,1)，background 简写
- * 在这里合法（styles.css 基础规则禁写 background 的约束只管那条基态块，冒烟切片也只扫它）。
- * 三个控制钮跟着玻璃化（同拍板）：节点卡小玻璃钮同款混色（text-primary 8% 底／30% 线），
- * 11-12「去框 hover 才浮底」在糖果深色下由本块取代，其余主题不吃本块、不受影响。 */
-html[data-theme="dark"][data-panel-skin="candy"] .app-container .progress-status {
-  border-radius: var(--r-lg) !important;
-  border-color: color-mix(in srgb, var(--text-primary) 40%, transparent) !important;
-  border-left: 6px solid color-mix(in srgb, var(--accent) 72%, var(--text-primary)) !important;
-  background: linear-gradient(
-    170deg,
-    color-mix(in srgb, var(--accent) 13%, transparent),
-    color-mix(in srgb, var(--text-primary) 9%, transparent)
-  ) !important;
-  -webkit-backdrop-filter: blur(16px) !important;
-  backdrop-filter: blur(16px) !important;
-  box-shadow:
-    0 0 24px color-mix(in srgb, var(--accent) 12%, transparent),
-    0 14px 38px color-mix(in srgb, var(--overlay-bg) 42%, transparent) !important;
-}
-/* 停靠宿主（任务面板挂底角）：柔光改贴地小影——大投影糊在面板顶边（night 块
-   2026-10-27 同款教训），底角让位仍由上方 dock-host 规则管。 */
-html[data-theme="dark"][data-panel-skin="candy"] .app-container .progress-status.aurora-glass--dock-host {
-  box-shadow:
-    0 6px 16px color-mix(in srgb, var(--overlay-bg) 42%, transparent) !important;
-}
-/* 控制钮玻璃化。开始键保留「全胶囊唯一主操作」身份：实底换半透粉玻璃＋粉描边，
-   图标转白——半透粉玻璃上沿用深色三角（#06101f）会糊回底色。圆角从药丸改控件档
-   --r-md，与节点卡里 −/🗑/▷ 小玻璃钮同一套曲线。 */
-html[data-theme="dark"][data-panel-skin="candy"] .app-container .progress-status .status-control-btn {
-  border: 1px solid color-mix(in srgb, var(--text-primary) 30%, transparent) !important;
-  background: color-mix(in srgb, var(--text-primary) 8%, transparent) !important;
-  border-radius: var(--r-md) !important;
-}
-html[data-theme="dark"][data-panel-skin="candy"] .app-container .progress-status .status-control-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--text-primary) 14%, transparent) !important;
-  border-color: color-mix(in srgb, var(--accent) 55%, transparent) !important;
-  color: var(--text-primary) !important;
-}
-html[data-theme="dark"][data-panel-skin="candy"] .app-container .progress-status .status-control-btn:disabled {
-  background: transparent !important;
-  border-color: color-mix(in srgb, var(--text-primary) 14%, transparent) !important;
-}
-html[data-theme="dark"][data-panel-skin="candy"] .app-container .progress-status .status-run-btn {
-  background: color-mix(in srgb, var(--accent) 30%, transparent) !important;
-  border-color: color-mix(in srgb, var(--accent) 65%, transparent) !important;
-  color: var(--white) !important;
-}
-html[data-theme="dark"][data-panel-skin="candy"] .app-container .progress-status .status-run-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 42%, transparent) !important;
-  color: var(--white) !important;
-}
+/* ---------- 糖果·进度胶囊：深浅同一套配方（2026-11-13 用户拍板）----------
+ * 此前本文件有过一块「糖果·深色：进度胶囊改节点卡质感」（深色专属：方角 --r-lg
+ * ＋6px 粉书脊＋渐变卡面＋控制钮玻璃化），浅色维持极光奶白药丸——两者形态分叉。
+ * 用户实测后要求「深色的胶囊改成浅色的样式，统一」：本块整条删除，糖果胶囊
+ * 深浅都走家族基础档（.aurora-glass--compact 药丸＋磨砂＋同款描边），
+ * 只有底色/色斑按深浅两套令牌走——与 thinking-slider「糖果深浅统一成一套」
+ * （styles-panels.css 6530 段）、节点皮肤 candy 的深浅成对口径一致。
+ * ★ 别再在糖果下加深色专属胶囊块：深浅分叉过一次，用户已明确否决。 */
 
 .graph-new-session-wrap {
   position: absolute;

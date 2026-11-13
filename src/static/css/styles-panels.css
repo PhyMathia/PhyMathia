@@ -1304,6 +1304,32 @@
       top: 50px;
       padding: 6px 14px;
     }
+
+    /* ---------- 糖果·顶栏：去掉「上淡下浓」的明暗渐变（2026-11-13 用户拍板）----------
+     * 用户报「顶部的栏感觉有一段颜色渐变，导致下方颜色深，删除这个渐变试试」。查因：
+     * 顶栏/二级栏走 .aurora-glass--panel，其 --glass-veil 继承 styles.css 糖果家族块的
+     * `linear-gradient(180deg, rgba(255,224,236,.04), rgba(8,5,12,.13) 84%)`
+     * ——这条纵向渐变把栏的下半截压深；二级栏又紧贴主栏下沿，两条栏的暗边连成一片。
+     * 处置：veil 归零（--glass-veil: none），**不动 background-image 本身**——
+     * 极光是「3 色斑 + veil」四层清单，配套 background-size/background-position，
+     * 删一层会把后面的色斑与 veil 一起拖歪（2026-09-27 实测口径，见 ui-glass.md）。
+     * 顶栏组＝.chat-header（主栏）＋.header-secondary-bar（二级栏）一起改，否则
+     * 主栏没了渐变、二级栏还留着，两条栏的接缝会不齐。
+     * 色斑（--aurora-1/2/3）保留：那是糖果的马卡龙柔光签名，与本次要删的
+     * 「明暗渐变」是两回事；要连色斑一起归零另说。
+     * ★ 落位说明：本块属「常驻主题规则」（竖屏同样生效），不是横屏打磨那轮的产物，
+     *   故放本文件（顶栏组的既定归属地，1293 段同族）——styles.css 里那处
+     *   .app-container .chat-header 是 design-ruler.mjs「横屏打磨」契约的探针字面量，
+     *   要求其每一处都落在 @media (orientation: landscape) 内（竖屏一像素不许动）。
+     *   把常驻规则塞进 styles.css 会被那条契约判红（本轮实踩），故避其管辖文件。 */
+    html[data-panel-skin="candy"] .app-container .chat-header,
+    html[data-panel-skin="candy"] .app-container .header-secondary-bar {
+      --glass-veil: none;
+    }
+    html[data-theme="light"][data-panel-skin="candy"] .app-container .chat-header,
+    html[data-theme="light"][data-panel-skin="candy"] .app-container .header-secondary-bar {
+      --glass-veil: none;
+    }
     .app-container .graph-workspace {
       position: fixed;
       inset: 0;
