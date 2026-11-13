@@ -43,9 +43,9 @@
     })();
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
-  <link rel="stylesheet" href="/dist/styles.min.css?v=64da8359">
-  <link rel="stylesheet" href="/dist/styles-panels.min.css?v=087a52e4">
-  <link rel="stylesheet" href="/dist/graph-override.min.css?v=8712d28d">
+  <link rel="stylesheet" href="/dist/styles.min.css?v=3b022f01">
+  <link rel="stylesheet" href="/dist/styles-panels.min.css?v=208d02c0">
+  <link rel="stylesheet" href="/dist/graph-override.min.css?v=d638cdfc">
   <link rel="stylesheet" href="/dist/phi-pet.min.css?v=9ee6cffb">
   <script defer src="/vendor/katex/katex.min.js"></script>
   <script defer src="/vendor/katex/contrib/auto-render.min.js"></script>
@@ -221,6 +221,7 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="9" y1="6" x2="21" y2="6"></line><line x1="9" y1="12" x2="21" y2="12"></line><line x1="9" y1="18" x2="21" y2="18"></line><circle cx="4.5" cy="6" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="4.5" cy="12" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="4.5" cy="18" r="1.2" fill="currentColor" stroke="none"></circle></svg>
         <span class="task-panel-badge" hidden></span>
       </button>
+      <span class="status-dot" aria-hidden="true"></span>
       <span class="status-text" aria-live="polite">待命</span>
       <button class="send-queue-chip" id="sendQueueChip" hidden aria-live="polite"></button>
       <div class="status-progress"><div class="status-progress-fill" id="statusProgressFill"></div></div>
@@ -265,7 +266,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/dist/app.js?v=d7f36806" defer></script>
+  <script src="/dist/app.js?v=87bbd0cf" defer></script>
   <script>
     // app.js 改 defer 后本脚本先于它执行，而 APP_VERSION 是 config.js 的顶层
     // const——内联脚本无法加 defer，只能等 DOMContentLoaded：所有 defer 脚本

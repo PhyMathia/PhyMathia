@@ -30,7 +30,18 @@ function makeEl(tag) {
     closest() { return null; },
     getAttribute() { return null; },
     querySelector() { return null; },
-    getBoundingClientRect() { return node._rect || { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }; },
+    getBoundingClientRect() {
+      const r = node._rect;
+      if (!r) return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+      // 撑宽/收窄后模拟重排（2026-11-12）：给了 center 就按中线重新摊开，等价于
+      // 胶囊在「居中布局」下撑宽会往两侧外扩；没给 center 就保持原位，等价于
+      // `.dragged`（fixed + inline left）那种只向右长的形态。两种分支 dock 都要对。
+      const w = parseFloat(node.style.width);
+      if (r.center != null && w > 0) {
+        return { ...r, left: r.center - w / 2, right: r.center + w / 2, width: w };
+      }
+      return r;
+    },
   };
   node.classList = {
     add: c => node._classes.add(c),
@@ -61,6 +72,7 @@ function fixture(opts = {}) {
       left: opts.anchor.left, top: opts.anchor.top,
       right: opts.anchor.left + opts.anchor.width,
       bottom: opts.anchor.bottom, width: opts.anchor.width, height: 40,
+      center: opts.anchor.center,
     };
     anchor.offsetWidth = opts.anchor.width;
     anchor.offsetHeight = 40;
@@ -555,9 +567,10 @@ test('源码契约：面板挂在胶囊下沿，接缝零缝隙，且不借用�
   assert.match(ui, /function _positionPanel\(panelId, triggerEl\)/, '共用的通用定位函数不许被改掉');
   assert.doesNotMatch(src, /function _positionPanel\(/, 'tasks.js 不许自己重定义通用定位');
   // 缝隙是 0：top 直接取胶囊 rect.bottom，不带任何 +N 偏移
+  // （2026-11-12 起读的是撑宽后重量的 box，语义不变）
   const dock = src.slice(src.indexOf('function _dockTaskPanel'), src.indexOf('function _undockTaskPanel'));
-  assert.match(dock, /const top = Math\.max\(8, rect\.bottom\);/, '面板顶部就是胶囊下沿，不留缝');
-  assert.doesNotMatch(dock, /rect\.bottom\)\s*\+\s*\d/, '接缝不许留偏移（旧路径的 +6 会露馅）');
+  assert.match(dock, /const top = Math\.max\(8, box\.bottom\);/, '面板顶部就是胶囊下沿，不留缝');
+  assert.doesNotMatch(dock, /box\.bottom\)\s*\+\s*\d/, '接缝不许留偏移（旧路径的 +6 会露馅）');
   // 拖胶囊时面板要跟过去
   assert.match(src, /window\._taskPanelDockFollow = _dockTaskPanel/, '要暴露跟随钩子给 chat.js');
   const chat = readSrc('src/static/js/chat.js');
@@ -565,25 +578,52 @@ test('源码契约：面板挂在胶囊下沿，接缝零缝隙，且不借用�
 });
 
 test('停靠几何：等宽时左右边缘对齐胶囊、零缝隙地吊在下沿', () => {
-  // 胶囊 550 宽、居中于 1280 视口 → left 365，底沿 y=150
-  const { s, run, els } = fixture({ anchor: { width: 550, left: 365, top: 110, bottom: 150 } });
+  // 胶囊 550 宽、居中于 1280 视口 → left 365（center 640），底沿 y=150
+  const { s, run, els } = fixture({ anchor: { width: 550, left: 365, top: 110, bottom: 150, center: 640 } });
   run('toggleTaskPanel();');
   assert.ok(els.taskPanel.classList.contains('show'), '面板要打开');
   assert.ok(els.taskPanel.classList.contains('task-panel--docked'), '要进停靠态');
   assert.ok(els.taskPanel.classList.contains('aurora-glass--attached'), '玻璃要降档，否则和胶囊差一道深浅台阶');
   assert.ok(els.progressStatus.classList.contains('aurora-glass--dock-host'), '胶囊也要让底角收投影');
   assert.equal(els.taskPanel.style.width, '550px', '胶囊 550 时面板同宽');
+  assert.equal(els.progressStatus.style.width, '550px', '胶囊本身也要显式等宽（头与身同宽）');
   assert.equal(els.taskPanel.style.left, '365px', '等宽时左边缘与胶囊对齐');
   assert.equal(els.taskPanel.style.top, '150px', '顶部就是胶囊下沿，零缝隙');
   assert.equal(s._positionCalls.length, 0, '停靠成功就不该再走通用路径');
 });
 
+// 2026-11-12 用户截图：胶囊改成短形态后闲时只有 188px，面板却有 360 底线，
+// 结果「胶囊头 + 面板身」变成小圆头吊在大盒子上——胶囊底角（已被 dock-host
+// 拉直）反而悬在面板上方两侧露出来。这条咬住「短板也要撑到同宽」。
+test('停靠几何：胶囊短于面板底线时，胶囊要撑到同宽而不是让面板独自变宽', () => {
+  const { s, run, els } = fixture({ anchor: { width: 188, left: 546, top: 110, bottom: 150, center: 640 } });
+  run('toggleTaskPanel();');
+  assert.equal(els.taskPanel.style.width, '360px', '面板宽度有 360 底线，不跟着胶囊缩');
+  assert.equal(els.progressStatus.style.width, '360px', '胶囊要撑到同宽，否则头身接不上');
+  // 居中布局撑宽是往两侧外扩，所以左边缘从 546 退到 640-180=460
+  assert.equal(els.taskPanel.style.left, '460px', '撑开后按胶囊新左边缘对齐');
+  assert.equal(s._positionCalls.length, 0, '仍然走停靠路径');
+
+  // 关面板必须把宽度还回去，否则胶囊永远停在 360 的撑开态
+  run('toggleTaskPanel();');
+  assert.equal(els.progressStatus.style.width, '', '撤停靠要清掉撑开的宽度');
+});
+
+test('停靠几何：胶囊被拖过（left 固定）时撑宽只向右长，面板要跟着这个新左边缘', () => {
+  // 没有 center：模拟 .dragged 的 fixed + inline left，宽度变了左边缘不动
+  const { run, els } = fixture({ anchor: { width: 188, left: 546, top: 110, bottom: 150 } });
+  run('toggleTaskPanel();');
+  assert.equal(els.progressStatus.style.width, '360px', '同样要撑到 360');
+  assert.equal(els.taskPanel.style.left, '546px', '左边缘不动，面板就该贴 546（不是按旧中线算出的 460）');
+});
+
 test('胶囊闲时只有 250px：面板撑到 360 底线并按胶囊中线居中（不照抄压扁列表）', () => {
   // 闲时恒 250px 是 Chrome 对可缩 flex 子项固有宽度的坑，拍板见 canvas-modules.md 2026-09-26
-  const { run, els } = fixture({ anchor: { width: 250, left: 515, top: 110, bottom: 150 } });
+  const { run, els } = fixture({ anchor: { width: 250, left: 515, top: 110, bottom: 150, center: 640 } });
   run('toggleTaskPanel();');
   assert.equal(els.taskPanel.style.width, '360px', '不能被压到 250，列表装不下');
-  // 胶囊中线 = 515 + 125 = 640 → 面板 360 宽 → left = 460
+  assert.equal(els.progressStatus.style.width, '360px', '胶囊同时撑到同宽（2026-11-12 头身等宽）');
+  // 胶囊撑开后中线仍是 640 → 面板 360 宽 → left = 460
   assert.equal(els.taskPanel.style.left, '460px', '比胶囊宽时按中线居中，吊在它下面');
   assert.equal(els.taskPanel.style.top, '150px');
 });

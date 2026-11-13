@@ -1124,11 +1124,21 @@ function _dockTaskPanel() {
   if (maxW < 1) return false;
   const width = Math.min(Math.max(rect.width, Math.min(_TASK_DOCK_MIN_W, maxW)), maxW);
 
+  // 头与身等宽（2026-11-12）：胶囊改成短形态后闲时只有 188px，而面板有
+  // _TASK_DOCK_MIN_W=360 的底线，不撑开就是「小圆头吊在大盒子上」——胶囊底角
+  // （dock-host 已拉直）会悬在面板上方两侧露出来。
+  // 顺序要紧：**先撑宽度，再读一次 rect**。撑开在居中布局下是往两侧外扩，
+  // 而拖过的胶囊（fixed + inline left）只向右长；拿撑开前的 rect 算 left，
+  // 后者会错开 (width - rect.width)/2。等宽之后中线对齐退化成左对齐。
+  anchor.classList.add('aurora-glass--dock-host');
+  anchor.style.width = width + 'px';
+  const box = anchor.getBoundingClientRect();
+
   // 等宽时居中与左对齐重合；面板比胶囊宽时按胶囊中线居中，吊在它下面更像"长出来的"。
-  let left = rect.left + (rect.width - width) / 2;
+  let left = box.left;
   left = Math.max(8, Math.min(left, viewW - width - 8));
 
-  const top = Math.max(8, rect.bottom);   // 0 缝隙：接缝要看不见
+  const top = Math.max(8, box.bottom);   // 0 缝隙：接缝要看不见
   const room = viewH - top - 8;
   let dockedTop = top;
   let maxHeight = room;
@@ -1143,7 +1153,6 @@ function _dockTaskPanel() {
 
   panel.classList.add('task-panel--docked');
   panel.classList.add('aurora-glass--attached');
-  anchor.classList.add('aurora-glass--dock-host');
   panel.style.width = width + 'px';
   panel.style.left = Math.round(left) + 'px';
   panel.style.right = 'auto';
@@ -1169,7 +1178,10 @@ function _undockTaskPanel() {
     panel.style.minHeight = '';
     panel.style.overflowY = '';
   }
-  if (anchor) anchor.classList.remove('aurora-glass--dock-host');
+  if (anchor) {
+    anchor.classList.remove('aurora-glass--dock-host');
+    anchor.style.width = '';   // 撤掉停靠时把撑开的宽度还回去，否则短形态再也回不来
+  }
 }
 
 function toggleTaskPanel(e) {

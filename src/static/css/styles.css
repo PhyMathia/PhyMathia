@@ -3472,9 +3472,12 @@
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
-      opacity: 0.55;
+      /* 拖拽是低频操作，不该占常驻视觉位：静止时只留一点影子（让人知道这里能抓），
+         鼠标进来才亮。0.55 那版六点常亮，是胶囊里最抢眼的东西之一。 */
+      opacity: 0.3;
       cursor: grab;
       user-select: none;
+      transition: opacity 0.15s ease;
     }
     .progress-status .status-drag-handle:hover {
       opacity: 1;
@@ -3482,6 +3485,11 @@
     .progress-status.dragging .status-drag-handle {
       cursor: grabbing;
     }
+    /* 控件去框（2026-11-12 用户："这个胶囊有些丑"）：
+       胶囊本身就是一个容器，里面再套三个带 1px 描边 + 8px 圆角的小方块，读起来是
+       「框里套框」而不是「一个胶囊里有三个按钮」；而且 8px 圆角与胶囊的 999px 是两套
+       语言。现在只留图标，**面在需要时出现**——hover 才浮一层 rgba 圆底（999px，
+       跟胶囊同一套曲线）。点击热区仍是 26×26 不变，只是看不见。 */
     .progress-status .status-control-btn {
       display: inline-flex;
       align-items: center;
@@ -3490,26 +3498,51 @@
       height: 26px;
       flex-shrink: 0;
       padding: 0;
-      border: 1px solid var(--border);
-      border-radius: var(--r-md);
-      background: var(--btn-bg);
+      border: none;
+      border-radius: var(--r-pill);
+      background: transparent;
       color: var(--text-secondary);
-      cursor: pointer; font-size: var(--fs-md);}
+      cursor: pointer;
+      font-size: var(--fs-md);
+      opacity: 0.85;
+      transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+    }
     .progress-status .status-control-btn svg {
       width: 16px;
       height: 16px;
       flex-shrink: 0;
     }
     .progress-status .status-control-btn:hover:not(:disabled) {
-      color: var(--accent);
-      border-color: var(--accent);
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-primary);
+      opacity: 1;
+    }
+    html[data-theme="light"] .progress-status .status-control-btn:hover:not(:disabled) {
+      background: rgba(0, 0, 0, 0.06);
     }
     .progress-status .status-control-btn:disabled {
-      opacity: 0.35;
+      /* 去框后 disabled 只剩一个很淡的图标——不再是「一个空盒子」。 */
+      opacity: 0.28;
       cursor: not-allowed;
+      background: transparent;
     }
+    /* 全胶囊只有这一个实心高饱和元素（一屏只给一个主操作）：
+       开始键是主动作，停止和列表是次要动作，形状上就得让出来。
+       图标取深色而不是白色——#4a9eff 上的白色三角对比度只有 2.9，糊；
+       浅色主题的 accent 是深棕金（#8b6914），那里反而要用白。 */
     .progress-status .status-run-btn {
-      color: var(--accent);
+      background: var(--accent);
+      color: #06101f;
+      opacity: 1;
+    }
+    .progress-status .status-run-btn:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--accent) 84%, #fff);
+      color: #06101f;
+      opacity: 1;
+    }
+    html[data-theme="light"] .progress-status .status-run-btn,
+    html[data-theme="light"] .progress-status .status-run-btn:hover:not(:disabled) {
+      color: #fff;
     }
     .progress-status .status-progress {
       /* 不可缩（flex-shrink:0）：胶囊是 fixed 收缩适应宽度，Chrome 算 flex 容器固有宽度时
@@ -3535,7 +3568,45 @@
       background: var(--progress-bar-fill);
       transition: width 0.2s ease;
     }
-    .progress-status .status-text { flex: 0 1 auto; min-width: 0; max-width: 260px; animation: none; }
+    /* 状态点（2026-11-12）：胶囊存在的理由是「现在在干什么」，但这句话原来是 14px
+       次要色、和三个灰图标同级，视觉上最弱。加一个 6px 的圆点当可扫读信号——
+       灰 = 待命 / 终态，蓝 = 进行中（呼吸）。用真实元素而不是 .status-text::before：
+       那条文字要 overflow:hidden + ellipsis，伪元素挂在可缩元素上会被一起裁掉。 */
+    .progress-status .status-dot {
+      flex: 0 0 auto;
+      width: 6px;
+      height: 6px;
+      margin-right: -4px;
+      border-radius: 50%;
+      background: var(--text-secondary);
+      opacity: 0.4;
+    }
+    .progress-status.active .status-dot {
+      background: var(--accent);
+      opacity: 1;
+      animation: statusDotPulse 1.8s ease-in-out infinite;
+    }
+    @keyframes statusDotPulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.78); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .progress-status.active .status-dot { animation: none; }
+    }
+    /* 状态文字升一级：主文字色 + 中等字重，让它读作胶囊的标题而不是附注。 */
+    .progress-status .status-text {
+      flex: 0 1 auto;
+      min-width: 0;
+      max-width: 260px;
+      color: var(--text-primary);
+      font-weight: 500;
+      animation: none;
+    }
+    /* 0% 时那截 180px 的空槽什么都不表达，还把药丸从中间切断。闲时（非 .active）
+       整条不渲染，真跑起来才展开——静止态从 ~380px 收到 ~200px，少挡画布。
+       .active 由 chat.js 的 showProgress 挂、hideProgress / setProgressTerminal 摘，
+       语义正好是「正在跑」；终态同样摘掉，满格的 100% 条一样没有信息量。 */
+    .progress-status:not(.active) .status-progress { display: none; }
     .progress-status .elapsed-time {
       margin-left: auto;
       font-size: var(--fs-sm);

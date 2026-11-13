@@ -614,10 +614,17 @@
 
 /* 任务面板挂上来时（tasks.js 的 _dockTaskPanel），胶囊要让出底角、收投影，
    好让「胶囊头 + 面板身」读作一整块。面板侧的顶角在 styles.css 的 .task-panel--docked。
-   挂在 .progress-status 之下而非裸类：胶囊有 .dragged（拖过）态，规则得跟着一起生效。 */
+   挂在 .progress-status 之下而非裸类：胶囊有 .dragged（拖过）态，规则得跟着一起生效。
+   2026-11-12 补：胶囊改成短形态后闲时只有 188px，_dockTaskPanel 会把它的 width
+   撑到面板同宽。撑开之后两件事跟着变——① 内容要居中，否则 188px 的内容贴在
+   360px 的条左边、右边空一大截，像没写完；② max-width 必须放开，不然窄屏下
+   CSS 的 min(550px, 100vw-24px) 会把 inline width 再压回去，比面板窄几个像素，
+   接缝处又露出台阶。宽度上限由 JS 的 maxW（min(560, viewW-16)）兜着。 */
 .app-container .progress-status.aurora-glass--dock-host {
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
+  justify-content: center;
+  max-width: none;
 }
 
 /* 小屏（≤480px）釜底抽薪：胶囊直接定宽，绕开 Chrome 对 shrink-to-fit flex 容器
