@@ -194,8 +194,7 @@ def thinking_request_params(provider: str, level: str, model: str = "") -> dict:
 
     on 对 effort 族无意义（不存在「比默认更开」），不发参数。上游不认识注入
     字段而拒绝整个请求时，由调用方剥掉参数降级重试一次（主应用与 harness 各
-    有一级——后者是 2026-09-30 接入的相位档位，Φ 的 evaluate/preset/apply 深、
-    chat 浅，见 harness/review.py PHASE_THINKING）。
+    有一级）。Φ 的 T97 相位默认档已于 2026-11-13 退役，六个功能统一跟随槽位档位。
     """
     p = (provider or "").strip().lower()
     level = (level or "").strip().lower()

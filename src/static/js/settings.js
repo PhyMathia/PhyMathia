@@ -11,6 +11,7 @@
  * 「标题＋说明」卡片；Φ 思考挡位改五档（自动/低/中/高/最高，medium 由后端 effort 族
  * 同名直发，文案与 harness.js 一字不差）；关于页加 GitHub 仓库行；帮助／检测页补
  * 「常用入口」——一律是「收抽屉＋调现有函数」，不复制面板逻辑。
+ * 2026-11-13：Φ 首档「自动」改「跟随」，六功能思考强度统一（T97 相位默认退役）。
  *
  * 面板互斥：打开抽屉先收掉顶栏四面板与两个小菜单；点遮罩／按 Esc／点抽屉外自动关闭，
  * 此时旧按钮被点击会照常打开自己的面板（节点已不在抽屉里，天然无冲突）。
@@ -464,10 +465,11 @@ function _settingsPageMemory() {
 }
 
 function _settingsPagePhi() {
-  // 五轮：档位文案改「低/中/高/最高」并新增 medium 档（后端 effort 族同名直发；
-  // 布尔开关族退化＝默认档），文案与 harness.js 的 HARNESS_THINKING_LABELS 一字不差。
+  // 五轮：档位文案「低/中/高/最高」＋ medium 档（后端 effort 族同名直发；布尔开关族
+  // 退化＝默认档）。2026-11-13：首档「自动」改「跟随」——'' 现在只表示「不额外指定，
+  // 跟随 Φ 槽位」，Φ 不再按相位自动调深度；文案与 harness.js 的 LABELS 一字不差。
   const levels = [
-    { v: '', label: '自动', desc: '跟随「模型」页当前 Φ 槽位的思考设置' },
+    { v: '', label: '跟随', desc: '不额外指定；跟随「模型」页 Φ 槽位的思考设置（默认跟随主模型）' },
     { v: 'low', label: '低', desc: '最浅推理，最快' },
     { v: 'medium', label: '中', desc: '速度与深度折中' },
     { v: 'high', label: '高', desc: '更完整的推理链' },
@@ -659,7 +661,7 @@ function settingsSetThinking(value) {
   if (_settingsGuard()) return;
   if (['', 'low', 'medium', 'high', 'max'].indexOf(value) === -1) return;
   _settingsLsSet(STORAGE_KEY_HARNESS_THINKING, value);
-  _settingsToast('深度思考已设为「' + ({ '': '自动', low: '低', medium: '中', high: '高', max: '最高' }[value]) + '」');
+  _settingsToast('深度思考已设为「' + ({ '': '跟随', low: '低', medium: '中', high: '高', max: '最高' }[value]) + '」');
   renderSettingsPage();
 }
 function settingsSetFallback(on) {

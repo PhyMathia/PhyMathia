@@ -409,11 +409,13 @@ window.THINKING_BOOLEAN_PROVIDERS = THINKING_BOOLEAN_PROVIDERS;
 // 槽位思考档位选项（纯函数，冒烟直测）：按供应商族给「真实存在」的档——
 // 布尔族 关/开 两档；effort 族 关/低/中/高/最高 五档（off/low/medium/high/max 同名
 // 直发，不认 max 的端点由后端 400 降级链降 high）；智谱 5.x（model 匹配 glm-5+）
-// 低/高/最高 三档（关不掉思考，不给「关」假档）。role==='graph'（Φ 槽）首项是
-// 「自动」('')：不发思考参数＝交给 Φ 面板按钮/后端相位默认，这是唯一保留 '' 档的角色
+// 低/高/最高 三档（关不掉思考，不给「关」假档）。
+// 2026-11-13 用户拍板 C：六槽档组完全一致，不再给 Φ（graph）单开「自动」('') 首档。
+// 旧的 '' 一值两义（Φ＝不发参数走相位默认／其余五槽＝跟随主槽）正是界面与实际发送
+// 对不上的根源；现在槽位留空统一只表示「跟随主槽」，Φ 面板按钮仍是显式覆盖出口。
+// role 参数保留仅为兼容既有调用点与冒烟，档组不再按角色分叉。
 function _thinkingOptionsFor(provider, role, model) {
   const opts = [];
-  if (role === 'graph') opts.push({ value: '', label: '思考：自动（Φ 按钮可覆盖）' });
   const p = String(provider || '').toLowerCase();
   const m = String(model || '').toLowerCase();
   if (p === 'zhipu' && THINKING_ZHIPU_EFFORT_RE.test(m)) {
@@ -428,9 +430,8 @@ function _thinkingOptionsFor(provider, role, model) {
 
 // 滑块档位（纯函数，冒烟直测）：选项转滑块档（值已按强度升序），附短标签与悬浮说明
 function _thinkingSliderEntries(options) {
-  const short = { '': '自动', off: '关', on: '开', low: '低', medium: '中', high: '高', max: '最高' };
+  const short = { off: '关', on: '开', low: '低', medium: '中', high: '高', max: '最高' };
   const titles = {
-    '': '自动＝由 Φ 面板深度思考按钮/相位默认决定',
     off: '强制关闭思考', on: '开启思考',
     low: '低强度思考', medium: '中等强度思考', high: '高强度思考', max: '最高强度思考',
   };
@@ -772,12 +773,12 @@ function getActiveModelForRole(role) {
 
 // 槽位思考档位（纯读，冒烟直测）：跟随**提供模型的那个槽**——槽配了自己的模型就用
 // 该槽档位；槽空（与主模型相同）连思考也跟主模型，保住「与主模型相同」的字面语义。
-// 例外：graph（Φ 槽）空时返回 ''——主模型档位灌进 Φ 请求会绕过 T97 相位档位
-// （evaluate 深/chat 浅），Φ 的思考归面板按钮与相位默认，见 harness-run 发送点。
+// 2026-11-13 用户拍板 C：graph（Φ 槽）不再例外。旧版空 Φ 槽返回 '' 是给 T97 相位默认
+// 让路，但同一份 '' 在其余五槽表示「跟随主槽」，一值两义让界面显示与实际发送打架。
+// 现在六个功能一律跟随主槽；Φ 面板按钮仍是显式覆盖出口（harness-run 的短路优先级）。
 function getSlotThinkingForRole(role) {
   const own = activeModels[SLOT_MODEL_KEYS[role]] ? getModelById(activeModels[SLOT_MODEL_KEYS[role]]) : null;
   if (own) return activeModels[role + '_thinking'] || '';
-  if (role === 'graph') return '';
   if (role === 'agent') return '';
   return activeModels.agent_thinking || '';
 }
@@ -967,11 +968,12 @@ function _ensureThinkingSliderOn(mount, onChangeCb) {
 // 简略态其余槽留空＝「与主模型相同」，实际发送走 getSlotThinkingForRole 跟随主槽，
 // 所以滑块也如实显示主槽档位，而不是 _thinkingDisplayValue('') 回退的「族默认档」
 // （旧版六槽同值时显示天然一致，改留空后不改这里就会看着像没联动）。
-// graph 槽例外：空槽按 T97 走相位默认，界面保持「自动」；agent 槽永远按自身值。
+// agent 槽永远按自身值；配了自有模型的槽留空＝不发参数，显示族默认档。
+// 2026-11-13 起 graph 不再例外：空 Φ 槽与其他槽一样显示主槽档位（六槽界面一致）。
 function _slotThinkingDisplay(role, current, entries) {
   const stored = current || '';
   if (stored) return _thinkingDisplayValue(stored, entries);
-  if (role === 'agent' || role === 'graph' || activeModels[SLOT_MODEL_KEYS[role]]) {
+  if (role === 'agent' || activeModels[SLOT_MODEL_KEYS[role]]) {
     return _thinkingDisplayValue('', entries);
   }
   return _thinkingDisplayValue(activeModels.agent_thinking || '', entries);
@@ -1050,7 +1052,7 @@ function applyModelPanelMode(mode) {
 }
 
 // 把除主槽外的五槽（模型＋思考档）清成默认；返回是否真的写了。
-// 槽空时 getSlotThinkingForRole 本来就跟随主槽档位（graph 例外走 T97 相位默认）。
+// 槽空时 getSlotThinkingForRole 本来就跟随主槽档位（六个功能一律如此，含 Φ）。
 function _normalizeToSimple() {
   let changed = false;
   for (const role of Object.keys(SLOT_MODEL_KEYS)) {
@@ -1090,7 +1092,7 @@ function onUnifiedModelChange(modelId) {
   applyUnifiedConfig(modelId || '');
 }
 
-// 简略模式统一滑块：只写主槽思考档，其余槽为空即自动跟随（graph 走相位默认）
+// 简略模式统一滑块：只写主槽思考档，其余五槽留空即跟随主槽（含 Φ，六功能统一）
 function onUnifiedThinkingChange(level) {
   const sel = document.getElementById('unifiedModelSelect');
   applyUnifiedConfig(sel ? sel.value : (activeModels.agent_model || ''), level || '');

@@ -85,7 +85,7 @@ async def workshop_step_call(
     if clean is None:
         raise HarnessError("messages 不合法：需要至少一条 user/assistant/tool 消息（system 会被剔除）")
     resolved = _resolve_model(model)
-    _apply_thinking_default(resolved, str(thinking or ""), "preset")
+    _apply_thinking_default(resolved, str(thinking or ""))
     try:
         tokens = int(max_tokens or WORKSHOP_STEP_MAX_TOKENS)
     except (TypeError, ValueError):

@@ -220,8 +220,8 @@ def _review_kwargs(payload: dict, context: str, journal: Optional[list] = None) 
         "all_previous_ops": payload.get("all_previous_ops"),
         "initial_snapshot": payload.get("initial_snapshot"),
         "journal": journal if journal is not None else [],
-        # T97 推理档位：前端可显式覆盖相位默认（evaluate/preset/apply=high、
-        # chat=low），不传/空串＝按相位默认（review_graph 内解析）
+        # 推理档位（2026-11-13 C：T97 相位默认已退役）：前端槽位档位或 Φ 面板按钮
+        # 显式覆盖，六个功能统一；不传/空串＝不覆盖＝不发思考参数
         "thinking": str(payload.get("thinking") or ""),
         # T95 上游容错：用户开关开启时前端才随 payload 带上 fallback_models
         # （≤2 个 {provider, api_key, model, base_url}）；服务端不信形状，

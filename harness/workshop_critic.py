@@ -111,7 +111,7 @@ async def workshop_critic_call(
         # 没输出可评＝没评上：降级，不白烧一次模型调用（实际链路上体检已保 ≥120 字）
         return _degrade_result()
     resolved = _resolve_model(model)
-    _apply_thinking_default(resolved, str(thinking or ""), "preset")
+    _apply_thinking_default(resolved, str(thinking or ""))
     try:
         tokens = int(max_tokens or WORKSHOP_CRITIC_MAX_TOKENS)
     except (TypeError, ValueError):

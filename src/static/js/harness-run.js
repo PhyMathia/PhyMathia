@@ -596,9 +596,9 @@
           // T82 收敛（前端半边）：payload 只直通模式锁（chat/preset）与显式入口
           // （apply/expand）；normal/evaluate 的本地猜测交后端 _detect_phase 重判。
           phase: _harnessPayloadPhase(harnessPhase),
-          // T97：深度思考档位（''/low/high/max）；参数映射归后端按供应商族做。
-          // 槽位思考（2026-10-11）：面板按钮显式档位优先；自动（''）回落 Φ 槽位档位
-          // （图槽空时 getSlotThinkingForRole 返回 ''，相位默认照旧生效不被绕过）
+          // 深度思考档位（''/low/medium/high/max）；参数映射归后端按供应商族做。
+          // 面板按钮显式档位优先；'' 不额外指定＝回落 Φ 槽位档位（槽空再跟随主槽）。
+          // 2026-11-13 起六功能统一，后端不再按相位塞默认档（T97 相位默认退役）。
           thinking: _harnessThinkingLevel() || getSlotThinkingForRole('graph'),
           // T95：备用模型兜底列表（开关开且非空才带，字段形状 {provider,api_key,model,base_url}）
           ...(fallbackModels.length ? { fallback_models: fallbackModels } : {}),

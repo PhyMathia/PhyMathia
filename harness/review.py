@@ -287,11 +287,10 @@ CONFIRM_PHASES = ("normal", "apply", "coach", "expand")
 BATCH_SEGMENT_OPS = 8
 BATCH_OVERSIZED_OPS = 24
 
-# 相位默认思考档（T97，2026-09-30）：质量杠杆按相位分配——评价/创造/应用是
-# 结构化深推理，给 high；答疑是即时小问答，给 low 控延迟；normal/expand 留空
-# （不发思考参数＝现状行为零变化，且不给改图主路径加不可控延迟）。
-# 显式 thinking kwarg / 请求体字段优先，可覆盖任何相位默认（含关掉）。
-PHASE_THINKING = {"evaluate": "high", "preset": "high", "apply": "high", "chat": "low"}
+# 相位默认思考档（T97，2026-09-30）已于 2026-11-13 退役：用户拍板「六个功能思考
+# 强度完全统一」，Φ 不再按 evaluate/preset/apply=high、chat=low 自动调深度。
+# 现在思考档唯一来源＝前端槽位档位（槽空跟随主槽）与 Φ 面板按钮的显式覆盖，
+# 见 _apply_thinking_default（函数名保留，兼容 recipe_draft / workshop_* 的调用点）。
 
 # ---- T412：空正文轮（推理模型把输出预算全花在思维链上）的恢复档 ----
 # 实测 glm-5.3-flash 编辑相位 84s/76s 的 completion_tokens 恰好等于上限 4000、
@@ -401,15 +400,16 @@ def _resolve_model(model: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def _apply_thinking_default(target: Dict[str, Any], thinking: str, phase: str) -> None:
-    """T97 相位默认档：显式 thinking 覆盖 > 模型条目自带档位 > 相位默认
-    （normal/expand 无默认＝不发参数，改图主路径零变化）。
+def _apply_thinking_default(target: Dict[str, Any], thinking: str) -> None:
+    """思考档覆盖（2026-11-13 C）：显式 payload.thinking 优先，其余一律保留
+    _resolve_model 里的模型条目自带值（通常为空＝不发思考参数）。
 
+    旧 T97 相位默认（PHASE_THINKING）已退役——它让 Φ 与其余五功能用了两套规则，
+    且同一个空值在前端既表示「跟随主槽」又表示「交给相位默认」，界面与实际发送
+    对不上。现在六个功能统一跟随槽位档位，Φ 面板按钮仍是显式覆盖出口。
     primary 与备用候选共用（T95 换模型后必须对候选重新应用一遍）。"""
     if thinking:
         target["thinking"] = thinking
-    elif not target.get("thinking"):
-        target["thinking"] = PHASE_THINKING.get(phase, "")
 
 
 def _lower_thinking_for_retry(target: Dict[str, Any]) -> bool:
@@ -2131,9 +2131,9 @@ async def review_graph(
     模型原话、tool_calls）按序 append，由 api 层随事件落盘。不传则零开销，
     测试桩/battery 直调路径行为不变。
 
-    thinking: 可选推理档位覆盖（T97；''/low/high/max）。优先于模型条目自带
-    档位与相位默认（PHASE_THINKING：evaluate/preset/apply=high、chat=low、
-    normal/expand 不发参数），只传给本函数内解析出的 model dict。
+    thinking: 可选推理档位覆盖（''/low/medium/high/max）。优先于模型条目自带档位，
+    只传给本函数内解析出的 model dict。2026-11-13 起不再有相位默认（T97 退役），
+    六个功能统一跟随前端槽位档位；'' 表示不覆盖＝不发思考参数。
 
     fallback_models: 可选备用模型列表（T95，前端用户开关开启时才随 payload
     传来），至多 2 个 {provider, api_key, model, base_url}。主模型调用抛
@@ -2197,7 +2197,7 @@ async def review_graph(
 
     full_context = str(context or "")
     resolved_model = _resolve_model(model)
-    _apply_thinking_default(resolved_model, thinking, phase)
+    _apply_thinking_default(resolved_model, thinking)
     provider = resolved_model["provider"]
 
     mode = str(mode or "auto").strip().lower()
@@ -2294,7 +2294,7 @@ async def review_graph(
                 })
                 _journal_fallback(journal, resolved_model, candidate, cfg_exc)
                 continue
-            _apply_thinking_default(switched, thinking, phase)
+            _apply_thinking_default(switched, thinking)
             _emit({
                 "type": "status",
                 "stage": "fallback",

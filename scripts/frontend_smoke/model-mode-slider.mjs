@@ -70,7 +70,7 @@ export function run() {
     return true;
   });
 
-  check('model-mode：滑块档位序——effort 关→低→中→高；布尔 关→开；智谱5.x 低→高→最高（无关）；graph 首档「自动」', () => {
+  check('model-mode：滑块档位序——effort 关→低→中→高；布尔 关→开；智谱5.x 低→高→最高；六槽档组一致（Φ 无「自动」首档）', () => {
     const e = sandbox._thinkingSliderEntries(sandbox._thinkingOptionsFor('deepseek', 'agent'));
     if (e.map(o => o.value).join(',') !== 'off,low,medium,high,max') throw new Error('effort 序错：' + e.map(o => o.value).join(','));
     if (e.map(o => o.short).join(',') !== '关,低,中,高,最高') throw new Error('effort 短标签错：' + e.map(o => o.short).join(','));
@@ -83,7 +83,10 @@ export function run() {
     const z4 = sandbox._thinkingSliderEntries(sandbox._thinkingOptionsFor('zhipu', 'agent', 'glm-4.7'));
     if (z4.map(o => o.value).join(',') !== 'off,on') throw new Error('智谱旧代应走布尔族：' + z4.map(o => o.value).join(','));
     const g = sandbox._thinkingSliderEntries(sandbox._thinkingOptionsFor('deepseek', 'graph'));
-    if (g[0].value !== '' || g[0].short !== '自动') throw new Error('graph 首档应为「自动」（Φ 按钮可覆盖）');
+    if (g.some(o => o.value === '')) throw new Error('Φ 槽不应再有「自动」空档（六槽档组统一）');
+    if (g.map(o => o.value).join(',') !== e.map(o => o.value).join(',')) {
+      throw new Error('Φ 槽档位序应与主槽逐项相同，不再按角色分叉');
+    }
     return true;
   });
 
@@ -96,7 +99,7 @@ export function run() {
     if (D('', effort) !== 'medium') throw new Error('effort 空值应显示中（OpenAI 默认档）');
     if (D('', bool) !== 'on') throw new Error('布尔空值应显示开（GLM 默认开）');
     if (D('', z5) !== 'max') throw new Error('智谱5.x 空值应显示最高（官方默认 max）');
-    if (D('', graph) !== '') throw new Error('graph 空值＝自动，应原样保留');
+    if (D('', graph) !== 'medium') throw new Error('Φ 空档应与其他槽一样回退到族默认档（medium）');
     if (D('max', effort) !== 'max') throw new Error('max 是 effort 族正式档，应原样返回');
     if (D('low', bool) !== 'on') throw new Error('旧 low 档在布尔族应归一为开');
     if (D('high', bool) !== 'on') throw new Error('旧 high 档在布尔族应归一为开');
@@ -106,7 +109,7 @@ export function run() {
     return true;
   });
 
-  check('model-mode：空槽滑块显示跟随主槽的档位（graph 仍「自动」）＋绝不写回存储', () => {
+  check('model-mode：六槽空槽滑块一律显示跟随主槽的档位（含 Φ）＋绝不写回存储', () => {
     sandbox.localStorage.setItem('phymathia_active_models', JSON.stringify({
       agent_model: 'model-probe-main', agent_thinking: 'high',
       html_model: '', html_thinking: '', graph_model: '', graph_thinking: '', quiz_model: '', quiz_thinking: '',
@@ -121,11 +124,12 @@ export function run() {
       }
     }
     if (sandbox._slotThinkingDisplay('agent', 'high', effort) !== 'high') throw new Error('主槽恒按自身值显示');
-    if (sandbox._slotThinkingDisplay('graph', '', graph) !== '') throw new Error('graph 空槽应保持「自动」');
+    if (sandbox._slotThinkingDisplay('graph', '', graph) !== 'high') throw new Error('Φ 空槽应与其他槽一样显示主槽档位 high');
     if (sandbox._slotThinkingDisplay('html', 'low', effort) !== 'low') throw new Error('有值的槽按自身值显示');
     const stored = JSON.parse(sandbox.localStorage.getItem('phymathia_active_models'));
     if (stored.html_thinking !== '' || stored.graph_thinking !== '') throw new Error('显示计算不得写回槽位存储');
     if (sandbox.getSlotThinkingForRole('html') !== 'high') throw new Error('实际发送仍应跟随主槽 high');
+    if (sandbox.getSlotThinkingForRole('graph') !== 'high') throw new Error('Φ 实际发送也应跟随主槽 high（不再走相位默认）');
     return true;
   });
 
@@ -164,9 +168,10 @@ export function run() {
       if (stored[role + '_thinking'] !== '') throw new Error(role + ' 槽思考档应留空＝默认');
       if (sandbox.getActiveModelForRole(role)) throw new Error(role + ' 槽不应再指向自有模型');
     }
-    // 留空不是「没配」：非主槽按既有回退跟随主槽档位，graph 例外走 T97 相位默认
-    if (sandbox.getSlotThinkingForRole('html') !== 'high') throw new Error('html 思考档应跟随主槽 high');
-    if (sandbox.getSlotThinkingForRole('graph') !== '') throw new Error('graph 槽应走相位默认（自动）');
+    // 留空不是「没配」：六个功能（含 Φ）一律跟随主槽档位，不再有相位默认例外
+    for (const role of ['html', 'graph', 'branch', 'descriptor', 'quiz']) {
+      if (sandbox.getSlotThinkingForRole(role) !== 'high') throw new Error(role + ' 思考档应跟随主槽 high');
+    }
     if (sandbox.localStorage.getItem('phymathia_model_detail_snapshot')) throw new Error('旧快照键不应再被写入');
     return true;
   });
@@ -360,6 +365,9 @@ export function run() {
       throw new Error('_refreshSlotThinkingSelect 未接线 _slotThinkingDisplay');
     }
     if (modelsSrc.includes('select.innerHTML = options.map')) throw new Error('旧思考下拉选项渲染残留');
+    // 2026-11-13 C 防回潮：'' 一值两义（Φ 走相位默认／其余跟随主槽）不许复活
+    if (/opts\.push\(\{ value: ''/.test(modelsSrc)) throw new Error('槽位档组不应再有空值「自动」档');
+    if (/if \(role === 'graph'\) return ''/.test(modelsSrc)) throw new Error('Φ 槽相位默认例外残留');
     // 刻度重建：setOptions 必须调 _renderTicks（换族重建档点；2026-10-25 真机首验教训）
     const tsSrc = fs.readFileSync('src/static/js/thinking-slider.js', 'utf8');
     if (!tsSrc.includes('function _renderTicks')) throw new Error('_renderTicks 定义缺失');

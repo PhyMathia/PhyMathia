@@ -324,8 +324,8 @@ try {
     ? ok('检测页：素材源卡片说明可见＋开始检测入口') : bad('检测页卡片', content.innerHTML.slice(0, 120));
   ctx.settingsSelectTab('phi');
   const phtml = content.innerHTML;
-  ['>自动<', '>低<', '>中<', '>高<', '>最高<'].every(k => phtml.includes(k))
-    ? ok('Φ 页：思考挡位五档文案（自动/低/中/高/最高）') : bad('Φ 挡位文案', phtml.slice(0, 160));
+  ['>跟随<', '>低<', '>中<', '>高<', '>最高<'].every(k => phtml.includes(k))
+    ? ok('Φ 页：思考挡位五档文案（跟随/低/中/高/最高）') : bad('Φ 挡位文案', phtml.slice(0, 160));
   ctx.settingsSetThinking('medium');
   store.get('phymathia_harness_thinking') === 'medium'
     ? ok('Φ 思考档位：medium 写现有存储键') : bad('medium 档', String(store.get('phymathia_harness_thinking')));
@@ -416,8 +416,8 @@ try {
   settingsSrc.includes("u.indexOf('https://github.com/PhyMathia/') !== 0")
     ? ok('外链入口有 GitHub 域名白名单') : bad('外链白名单', '缺前缀校验');
   const harnessSrc = readFileSync(ROOT + 'src/static/js/harness.js', 'utf8');
-  harnessSrc.includes("HARNESS_THINKING_LABELS = { '': '自动', low: '低', medium: '中', high: '高', max: '最高' }")
-    ? ok('harness.js 挡位文案与设置抽屉一致（自动/低/中/高/最高）') : bad('挡位文案同步', '标签表不一致');
+  harnessSrc.includes("HARNESS_THINKING_LABELS = { '': '跟随', low: '低', medium: '中', high: '高', max: '最高' }")
+    ? ok('harness.js 挡位文案与设置抽屉一致（跟随/低/中/高/最高）') : bad('挡位文案同步', '标签表不一致');
   const cfgSrc = readFileSync(ROOT + 'src/static/js/config.js', 'utf8');
   cfgSrc.includes('github:') && cfgSrc.includes('viewBox="0 0 16 16"')
     ? ok('config.js 有 GitHub 实心章鱼猫标') : bad('GitHub 图标', '缺 github 条目');

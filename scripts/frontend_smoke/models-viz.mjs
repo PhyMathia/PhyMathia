@@ -200,7 +200,7 @@ check('model-add：双模式添加接线（预设/手动选项卡 + 勾选清单
   return true;
 });
 
-check('model-add：预设标签一律光模型名＋槽位思考选项（布尔族两档/effort 族四档/智谱5.x 三档/Φ 槽自动）', () => {
+check('model-add：预设标签一律光模型名＋槽位思考选项（布尔族两档/effort 族五档/智谱5.x 三档/六槽档组一致无自动）', () => {
   // 2026-10-11 用户拍板：模型名不挂（旗舰）（性价比）这类注解，档位/定位说明走供应商 tagline
   for (const [key, preset] of Object.entries(sandbox.window.MODEL_PRESETS)) {
     for (const m of preset.models || []) {
@@ -223,7 +223,10 @@ check('model-add：预设标签一律光模型名＋槽位思考选项（布尔�
     throw new Error('智谱 5.x 槽位思考选项应为 低/高/最高 三档');
   }
   const graphOpts = sandbox._thinkingOptionsFor('deepseek', 'graph');
-  if (!graphOpts[0].label.includes('自动')) throw new Error('Φ 槽首档应标注自动（相位默认/按钮可覆盖）');
+  if (graphOpts.some(o => o.value === '')) throw new Error('Φ 槽不应再有「自动」空档（六槽档组统一）');
+  if (graphOpts.map(o => o.value).join(',') !== effortOpts.map(o => o.value).join(',')) {
+    throw new Error('Φ 槽档位序应与主槽逐项相同，不再按角色分叉');
+  }
   return true;
 });
 

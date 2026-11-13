@@ -259,8 +259,9 @@ const STORAGE_KEY_PHI_SESSIONS = 'phymathia_phi_sessions';
 const STORAGE_KEY_PHI_CURRENT = 'phymathia_current_phi_session';
 
 // Φ 面板档位与容错开关（T97/T95 前端半边，2026-09-30）：都是用户级全局键，不带会话后缀。
-// - 深度思考档位：''（自动，跟随模型默认）/ low / high / max，随 payload.thinking 上送，
-//   具体参数映射由后端按供应商族做（与模型条目上的 thinking 字段同一套口径）。
+// - 深度思考档位：''（不额外指定＝跟随 Φ 槽位，槽空再跟随主模型）/ low / medium /
+//   high / max，随 payload.thinking 上送；参数映射由后端按供应商族做。2026-11-13 起
+//   六个功能思考档完全统一，Φ 不再有相位默认；这个键只作显式覆盖出口。
 // - 失败自动换备用模型：'1' 开 / '0' 关（默认关——兜底是用户开关不是默认，见评审路线 #10）。
 const STORAGE_KEY_HARNESS_THINKING = 'phymathia_harness_thinking';
 const STORAGE_KEY_HARNESS_FALLBACK = 'phymathia_harness_fallback';

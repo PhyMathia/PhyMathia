@@ -226,7 +226,7 @@ async def draft_recipe(
     msg_mode = "patch" if template is not None else mode
     template_label = str((template or {}).get("label") or "")
     resolved = _resolve_model(model)
-    _apply_thinking_default(resolved, str(thinking or ""), "preset")
+    _apply_thinking_default(resolved, str(thinking or ""))
     messages = build_recipe_draft_messages(
         instruction=instruction,
         draft=base,

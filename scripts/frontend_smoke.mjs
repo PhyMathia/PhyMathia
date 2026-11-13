@@ -14,7 +14,7 @@
 //   knowledge-summary      知识点摘要契约＋存量摘要优化（方案 B）
 //   models-viz             M1 可视化数值实验校验＋模型分组/组级更新模型列表
 //   serial-models-sync     串行边界：模型配置服务端同步（T284；model-update 用例含 await fetchModels 自 models-viz 挪来）
-//   model-mode-slider      模型面板简略/详细模式＋思考强度滑块（统一写入/切模式归一/档位序/DOM·CSS·构建契约）
+//   model-mode-slider      模型面板简略/详细模式＋思考强度滑块（统一写入/切模式归一/六槽档组一致/DOM·CSS·构建契约）
 //   quiz                   M2 检测闭环收口（quiz-relearn）；M2 夹具在 _runner.mjs
 //   phi-tiers              Φ 第一档七件套＋第三档体验级
 //   continent-core         知识大陆主契约（六文件组拼接源）

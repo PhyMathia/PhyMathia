@@ -22,7 +22,7 @@ if ROOT not in sys.path:
 from server import llm_common
 from harness import api as api_mod
 from harness import review as review_mod
-from harness.review import PHASE_THINKING, HarnessError
+from harness.review import HarnessError
 
 
 # ====== T98：_resolve_model 的模型目标校验 ======
@@ -275,7 +275,7 @@ def test_call_model_stream_strips_stream_options_then_thinking(monkeypatch):
     assert deltas == ["he", "llo"]
 
 
-# ====== T97：相位默认档（review_graph 装配）======
+# ====== 思考档装配（2026-11-13 C：T97 相位默认退役，六功能统一）======
 
 
 def _run_phase(monkeypatch, phase, instruction, thinking_kwarg=None, model_thinking=None):
@@ -299,32 +299,31 @@ def _run_phase(monkeypatch, phase, instruction, thinking_kwarg=None, model_think
     return captured["model"]
 
 
-@pytest.mark.parametrize("phase,instruction,expected", [
-    ("evaluate", "评价一下这张图", PHASE_THINKING["evaluate"]),
-    ("apply", "应用建议", PHASE_THINKING["apply"]),
-    ("preset", "做一个新配方试试", PHASE_THINKING["preset"]),
-    ("chat", "这个公式是什么意思", PHASE_THINKING["chat"]),
-    ("normal", "讲讲这个概念", ""),          # normal/expand 无默认＝不发参数
+@pytest.mark.parametrize("phase,instruction", [
+    ("evaluate", "评价一下这张图"),
+    ("apply", "应用建议"),
+    ("preset", "做一个新配方试试"),
+    ("chat", "这个公式是什么意思"),
+    ("normal", "讲讲这个概念"),
 ])
-def test_phase_default_thinking(monkeypatch, phase, instruction, expected):
+def test_no_phase_default_thinking(monkeypatch, phase, instruction):
+    """所有相位都不再塞默认档：Φ 与其余五功能一样按前端槽位档位发送。"""
     model = _run_phase(monkeypatch, phase, instruction)
-    assert model["thinking"] == expected
+    assert model["thinking"] == ""
 
 
-def test_explicit_thinking_overrides_phase_default(monkeypatch):
+def test_explicit_thinking_still_overrides(monkeypatch):
     model = _run_phase(monkeypatch, "evaluate", "评价一下这张图", thinking_kwarg="low")
     assert model["thinking"] == "low"
 
 
-def test_model_entry_thinking_beats_phase_default(monkeypatch):
+def test_model_entry_thinking_preserved(monkeypatch):
     model = _run_phase(monkeypatch, "chat", "这个公式是什么意思", model_thinking="max")
     assert model["thinking"] == "max"
 
 
-def test_expand_phase_has_no_default(monkeypatch):
-    # expand 相位不在 PHASE_THINKING 表里（改图主路径零延迟变化）
-    assert "expand" not in PHASE_THINKING
-    assert "normal" not in PHASE_THINKING
+def test_phase_table_retired():
+    assert not hasattr(review_mod, "PHASE_THINKING")
 
 
 # ====== T97：api 层入参装配 ======

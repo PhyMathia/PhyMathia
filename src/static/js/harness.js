@@ -1216,14 +1216,16 @@ let harnessLastAppliedReport = null;
     menu.hidden = false;
   }
 
-  // ===== T97 深度思考档位 / T95 失败换备用模型开关（2026-09-30）=====
+  // ===== 深度思考档位 / T95 失败换备用模型开关（T97 相位默认 2026-11-13 退役）=====
   // 两行都活在模式菜单底部：点击只更新自身文案＋toast（不收菜单），状态落 localStorage。
-  // 档位 2026-11-11 五轮起是 ''/low/medium/high/max 五档循环（显示：自动/低/中/高/最高）。
+  // 档位 2026-11-11 五轮起是 ''/low/medium/high/max 五档循环（显示：跟随/低/中/高/最高）。
+  // '' 现在明确表示「不额外指定」＝跟随「模型」页 Φ 槽位（槽空再跟随主槽），不再是
+  // 「自动调深度」；Φ 不再按相位自动调档，六个功能的思考强度完全统一。
   // medium 后端 effort 族同名直发（llm_common.thinking_request_params），布尔开关族退化＝
   // 默认档（不发参数）；参数映射同模型条目上的 thinking 字段，由后端按供应商族做。
   // 备用模型开关默认关（兜底是用户开关不是默认）。
   const HARNESS_THINKING_LEVELS = ['', 'low', 'medium', 'high', 'max'];
-  const HARNESS_THINKING_LABELS = { '': '自动', low: '低', medium: '中', high: '高', max: '最高' };
+  const HARNESS_THINKING_LABELS = { '': '跟随', low: '低', medium: '中', high: '高', max: '最高' };
 
   function _harnessThinkingLevel() {
     try {
@@ -1236,10 +1238,10 @@ let harnessLastAppliedReport = null;
   // 备用模型那行换 UI_ICON_SVG.repeat 线性图标。文案更新只写 .graph-harness-mode-label，
   // 免得 textContent 整节点覆盖把图标一起冲掉。
   function HARNESS_THINKING_TEXT() {
-    return '深度思考：' + (HARNESS_THINKING_LABELS[_harnessThinkingLevel()] || '自动');
+    return '深度思考：' + (HARNESS_THINKING_LABELS[_harnessThinkingLevel()] || '跟随');
   }
 
-  // 自动 → 低 → 中 → 高 → 最高 → 自动；返回新档位（纯逻辑，smoke 直接调）
+  // 跟随 → 低 → 中 → 高 → 最高 → 跟随；返回新档位（纯逻辑，smoke 直接调）
   function _cycleHarnessThinking() {
     const current = _harnessThinkingLevel();
     const next = HARNESS_THINKING_LEVELS[(HARNESS_THINKING_LEVELS.indexOf(current) + 1) % HARNESS_THINKING_LEVELS.length];
