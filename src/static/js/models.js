@@ -998,19 +998,28 @@ function onSlotThinkingChange(role, value) {
   persistActiveModels();
 }
 
-// ====== 模型面板 简略/详细模式（2026-10-25） ======
-// 简略＝一个模型＋一个思考滑块统一六槽：改模型写 6 个 *_model 键，改思考档写 6 个
-// *_thinking 键；首次改动前把当时的详细配置快照进 localStorage，切回详细模式自动还原
-// 并清快照——老配置不丢。简略模式展示恒取主槽（agent）现值，仅展示不落盘。
+// ====== 模型面板 简略/详细模式（2026-10-25 建，2026-11-13 用户重定语义）======
+// 简略＝只有主槽（agent）有值，其余五槽留空＝「与主模型相同（默认）」，六个功能
+// 统一跟随主模型；详细＝六槽各自可改。切到简略时把其余五槽清成默认，切回详细只是
+// 换视图、绝不写数据；再切回简略又统一一次。循环可预测、无隐藏状态。
+// 旧版「首次统一前拍快照、切回详细自动还原」整体退役：它把视图切换变成了破坏性
+// 写操作，快照还会挂几周后突然把配置退回旧值。现在没有后悔药，进简略＝统一，
+// 进详细＝如实看到现状。boot 只套用模式视图（不归一化），避免与 fetchModels 的
+// 服务端同步打架；归一化只发生在用户主动点「简略」时。
 const MODEL_PANEL_MODE_KEY = 'phymathia_model_config_mode';
-const MODEL_DETAIL_SNAPSHOT_KEY = 'phymathia_model_detail_snapshot';
 
 function getModelPanelMode() {
   try { return localStorage.getItem(MODEL_PANEL_MODE_KEY) === 'detail' ? 'detail' : 'simple'; } catch (e) { return 'simple'; }
 }
 
-function setModelPanelMode(mode) { applyModelPanelMode(mode); }
+// 用户点模式钮的入口：简略态恒等＝主槽有值＋其余槽全空。幂等，无变化不落盘。
+function setModelPanelMode(mode) {
+  const next = mode === 'detail' ? 'detail' : 'simple';
+  if (next === 'simple') _normalizeToSimple();
+  applyModelPanelMode(next);
+}
 
+// 纯视图套用：只写模式键、切 CSS 类、刷下拉。绝不碰槽位——boot 与「切详细」都走这里。
 function applyModelPanelMode(mode) {
   if (mode !== 'detail') mode = 'simple';
   try { localStorage.setItem(MODEL_PANEL_MODE_KEY, mode); } catch (e) {}
@@ -1023,66 +1032,51 @@ function applyModelPanelMode(mode) {
   const btnDetail = document.getElementById('modelModeBtnDetail');
   if (btnSimple && btnSimple.classList) btnSimple.classList.toggle('current', mode === 'simple');
   if (btnDetail && btnDetail.classList) btnDetail.classList.toggle('current', mode === 'detail');
-  if (mode === 'detail') _restoreDetailSnapshot();
   renderModelSelects();
 }
 
-function _hasDetailSnapshot() {
-  try { return !!localStorage.getItem(MODEL_DETAIL_SNAPSHOT_KEY); } catch (e) { return false; }
-}
-
-function _takeDetailSnapshot() {
-  const models = {}, thinking = {};
+// 把除主槽外的五槽（模型＋思考档）清成默认；返回是否真的写了。
+// 槽空时 getSlotThinkingForRole 本来就跟随主槽档位（graph 例外走 T97 相位默认）。
+function _normalizeToSimple() {
+  let changed = false;
   for (const role of Object.keys(SLOT_MODEL_KEYS)) {
-    models[SLOT_MODEL_KEYS[role]] = activeModels[SLOT_MODEL_KEYS[role]] || '';
-    thinking[role + '_thinking'] = activeModels[role + '_thinking'] || '';
+    if (role === 'agent') continue;
+    const modelKey = SLOT_MODEL_KEYS[role], thinkKey = role + '_thinking';
+    if (activeModels[modelKey]) { activeModels[modelKey] = ''; changed = true; }
+    if (activeModels[thinkKey]) { activeModels[thinkKey] = ''; changed = true; }
   }
-  try {
-    localStorage.setItem(MODEL_DETAIL_SNAPSHOT_KEY, JSON.stringify({ models, thinking, savedAt: Date.now() }));
-  } catch (e) {
-    return false;
-  }
-  // 写后复核：setItem 静默失败（配额/隐私模式等）就绝不能继续销毁原配置
-  return _hasDetailSnapshot();
+  if (changed) persistActiveModels();
+  return changed;
 }
 
-function _restoreDetailSnapshot() {
-  let snap = null;
-  try { snap = JSON.parse(localStorage.getItem(MODEL_DETAIL_SNAPSHOT_KEY) || 'null'); } catch (e) {}
-  if (!snap || !snap.models) return false;
-  for (const role of Object.keys(SLOT_MODEL_KEYS)) {
-    activeModels[SLOT_MODEL_KEYS[role]] = snap.models[SLOT_MODEL_KEYS[role]] || '';
-    activeModels[role + '_thinking'] = (snap.thinking || {})[role + '_thinking'] || '';
-  }
-  try { localStorage.removeItem(MODEL_DETAIL_SNAPSHOT_KEY); } catch (e) {}
-  persistActiveModels();
-  return true;
-}
-
-// 简略模式统一写入：模型键必写（六槽同值）；thinkingLevel 传字符串才写思考键——
-// 只换模型不动思考。与现状全等时不写不快照。返回是否真写了。
+// 简略模式写入：只写主槽（模型/思考档），其余五槽保证为空＝跟随主模型。
+// thinkingLevel 传字符串才写思考键——只换模型不动思考。现状已合恒等时不写盘。
 function applyUnifiedConfig(modelId, thinkingLevel) {
   const model = modelId || '';
   const hasLevel = typeof thinkingLevel === 'string';
   const level = hasLevel ? thinkingLevel : '';
-  const roles = Object.keys(SLOT_MODEL_KEYS);
-  const modelChanged = roles.some(role => (activeModels[SLOT_MODEL_KEYS[role]] || '') !== model);
-  const thinkChanged = hasLevel && roles.some(role => (activeModels[role + '_thinking'] || '') !== level);
-  if (!modelChanged && !thinkChanged) return false;
-  if (!_hasDetailSnapshot() && !_takeDetailSnapshot()) return false; // 快照落不了盘→拒绝统一（fail-safe，见 _takeDetailSnapshot）
-  for (const role of roles) activeModels[SLOT_MODEL_KEYS[role]] = model;
-  if (hasLevel) for (const role of roles) activeModels[role + '_thinking'] = level;
+  const others = Object.keys(SLOT_MODEL_KEYS).filter(role => role !== 'agent');
+  const modelChanged = (activeModels.agent_model || '') !== model;
+  const thinkChanged = hasLevel && (activeModels.agent_thinking || '') !== level;
+  const needClear = others.some(role => activeModels[SLOT_MODEL_KEYS[role]] || activeModels[role + '_thinking']);
+  if (!modelChanged && !thinkChanged && !needClear) return false;
+  activeModels.agent_model = model;
+  if (hasLevel) activeModels.agent_thinking = level;
+  for (const role of others) {
+    activeModels[SLOT_MODEL_KEYS[role]] = '';
+    activeModels[role + '_thinking'] = '';
+  }
   persistActiveModels();
   renderModelSelects();
   return true;
 }
 
-// 简略模式统一下拉：只换模型，思考档保持各自现值（快照语义见上）
+// 简略模式统一下拉：只换主槽模型，思考档保持现值，其余槽仍为空（跟随主模型）
 function onUnifiedModelChange(modelId) {
   applyUnifiedConfig(modelId || '');
 }
 
-// 简略模式统一滑块：六槽思考档同写
+// 简略模式统一滑块：只写主槽思考档，其余槽为空即自动跟随（graph 走相位默认）
 function onUnifiedThinkingChange(level) {
   const sel = document.getElementById('unifiedModelSelect');
   applyUnifiedConfig(sel ? sel.value : (activeModels.agent_model || ''), level || '');
@@ -1899,8 +1893,11 @@ async function proxyChat(prompt, level, sessionId, stream = true, signal, branch
 }
 
 loadUserModels();
-// 模型面板简略/详细模式（默认简略）：boot 即套用，面板首开即所见即所得；
-// 顺带把七个思考滑块建好（renderModelSelects → updateModelMeta → _refreshSlotThinkingSelect）
+// 模型面板简略/详细模式（默认简略）：boot 只套用视图，不动槽位——详细模式的分散
+// 配置刷新后必须原样保留（归一化只在用户主动点「简略」时发生）；顺带把七个思考
+// 滑块建好（renderModelSelects → updateModelMeta → _refreshSlotThinkingSelect）。
+// 旧版快照键 2026-11-13 退役，已无任何读写方，残留只占空间，boot 顺手清一次。
+try { localStorage.removeItem('phymathia_model_detail_snapshot'); } catch (e) {}
 applyModelPanelMode(getModelPanelMode());
 
 // ====== 模型配置向导（2026-10-26 简化计划 3）======

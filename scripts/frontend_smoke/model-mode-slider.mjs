@@ -1,6 +1,7 @@
 // 模型面板 简略/详细模式＋思考强度滑块（2026-10-25 建，同日滑块重做同步改）：
-// 统一写入/快照三态/档位序（去「默认」档、按族给真实档）/显示回退/滑块组件沙箱实跑/
-// DOM·CSS·构建·源码契约。纯同步域文件（不 await）。
+// 统一写入（只写主槽＋其余留空）/切模式归一/档位序（去「默认」档、按族给真实档）/
+// 显示回退/滑块组件沙箱实跑/DOM·CSS·构建·源码契约。纯同步域文件（不 await）。
+// 2026-11-13 用户重定语义后快照三态用例退役，改为「切简略归一／切详细只读」契约。
 // 排在 models-viz 与 serial-models-sync 之后（models 域既有段先跑完），自播自收、
 // 收尾清掉本轮写的 localStorage 键并把 activeModels 复位为空对象，不污染后续域。
 import fs from 'node:fs';
@@ -105,7 +106,7 @@ export function run() {
     return true;
   });
 
-  check('model-mode：applyUnifiedConfig 首写＝六槽模型与思考统一＋快照存住原详细配置', () => {
+  check('model-mode：applyUnifiedConfig 首写＝只写主槽＋其余五槽留空（快照机制已退役）', () => {
     sandbox.localStorage.removeItem('phymathia_user_models');
     sandbox.localStorage.removeItem('phymathia_model_group_keys');
     sandbox.localStorage.removeItem('phymathia_active_models');
@@ -120,8 +121,7 @@ export function run() {
     if (seeded !== 2) throw new Error('播种 2 条应全部入库，实际 ' + seeded);
     const all = sandbox.getAllModels();
     const m1 = all[0].id, m2 = all[1].id;
-    // 模拟详细模式下的分散配置：三槽指各自模型、思考档各异（branch 也配自己的模型——
-    // getSlotThinkingForRole 在槽空时按语义回主槽思考，还原断言须打在「自有模型」的槽上）
+    // 模拟详细模式下的分散配置：三槽指各自模型、思考档各异
     sandbox.localStorage.setItem('phymathia_active_models', JSON.stringify({
       agent_model: m1, html_model: m2, graph_model: '', branch_model: m2, descriptor_model: '', quiz_model: '',
       agent_thinking: 'max', html_thinking: 'off', graph_thinking: '', branch_thinking: 'high', descriptor_thinking: '', quiz_thinking: 'low',
@@ -132,50 +132,71 @@ export function run() {
     }
     const changed = sandbox.applyUnifiedConfig(m1, 'high');
     if (changed !== true) throw new Error('统一写入应返回 true');
-    for (const role of ['agent', 'html', 'graph', 'branch', 'descriptor', 'quiz']) {
-      const m = sandbox.getActiveModelForRole(role);
-      if (!m || m.id !== m1) throw new Error(role + ' 槽模型应统一为 m1');
-      if (sandbox.getSlotThinkingForRole(role) !== 'high') throw new Error(role + ' 槽思考应统一为 high');
+    const stored = JSON.parse(sandbox.localStorage.getItem('phymathia_active_models') || 'null');
+    if (!stored || stored.agent_model !== m1 || stored.agent_thinking !== 'high') {
+      throw new Error('主槽应写入新模型与新档位');
     }
-    const snap = JSON.parse(sandbox.localStorage.getItem('phymathia_model_detail_snapshot') || 'null');
-    if (!snap || !snap.models || snap.models.html_model !== m2 || snap.models.agent_model !== m1) {
-      throw new Error('快照应存住统一前的详细模型配置');
+    for (const role of ['html', 'graph', 'branch', 'descriptor', 'quiz']) {
+      if (stored[role + '_model'] !== '') throw new Error(role + ' 槽模型应留空＝默认');
+      if (stored[role + '_thinking'] !== '') throw new Error(role + ' 槽思考档应留空＝默认');
+      if (sandbox.getActiveModelForRole(role)) throw new Error(role + ' 槽不应再指向自有模型');
     }
-    if (snap.thinking.agent_thinking !== 'max' || snap.thinking.html_thinking !== 'off' || snap.thinking.quiz_thinking !== 'low') {
-      throw new Error('快照应存住统一前的各槽思考档');
-    }
+    // 留空不是「没配」：非主槽按既有回退跟随主槽档位，graph 例外走 T97 相位默认
+    if (sandbox.getSlotThinkingForRole('html') !== 'high') throw new Error('html 思考档应跟随主槽 high');
+    if (sandbox.getSlotThinkingForRole('graph') !== '') throw new Error('graph 槽应走相位默认（自动）');
+    if (sandbox.localStorage.getItem('phymathia_model_detail_snapshot')) throw new Error('旧快照键不应再被写入');
     return true;
   });
 
-  check('model-mode：二次统一写入不覆盖快照（快照＝首次写入前的详细配置）', () => {
-    const before = sandbox.localStorage.getItem('phymathia_model_detail_snapshot');
-    if (!before) throw new Error('前置态丢失：快照应已存在');
-    if (sandbox.applyUnifiedConfig(sandbox.getActiveModelForRole('agent').id, 'low') !== true) {
-      throw new Error('改档位应真写入');
-    }
-    if (sandbox.getSlotThinkingForRole('html') !== 'low') throw new Error('六槽思考应统一为 low');
-    if (sandbox.localStorage.getItem('phymathia_model_detail_snapshot') !== before) {
-      throw new Error('快照不应被二次写入覆盖');
-    }
+  check('model-mode：二次统一写入只动主槽、不复活其余槽、恒等时不写盘', () => {
+    const cur = JSON.parse(sandbox.localStorage.getItem('phymathia_active_models'));
+    if (sandbox.applyUnifiedConfig(cur.agent_model, 'low') !== true) throw new Error('改档位应真写入');
+    const after = JSON.parse(sandbox.localStorage.getItem('phymathia_active_models'));
+    if (after.agent_thinking !== 'low') throw new Error('主槽档位应更新为 low');
+    if (after.html_thinking !== '' || after.branch_model !== '') throw new Error('其余槽不应被复活');
+    if (sandbox.getSlotThinkingForRole('html') !== 'low') throw new Error('html 应跟随主槽 low');
+    if (sandbox.localStorage.getItem('phymathia_model_detail_snapshot')) throw new Error('二次写入不得产生快照');
+    if (sandbox.applyUnifiedConfig(cur.agent_model, 'low') !== false) throw new Error('与现状全等应返回 false');
     return true;
   });
 
-  check('model-mode：切回详细模式自动还原快照并清快照键', () => {
-    sandbox.applyModelPanelMode('detail');
+  check('model-mode：切简略＝归一其余槽；切详细＝纯视图不写数据；再切简略又统一', () => {
     const all = sandbox.getAllModels();
-    const m2 = all[1].id;
-    if (!sandbox.getActiveModelForRole('html') || sandbox.getActiveModelForRole('html').id !== m2) {
-      throw new Error('详细模式应还原统一前的各槽模型（html=m2）');
+    const m1 = all[0].id, m2 = all[1].id;
+    sandbox.localStorage.setItem('phymathia_model_config_mode', 'detail');
+    sandbox.localStorage.setItem('phymathia_active_models', JSON.stringify({
+      agent_model: m1, html_model: m2, graph_model: '', branch_model: '', descriptor_model: '', quiz_model: '',
+      agent_thinking: 'high', html_thinking: 'off', graph_thinking: '', branch_thinking: '', descriptor_thinking: '', quiz_thinking: '',
+    }));
+    sandbox.reloadModelsFromStorage();
+    sandbox.applyModelPanelMode('detail');
+    const before = JSON.parse(sandbox.localStorage.getItem('phymathia_active_models'));
+    if (before.html_model !== m2) throw new Error('boot 套用模式（applyModelPanelMode）不得抹平详细配置');
+
+    sandbox.setModelPanelMode('simple');
+    if (sandbox.getModelPanelMode() !== 'simple') throw new Error('模式键应落 simple');
+    const unified = JSON.parse(sandbox.localStorage.getItem('phymathia_active_models'));
+    if (unified.agent_model !== m1 || unified.agent_thinking !== 'high') throw new Error('主槽应原样保留');
+    for (const role of ['html', 'graph', 'branch', 'descriptor', 'quiz']) {
+      if (unified[role + '_model'] !== '' || unified[role + '_thinking'] !== '') throw new Error(role + ' 应清成默认');
     }
-    if (!sandbox.getActiveModelForRole('branch') || sandbox.getActiveModelForRole('branch').id !== m2) {
-      throw new Error('详细模式应还原统一前的各槽模型（branch=m2）');
-    }
-    if (sandbox.getSlotThinkingForRole('agent') !== 'max') throw new Error('agent 思考应还原为 max');
-    if (sandbox.getSlotThinkingForRole('html') !== 'off') throw new Error('html 思考应还原为 off');
-    if (sandbox.getSlotThinkingForRole('branch') !== 'high') throw new Error('branch 思考应还原为 high');
-    if (sandbox.localStorage.getItem('phymathia_model_detail_snapshot') !== null) {
-      throw new Error('还原后快照键应清掉');
-    }
+    const frozen = sandbox.localStorage.getItem('phymathia_active_models');
+
+    sandbox.setModelPanelMode('detail');
+    if (sandbox.getModelPanelMode() !== 'detail') throw new Error('模式键应落 detail');
+    if (sandbox.localStorage.getItem('phymathia_active_models') !== frozen) throw new Error('切详细不得写槽位数据');
+    const detailed = JSON.parse(frozen);
+    if (detailed.html_model !== '') throw new Error('详细里应看到 html 槽＝默认，而不是旧快照值');
+
+    // 详细里单独改 html，再切回简略 → 又统一
+    detailed.html_model = m2;
+    detailed.html_thinking = 'off';
+    sandbox.localStorage.setItem('phymathia_active_models', JSON.stringify(detailed));
+    sandbox.reloadModelsFromStorage();
+    sandbox.setModelPanelMode('simple');
+    const again = JSON.parse(sandbox.localStorage.getItem('phymathia_active_models'));
+    if (again.html_model !== '' || again.html_thinking !== '') throw new Error('再切简略应重新统一');
+    if (sandbox._normalizeToSimple() !== false) throw new Error('已是简略态时归一化应幂等返回 false');
     return true;
   });
 
@@ -291,9 +312,17 @@ export function run() {
     return true;
   });
 
-  check('model-mode：源码契约——模式/快照键带 phymathia_ 前缀＋滑块回调接线＋旧下拉渲染清除＋刻度重建', () => {
-    if (!modelsSrc.includes("'phymathia_model_config_mode'") || !modelsSrc.includes("'phymathia_model_detail_snapshot'")) {
-      throw new Error('模式/快照键未带 phymathia_ 前缀');
+  check('model-mode：源码契约——模式键前缀＋快照回滚已退役＋切简略归一接线＋滑块回调＋刻度重建', () => {
+    if (!modelsSrc.includes("'phymathia_model_config_mode'")) throw new Error('模式键未带 phymathia_ 前缀');
+    // 2026-11-13 退役：视图切换不得再绑定任何快照写入/还原，旧键只在 boot 清理处出现
+    for (const dead of ['_restoreDetailSnapshot', '_takeDetailSnapshot', '_hasDetailSnapshot', 'MODEL_DETAIL_SNAPSHOT_KEY']) {
+      if (modelsSrc.includes(dead)) throw new Error('快照回滚已退役，不得回潮：' + dead);
+    }
+    if (!/function setModelPanelMode\(mode\) \{[\s\S]{0,240}_normalizeToSimple\(\)/.test(modelsSrc)) {
+      throw new Error('点「简略」应接线 _normalizeToSimple（切简略＝归一其余槽）');
+    }
+    if (!/function applyModelPanelMode\(mode\) \{[\s\S]*?renderModelSelects\(\);\s*\}/.test(modelsSrc)) {
+      throw new Error('applyModelPanelMode 应保持纯视图（不得写槽位）');
     }
     if (!modelsSrc.includes('_ensureThinkingSliderOn(mount, v => onSlotThinkingChange(role, v))')) {
       throw new Error('槽位滑块 onChange 接线缺失');
@@ -317,6 +346,7 @@ export function run() {
   });
 
   check('model-mode：收尾清理——本轮键不残留、activeModels 复位，不污染后续域', () => {
+    // 旧快照键虽已退役，沙箱里仍顺手清掉，免得后续域误读成在用状态
     for (const k of ['phymathia_model_config_mode', 'phymathia_model_detail_snapshot', 'phymathia_active_models', 'phymathia_user_models', 'phymathia_model_group_keys']) {
       sandbox.localStorage.removeItem(k);
     }
