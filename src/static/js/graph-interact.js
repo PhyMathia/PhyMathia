@@ -809,12 +809,15 @@ function draftInputKeydown(event, nodeId) {
 }
 
 // 追问自动选路（2026-11-03）：回答方式胶囊回写。auto＝发送时让模型判断；
-// direct/analysis＝用户手动定死，跳过判断。非 auto 值一律归一到 auto，防脏值进对象。
+// direct/analysis＝用户手动定死，跳过判断。总开关（2026-11-13）关时连 auto
+// 都不许写进节点：非法/旧值一律归一到 analysis，避免旧草稿绕过设置去调模型。
 function draftRouteChanged(nodeId, value, btn) {
   const node = _findDraftNode(nodeId);
   if (!node || node.kind !== 'draft') return;
   const next = String(value || '').toLowerCase();
-  node.routeMode = (next === 'direct' || next === 'analysis') ? next : 'auto';
+  const autoEnabled = (typeof followupAutoRouteEnabled === 'function') ? followupAutoRouteEnabled() : false;
+  if (next === 'direct' || next === 'analysis') node.routeMode = next;
+  else node.routeMode = autoEnabled ? 'auto' : 'analysis';
   const group = btn && typeof btn.closest === 'function' ? btn.closest('.graph-draft-route') : null;
   if (!group || typeof group.querySelectorAll !== 'function') return;
   group.querySelectorAll('.graph-draft-route-btn').forEach(item => {
@@ -858,8 +861,13 @@ function submitDraftQuestion(nodeId) {
   const sourceNodeId = _findDraftSourceNodeId(nodeId);
   if (typeof window.startQuestionWorkflow === 'function') {
     const opts = { sourceNodeId: sourceNodeId || '', sourcePort: meta.fromPort || '', draftNodeId: nodeId };
-    // 只有「追问」口拖出的卡才带回答方式（默认自动）；其他草稿口不传，不进入自动选路
-    if (meta.branchType === 'followup') opts.followupRoute = node.routeMode || 'auto';
+    // 只有「追问」口拖出的卡才带回答方式；其他草稿口不传，不进入自动选路。
+    // 总开关（2026-11-13）关时把 auto／脏值／旧草稿统一压成 analysis，双保险之一。
+    if (meta.branchType === 'followup') {
+      const rm = String(node.routeMode || '').toLowerCase();
+      const autoEnabled = (typeof followupAutoRouteEnabled === 'function') ? followupAutoRouteEnabled() : false;
+      opts.followupRoute = (rm === 'direct' || rm === 'analysis') ? rm : (autoEnabled ? 'auto' : 'analysis');
+    }
     window.startQuestionWorkflow(text, opts);
   }
 }

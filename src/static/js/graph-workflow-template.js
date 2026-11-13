@@ -396,9 +396,12 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
   let followupRoute = '';
   if (options.followupRoute) {
     const requested = String(options.followupRoute).trim().toLowerCase();
+    // 总开关（2026-11-13）第二道闸：关时 auto 直接降级 analysis，连判断段都不进，
+    // 防旧草稿／其他调用方绕过设置继续发那一次模型请求。
+    const autoAllowed = (typeof followupAutoRouteEnabled === 'function') ? followupAutoRouteEnabled() : false;
     if (requested === 'direct' || requested === 'analysis') {
       followupRoute = requested;
-    } else if (requested === 'auto') {
+    } else if (requested === 'auto' && autoAllowed) {
       // 伞只盖住「模型判断」这一段：finally 归零，任何异常（含判断段本身）
       // 都不会把 workflowRunActive 永久留在 true——那会让此后所有发送只排队不放行（须刷新页面）。
       // 正式生成段各自撑伞（分析段自己置位、直接回答交给 _executeParallelWorkflow）。
@@ -436,6 +439,9 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
         followupClassifyController = null;
         workflowRunActive = false;
       }
+    } else {
+      // 开关关（或非法值）：按「拆分分析」继续，不发起任何判断请求
+      followupRoute = 'analysis';
     }
   }
   let draftPlacement = null;

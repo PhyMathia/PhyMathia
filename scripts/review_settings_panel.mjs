@@ -96,6 +96,7 @@ const ctx = {
   STORAGE_KEY_HARNESS_THINKING: 'phymathia_harness_thinking',
   STORAGE_KEY_HARNESS_FALLBACK: 'phymathia_harness_fallback',
   STORAGE_KEY_QUIZ_SOURCE: 'phymathia_quiz_source',
+  STORAGE_KEY_FOLLOWUP_AUTO_ROUTE: 'phymathia_followup_auto_route',
   STORAGE_KEY_TRASH_RETENTION: 'phymathia_trash_retention',
   STORAGE_KEY_ACCOUNT_NAME: 'phymathia_account_name',
   STORAGE_KEY_THEME: 'phymathia_theme',
@@ -176,12 +177,13 @@ try {
   ctx.openSettingsDrawer();
   overlay.classList.contains('show') ? ok('打开抽屉：show 类就位') : bad('打开抽屉', '缺 show');
   const navItems = (nav.innerHTML.match(/settings-nav-item/g) || []).length;
-  navItems === 11 ? ok('左栏渲染 11 个入口') : bad('左栏入口数', String(navItems));
+  navItems === 12 ? ok('左栏渲染 12 个入口') : bad('左栏入口数', String(navItems));
   content.innerHTML.includes('外观') ? ok('默认停在「外观」页') : bad('默认页', content.innerHTML.slice(0, 80));
 
   const expect = {
     appearance: '深浅模式', level: '难度等级', model: '模型设置', memory: '记忆与画像',
-    phi: '深度思考', quiz: '出题素材源', data: '数据管理', account: '账号与查阅',
+    phi: '深度思考', quiz: '出题素材源', canvas: '允许 AI 自动判断回答方式',
+    data: '数据管理', account: '账号与查阅',
     trash: '自动保留', about: '版本', help: '新手引导'
   };
   for (const [tab, keyword] of Object.entries(expect)) {
@@ -278,6 +280,17 @@ try {
   store.get('phymathia_harness_thinking') === 'high' ? ok('Φ 思考档位写现有存储键') : bad('Φ 思考档位', String(store.get('phymathia_harness_thinking')));
   ctx.settingsSetFallback(true);
   store.get('phymathia_harness_fallback') === '1' ? ok('Φ 备用模型开关写现有存储键') : bad('Φ 备用模型', String(store.get('phymathia_harness_fallback')));
+  // 2026-11-13：追问自动判断总开关（默认关；开/关都写同一个键并重画开关态）
+  ctx.settingsSelectTab('canvas');
+  const canvasOff = content.innerHTML;
+  !canvasOff.includes(' checked') ? ok('画布与追问：默认关闭（开关未勾）') : bad('追问开关默认态', '不该默认勾选');
+  ctx.settingsSetFollowupAutoRoute(true);
+  const canvasOn = content.innerHTML;
+  store.get('phymathia_followup_auto_route') === '1' && canvasOn.includes(' checked')
+    ? ok('追问自动判断：开启写键并重画为勾选态') : bad('追问自动判断开', String(store.get('phymathia_followup_auto_route')));
+  ctx.settingsSetFollowupAutoRoute(false);
+  store.get('phymathia_followup_auto_route') === '0'
+    ? ok('追问自动判断：关闭写 0') : bad('追问自动判断关', String(store.get('phymathia_followup_auto_route')));
   ctx.settingsSetQuizSource('mixed');
   quizSource === 'mixed' && store.get('phymathia_quiz_source') === 'mixed'
     ? ok('检测出题源：调现有 changeQuizSourcePreference') : bad('检测出题源', quizSource);

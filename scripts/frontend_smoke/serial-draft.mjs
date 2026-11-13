@@ -80,8 +80,10 @@ check('追问草稿框回车发送：Enter 发、Shift+Enter 换行、输入法�
   return true;
 });
 
-// ===== 串行边界追加：追问自动选路——回答方式胶囊三选一（2026-11-03 改版）=====
-check('追问草稿卡「回答方式」：追问口有三枚胶囊、默认选中「自动判断」，学习/苏格拉底口不显示', () => {
+// ===== 串行边界追加：追问自动选路——回答方式胶囊（2026-11-03 改版／2026-11-13 加总开关）=====
+check('追问草稿卡「回答方式」：总开关开＝三枚胶囊默认自动判断，关＝两枚手动默认拆分分析', () => {
+  const key = 'phymathia_followup_auto_route';
+  const prev = sandbox.localStorage.getItem(key);
   const realEsc = sandbox.escapeHtml;
   sandbox.escapeHtml = t => (t == null ? '' : String(t));
   try {
@@ -91,9 +93,10 @@ check('追问草稿卡「回答方式」：追问口有三枚胶囊、默认选�
       draftInput: '',
       ...extra,
     }) + ')', sandbox);
+    sandbox.localStorage.setItem(key, '1');
     const followup = render({});
     if (!followup.includes('class="graph-draft-route" role="group" aria-label="回答方式"')) throw new Error('追问草稿卡应有「回答方式」胶囊组');
-    if (!followup.includes('class="graph-draft-route-btn is-current" data-route="auto" aria-pressed="true"')) throw new Error('默认应选中「自动判断」');
+    if (!followup.includes('class="graph-draft-route-btn is-current" data-route="auto" aria-pressed="true"')) throw new Error('开关开时默认应选中「自动判断」');
     if (!followup.includes('data-route="analysis" aria-pressed="false"')) throw new Error('应有「拆分分析」选项');
     if (!followup.includes('data-route="direct" aria-pressed="false"')) throw new Error('应有「直接回答」选项');
     if (!followup.includes('onclick="draftRouteChanged(\'draft-route\',\'auto\',this)"')) throw new Error('自动判断没挂 draftRouteChanged');
@@ -104,7 +107,17 @@ check('追问草稿卡「回答方式」：追问口有三枚胶囊、默认选�
     const manualAnalysis = render({ routeMode: 'analysis' });
     if (!manualAnalysis.includes('class="graph-draft-route-btn is-current" data-route="analysis" aria-pressed="true"')) throw new Error('routeMode=analysis 应选中「拆分分析」');
     const junk = render({ routeMode: 'nonsense' });
-    if (!junk.includes('class="graph-draft-route-btn is-current" data-route="auto" aria-pressed="true"')) throw new Error('非法 routeMode 应回落「自动判断」');
+    if (!junk.includes('class="graph-draft-route-btn is-current" data-route="auto" aria-pressed="true"')) throw new Error('开关开时非法 routeMode 应回落「自动判断」');
+
+    // 关：不渲染 auto 胶囊、默认值与旧 auto 脏值一律「拆分分析」
+    sandbox.localStorage.removeItem(key);
+    const off = render({});
+    if (off.includes('data-route="auto"')) throw new Error('总开关关时不应有「自动判断」胶囊');
+    if (!off.includes('class="graph-draft-route-btn is-current" data-route="analysis" aria-pressed="true"')) throw new Error('关时默认应选中「拆分分析」');
+    if (!off.includes('data-route="direct" aria-pressed="false"')) throw new Error('关时应保留「直接回答」');
+    const offStale = render({ routeMode: 'auto' });
+    if (offStale.includes('data-route="auto"')) throw new Error('关时旧 auto 值也不该渲染自动判断胶囊');
+    if (!offStale.includes('class="graph-draft-route-btn is-current" data-route="analysis" aria-pressed="true"')) throw new Error('关时旧 auto 值应回落拆分分析');
 
     const learn = render({ portMeta: { branchType: 'learn', question: 'q' } });
     if (learn.includes('graph-draft-route')) throw new Error('进阶学习口不应显示回答方式胶囊');
@@ -113,40 +126,67 @@ check('追问草稿卡「回答方式」：追问口有三枚胶囊、默认选�
     const continuePort = render({ portMeta: { branchType: 'continue', question: 'q' } });
     if (continuePort.includes('graph-draft-route')) throw new Error('直接问AI 口不应显示回答方式胶囊（自动选路只挂追问口）');
     return true;
-  } finally { sandbox.escapeHtml = realEsc; }
+  } finally {
+    if (prev == null) sandbox.localStorage.removeItem(key); else sandbox.localStorage.setItem(key, prev);
+    sandbox.escapeHtml = realEsc;
+  }
 });
 
-check('draftRouteChanged：回答方式回写 + 胶囊选中态同步，非法/空值归一 auto', () => {
-  const out = vm.runInContext(`(() => {
-    graphView.nodes = [{ id: 'draft-rc', kind: 'draft', x: 0, y: 0, portMeta: { branchType: 'followup' } }];
-    graphView.nodeById = {}; graphView.nodeById['draft-rc'] = graphView.nodes[0];
-    draftRouteChanged('draft-rc', 'direct');
-    const a = graphView.nodes[0].routeMode;
-    draftRouteChanged('draft-rc', 'ANALYSIS');
-    const b = graphView.nodes[0].routeMode;
-    draftRouteChanged('draft-rc', 'auto');
-    const c = graphView.nodes[0].routeMode;
-    draftRouteChanged('draft-rc', 'junk');
-    const d = graphView.nodes[0].routeMode;
-    const seen = [];
-    const makeBtn = route => ({
-      getAttribute: () => route,
-      classList: { toggle: (cls, on) => seen.push(route + ':' + cls + ':' + on) },
-      setAttribute: (k, v) => seen.push(route + ':' + k + ':' + v),
-    });
-    const group = { querySelectorAll: () => [makeBtn('auto'), makeBtn('analysis'), makeBtn('direct')] };
-    draftRouteChanged('draft-rc', 'direct', { closest: () => group });
-    const toggle = seen.join(',');
-    graphView.nodes = []; graphView.nodeById = {};
-    return [a, b, c, d].join(',') + '|' + toggle;
-  })()`, sandbox);
-  if (!out.startsWith('direct,analysis,auto,auto|')) throw new Error('routeMode 回写口径不对：' + out);
-  if (!out.includes('auto:is-current:false') || !out.includes('direct:is-current:true')) throw new Error('胶囊选中态没同步：' + out);
-  if (!out.includes('direct:aria-pressed:true') || !out.includes('auto:aria-pressed:false')) throw new Error('aria-pressed 没同步：' + out);
-  return true;
+check('draftRouteChanged：开时非法值归一 auto，关时连 auto 都压成 analysis', () => {
+  const key = 'phymathia_followup_auto_route';
+  const prev = sandbox.localStorage.getItem(key);
+  try {
+    sandbox.localStorage.setItem(key, '1');
+    const out = vm.runInContext(`(() => {
+      graphView.nodes = [{ id: 'draft-rc', kind: 'draft', x: 0, y: 0, portMeta: { branchType: 'followup' } }];
+      graphView.nodeById = {}; graphView.nodeById['draft-rc'] = graphView.nodes[0];
+      draftRouteChanged('draft-rc', 'direct');
+      const a = graphView.nodes[0].routeMode;
+      draftRouteChanged('draft-rc', 'ANALYSIS');
+      const b = graphView.nodes[0].routeMode;
+      draftRouteChanged('draft-rc', 'auto');
+      const c = graphView.nodes[0].routeMode;
+      draftRouteChanged('draft-rc', 'junk');
+      const d = graphView.nodes[0].routeMode;
+      const seen = [];
+      const makeBtn = route => ({
+        getAttribute: () => route,
+        classList: { toggle: (cls, on) => seen.push(route + ':' + cls + ':' + on) },
+        setAttribute: (k, v) => seen.push(route + ':' + k + ':' + v),
+      });
+      const group = { querySelectorAll: () => [makeBtn('auto'), makeBtn('analysis'), makeBtn('direct')] };
+      draftRouteChanged('draft-rc', 'direct', { closest: () => group });
+      const toggle = seen.join(',');
+      graphView.nodes = []; graphView.nodeById = {};
+      return [a, b, c, d].join(',') + '|' + toggle;
+    })()`, sandbox);
+    if (!out.startsWith('direct,analysis,auto,auto|')) throw new Error('routeMode 回写口径不对：' + out);
+    if (!out.includes('auto:is-current:false') || !out.includes('direct:is-current:true')) throw new Error('胶囊选中态没同步：' + out);
+    if (!out.includes('direct:aria-pressed:true') || !out.includes('auto:aria-pressed:false')) throw new Error('aria-pressed 没同步：' + out);
+
+    sandbox.localStorage.removeItem(key);
+    const off = vm.runInContext(`(() => {
+      graphView.nodes = [{ id: 'draft-rc-off', kind: 'draft', x: 0, y: 0, portMeta: { branchType: 'followup' } }];
+      graphView.nodeById = {}; graphView.nodeById['draft-rc-off'] = graphView.nodes[0];
+      draftRouteChanged('draft-rc-off', 'auto');
+      const a = graphView.nodes[0].routeMode;
+      draftRouteChanged('draft-rc-off', 'junk');
+      const b = graphView.nodes[0].routeMode;
+      draftRouteChanged('draft-rc-off', 'direct');
+      const c = graphView.nodes[0].routeMode;
+      graphView.nodes = []; graphView.nodeById = {};
+      return [a, b, c].join(',');
+    })()`, sandbox);
+    if (off !== 'analysis,analysis,direct') throw new Error('关时归一不对：' + off);
+    return true;
+  } finally {
+    if (prev == null) sandbox.localStorage.removeItem(key); else sandbox.localStorage.setItem(key, prev);
+  }
 });
 
-check('追问草稿发送：追问口携带回答方式（默认 auto），其他口不带', () => {
+check('追问草稿发送：开时默认 auto，关时默认/旧 auto 草稿一律 analysis，其他口不带', () => {
+  const key = 'phymathia_followup_auto_route';
+  const prev = sandbox.localStorage.getItem(key);
   const prevQwf = sandbox.window.startQuestionWorkflow;
   // graphInner 前值若是 loose 代理（某域占位），restore 回 loose 会让后续域假绿——
   // 记 null（等同「未渲染过画布」的干净环境语义）
@@ -158,9 +198,11 @@ check('追问草稿发送：追问口携带回答方式（默认 auto），其�
   const calls = [];
   sandbox.window.startQuestionWorkflow = (text, opts) => { calls.push({ text, opts }); };
   try {
+    sandbox.localStorage.setItem(key, '1');
     vm.runInContext('graphView.nodes = ['
       + '{ id: "draft-send-auto", kind: "draft", x: 0, y: 0, portMeta: { branchType: "followup", fromPort: "out-1" } },'
       + '{ id: "draft-send-manual", kind: "draft", x: 0, y: 0, routeMode: "direct", portMeta: { branchType: "followup", fromPort: "out-1" } },'
+      + '{ id: "draft-send-stale", kind: "draft", x: 0, y: 0, routeMode: "auto", portMeta: { branchType: "followup", fromPort: "out-1" } },'
       + '{ id: "draft-send-learn", kind: "draft", x: 0, y: 0, portMeta: { branchType: "learn", fromPort: "out-0" } }'
       + '];'
       + 'graphView.nodeById = {};'
@@ -171,18 +213,26 @@ check('追问草稿发送：追问口携带回答方式（默认 auto），其�
     sandbox.submitDraftQuestion('draft-send-auto');
     sandbox.submitDraftQuestion('draft-send-manual');
     sandbox.submitDraftQuestion('draft-send-learn');
+    // 关：默认草稿与「切换设置前拖出、仍存着 auto」的旧草稿都不许把 auto 发出去
+    sandbox.localStorage.setItem(key, '0');
+    sandbox.submitDraftQuestion('draft-send-auto');
+    sandbox.submitDraftQuestion('draft-send-stale');
   } finally {
     vm.runInContext('graphView.nodes = ' + prevNodes + ';'
       + 'graphView.edges = ' + prevEdges + ';'
       + 'graphView.nodeById = ' + prevById + ';'
       + 'graphInner = globalThis.__draftSendPrevInner; delete globalThis.__draftSendPrevInner;', sandbox);
     restoreWindowStub('startQuestionWorkflow', prevQwf);
+    if (prev == null) sandbox.localStorage.removeItem(key); else sandbox.localStorage.setItem(key, prev);
   }
-  if (calls.length !== 3) throw new Error('应发出三次提问，实际 ' + calls.length);
-  if (calls[0].opts.followupRoute !== 'auto') throw new Error('未手动选择的草稿应默认 auto：' + JSON.stringify(calls[0].opts));
+  if (calls.length !== 5) throw new Error('应发出五次提问，实际 ' + calls.length);
+  if (calls[0].opts.followupRoute !== 'auto') throw new Error('开关开、未手动选择的草稿应默认 auto：' + JSON.stringify(calls[0].opts));
   if (calls[0].opts.sourceNodeId !== 'm-follow' || calls[0].opts.sourcePort !== 'out-1') throw new Error('来源节点/端口没带上：' + JSON.stringify(calls[0].opts));
   if (calls[1].opts.followupRoute !== 'direct') throw new Error('手动选「直接回答」的草稿应传 direct：' + JSON.stringify(calls[1].opts));
   if (Object.prototype.hasOwnProperty.call(calls[2].opts, 'followupRoute')) throw new Error('进阶学习草稿不应带 followupRoute：' + JSON.stringify(calls[2].opts));
+  if (calls[3].opts.followupRoute !== 'analysis') throw new Error('关时默认草稿应传 analysis：' + JSON.stringify(calls[3].opts));
+  if (calls[4].opts.followupRoute !== 'analysis') throw new Error('关时旧 auto 草稿应被压成 analysis：' + JSON.stringify(calls[4].opts));
+  if (calls.slice(3).some(c => c.opts.followupRoute === 'auto')) throw new Error('关时绝不能发出 auto');
   return true;
 });
 

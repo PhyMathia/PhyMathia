@@ -26,7 +26,8 @@ const SETTINGS_GROUPS = [
   { label: '功能', items: [
     { id: 'memory', label: '记忆与画像', icon: 'user' },
     { id: 'phi', label: 'Φ 助手', icon: 'sparkles' },
-    { id: 'quiz', label: '知识检测', icon: 'check' }
+    { id: 'quiz', label: '知识检测', icon: 'check' },
+    { id: 'canvas', label: '画布与追问', icon: 'curve' }
   ]},
   { label: '数据', items: [
     { id: 'data', label: '数据管理', icon: 'database' },
@@ -555,9 +556,31 @@ function _settingsPageHelp() {
     '<div class="settings-note">画布右键菜单里会标出该操作对应的快捷键；快捷键目前是内置的，不能自定义。</div>';
 }
 
+// ====== 画布与追问（2026-11-13 用户拍板）======
+// 总开关管住「追问自动选路」：关＝追问卡只给两枚手动胶囊、绝不发模型判断请求；
+// 开＝恢复三枚胶囊。读侧与 config.js 的 followupAutoRouteEnabled() 同一个键、同一个
+// '1' 口径；本文件在离线 DOM 桩里单独执行（不加载 config.js），故走 _settingsLsGet。
+function _settingsPageCanvas() {
+  const on = _settingsLsGet(STORAGE_KEY_FOLLOWUP_AUTO_ROUTE, '0') === '1';
+  return _sHead('画布与追问', '从节点「追问」出口拖出的提问卡，要不要为挑回答方式多花一次模型调用。') +
+    _sSection('回答方式', _sSwitch(
+      '允许 AI 自动判断回答方式',
+      '开启：追问卡多一枚「自动判断」，发送时先问一次模型该直接答还是拆开分析（每次追问多一次模型调用）；关闭：只留「拆分分析／直接回答」两枚手动选项，不花这笔钱',
+      on, 'settingsSetFollowupAutoRoute(this.checked)'
+    )) +
+    '<div class="settings-note">默认关闭。改动对之后拖出的追问卡立即生效，已在画布上的旧卡也会按当前开关重新渲染。</div>';
+}
+function settingsSetFollowupAutoRoute(on) {
+  if (_settingsGuard()) return;
+  _settingsLsSet(STORAGE_KEY_FOLLOWUP_AUTO_ROUTE, on ? '1' : '0');
+  _settingsToast('追问自动判断：' + (on ? '开（会多一次模型调用）' : '关（全部手动）'));
+  renderSettingsPage();
+}
+
 const _SETTINGS_PAGES = {
   appearance: _settingsPageAppearance, level: _settingsPageLevel, model: _settingsPageModel,
   memory: _settingsPageMemory, phi: _settingsPagePhi, quiz: _settingsPageQuiz,
+  canvas: _settingsPageCanvas,
   data: _settingsPageData, account: _settingsPageAccount, trash: _settingsPageTrash,
   about: _settingsPageAbout, help: _settingsPageHelp
 };

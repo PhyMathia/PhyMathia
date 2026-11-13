@@ -303,12 +303,15 @@ function _renderDraftNodeHtml(node) {
     const suggestion = _draftSuggestionText(node) || '输入你想追问的问题…';
     const value = typeof node.draftInput === 'string' ? node.draftInput : '';
     // 追问自动选路（2026-11-03）：只有「追问」口拖出的卡显示「回答方式」；学习/苏格拉底/
-    // 人工内容口不显示（那些链路的生成口径固定）。默认自动＝模型判断，可手动改。
-    const routeMode = (node.routeMode === 'direct' || node.routeMode === 'analysis') ? node.routeMode : 'auto';
+    // 人工内容口不显示（那些链路的生成口径固定）。总开关（2026-11-13 用户拍板）关时
+    // 不渲染「自动判断」这枚胶囊、默认选中「拆分分析」——全程不发模型判断请求。
+    const autoEnabled = (typeof followupAutoRouteEnabled === 'function') ? followupAutoRouteEnabled() : false;
+    const routeMode = (node.routeMode === 'direct' || node.routeMode === 'analysis')
+      ? node.routeMode : (autoEnabled ? 'auto' : 'analysis');
     const routeBtn = (route, label, hint) => '<button type="button" class="graph-draft-route-btn' + (routeMode === route ? ' is-current' : '') + '" data-route="' + route + '" aria-pressed="' + (routeMode === route ? 'true' : 'false') + '" title="' + hint + '" onclick="draftRouteChanged(\'' + node.id + '\',\'' + route + '\',this)">' + label + '</button>';
     const routeSwitch = meta.branchType === 'followup'
       ? '<div class="graph-draft-route" role="group" aria-label="回答方式">'
-        + routeBtn('auto', '自动判断', '由 AI 判断：一句话能答清就直接回答，否则拆分分析')
+        + (autoEnabled ? routeBtn('auto', '自动判断', '由 AI 判断：一句话能答清就直接回答，否则拆分分析') : '')
         + routeBtn('analysis', '拆分分析', '先拆成子问题、铺开分析，步骤更多')
         + routeBtn('direct', '直接回答', '一次成文，不铺模块')
         + '</div>'

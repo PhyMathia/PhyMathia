@@ -240,6 +240,14 @@ const STORAGE_KEY_RECIPE_DRAFT = 'phymathia_recipe_draft';
 // 深入模块一次性提示（T265）：起新根问题时上一簇模块零点开就弹一次指路 toast，
 // 弹过即置键永不再弹（经垫片自然分账号）
 const STORAGE_KEY_MODULE_HINT_DONE = 'phymathia_module_hint_done';
+// 追问自动选路总开关（2026-11-13 用户拍板）：'1' 开 / 其他值（含缺键）＝关。
+// 关＝追问卡只给「拆分分析／直接回答」两枚手动胶囊，绝不发那一次「回答方式」
+// 判断请求；开＝恢复三枚胶囊与模型判断。全局键（不带会话后缀），经账号垫片
+// 自然分账号。读侧统一走下面这个函数，别在各调用点自己 getItem 比字符串。
+const STORAGE_KEY_FOLLOWUP_AUTO_ROUTE = 'phymathia_followup_auto_route';
+function followupAutoRouteEnabled() {
+  try { return localStorage.getItem(STORAGE_KEY_FOLLOWUP_AUTO_ROUTE) === '1'; } catch (e) { return false; }
+}
 
 // ===== Φ助手独立会话（2026-09-30 与画布解耦）======
 // Φ 会话有独立 id 空间（phi_<uuid>），与画布会话（sess_<uuid>）互不隶属：

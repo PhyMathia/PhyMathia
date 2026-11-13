@@ -108,6 +108,10 @@ export async function run() {
   const prevRender = vm.runInContext('renderGraphCanvas', sandbox);
   sandbox.__smokePrevRender = prevRender;
   vm.runInContext('renderGraphCanvas = function () {};', sandbox);
+  // 2026-11-13：本域验的是「总开关开」时的 auto 判断链，整域统一置 1、收尾还原
+  // （别把 '1' 漏给后面各域；默认关的回归在 serial-draft 与本域末段）。
+  const prevAutoRoute = sandbox.localStorage.getItem('phymathia_followup_auto_route');
+  sandbox.localStorage.setItem('phymathia_followup_auto_route', '1');
   try {
     check('T361 方向钮：宿主节点解析成功 → 走 startQuestionWorkflow（不再 sendBranchQuick）', () => {
       _seed();
@@ -1005,6 +1009,44 @@ export async function run() {
         vm.runInContext('delete globalThis.getCurrentSessionId;', sandbox);
         sandbox.localStorage.removeItem('phymathia_current_session');
       }
+
+      // ===== ⑧ 总开关关（2026-11-13）：auto 被第二道闸压成 analysis，绝不调模型 =====
+      _seed();
+      sandbox.localStorage.setItem('phymathia_followup_auto_route', '0');
+      sandbox.localStorage.setItem('phymathia_current_session', 'sess_branch_wf');
+      vm.runInContext('currentSessionId = "sess_branch_wf"; SESSION_ID = "rsess_branch_wf";'
+        + ' sessions = { sess_branch_wf: { title: "", updatedAt: 1 } }; chatHistory = []; workflowRunActive = false; workflowLastAborted = false;', sandbox);
+      const calls8 = { analysis: 0, classify: 0, exec: [] };
+      const prevGen8 = sandbox._generateAnalysis, prevExec8 = sandbox._executeParallelWorkflow;
+      const prevExtract8 = sandbox._extractKnowledgeFromWorkflow, prevPush8 = sandbox._pushGraphUndo;
+      const prevModel8 = sandbox.getActiveModelForRole, prevProxy8 = sandbox.proxyChatWithModel;
+      const prevDone8 = sandbox._graphHistoryLiveEventDone, prevToast8 = sandbox.showToast;
+      sandbox._generateAnalysis = async () => { calls8.analysis += 1; };
+      sandbox._executeParallelWorkflow = async (ids) => { calls8.exec.push((ids || []).slice()); };
+      sandbox._extractKnowledgeFromWorkflow = async () => {};
+      sandbox._pushGraphUndo = () => {};
+      sandbox.getActiveModelForRole = () => { calls8.classify += 1; return { provider: 'mock', model: 'mock-model', apiKey: 'k' }; };
+      sandbox.proxyChatWithModel = async () => { calls8.classify += 1; return { json: async () => ({ choices: [{ message: { content: '{"route":"direct"}' } }] }) }; };
+      sandbox._graphHistoryLiveEventDone = () => {};
+      sandbox.showToast = () => {};
+      try {
+        await sandbox.startQuestionWorkflow('开关关时别花钱', { sourceNodeId: 'lm1', sourcePort: 'out-0', followupRoute: 'auto' });
+        if (calls8.classify !== 0) throw new Error('开关关时仍调了模型判断（' + calls8.classify + ' 次）');
+        if (calls8.analysis !== 1) throw new Error('应回落问题分析（跑了 ' + calls8.analysis + ' 次）');
+        if (calls8.exec.length !== 0) throw new Error('开关关时不该直接执行 direct 工作流');
+      } finally {
+        sandbox._generateAnalysis = prevGen8;
+        sandbox._executeParallelWorkflow = prevExec8;
+        sandbox._extractKnowledgeFromWorkflow = prevExtract8;
+        sandbox._pushGraphUndo = prevPush8;
+        sandbox.getActiveModelForRole = prevModel8;
+        sandbox.proxyChatWithModel = prevProxy8;
+        sandbox._graphHistoryLiveEventDone = prevDone8;
+        sandbox.showToast = prevToast8;
+        sandbox.localStorage.setItem('phymathia_followup_auto_route', '1');
+        sandbox.localStorage.removeItem('phymathia_current_session');
+      }
+
       return true;
     });
 
@@ -1023,6 +1065,8 @@ export async function run() {
     sandbox.confirm = prevConfirm;
     vm.runInContext('renderGraphCanvas = __smokePrevRender;', sandbox);
     delete sandbox.__smokePrevRender;
+    if (prevAutoRoute == null) sandbox.localStorage.removeItem('phymathia_followup_auto_route');
+    else sandbox.localStorage.setItem('phymathia_followup_auto_route', prevAutoRoute);
     vm.runInContext('graphView.nodes = []; graphView.edges = []; graphView.nodeById = {}; graphView.defaultEdges = [];', sandbox);
   }
 }
