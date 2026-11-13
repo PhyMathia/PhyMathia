@@ -265,7 +265,19 @@ const MODELS_STORAGE_KEY = 'phymathia_user_models';
 // 「密钥已配置」徽标、hasKey 全部零改动；组内单个条目仍可用模型配置弹窗覆盖自己的密钥。
 const MODEL_GROUP_KEYS_STORAGE = 'phymathia_model_group_keys';
 let modelGroupKeys = {};
-const _modelGroupCollapsed = {};
+// 分组折叠：默认全部收起（2026-11-13 用户反馈：供应商一多，打开模型面板时每组都
+// 摊开，列表被撑到要滚动才能找）。这里存的是「用户手动展开过的组」白名单——
+// 没记过＝收起，只有显式点开过才展开；新加的分组天然落在收起态。
+// 展开态只在内存里活到刷新（不落 localStorage），保证每次开页默认仍是收起；
+// 但本次会话内的重渲染（改组密钥 / 增删模型）要保留用户点开过的组，别把他手里的
+// 操作收走。语义从「折叠表」翻成「展开白名单」，正是为了让缺省值落在收起。
+const _modelGroupExpanded = {};
+
+function isModelGroupCollapsed(provider) {
+  return _modelGroupExpanded[provider] !== true;
+}
+// 顶层 const 不挂全局：显式挂 window，供冒烟直接读默认态（同 MODEL_PRESETS 口径）
+window.isModelGroupCollapsed = isModelGroupCollapsed;
 
 function loadGroupKeys() {
   try { modelGroupKeys = JSON.parse(localStorage.getItem(MODEL_GROUP_KEYS_STORAGE) || '{}'); }
@@ -330,17 +342,21 @@ function _refreshGroupKeyBadges(provider) {
 }
 
 function toggleModelGroup(provider) {
-  _modelGroupCollapsed[provider] = !_modelGroupCollapsed[provider];
+  // 当前收起 → 这次动作是展开（白名单置 true）；当前展开 → 这次动作是收起
+  const expanded = isModelGroupCollapsed(provider);
+  _modelGroupExpanded[provider] = expanded;
   // 就地切换可见性，不重建列表——重建会让本次点击的按钮脱离 DOM，
-  // 冒泡到 document 的“点外关闭”监听时 contains=false，面板被误关
+  // 冒泡到 document 的“点外关闭”监听时 contains=false，面板被误关。
+  // 因此收起态也必须把 .model-group-body 渲染出来（只是 display:none），
+  // 否则初始收起时点「展开」只有箭头翻转、组内条目却出不来。
   document.querySelectorAll('#modelList .model-group').forEach(g => {
     if (g.getAttribute('data-provider') !== provider) return;
     const body = g.querySelector('.model-group-body');
     const btn = g.querySelector('.model-group-toggle');
-    if (body) body.style.display = _modelGroupCollapsed[provider] ? 'none' : '';
+    if (body) body.style.display = expanded ? '' : 'none';
     if (btn) {
-      btn.textContent = _modelGroupCollapsed[provider] ? '▶' : '▼';
-      btn.title = _modelGroupCollapsed[provider] ? '展开' : '折叠';
+      btn.textContent = expanded ? '▼' : '▶';
+      btn.title = expanded ? '折叠' : '展开';
     }
   });
 }
@@ -1140,7 +1156,7 @@ function renderModelList() {
     const groupName = (preset && preset.name) || provider;
     // provider 进 onclick/oninput 单引号串需做 JS 转义（自定义 provider 是用户自由输入）
     const jsProvider = String(provider).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
-    const collapsed = !!_modelGroupCollapsed[provider];
+    const collapsed = isModelGroupCollapsed(provider);
     const hint = (preset && preset.apiKeyHint) || 'sk-...';
     const items = models.map(m => {
       // label/model 是用户自由输入，必须转义；id 进 onclick 单引号串需做 JS 转义
@@ -1165,7 +1181,7 @@ function renderModelList() {
         <button class="model-group-refresh" onclick="openModelListUpdate('${jsProvider}')" title="从上游更新模型列表（对比新增 / 已下线）">${UI_ICON_SVG.reset}</button>
         <button class="model-group-del" onclick="confirmDeleteModelGroup('${jsProvider}')" title="删除该分组的全部模型">${UI_ICON_SVG.trash}</button>
       </div>
-      ${collapsed ? '' : `<div class="model-group-body">${items}</div>`}
+      <div class="model-group-body"${collapsed ? ' style="display:none"' : ''}>${items}</div>
     </div>`;
   }).join('');
 }

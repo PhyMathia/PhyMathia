@@ -155,6 +155,23 @@ check('model-group：分组接线（组头渲染/组密钥输入/折叠/optgroup
   return true;
 });
 
+// 2026-11-13 用户反馈：供应商一多，打开模型面板时每组默认全摊开。默认态翻成收起后，
+// 这里锁住三件事：新分组默认收起 / 点开再点回能来回切 / 收起态仍渲染 body
+// （否则初始收起时点「展开」只有箭头翻转，组内条目出不来）。
+check('model-group：分组默认收起（点开才展开，收起态仍留 body 供就地切换）', () => {
+  const p = '__smoke_group_collapse__';
+  const isCollapsed = sandbox.window.isModelGroupCollapsed;
+  if (isCollapsed(p) !== true) throw new Error('新分组应默认收起');
+  sandbox.toggleModelGroup(p);
+  if (isCollapsed(p) !== false) throw new Error('点一次应展开');
+  sandbox.toggleModelGroup(p);
+  if (isCollapsed(p) !== true) throw new Error('再点一次应收起');
+  const src = fs.readFileSync('src/static/js/models.js', 'utf8');
+  if (!src.includes('<div class="model-group-body"')) throw new Error('分组体应始终渲染');
+  if (!src.includes('style="display:none"')) throw new Error('收起应由 display:none 承担');
+  return true;
+});
+
 check('model-add：双模式添加接线（预设/手动选项卡 + 勾选清单 + 在线拉取）静态断言', () => {
   // 打包产物经 esbuild 压缩（键名引号/空白会被改写），只能断言裸标识符存在
   for (const t of ['switchAddModelTab', 'am-model-check', 'addModelsForProvider', 'api/models/list', 'fetchProviderModelList', 'fetchManualModelList', 'confirmDeleteModelGroup', '_parseExtraModelInput', '_dialogApiKeyWithFallback', '_freshIdsNotListed']) {
