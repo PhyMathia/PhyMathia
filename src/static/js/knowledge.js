@@ -903,12 +903,12 @@ async function optimizeKnowledgeSummaries() {
     .filter(isLegacyCardSummaryItem)
     .map(it => it.id);
   if (!targetIds.length) {
-    showToast('没有需要优化的旧摘要（均为手动/模型摘要或已优化）');
+    showToast('没有需要优化的旧摘要');
     return;
   }
   const model = _activeModelForSummaryRestate();
   if (!model) {
-    showToast('未配置 AI 模型，请在模型设置中配置（公式描述模型或主模型均可）');
+    showToast('未配置 AI 模型，请先在模型设置中配置');
     return;
   }
   const controller = new AbortController();
@@ -1062,7 +1062,7 @@ async function optimizeFormulaMeanings() {
   }
   const model = _activeModelForSummaryRestate();
   if (!model) {
-    showToast('未配置 AI 模型，请在模型设置中配置（公式描述模型或主模型均可）');
+    showToast('未配置 AI 模型，请先在模型设置中配置');
     return;
   }
   const controller = new AbortController();
@@ -1139,7 +1139,7 @@ async function restatKnowledgeItemSummary(itemId) {
   }
   const model = _activeModelForSummaryRestate();
   if (!model) {
-    showToast('未配置 AI 模型，请在模型设置中配置（公式描述模型或主模型均可）');
+    showToast('未配置 AI 模型，请先在模型设置中配置');
     return;
   }
   showToast('正在重述摘要：' + String(item.title || '').slice(0, 16) + '...', TOAST_MS_LONG);

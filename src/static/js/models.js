@@ -1187,7 +1187,7 @@ function renderModelList() {
       <div class="model-group-header">
         <button class="model-group-toggle" onclick="toggleModelGroup('${jsProvider}')" title="${collapsed ? '展开' : '折叠'}">${collapsed ? '▶' : '▼'}</button>
         <div class="model-group-title">${escapeHtml(groupName)}<span class="model-group-count">${models.length} 个模型</span></div>
-        <input type="password" class="model-group-key" placeholder="分组密钥（${escapeHtml(hint)}）" value="${escapeHtml(getGroupKey(provider))}" autocomplete="new-password" spellcheck="false" data-lpignore="true" onchange="saveGroupKeyCommitted('${jsProvider}', this)" title="统一配置组内密钥；单条目在配置里单独设过的钥不会被覆盖。失焦才落盘（逐键写会把半截钥存进去）">
+        <input type="password" class="model-group-key" placeholder="分组密钥（${escapeHtml(hint)}）" value="${escapeHtml(getGroupKey(provider))}" autocomplete="new-password" spellcheck="false" data-lpignore="true" onchange="saveGroupKeyCommitted('${jsProvider}', this)" title="统一配置组内密钥；单条目单独设过的钥不会被覆盖，输完自动保存">
         <button class="model-group-refresh" onclick="openModelListUpdate('${jsProvider}')" title="从上游更新模型列表（对比新增 / 已下线）">${UI_ICON_SVG.reset}</button>
         <button class="model-group-del" onclick="confirmDeleteModelGroup('${jsProvider}')" title="删除该分组的全部模型">${UI_ICON_SVG.trash}</button>
       </div>
@@ -1594,7 +1594,7 @@ function saveNewModel() {
   renderModelList();
   renderModelSelects();
   if (typeof showToast === 'function') {
-    showToast(added > 0 ? `已添加 ${added} 个模型` : '没有新增模型（可能都已添加过）');
+    showToast(added > 0 ? `已添加 ${added} 个模型` : '没有新增模型，可能都已添加过');
   }
 }
 

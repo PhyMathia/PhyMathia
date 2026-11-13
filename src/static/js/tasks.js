@@ -617,7 +617,7 @@ async function _taskRegenerate(id) {
   if (!task) return;
   const replay = task.replay || null;
   if (!task.sessionId || typeof getSessionById !== 'function' || !getSessionById(task.sessionId)) {
-    if (typeof showToast === 'function') showToast('它所属的画布已经删掉了，没法重新生成');
+    if (typeof showToast === 'function') showToast('所属画布已删除，无法重新生成');
     return;
   }
   if (typeof switchToSession === 'function' && typeof getCurrentSessionId === 'function'
@@ -625,7 +625,7 @@ async function _taskRegenerate(id) {
     await switchToSession(task.sessionId);
   }
   if (typeof getCurrentSessionId === 'function' && getCurrentSessionId() !== task.sessionId) {
-    if (typeof showToast === 'function') showToast('没能切到它所属的画布，请先手动切过去再试');
+    if (typeof showToast === 'function') showToast('没能切回所属画布，请手动切换后重试');
     return;
   }
   // 单节点生成任务（T61）的重放：按记下的节点种类回到它自己的生成入口。
@@ -637,7 +637,7 @@ async function _taskRegenerate(id) {
     // 是用户当初手写的那句话，存在 replay.text 里——重试时原样再交回去。
     if (job.kind === 'viz' || job.kind === 'regen') {
       if (typeof _findGraphNode !== 'function' || !_findGraphNode(job.id)) {
-        if (typeof showToast === 'function') showToast('那个节点已经不在画布上了，没法重新生成');
+        if (typeof showToast === 'function') showToast('节点已不在画布，无法重新生成');
         return;
       }
       if (job.kind === 'viz') {
@@ -653,13 +653,13 @@ async function _taskRegenerate(id) {
     if (typeof fn === 'function' && typeof _findGraphNode === 'function' && _findGraphNode(job.id)) {
       return fn(job.id);
     }
-    if (typeof showToast === 'function') showToast('那个节点已经不在画布上了，没法重新生成');
+    if (typeof showToast === 'function') showToast('节点已不在画布，无法重新生成');
     return;
   }
   if (task.kind === 'workflow' && replay && replay.nodeIds && replay.nodeIds.length) {
     if (typeof runWorkflowNodes !== 'function') return;
     const ok = await runWorkflowNodes(replay.nodeIds, !!replay.force);
-    if (!ok && typeof showToast === 'function') showToast('那些节点已经不在画布上了，没法重新生成');
+    if (!ok && typeof showToast === 'function') showToast('节点已不在画布，无法重新生成');
     return;
   }
   if (replay && replay.text) {

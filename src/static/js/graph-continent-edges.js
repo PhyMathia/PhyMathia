@@ -950,7 +950,7 @@ function _continentSetLinkMode(on) {
   const hint = document.getElementById('continentHint');
   if (hint) {
     hint.hidden = !_continentLinkMode;
-    hint.textContent = '连接模式：点两个聚落，或点两座岛的岛牌连成岛级航线（Esc 退出）';
+    hint.textContent = '连接模式：点两个聚落或两座岛牌连成航线（Esc 退出）';
   }
   // v5.4 空态引导与连接模式提示互斥（同一条顶栏位置）
   const guide = document.getElementById('continentGuide');
@@ -974,7 +974,7 @@ async function _continentLinkPick(itemId, sessionId) {
     _continentLinkSource = { itemId: itemId, sessionId: sessionId };
     _continentMarkLinkSource(itemId);
     const hint = document.getElementById('continentHint');
-    if (hint) hint.textContent = '再点另一座岛的聚落完成航线（再点自己取消，Esc 退出）';
+    if (hint) hint.textContent = '再点另一座岛的聚落完成航线（点自己取消，Esc 退出）';
     return;
   }
   if (_continentLinkSource.itemId === itemId) {
@@ -991,7 +991,7 @@ async function _continentLinkPick(itemId, sessionId) {
     const ok = await _continentAddUserEdge(_continentLinkSource.itemId, itemId, '');
     if (ok) {
       _continentSetLinkMode(false);
-      _continentToast('已连成航线（点线可加备注、调样式，Ctrl+Z 可撤销）');
+      _continentToast('已连成航线（点线可调，Ctrl+Z 可撤销）');
     }
   } catch (err) {
     _continentToast('航线保存失败：' + (err && err.message || err));
@@ -1019,7 +1019,7 @@ async function _continentLinkPickIsland(sessionId) {
     _continentIslandLinkSource = sessionId;
     _continentMarkIslandLinkSource(sessionId);
     const hint = document.getElementById('continentHint');
-    if (hint) hint.textContent = '再点另一座岛的岛牌完成岛级航线（再点自己取消，Esc 退出）';
+    if (hint) hint.textContent = '再点另一座岛的岛牌完成航线（点自己取消，Esc 退出）';
     return;
   }
   if (_continentIslandLinkSource === sessionId) {
@@ -1039,7 +1039,7 @@ async function _continentLinkPickIsland(sessionId) {
       _continentIslandLinkSource = null;
       _continentMarkIslandLinkSource(null);
       _continentSetLinkMode(false);
-      _continentToast('已连成岛级航线（点线可加备注、调样式，Ctrl+Z 可撤销）');
+      _continentToast('已连成岛级航线（点线可调，Ctrl+Z 可撤销）');
     }
   } catch (err) {
     _continentToast('航线保存失败：' + (err && err.message || err));

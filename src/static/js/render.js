@@ -476,7 +476,7 @@ function _vizCheckRegenerate(verdict, badge) {
   const nodeId = nodeEl ? nodeEl.dataset.nodeId : '';
   const node = (nodeId && typeof _findGraphNode === 'function') ? _findGraphNode(nodeId) : null;
   if (!node) {
-    if (typeof showToast === 'function') showToast('已退出全屏：请在画布可视化卡片的角标上点击重做');
+    if (typeof showToast === 'function') showToast('已退出全屏，点击可视化卡片角标重做');
     return;
   }
   if (node.messageIndex >= 0) {

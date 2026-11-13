@@ -575,7 +575,7 @@ function _settingsPageCanvas() {
 function settingsSetFollowupAutoRoute(on) {
   if (_settingsGuard()) return;
   _settingsLsSet(STORAGE_KEY_FOLLOWUP_AUTO_ROUTE, on ? '1' : '0');
-  _settingsToast('追问自动判断：' + (on ? '开（会多一次模型调用）' : '关（全部手动）'));
+  _settingsToast('追问自动判断：' + (on ? '开' : '关'));
   renderSettingsPage();
 }
 

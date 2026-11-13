@@ -180,7 +180,7 @@ function _quizReturnPillStartCountdown() {
       _quizReturnPillStopCountdown();
       hideQuizReturnPill();
       if (typeof clearQuizRelearnGuide === 'function') clearQuizRelearnGuide();
-      if (typeof showToast === 'function') showToast('引导卡已自动收起（60 秒未操作）');
+      if (typeof showToast === 'function') showToast('引导卡已自动收起');
       return;
     }
     _quizReturnPillPaint();

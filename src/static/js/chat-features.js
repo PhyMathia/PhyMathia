@@ -514,7 +514,7 @@
         if (!localItems.length && _knowledgeSkipReason === 'reasoning_leak'
             && !_knowledgeLeakToastShown && typeof showToast === 'function') {
           _knowledgeLeakToastShown = true;
-          showToast('这轮回答里混进了模型的思考过程，没能提取知识点——换一个模型或重新问一次通常就好');
+          showToast('知识点提取失败：回答混入思考过程，可重试或换模型');
         }
 
         const payload = { ...basePayload };

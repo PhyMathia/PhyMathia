@@ -473,8 +473,8 @@ check('chat：推理通道不混进正文（混进去 → 整轮知识提取被�
   // 被闸门跳过时必须让用户知道原因：静默正是这场事故最坑的地方
   const feat = fs.readFileSync('src/static/js/chat-features.js', 'utf8');
   if (!feat.includes("_knowledgeSkipReason = 'reasoning_leak'")) throw new Error('提取被跳过时未记录原因');
-  if (!feat.includes('混进了模型的思考过程')) throw new Error('跳过原因未告知用户（不许静默）');
-  if (!code.includes('混进了模型的思考过程')) throw new Error('打包产物缺提示文案（未 build:js？）');
+  if (!feat.includes('混入思考过程')) throw new Error('跳过原因未告知用户（不许静默）');
+  if (!code.includes('混入思考过程')) throw new Error('打包产物缺提示文案（未 build:js？）');
   return true;
 });
 

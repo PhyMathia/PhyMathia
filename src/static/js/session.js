@@ -1276,7 +1276,7 @@
           return;
         }
         if (r.offline && typeof showToast === 'function') {
-          showToast('当前离线，仅从本机删除；服务器上的资料可能残留', TOAST_MS_LONG);
+          showToast('离线中：仅从本机删除，服务器资料可能残留', TOAST_MS_LONG);
         } else {
           // T271：删除已生效，登记表本地即刻补登——卸载信标等不到下一轮同步刷新
           _tombstonedSids.add(id);
@@ -1392,7 +1392,7 @@
             ? `已删除 ${removed.length} 个画布（离线：服务器可能残留）`
             : `已删除 ${removed.length} 个画布`, TOAST_MS_LONG);
         } else {
-          showToast(`已删除 ${removed.length} 个，${failed.length} 个失败（已保留勾选，可重试）`, TOAST_MS_LONG);
+          showToast(`已删除 ${removed.length} 个，${failed.length} 个失败，可重试`, TOAST_MS_LONG);
         }
       }
       if (failed.length === 0) _sessionMultiSelect = false;

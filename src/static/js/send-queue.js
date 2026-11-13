@@ -189,7 +189,7 @@ function _enqueueNodeJob(label, run, meta) {
 function _queuedJobNodeGuard(taskId, nodeId) {
   if (typeof _findGraphNode === 'function' && _findGraphNode(nodeId)) return true;
   if (typeof _taskFinish === 'function') _taskFinish(taskId, 'error', '节点已不在画布上');
-  if (typeof showToast === 'function') showToast('轮到这条时，那颗节点已经不在画布上了');
+  if (typeof showToast === 'function') showToast('节点已不在画布，无法重新生成');
   return false;
 }
 

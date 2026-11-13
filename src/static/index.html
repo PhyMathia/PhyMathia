@@ -45,7 +45,7 @@
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
   <link rel="stylesheet" href="/dist/styles.min.css?v=dba9cdaa">
   <link rel="stylesheet" href="/dist/styles-panels.min.css?v=ee8352f1">
-  <link rel="stylesheet" href="/dist/graph-override.min.css?v=d638cdfc">
+  <link rel="stylesheet" href="/dist/graph-override.min.css?v=9aa4c95d">
   <link rel="stylesheet" href="/dist/phi-pet.min.css?v=9ee6cffb">
   <script defer src="/vendor/katex/katex.min.js"></script>
   <script defer src="/vendor/katex/contrib/auto-render.min.js"></script>
@@ -137,13 +137,13 @@
         </button>
         <!-- Token 用量统计（2026-10-08）：第 9 块磁贴——AI 调用记账的可视化，
              全局口径（所有账号共用，backlog T180 拍板）。数据只读，无副行。 -->
-        <button class="sidebar-tile" id="usageTile" onclick="closeSidebar();openTokenUsagePanel();" title="Token 用量统计：按日期、模型、用途查看 AI 调用量与缓存命中">
+        <button class="sidebar-tile" id="usageTile" onclick="closeSidebar();openTokenUsagePanel();" title="Token 用量统计：按日期、模型、用途">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"></path><path d="M7 14l4-4 3 3 5-6"></path></svg>
           <span class="sidebar-tile-label">用量统计</span>
         </button>
       </div>
       <!-- 清空是危险操作：现在先进回收站（可按保留天数恢复），文案随之改口径 -->
-      <button class="sidebar-clear-all" onclick="clearAllSessions()" title="删除全部画布及其知识、公式与检测记录（先进入回收站暂存，保留期内可恢复）">
+      <button class="sidebar-clear-all" onclick="clearAllSessions()" title="删除全部画布与记录（可从回收站恢复）">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path></svg>
         清空所有画布
       </button>
@@ -164,7 +164,7 @@
         <button class="header-btn run-gen-btn" id="runAllBtn" title="全部开始" aria-label="全部开始" onclick="runAllWorkflowNodes()">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
         </button>
-        <button class="header-btn task-panel-btn" id="taskPanelBtn" title="任务列表：正在跑的活儿、排队的活儿、之前干过的活" aria-label="打开任务列表" aria-controls="taskPanel" aria-expanded="false" onclick="toggleTaskPanel(event)">
+        <button class="header-btn task-panel-btn" id="taskPanelBtn" title="任务列表：在跑、排队与历史任务" aria-label="打开任务列表" aria-controls="taskPanel" aria-expanded="false" onclick="toggleTaskPanel(event)">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
           <span class="task-panel-badge" hidden></span>
         </button>
@@ -217,7 +217,7 @@
       <div class="status-drag-handle" title="拖动调整位置"><svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor"><circle cx="3" cy="2" r="1.2"/><circle cx="9" cy="2" r="1.2"/><circle cx="3" cy="8" r="1.2"/><circle cx="9" cy="8" r="1.2"/><circle cx="3" cy="14" r="1.2"/><circle cx="9" cy="14" r="1.2"/></svg></div>
       <button class="status-control-btn status-run-btn" id="statusRunBtn" title="全部开始" aria-label="全部开始" onclick="runAllWorkflowNodes()"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
       <button class="status-control-btn status-stop-btn" id="statusStopBtn" title="停止生成" aria-label="停止生成" disabled onclick="stopGeneration()"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
-      <button class="status-control-btn status-task-btn" id="progressTaskBtn" title="任务列表：正在跑的活儿、排队的活儿、之前干过的活（可暂停 / 停止 / 重试）" aria-label="打开任务列表" aria-controls="taskPanel" aria-expanded="false" onclick="toggleTaskPanel(event)">
+      <button class="status-control-btn status-task-btn" id="progressTaskBtn" title="任务列表：在跑、排队与历史任务" aria-label="打开任务列表" aria-controls="taskPanel" aria-expanded="false" onclick="toggleTaskPanel(event)">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="9" y1="6" x2="21" y2="6"></line><line x1="9" y1="12" x2="21" y2="12"></line><line x1="9" y1="18" x2="21" y2="18"></line><circle cx="4.5" cy="6" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="4.5" cy="12" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="4.5" cy="18" r="1.2" fill="currentColor" stroke="none"></circle></svg>
         <span class="task-panel-badge" hidden></span>
       </button>
@@ -266,7 +266,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/dist/app.js?v=987f8154" defer></script>
+  <script src="/dist/app.js?v=1295e34c" defer></script>
   <script>
     // app.js 改 defer 后本脚本先于它执行，而 APP_VERSION 是 config.js 的顶层
     // const——内联脚本无法加 defer，只能等 DOMContentLoaded：所有 defer 脚本
@@ -349,13 +349,13 @@
     <div class="kp-header">
       <h2>知识总览</h2>
       <div class="kp-header-actions">
-        <button class="kp-tool-btn aurora-glass aurora-glass--compact" id="kpExportBtn" onclick="exportKnowledgeMarkdown()" title="导出当前标签页全部内容为 Markdown 文件（整库导出，不受筛选/搜索影响）">⇩ 导出</button>
+        <button class="kp-tool-btn aurora-glass aurora-glass--compact" id="kpExportBtn" onclick="exportKnowledgeMarkdown()" title="导出当前标签页全部内容为 Markdown（整库导出）">⇩ 导出</button>
         <button class="kp-tool-btn aurora-glass aurora-glass--compact" id="kpContinentBtn" onclick="openKnowledgeContinentView()" title="打开知识大陆（跨会话概念投影总览）">🌐 大陆</button>
         <span class="kp-optimize-progress" id="kpOptimizeProgress" hidden>
           <span id="kpOptimizeProgressText">0/0</span>
           <span class="kp-optimize-progress-track"><span class="kp-optimize-progress-fill" id="kpOptimizeProgressFill"></span></span>
         </span>
-        <button class="kp-tool-btn aurora-glass aurora-glass--compact" id="kpOptimizeBtn" onclick="kpOptimizeBtnClicked()" title="知识点页：用 AI 重述整卡复述的旧摘要；公式页：批量重写模板兜底的公式含义（手动/模型结果不触碰）；运行中再次点击可停止">✦ 优化摘要</button>
+        <button class="kp-tool-btn aurora-glass aurora-glass--compact" id="kpOptimizeBtn" onclick="kpOptimizeBtnClicked()" title="用 AI 重述旧摘要（手动/模型结果不动）；运行中再点可停止">✦ 优化摘要</button>
         <button aria-label="关闭" class="kp-close" onclick="closeKnowledgePanel()">✕</button>
       </div>
     </div>
@@ -567,7 +567,7 @@
           <div class="am-model-list-bar">
             <button type="button" class="am-mini-btn" onclick="toggleAllPresetModels()">全选 / 全不选</button>
             <button type="button" class="am-mini-btn" id="presetFetchBtn" onclick="fetchProviderModelList()">↻ 获取模型列表</button>
-            <button type="button" class="am-mini-btn" id="presetProbeBtn" onclick="probeCheckedPresetModels()" title="对勾选的模型各真发一条最小消息验证能不能用——免费网关清单里常混着付费档才能用的模型（T60）">⚡ 测活勾选项</button>
+            <button type="button" class="am-mini-btn" id="presetProbeBtn" onclick="probeCheckedPresetModels()" title="对勾选的模型各发一条测试消息，验证能不能用">⚡ 测活勾选项</button>
             <span class="am-fetch-status" id="presetFetchStatus"></span>
           </div>
         </div>

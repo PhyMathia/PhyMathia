@@ -1889,7 +1889,7 @@ check('quiz-relearn：引导浮卡的可见倒计时与生命周期（旧版 60 
     'quiz-return-pill-count',                  // 秒数文案
     '悬停暂停',                                 // 悬停暂停提示
     '秒后收起',                                 // 剩余时间文案
-    '引导卡已自动收起（60 秒未操作）',            // 自动收起时说明原因
+    '引导卡已自动收起',                          // 自动收起时说明原因
     "document.querySelector('.graph-network-modal-overlay')", // 编辑弹窗打开时暂停
   ]) {
     if (!uiSrc.includes(frag)) throw new Error('浮卡生命周期缺: ' + frag);

@@ -334,7 +334,7 @@ async function _generateCustomNode(node, nodeSignal) {
         _commitWorkflowNodeVersion(failedLive);
         _saveGraphNodeTail(failedLive);
         _refreshWorkflowNodeStatusUi(failedLive);
-        if (typeof showToast === 'function') showToast('连接超时、生成没跑完：已保留收到的内容，可重新生成');
+        if (typeof showToast === 'function') showToast('连接超时，已保留内容，可重试');
         return;
       }
       if (failedLive) {
@@ -387,7 +387,7 @@ async function _generateCustomNode(node, nodeSignal) {
         if (workflowRunActive) _refreshWorkflowNodeUi(live);
         else renderGraphCanvas();
         if (!wasAborted && typeof showToast === 'function') {
-          showToast('交互可视化生成失败：' + (vizRetryMessage || '模型未返回完整 HTML，请点击该节点重试'));
+          showToast('可视化生成失败：' + (vizRetryMessage || '点击节点重试'));
         }
         return;
       }

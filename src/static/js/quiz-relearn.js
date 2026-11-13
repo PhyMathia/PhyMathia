@@ -343,7 +343,7 @@ function quizRelearnConnect() {
   if (!fromId || typeof graphView === 'undefined' || typeof _applyGraphLinkMode !== 'function') {
     if (typeof toggleGraphLinkMode === 'function') {
       toggleGraphLinkMode();
-      if (typeof showToast === 'function') showToast('联系模式已开启：依次点击两个节点即可添加联系箭头');
+      if (typeof showToast === 'function') showToast('联系模式已开启：依次点两个节点完成连线');
     }
     return;
   }
@@ -352,7 +352,7 @@ function quizRelearnConnect() {
   _applyGraphLinkMode();
   if (typeof showToast === 'function') {
     const what = _quizRelearnFindNode(ctx.noteNodeId) ? '你的总结节点' : '「' + ctx.title + '」';
-    showToast('已把' + what + '设为起点——点击要连接的先导概念节点完成连线');
+    showToast('已把' + what + '设为起点，点击要连接的概念节点完成连线');
   }
 }
 

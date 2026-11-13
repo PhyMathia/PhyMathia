@@ -941,8 +941,8 @@ function _continentSyncStyleBtn() {
   btn.textContent = organic ? '网格' : '有机';
   btn.classList.toggle('is-on', !organic);
   btn.title = (organic
-    ? '当前：有机——岛与卡在网格里各偏一点、带厚度。点此切回整齐网格'
-    : '当前：网格——整齐正交。点此切到有机画风');
+    ? '当前：有机，点此切回网格'
+    : '当前：网格，点此切到有机');
 }
 
 // 有机化的纯函数：吃一份布局结果，吐一份视觉坐标全部就位的布局结果。

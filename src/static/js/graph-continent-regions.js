@@ -113,7 +113,7 @@ function _continentRenderLegend(regionInfo, data) {
     '<div class="continent-legend-head">' +
       '<span class="continent-legend-title">图例' + (collapsed ? ' ▸' : ' ▾') + '</span>' +
       (regions.length
-        ? '<button class="continent-legend-locate" data-locate title="把镜头飞到岛上最多的那片海域（海域板都在这片大陆上，只是滚出视野了）">海域在哪</button>'
+        ? '<button class="continent-legend-locate" data-locate title="把镜头飞到岛上最多的那片海域">海域在哪</button>'
         : '') +
       (pending.length || unclassified.length
         ? '<button class="continent-legend-pending" data-pending>待确认 ' +
