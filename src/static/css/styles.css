@@ -1472,9 +1472,11 @@
       gap: 2px;
       align-items: center;
       padding: 3px;
-      background: var(--btn-bg);
-      border: 1px solid var(--btn-border);
       border-radius: var(--r-lg);
+      /* 底色/描边交给 .aurora-glass（T447，2026-11-13 用户问「两处胶囊观感不同」后统一）：
+         这里**不能写 background**——简写会把极光色斑的 background-image 一并清空
+         （同 .progress-status 3437 行注释的坑）。材质与「待命」胶囊同挂
+         aurora-glass aurora-glass--compact（index.html），磨砂/立体感由玻璃层出。 */
     }
     .header-btn {
       background: var(--btn-bg);
