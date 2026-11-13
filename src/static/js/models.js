@@ -1594,8 +1594,26 @@ function saveNewModel() {
   renderModelList();
   renderModelSelects();
   if (typeof showToast === 'function') {
-    showToast(added > 0 ? `已添加 ${added} 个模型` : '没有新增模型，可能都已添加过');
+    showToast(added > 0 ? `已添加 ${added} 个模型` : '没有新增模型（可能都已添加过）');
   }
+}
+
+// 组内快捷补模型（设置抽屉模型页「＋ 添加模型」行内入口，2026-11-14 用户拍板：
+// 该按钮语义是往当前供应商的组里加模型，不是再开添加供应商大弹窗）。文本解析
+// 复用 _parseExtraModelInput（逗号/换行分隔、「id | 显示名」），写入全走
+// addModelsForProvider（重复跳过、密钥继承组密钥、baseUrl 沿用组配置→预设回落）。
+// 返回实际新增条数；-1＝入参没解析出任何模型。
+function addModelToGroup(provider, rawText) {
+  const entries = _parseExtraModelInput(rawText);
+  if (!entries.length) return -1;
+  const cfg = (Array.isArray(userModelConfigs) ? userModelConfigs : []).find(c => c && c.provider === provider);
+  const added = addModelsForProvider(provider, '', (cfg && cfg.baseUrl) || '', entries);
+  renderModelList();
+  renderModelSelects();
+  if (typeof showToast === 'function') {
+    showToast(added > 0 ? `已添加 ${added} 个模型` : '没有新增模型（可能都已添加过）');
+  }
+  return added;
 }
 
 // ====== 组级「更新模型列表」：已添加分组的在线刷新 ======

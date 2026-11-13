@@ -6713,6 +6713,12 @@ html[data-theme="light"][data-panel-skin="candy"] .thinking-slider {
 .settings-model-baseurl { font-size: var(--fs-xs); color: var(--text-secondary); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-model-subhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 18px 0 8px; font-size: var(--fs-sm); color: var(--text-secondary); }
 .settings-model-rows { display: flex; flex-direction: column; gap: 7px; }
+/* 「＋ 添加模型」行内输入行：默认收起（subhead 按钮切换），展开时贴在模型列表上方 */
+.settings-model-addrow { display: flex; align-items: center; gap: 7px; margin: 0 0 10px; }
+.settings-model-addrow input { flex: 1; min-width: 0; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--r-sm); background: color-mix(in srgb, var(--text-primary) 4%, transparent); color: var(--text-primary); font-size: var(--fs-xs); font-family: inherit; }
+.settings-model-addrow input:focus { outline: none; border-color: var(--accent); }
+.settings-model-addrow input::placeholder { color: var(--text-secondary); opacity: .7; }
+.settings-model-addhint { flex: none; font-size: var(--fs-xs); color: var(--text-secondary); }
 .settings-model-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--r-md); background: color-mix(in srgb, var(--text-primary) 4%, transparent); }
 .settings-model-row-main { min-width: 0; display: flex; flex-direction: column; }
 .settings-model-row-name { font-size: var(--fs-md); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

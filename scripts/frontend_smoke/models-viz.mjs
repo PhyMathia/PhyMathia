@@ -615,4 +615,54 @@ check('model-switch：停用写同一份配置 + 清槽位引用 + 重新启用'
   sandbox.reloadModelsFromStorage();
   return true;
 });
+
+// 2026-11-14 用户实报：设置抽屉模型页「＋ 添加模型」弹的是添加供应商大弹窗。
+// 拍板改为组内行内补模型（手动输 ID、不显眼但要有）——接线与行为两组断言。
+check('model-add：设置抽屉「＋ 添加模型」行内接线（不再转发添加供应商大弹窗）', () => {
+  const sjs = fs.readFileSync('src/static/js/settings.js', 'utf8');
+  // subhead 的 mini 按钮必须接行内开关，且不得再把组内入口转给 settingsModelAction
+  const subhead = sjs.split('\n').find(l => l.includes('settings-model-mini') && l.includes('添加模型'));
+  if (!subhead || !subhead.includes('settingsModelToggleAdd()')) throw new Error('subhead 按钮未接行内开关');
+  if (subhead.includes('settingsModelAction')) throw new Error('subhead 按钮仍走 settingsModelAction');
+  // 顶部「＋ 添加供应商」保持大弹窗语义不动（源码 onclick 里引号带转义，断言裸标识符）
+  const top = sjs.split('\n').find(l => l.includes('settings-model-primary'));
+  if (!top || !top.includes('settingsModelAction') || top.includes('settingsModelToggleAdd')) throw new Error('顶部添加供应商按钮语义变了');
+  for (const t of ['settingsModelToggleAdd', 'settingsModelAddSubmit', 'settings-model-addrow', 'settingsAddModelInput']) {
+    if (!sjs.includes(t)) throw new Error('settings.js 缺：' + t);
+  }
+  const mjs = fs.readFileSync('src/static/js/models.js', 'utf8');
+  for (const t of ['function addModelToGroup', 'addModelsForProvider(provider']) {
+    if (!mjs.includes(t)) throw new Error('models.js 缺：' + t);
+  }
+  return true;
+});
+
+check('model-add：addModelToGroup 组内快捷补模型（多只解析/重复跳过/密钥与地址继承组）', () => {
+  const preset = sandbox.window.MODEL_PRESETS.deepseek;
+  if (sandbox.addModelToGroup('deepseek', '') !== -1) throw new Error('空输入应返回 -1');
+  if (sandbox.addModelToGroup('deepseek', ' ， \n') !== -1) throw new Error('纯分隔符应返回 -1');
+  // 组内先有一只带组密钥的条目 → 新模型应继承组密钥与组 baseUrl
+  sandbox.addModelsForProvider('deepseek', 'sk-group-A', preset.baseUrl, [{ model: 'm-base' }]);
+  const n = sandbox.addModelToGroup('deepseek', 'm-new-1, m-new-2 | 别名二, m-base');
+  if (n !== 2) throw new Error('应新增 2 只（重复的 m-base 跳过）: ' + n);
+  const all = sandbox.getAllModels().filter(m => m.provider === 'deepseek');
+  if (all.length !== 3) throw new Error('组内应为 3 只: ' + all.length);
+  for (const m of all) {
+    if (!m.hasKey) throw new Error('组密钥未生效: ' + m.model);
+    // getAllModels 是投影（只有 hasKey），原始条目的 apiKey/baseUrl 用 getModelById 取
+    const raw = sandbox.getModelById(m.id);
+    if (raw.apiKey !== 'sk-group-A') throw new Error('组密钥未继承: ' + m.model);
+    if (raw.baseUrl !== preset.baseUrl) throw new Error('baseUrl 未沿用组配置: ' + m.model);
+  }
+  // 「id | 显示名」别名要落进原始条目的 label（投影无 label 字段，同样走 getModelById）
+  const raw2 = all.map(m => sandbox.getModelById(m.id)).find(c => c && c.model === 'm-new-2');
+  if (!raw2 || raw2.label !== '别名二') throw new Error('「id | 显示名」解析丢失');
+  if (sandbox.addModelToGroup('deepseek', 'm-base, m-new-1') !== 0) throw new Error('全重复应返回 0');
+  for (const k of ['phymathia_user_models', 'phymathia_model_group_keys', 'phymathia_active_models']) {
+    sandbox.localStorage.removeItem(k);
+  }
+  sandbox.loadUserModels();
+  sandbox.reloadModelsFromStorage();
+  return true;
+});
 }
