@@ -796,6 +796,18 @@ function draftInputChanged(nodeId, value) {
   if (node && node.kind === 'draft') node.draftInput = String(value == null ? '' : value);
 }
 
+// 草稿框回车发送（2026-11-13）：草稿是 textarea（要能打多行），过去只有「发送提问」
+// 按钮能发，回车只换行——从端口拖出来的追问框看着像聊天输入框，用户按回车以为发了、
+// 其实字还在框里。口径与画布「新会话」输入框一致：Enter 直接发、Shift+Enter 换行。
+// 中文输入法组字期的回车是「选候选词」不是「发送」：Chromium 给 isComposing=true、
+// 老 Safari 给 keyCode 229，两者都要放行，否则打拼音选词就把半句话发出去。
+function draftInputKeydown(event, nodeId) {
+  if (!event || event.key !== 'Enter' || event.shiftKey) return;
+  if (event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  submitDraftQuestion(nodeId);
+}
+
 // 追问自动选路（2026-11-03）：回答方式胶囊回写。auto＝发送时让模型判断；
 // direct/analysis＝用户手动定死，跳过判断。非 auto 值一律归一到 auto，防脏值进对象。
 function draftRouteChanged(nodeId, value, btn) {

@@ -19,11 +19,14 @@ check('追问草稿卡渲染（T152→占位提示）：draftInput 作值、建�
       portMeta: { branchType: 'followup', question: '端口预填问题' },
       ...extra,
     }) + ')';
-    const emptyTail = 'oninput="draftInputChanged(\'draft-smk\', this.value)"></textarea>';
+    const inputAttrs = 'oninput="draftInputChanged(\'draft-smk\', this.value)"'
+      + ' onkeydown="return draftInputKeydown(event, \'draft-smk\')"';
+    const emptyTail = inputAttrs + '></textarea>';
     const typed = vm.runInContext(mk({ draftInput: '我自己打的字' }), sandbox);
     if (!typed.includes('>我自己打的字</textarea>')) throw new Error('重渲后没取节点对象上的 draftInput，字会丢');
     if (!typed.includes('placeholder="端口预填问题"')) throw new Error('建议问题应作 placeholder 灰色提示');
     if (!typed.includes('oninput="draftInputChanged(\'draft-smk\', this.value)"')) throw new Error('textarea 未挂 oninput 回写');
+    if (!typed.includes('onkeydown="return draftInputKeydown(event, \'draft-smk\')"')) throw new Error('textarea 未挂回车发送（onkeydown）');
     const cleared = vm.runInContext(mk({ draftInput: '' }), sandbox);
     if (!cleared.includes(emptyTail)) throw new Error('用户主动清空后框内容应为空串（建议问题不再当正文塞回）');
     if (!cleared.includes('placeholder="端口预填问题"')) throw new Error('清空后建议问题应继续作灰色提示');
@@ -41,6 +44,39 @@ check('追问草稿空发回落：框空着点发送＝采用建议问题（占�
   const src = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
   if (!src.includes("_draftSuggestionText(node).trim()")) throw new Error('submitDraftQuestion 空值时应回落建议问题（_draftSuggestionText）');
   if (!/const text = \(input\?\.value \|\| ''\)\.trim\(\)\s*\n\s*\|\|/.test(src)) throw new Error('回落应拼在空值判断同一处，先取框内实文再回落');
+  return true;
+});
+
+// ===== 追问草稿框回车发送（2026-11-13）=====
+check('追问草稿框回车发送：Enter 发、Shift+Enter 换行、输入法组字期回车不发', () => {
+  const out = JSON.parse(vm.runInContext(`
+    (() => {
+      const prev = submitDraftQuestion;
+      const calls = [];
+      submitDraftQuestion = function (id) { calls.push(String(id)); };
+      const ev = (extra) => Object.assign({
+        key: 'Enter', shiftKey: false, isComposing: false, keyCode: 13, prevented: 0,
+        preventDefault() { this.prevented++; },
+      }, extra);
+      const enter = ev({});
+      draftInputKeydown(enter, 'draft-enter');
+      const shift = ev({ shiftKey: true });
+      draftInputKeydown(shift, 'draft-shift');
+      const ime = ev({ isComposing: true });
+      draftInputKeydown(ime, 'draft-ime');
+      const ime229 = ev({ keyCode: 229 });
+      draftInputKeydown(ime229, 'draft-ime229');
+      const other = ev({ key: 'a' });
+      draftInputKeydown(other, 'draft-a');
+      submitDraftQuestion = prev;
+      return JSON.stringify({
+        calls,
+        prevented: [enter.prevented, shift.prevented, ime.prevented, ime229.prevented, other.prevented],
+      });
+    })()
+  `, sandbox));
+  if (out.calls.join(',') !== 'draft-enter') throw new Error('只有无修饰 Enter 该发，实际：' + JSON.stringify(out.calls));
+  if (out.prevented.join(',') !== '1,0,0,0,0') throw new Error('Enter 应 preventDefault（防插换行），Shift/组字/其他键放行：' + JSON.stringify(out.prevented));
   return true;
 });
 

@@ -314,7 +314,7 @@ function _renderDraftNodeHtml(node) {
         + '</div>'
       : '';
     body = '<div class="graph-draft-body">'
-      + '<textarea class="graph-draft-input" rows="3" placeholder="' + escapeHtml(suggestion) + '" oninput="draftInputChanged(\'' + node.id + '\', this.value)">' + escapeHtml(value) + '</textarea>'
+      + '<textarea class="graph-draft-input" rows="3" placeholder="' + escapeHtml(suggestion) + '" oninput="draftInputChanged(\'' + node.id + '\', this.value)" onkeydown="return draftInputKeydown(event, \'' + node.id + '\')">' + escapeHtml(value) + '</textarea>'
       + '<div class="graph-draft-footer">' + routeSwitch
       + '<button class="graph-draft-btn graph-draft-send" onclick="submitDraftQuestion(\'' + node.id + '\')">发送提问</button>'
       + '</div></div>';
