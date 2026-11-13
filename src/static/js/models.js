@@ -963,6 +963,20 @@ function _ensureThinkingSliderOn(mount, onChangeCb) {
   return mount._ts;
 }
 
+// 槽位滑块显示档（纯函数，冒烟直测）：只决定显示，绝不写回存储。
+// 简略态其余槽留空＝「与主模型相同」，实际发送走 getSlotThinkingForRole 跟随主槽，
+// 所以滑块也如实显示主槽档位，而不是 _thinkingDisplayValue('') 回退的「族默认档」
+// （旧版六槽同值时显示天然一致，改留空后不改这里就会看着像没联动）。
+// graph 槽例外：空槽按 T97 走相位默认，界面保持「自动」；agent 槽永远按自身值。
+function _slotThinkingDisplay(role, current, entries) {
+  const stored = current || '';
+  if (stored) return _thinkingDisplayValue(stored, entries);
+  if (role === 'agent' || role === 'graph' || activeModels[SLOT_MODEL_KEYS[role]]) {
+    return _thinkingDisplayValue('', entries);
+  }
+  return _thinkingDisplayValue(activeModels.agent_thinking || '', entries);
+}
+
 // 单个槽位思考滑块：档位按实际会被调用的模型的供应商族＋代次渲染；存量档位在新档组
 // 无效（如 on 遇 effort 族）时按语义就近改写并落盘，''（不发参数）保留不改只就近显示
 function _refreshSlotThinkingSelect(role) {
@@ -972,7 +986,7 @@ function _refreshSlotThinkingSelect(role) {
   const entries = _thinkingSliderEntries(_thinkingOptionsFor(_slotThinkingProvider(role), role, _slotThinkingModelName(role)));
   const current = activeModels[role + '_thinking'] || '';
   const valid = entries.some(e => e.value === current);
-  const display = _thinkingDisplayValue(current, entries);
+  const display = _slotThinkingDisplay(role, current, entries);
   if (slider) {
     slider.setOptions(entries);
     slider.setValue(display);

@@ -106,6 +106,29 @@ export function run() {
     return true;
   });
 
+  check('model-mode：空槽滑块显示跟随主槽的档位（graph 仍「自动」）＋绝不写回存储', () => {
+    sandbox.localStorage.setItem('phymathia_active_models', JSON.stringify({
+      agent_model: 'model-probe-main', agent_thinking: 'high',
+      html_model: '', html_thinking: '', graph_model: '', graph_thinking: '', quiz_model: '', quiz_thinking: '',
+      branch_model: '', branch_thinking: '', descriptor_model: '', descriptor_thinking: '',
+    }));
+    sandbox.reloadModelsFromStorage();
+    const effort = sandbox._thinkingSliderEntries(sandbox._thinkingOptionsFor('deepseek', 'html'));
+    const graph = sandbox._thinkingSliderEntries(sandbox._thinkingOptionsFor('deepseek', 'graph'));
+    for (const role of ['html', 'quiz', 'branch', 'descriptor']) {
+      if (sandbox._slotThinkingDisplay(role, '', effort) !== 'high') {
+        throw new Error(role + ' 空槽应显示主槽档位 high，而不是族默认 medium');
+      }
+    }
+    if (sandbox._slotThinkingDisplay('agent', 'high', effort) !== 'high') throw new Error('主槽恒按自身值显示');
+    if (sandbox._slotThinkingDisplay('graph', '', graph) !== '') throw new Error('graph 空槽应保持「自动」');
+    if (sandbox._slotThinkingDisplay('html', 'low', effort) !== 'low') throw new Error('有值的槽按自身值显示');
+    const stored = JSON.parse(sandbox.localStorage.getItem('phymathia_active_models'));
+    if (stored.html_thinking !== '' || stored.graph_thinking !== '') throw new Error('显示计算不得写回槽位存储');
+    if (sandbox.getSlotThinkingForRole('html') !== 'high') throw new Error('实际发送仍应跟随主槽 high');
+    return true;
+  });
+
   check('model-mode：applyUnifiedConfig 首写＝只写主槽＋其余五槽留空（快照机制已退役）', () => {
     sandbox.localStorage.removeItem('phymathia_user_models');
     sandbox.localStorage.removeItem('phymathia_model_group_keys');
@@ -329,6 +352,12 @@ export function run() {
     }
     if (!modelsSrc.includes('_ensureThinkingSliderOn(mount, v => onUnifiedThinkingChange(v))')) {
       throw new Error('统一滑块 onChange 接线缺失');
+    }
+    if (!modelsSrc.includes('function _slotThinkingDisplay(role, current, entries)')) {
+      throw new Error('空槽显示跟随档位的纯函数缺失（详细面板会看着像没联动）');
+    }
+    if (!modelsSrc.includes('const display = _slotThinkingDisplay(role, current, entries);')) {
+      throw new Error('_refreshSlotThinkingSelect 未接线 _slotThinkingDisplay');
     }
     if (modelsSrc.includes('select.innerHTML = options.map')) throw new Error('旧思考下拉选项渲染残留');
     // 刻度重建：setOptions 必须调 _renderTicks（换族重建档点；2026-10-25 真机首验教训）
