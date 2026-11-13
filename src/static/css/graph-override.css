@@ -3357,6 +3357,15 @@ html[data-theme="light"] .graph-node-fs,
   filter: drop-shadow(0 6px 18px rgba(2, 6, 23, 0.45));
   transition: transform 180ms ease, filter 180ms ease;
 }
+/* 设置抽屉开着时 Φ 浮层全体退到抽屉之后（2026-11-14 用户实报「拖一下桌宠设置面板就没了」）：
+   桌宠 9800／聊天窗口 9700 都压着抽屉遮罩 9000——挡面板不说，抽屉的捕获相外点关闭
+   监听（settings.js）把落在它们身上的 click 判成「点在抽屉外」，拖一下桌宠抽屉就关。
+   遮罩 inset:0 且 .show 时接管指针，退到它后面即点不到也拖不动，关抽屉自动回原层。
+   手法与矮屏 harness-open 让位（body.harness-open → --z-modal）同款。 */
+body:has(.settings-overlay.show) .phi-pet-root,
+body:has(.settings-overlay.show) .graph-harness-window {
+  z-index: var(--z-modal);
+}
 .phi-pet-root:active {
   cursor: grabbing;
 }

@@ -160,9 +160,25 @@ check('T51 桌宠让位正解：body.harness-open + 内联定位暂存归还', (
   return true;
 });
 
+check('设置抽屉开着时 Φ 桌宠/聊天窗口退到抽屉之后（2026-11-14 用户实报拖桌宠误关抽屉）', () => {
+  const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  if (!css.includes('body:has(.settings-overlay.show) .phi-pet-root')) {
+    throw new Error('桌宠退位选择器缺失——桌宠 9800 会压住抽屉遮罩 9000 并吃外点关闭');
+  }
+  if (!css.includes('body:has(.settings-overlay.show) .graph-harness-window')) {
+    throw new Error('聊天窗口退位选择器缺失（9700 同样压抽屉一头）');
+  }
+  // 退位目标必须是 --z-modal（450 < 遮罩 9000）：退不到位＝挡面板，用裸数值＝绕开层级档
+  const rule = css.slice(css.indexOf('body:has(.settings-overlay.show)'));
+  if (!rule.includes('z-index: var(--z-modal);')) throw new Error('退位未挂 --z-modal 档');
+  return true;
+});
+
 check('T125 面板高度预算自洽：height 与 bottom 同一条预算、矮视口兜底仍在', () => {
   const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
-  const start = css.indexOf('.graph-harness-window {');
+  // 行首锚（2026-11-14）：限定选择器（如 body:has(...) .graph-harness-window）同样含
+  // 「.graph-harness-window {」子串，裸 indexOf 会被劫持到别处、切块混入桌面宠物段。
+  const start = css.indexOf('\n.graph-harness-window {');
   const end = css.indexOf('/* 矮视口兜底', start);
   if (start < 0 || end < 0) throw new Error('找不到 .graph-harness-window 基础块或矮视口兜底注释');
   const block = css.slice(start, end);
