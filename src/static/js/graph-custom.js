@@ -703,6 +703,13 @@ function _nodeFsReaderTheme() {
   return appTheme;
 }
 
+// 字数／预计时长（2026-11-15）：与新窗口阅读页同口径——按 380 字/分钟，≤240 字不挂
+function _nodeFsReadingMeta(text) {
+  const n = String(text || '').replace(/\s+/g, '').length;
+  if (n < 240) return '';
+  return n + ' 字 · 约 ' + Math.max(1, Math.round(n / 380)) + ' 分钟';
+}
+
 // 主应用当前明暗（桩环境没有真 DOM 时按深色，绝不抛错——冒烟与 viewer 老调用都走这条）
 function _nodeFsAppTheme() {
   try {
@@ -760,14 +767,27 @@ function openNodeFullscreen(nodeId) {
   overlay.className = 'graph-node-fs-overlay';
   overlay.innerHTML = '<div class="graph-node-fs aurora-glass aurora-glass--panel">'
     + '<div class="graph-node-fs-head"><span class="graph-node-fs-title">' + escapeHtml(_nodeFsTitle(node)) + '</span>'
+    + '<span class="graph-node-fs-meta">' + escapeHtml(_nodeFsReadingMeta(text)) + '</span>'
     + '<span class="graph-node-fs-head-actions">'
     + '<button type="button" onclick="openNodeNewWindow(\'' + node.id + '\')" title="新窗口全屏">' + externalIcon + '</button>'
     + '<button type="button" onclick="closeNodeFullscreen()" title="关闭（Esc）">×</button>'
-    + '</span></div>'
+    + '</span>'
+    + '<span class="graph-node-fs-progress" aria-hidden="true"><span></span></span></div>'
     + '<div class="graph-node-fs-body"><div class="graph-node-fs-content">'
     + _nodeFsRenderedHtml(text, { parentId: String((message && message.timestamp) || node.timestamp || ''), sourceModule: node.moduleKey || '' })
     + '</div></div></div>';
   overlay.addEventListener('pointerdown', ev => { if (ev.target === overlay) closeNodeFullscreen(); });
+  // 阅读进度（2026-11-15）：本层正文列自己滚，细条跟着它走。桩环境（冒烟）没有
+  // querySelector/style，逐级守一下——真实浏览器成立即生效
+  const fsScroller = typeof overlay.querySelector === 'function' ? overlay.querySelector('.graph-node-fs-body') : null;
+  const fsBar = typeof overlay.querySelector === 'function' ? overlay.querySelector('.graph-node-fs-progress > span') : null;
+  if (fsScroller && fsBar && fsBar.style && typeof fsScroller.addEventListener === 'function') {
+    fsScroller.addEventListener('scroll', () => {
+      const max = fsScroller.scrollHeight - fsScroller.clientHeight;
+      const p = max > 4 ? Math.min(1, Math.max(0, fsScroller.scrollTop / max)) : 0;
+      fsBar.style.transform = 'scaleX(' + p.toFixed(4) + ')';
+    }, { passive: true });
+  }
   // 划词快捷工具（node-fs-toolbar.js）：浮条挂本层，动作落回这个节点。
   // dataset 沙箱桩可能没有（recipes 的全屏用例），守一下
   if (overlay.dataset) {
