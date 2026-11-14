@@ -320,6 +320,16 @@ function _graphContextItemsForCanvas(point, client) {
       zoomGraph(1 / zoom, client ? client.x : null, client ? client.y : null);
     },
   });
+  // 字号档（2026-11-15）：与「缩放复位」并列但指的是两件事——上面复位的是视口 zoom，
+  // 这里复位的是文字大小。label 直接报当前档，避免用户点进去才看见状态。
+  const _tsPct = Math.round((typeof _graphTextScale === 'number' ? _graphTextScale : 1) * 100);
+  items.push({
+    key: 'text-scale-reset',
+    label: '字号 ' + _tsPct + '%',
+    title: _tsPct === 100 ? '已是默认字号（工具条 A− / A+ 可调）' : '点此恢复默认 100%（工具条 A− / A+ 可调）',
+    disabled: _tsPct === 100,
+    run: () => { if (typeof graphTextScaleReset === 'function') graphTextScaleReset(); },
+  });
   items.push({ key: 'arrange', label: '自动整理', run: () => autoArrangeGraph() });
   items.push({
     key: 'create-group',

@@ -202,6 +202,10 @@ const STORAGE_KEY_BG_LIGHT = 'phymathia_bg_light';
 const STORAGE_KEY_FLIP_SLOW = 'phymathia_flip_slow_raster';
 // 节点皮肤模板（T128）：全局键，存当前模板 key（aurora=默认极光磨砂），与深浅主题同款机制
 const STORAGE_KEY_NODE_SKIN = 'phymathia_node_skin';
+// 画布字号档（2026-11-15）：只改节点内文字大小的等比系数（0.85~1.32），
+// 与画布缩放（state.zoom，缩的是整卡几何）是两回事。全局键不分会话——
+// 同一台设备的阅读舒适度跟具体哪张图无关。
+const STORAGE_KEY_GRAPH_TEXT_SCALE = 'phymathia_graph_text_scale';
 // 风格家族（2026-10-02 用户拍板）：一个开关同时管面板质感＋节点皮肤＋强调色——
 // data-panel-skin / data-node-skin 双属性同 key 同挂（家族即皮肤超集，杜绝「面板一个样、
 // 节点另一个样」的零件级混搭）。缺键时从旧 phymathia_node_skin 折算（ui.js 迁移）。

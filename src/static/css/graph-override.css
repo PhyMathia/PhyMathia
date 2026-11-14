@@ -189,7 +189,7 @@
 }
 
 .graph-node.minimized .graph-node-label {
-  font-size: var(--fs-lg) !important;
+  font-size: calc(var(--fs-lg) * var(--graph-text-scale, 1)) !important;
   overflow-wrap: anywhere !important;
 }
 
@@ -341,7 +341,7 @@
 .graph-node-sub {
   width: auto !important;
   margin: 0 !important;
-  font-size: var(--fs-xs) !important;
+  font-size: calc(var(--fs-xs) * var(--graph-text-scale, 1)) !important;
   font-weight: 600 !important;
   color: var(--text-secondary) !important;
   white-space: normal !important;
@@ -351,7 +351,7 @@
 
 .graph-node-label {
   width: 100% !important;
-  font-size: 15px !important;
+  font-size: calc(15px * var(--graph-text-scale, 1)) !important;
   font-weight: 700 !important;
   line-height: 1.5 !important;
   color: var(--text-primary) !important;
@@ -369,7 +369,7 @@
   width: 100% !important;
   margin-top: 10px !important;
   color: var(--text-primary) !important;
-  font-size: var(--fs-md) !important;
+  font-size: calc(var(--fs-md) * var(--graph-text-scale, 1)) !important;
   line-height: 1.75 !important;
   overflow-wrap: anywhere !important;
   /* max-height 由下方 .graph-node .graph-node-full-content 的动态上限统一决定 */
@@ -565,6 +565,38 @@
   font-weight: 800 !important;
   transform: translateY(-1px);
 }
+/* 字号档按钮（2026-11-15）：A− / A+ 两枚字母钮，字号比旁边的 +/− 小一号、字重更实，
+   视觉上区分「改文字」与「改视野」两件事；点小/点大后由 JS 把当前百分比写进 tooltip */
+.graph-tool-btn.graph-text-btn {
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+  letter-spacing: -0.02em !important;
+}
+/* 工具条从 7 钮涨到 9 钮（字号档 A− / A+，2026-11-15）：桌面 38px 一排仍宽裕，
+   但 375px 屏上 9×38 + 8×4 = 374px 会顶出右缘——窄屏压到 32px / 间距 2px
+   （9×32 + 8×2 + 8 = 312px，320px 屏也放得下），图标与字号同步缩一档 */
+@media (max-width: 560px) {
+  .graph-canvas-toolbar {
+    gap: 2px !important;
+    right: 8px !important;
+    bottom: 8px !important;
+  }
+  .graph-canvas-toolbar .graph-tool-btn {
+    width: 32px !important;
+    height: 32px !important;
+  }
+  .graph-canvas-toolbar .graph-tool-btn.graph-tool-glyph-lg {
+    font-size: 18px !important;
+  }
+  .graph-canvas-toolbar .graph-tool-btn.graph-text-btn {
+    font-size: 13px !important;
+  }
+  .graph-canvas-toolbar .graph-tool-btn svg {
+    width: 16px !important;
+    height: 16px !important;
+  }
+}
 .chat-header .header-actions .header-btn.run-gen-btn,
 .chat-header .header-actions #runAllBtn {
   background: var(--accent) !important;
@@ -725,7 +757,7 @@
   }
 
   .graph-node-label {
-    font-size: var(--fs-lg) !important;
+    font-size: calc(var(--fs-lg) * var(--graph-text-scale, 1)) !important;
   }
 
   .graph-node-full-content {
@@ -776,7 +808,12 @@
 @property --graph-edge-color { syntax: '<color>'; inherits: true; initial-value: #4a9eff; }
 @property --graph-edge-glow { syntax: '<color>'; inherits: true; initial-value: rgba(74, 158, 255, 0.45); }
 
+/* 画布字号档（2026-11-15）：节点内文字字号统一乘这个无单位系数，1＝原始尺寸。
+   只作用于「读的字」（标题/副标题/正文/编辑框/全屏阅读层），不碰角标、按钮、端口
+   这些按尺寸画的零件——它们跟着放大会撑破头部一行。改这个变量由 graph-interact.js
+   的 graphTextScaleStep 写（同时在 :root 上落 inline style，优先级高于此处默认值）。 */
 :root {
+  --graph-text-scale: 1;
   --graph-bubble-start: rgba(16, 24, 46, 0.97);
   --graph-bubble-end: rgba(16, 24, 46, 0.97);
   --graph-bubble-border: rgba(255, 255, 255, 0.12);
@@ -1835,7 +1872,7 @@
   max-height: 520px;
   overflow-y: auto;
   color: var(--text-primary);
-  font-size: var(--fs-md);
+  font-size: calc(var(--fs-md) * var(--graph-text-scale, 1));
   line-height: 1.75;
   overflow-wrap: anywhere;
 }
@@ -1853,7 +1890,7 @@
   border-radius: var(--r-md);
   background: var(--input-bg);
   color: var(--text-primary);
-  font-size: var(--fs-md);
+  font-size: calc(var(--fs-md) * var(--graph-text-scale, 1));
   line-height: 1.5;
   resize: vertical;
   outline: none;
@@ -1887,7 +1924,7 @@
   border-radius: var(--r-md);
   background: var(--input-bg);
   color: var(--text-primary);
-  font-size: var(--fs-md);
+  font-size: calc(var(--fs-md) * var(--graph-text-scale, 1));
   line-height: 1.5;
   resize: vertical;
   outline: none;
@@ -1902,7 +1939,7 @@
   border-radius: var(--r-md);
   background: var(--input-bg);
   color: var(--text-primary);
-  font-size: var(--fs-md);
+  font-size: calc(var(--fs-md) * var(--graph-text-scale, 1));
   line-height: 1.6;
   resize: vertical;
   outline: none;
@@ -1916,7 +1953,7 @@
 .graph-custom-node-render {
   width: 100%;
   color: var(--text-primary);
-  font-size: var(--fs-md);
+  font-size: calc(var(--fs-md) * var(--graph-text-scale, 1));
   line-height: 1.75;
   overflow-wrap: anywhere;
 }
@@ -3197,7 +3234,8 @@ html[data-theme="light"] .graph-node-fs,
 .graph-node-fs-content {
   max-width: 760px;
   margin: 0 auto;
-  font-size: var(--fs-xl);
+  /* 全屏阅读层跟随画布字号档：放大字号的人多半就是为了读长文，全屏里打回原尺寸很割裂 */
+  font-size: calc(var(--fs-xl) * var(--graph-text-scale, 1));
   line-height: 1.86;
   letter-spacing: 0.008em;
   color: var(--text-primary);

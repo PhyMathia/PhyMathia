@@ -89,6 +89,10 @@ function renderGraphCanvas(streaming) {
     + '<button class="graph-tool-btn graph-tool-glyph-lg" onclick="zoomGraph(1.2)" title="放大">+</button>'
     + '<button class="graph-tool-btn graph-tool-glyph-lg" onclick="zoomGraph(0.85)" title="缩小">−</button>'
     + '<button class="graph-tool-btn graph-tool-glyph-lg graph-tool-fit-btn" onclick="fitGraph()" title="适配画布">⌂</button>'
+    // 字号档（2026-11-15）：只改卡内文字，不动画布几何。与 +/− 缩放并排但不混用图标，
+    // 用 A− / A+ 字面量区分「看字号」和「看全景」两件事
+    + '<button class="graph-tool-btn graph-text-btn" onclick="graphTextScaleStep(-1)" data-text-scale-btn="-1" title="字号调小" aria-label="字号调小">A−</button>'
+    + '<button class="graph-tool-btn graph-text-btn" onclick="graphTextScaleStep(1)" data-text-scale-btn="1" title="字号调大" aria-label="字号调大">A+</button>'
     + '<button class="graph-tool-btn" onclick="autoArrangeGraph()" title="自动整理">⌗</button>'
     + '<button class="graph-tool-btn graph-harness-btn" onclick="toggleGraphPet()" title="Φ 网络助手" aria-label="Φ 网络助手" aria-pressed="true">'
     + '<span class="graph-harness-btn-phi">Φ</span></button>'
@@ -121,6 +125,8 @@ function renderGraphCanvas(streaming) {
     + '<line x1="12" y1="11" x2="12" y2="17"></line><line x1="9" y1="14" x2="15" y2="14"></line>'
     + '</svg></button>';
   graphCanvas.appendChild(toolbarEdit);
+  // 工具条新建完同步一次字号按钮的 tooltip（顶层应用时它还不存在）
+  _applyGraphTextScale();
   _applyGraphTextSelectionMode();
   _applyGraphLinkMode();
   if (typeof window.syncGraphPetToggleButton === 'function') window.syncGraphPetToggleButton();
@@ -1681,6 +1687,100 @@ function resetGraphConnections() {
 // 画布缩放限度：0.10 ~ 4.00（旧值 0.25 ~ 2.50 偏窄，放大不够细、缩小看不全大图）
 const GRAPH_MIN_ZOOM = 0.1;
 const GRAPH_MAX_ZOOM = 4;
+
+// ===== 画布字号档（2026-11-15 用户提「探索网里改字号」）=====
+// 与 zoomGraph 划清界限：zoom 缩的是整张卡（边框、端口、间距一起变），读起来仍是「凑近看」；
+// 这里只等比放大/缩小卡内**文字**（标题、正文、编辑框），卡宽不变、换行更少/更多。
+// 实现走一条 CSS 变量 --graph-text-scale：节点文本字号在 graph-override.css 里统一写成
+// calc(基准 * var(--graph-text-scale))，所以改一个变量全画布即时生效，无需重渲染 DOM。
+// 档位是拍过的等比序列（85/92/100/110/120/132%），不用任意倍率——按钮连点也不会漂成 97.3%。
+const GRAPH_TEXT_SCALES = [0.85, 0.925, 1, 1.1, 1.2, 1.32];
+let _graphTextScale = 1;
+
+function _graphTextScaleIndex() {
+  let best = 0;
+  let bestDelta = Infinity;
+  for (let i = 0; i < GRAPH_TEXT_SCALES.length; i++) {
+    const d = Math.abs(GRAPH_TEXT_SCALES[i] - _graphTextScale);
+    if (d < bestDelta) { bestDelta = d; best = i; }
+  }
+  return best;
+}
+
+// 落盘 + 把值铺到 :root（inline 优先级高于 CSS 里的默认 1），并同步按钮 tooltip，
+// 让"当前多少"在不点按钮时也看得见
+function _applyGraphTextScale() {
+  document.documentElement.style.setProperty('--graph-text-scale', String(_graphTextScale));
+  const pct = Math.round(_graphTextScale * 100);
+  // 工具条挂在 graphCanvas 上（不在 graphInner 里），且顶层应用时它还没建——
+  // 这里只是「有就顺手同步 tooltip」，没有就等 renderGraphCanvas 建完再调一次。
+  try {
+    const host = (typeof graphCanvas !== 'undefined' && graphCanvas) ? graphCanvas : null;
+    if (host && host.querySelectorAll) {
+      host.querySelectorAll('[data-text-scale-btn]').forEach(btn => {
+        const dir = btn.getAttribute('data-text-scale-btn');
+        btn.setAttribute('title', (dir === '1' ? '字号调大' : '字号调小') + '（当前 ' + pct + '%）');
+      });
+    }
+  } catch (e) {}
+}
+
+function _loadGraphTextScale() {
+  try {
+    const raw = parseFloat(localStorage.getItem(STORAGE_KEY_GRAPH_TEXT_SCALE));
+    if (isFinite(raw) && raw > 0.5 && raw < 2) _graphTextScale = raw;
+  } catch (e) {}
+}
+
+function _saveGraphTextScale() {
+  try { localStorage.setItem(STORAGE_KEY_GRAPH_TEXT_SCALE, String(_graphTextScale)); } catch (e) {}
+}
+
+// 字号一变，每张卡重新换行 → 卡高变化 → 边端点跟着挪。边由 ResizeObserver 兜
+// （_observeNodeGeometry），这里补一次合并到一帧的量测：连点时不会每帧全量重量，
+// 且改完立刻拖动/连线拿到的是新尺寸。
+function _afterGraphTextScaleChange() {
+  if (typeof requestAnimationFrame !== 'function') return;
+  requestAnimationFrame(() => {
+    try {
+      if (typeof _measureNodes === 'function') _measureNodes();
+      if (typeof _updateNodeTransforms === 'function') _updateNodeTransforms();
+      if (typeof _redrawEdges === 'function') _redrawEdges();
+    } catch (e) {}
+  });
+}
+
+function graphTextScaleStep(dir) {
+  const idx = _graphTextScaleIndex();
+  const next = GRAPH_TEXT_SCALES[Math.min(GRAPH_TEXT_SCALES.length - 1, Math.max(0, idx + (dir > 0 ? 1 : -1)))];
+  const pct = Math.round(next * 100);
+  if (next === _graphTextScale) {
+    if (typeof showToast === 'function') showToast('字号已经是' + (dir > 0 ? '最大' : '最小') + '（' + pct + '%）');
+    return;
+  }
+  _graphTextScale = next;
+  _saveGraphTextScale();
+  _applyGraphTextScale();
+  _afterGraphTextScaleChange();
+  if (typeof showToast === 'function') showToast('字号 ' + pct + '%');
+}
+
+function graphTextScaleReset() {
+  if (_graphTextScale === 1) {
+    if (typeof showToast === 'function') showToast('字号已是默认 100%');
+    return;
+  }
+  _graphTextScale = 1;
+  _saveGraphTextScale();
+  _applyGraphTextScale();
+  _afterGraphTextScaleChange();
+  if (typeof showToast === 'function') showToast('字号已复位 100%');
+}
+
+// 顶层加载即应用：defer 脚本在 DOM 解析后执行，documentElement 一定在；画布节点
+// 由后续 renderGraphCanvas 生成，所以首屏渲染就已经是用户上次的档位（无闪变）。
+_loadGraphTextScale();
+_applyGraphTextScale();
 
 function zoomGraph(factor, centerX, centerY) {
   const state = _graphState();
