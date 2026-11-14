@@ -781,11 +781,18 @@ async function openNodeNewWindow(nodeId) {
   // readonly 随快照带进预览页：查阅模式下预览浮条不亮「追问」（startQuestionWorkflow
   // 在主应用侧还会再拦一道，双保险）
   const ro = typeof phyIsReadonly === 'function' && phyIsReadonly();
+  // 阅读页跟随主应用明暗（2026-11-14 推翻 10-14 的「深色定版」）：读 html[data-theme]，
+  // 缺省按深色——viewer 家族不经过这里，行为不变
+  const theme = (typeof document !== 'undefined' && document.documentElement
+    && document.documentElement.getAttribute('data-theme') === 'light') ? 'light' : 'dark';
   let ctx = null;
   if (typeof _buildNodeFsPreviewScript === 'function') {
     ctx = isFile
-      ? { nodeId: String(node.id || ''), title: String(title || ''), bridge: false, readonly: ro }
-      : { nodeId: String(node.id || ''), title: String(title || ''), bridge: true, token: _nodeFsMintPreviewToken(), readonly: ro };
+      ? { nodeId: String(node.id || ''), title: String(title || ''), bridge: false, readonly: ro, theme: theme }
+      : { nodeId: String(node.id || ''), title: String(title || ''), bridge: true, token: _nodeFsMintPreviewToken(), readonly: ro, theme: theme };
+  } else {
+    // 没编进桥模块的环境（老调用）：仍要把主题带过去，页面着色才对
+    ctx = { theme: theme };
   }
   const page = _buildContentPreviewPage(title, contentHtml, ctx);
   // file:// 单文件场景：没有同源预览页可跳，Blob URL 直开（同 openVizNewTab 先例；
@@ -803,6 +810,8 @@ async function openNodeNewWindow(nodeId) {
   }
   try {
     sessionStorage.setItem('phymathia_content_preview', page);
+    // 外壳 content-preview.html 先于 srcdoc 绘制，靠这枚键决定首帧底色（避免浅色主题闪一下深底）
+    sessionStorage.setItem('phymathia_content_preview_theme', theme);
   } catch (e) {
     if (typeof showToast === 'function') showToast('内容过大，无法在新窗口打开');
     return;
@@ -820,60 +829,349 @@ async function openNodeNewWindow(nodeId) {
   const win = window.open('/content-preview.html', '_blank');
   if (!win) {
     if (typeof _setNodeFsPreviewCtx === 'function') _setNodeFsPreviewCtx(null);
-    try { sessionStorage.removeItem('phymathia_content_preview'); } catch (e2) {}
+    try { sessionStorage.removeItem('phymathia_content_preview'); sessionStorage.removeItem('phymathia_content_preview_theme'); } catch (e2) {}
     if (typeof showToast === 'function') showToast('浏览器拦截了弹出窗口，请允许弹窗后重试');
   } else if (typeof _attachNodeFsPreviewWin === 'function') {
     _attachNodeFsPreviewWin(win);
   }
 }
 
-// 新窗口页面文档：自带排版（深色定版，同 viz-preview 色板；2026-10-14 观感重制——
-// 纯平 #0f142d 被用户报丑，改「极光纱底＋磨砂吸顶头条」：三团固定径向色斑呼应主应用
-// 深色极光（蓝/紫/青玉低 alpha），头条 sticky+blur，长文滚动时标题常驻），katex css 走同源外链。
-// 内容是主应用渲染管线已 sanitize 的静态 HTML，页面内不再执行任何渲染脚本。
-// 2026-10-25 加可选 ctx：划词快捷工具（node-fs-toolbar.js）——ctx 存在时塞 data-node-id
-// 与自包含浮条脚本（bridge:true 带 token 过桥回主应用）；不传 ctx 行为与旧版逐字一致
-// （viewer 家族的老调用不受影响）
+// ===== 新窗口阅读页（2026-11-14 观感重构：推翻「深色定版」，改为跟随主应用明暗）=====
+// 两套色板共用同一副排版骨架：深色走极光深底＋冷白字，浅色走暖纸底＋墨字（与主应用
+// --bg-panel/--accent 同调）。所有颜色收在 --cp-* 令牌里，DOM 与脚本不写死色值。
+// 内容是主应用渲染管线已 sanitize 的静态 HTML，页面内不做任何内容渲染，只挂阅读辅助
+// （滚动进度、字数/时长、回到顶部）。
+
+const CONTENT_PREVIEW_STYLE = `
+*,*::before,*::after{box-sizing:border-box;}
+:root{
+  --cp-measure:748px;
+  --cp-bg:#080d20;
+  --cp-head-bg:rgba(8,13,32,.62);
+  --cp-grid:rgba(139,147,184,.055);
+  --cp-aur1:rgba(74,158,255,.20);
+  --cp-aur2:rgba(109,40,217,.16);
+  --cp-aur3:rgba(15,118,110,.18);
+  --cp-ink:#e8eeff;
+  --cp-ink-2:#c6cfe8;
+  --cp-ink-strong:#f4f8ff;
+  --cp-mute:#8b93b8;
+  --cp-line:rgba(139,147,184,.22);
+  --cp-line-soft:rgba(139,147,184,.11);
+  --cp-surface:rgba(15,21,48,.55);
+  --cp-chip-bg:rgba(139,147,184,.14);
+  --cp-bar-bg:rgba(15,21,48,.92);
+  --cp-input-bg:rgba(9,13,32,.6);
+  --cp-code-bg:rgba(139,147,184,.15);
+  --cp-pre-bg:rgba(9,14,32,.62);
+  --cp-accent:#6fb2ff;
+  --cp-accent-2:#5eead4;
+  --cp-primary:#0e74e9;
+  --cp-primary-hover:#2b86f2;
+  --cp-focus:rgba(94,234,212,.55);
+  --cp-shadow:rgba(2,6,23,.5);
+  --cp-glow:0 18px 48px rgba(2,6,23,.45);
+  --cp-sel:rgba(94,234,212,.28);
+  color-scheme:dark;
+}
+html[data-theme="light"]{
+  --cp-bg:#f8f3ea;
+  --cp-head-bg:rgba(250,246,238,.74);
+  --cp-grid:rgba(160,145,120,.10);
+  --cp-aur1:rgba(251,191,36,.28);
+  --cp-aur2:rgba(232,168,124,.20);
+  --cp-aur3:rgba(147,166,232,.16);
+  --cp-ink:#2a2418;
+  --cp-ink-2:#4a4133;
+  --cp-ink-strong:#1f1a11;
+  --cp-mute:#7d6f59;
+  --cp-line:rgba(160,145,120,.34);
+  --cp-line-soft:rgba(160,145,120,.18);
+  --cp-surface:rgba(255,252,246,.72);
+  --cp-chip-bg:rgba(160,145,120,.14);
+  --cp-bar-bg:rgba(255,252,246,.94);
+  --cp-input-bg:rgba(255,255,255,.9);
+  --cp-code-bg:rgba(139,120,90,.14);
+  --cp-pre-bg:rgba(255,253,248,.88);
+  --cp-accent:#8b6914;
+  --cp-accent-2:#a07828;
+  --cp-primary:#8b6914;
+  --cp-primary-hover:#a07828;
+  --cp-focus:rgba(139,105,20,.5);
+  --cp-shadow:rgba(120,100,70,.16);
+  --cp-glow:0 18px 40px rgba(120,100,70,.14);
+  --cp-sel:rgba(214,168,70,.30);
+  color-scheme:light;
+}
+html,body{margin:0;padding:0;min-height:100%;}
+html{scrollbar-color:var(--cp-line) transparent;scrollbar-width:thin;}
+body{
+  background-color:var(--cp-bg);
+  background-image:
+    radial-gradient(64% 42% at 12% -8%,var(--cp-aur1),transparent 62%),
+    radial-gradient(52% 36% at 92% -4%,var(--cp-aur2),transparent 58%),
+    radial-gradient(78% 52% at 76% 104%,var(--cp-aur3),transparent 62%);
+  background-attachment:fixed;
+  background-repeat:no-repeat;
+  color:var(--cp-ink-2);
+  font-family:"Segoe UI","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}
+/* 细网格只在上半场显影：给整片渐变一个「纸面/图纸」的触感，不抢正文 */
+body::before{
+  content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+  background-image:
+    linear-gradient(to right,var(--cp-grid) 1px,transparent 1px),
+    linear-gradient(to bottom,var(--cp-grid) 1px,transparent 1px);
+  background-size:64px 64px;
+  -webkit-mask-image:radial-gradient(120% 82% at 50% -6%,#000 0%,rgba(0,0,0,.42) 46%,transparent 80%);
+  mask-image:radial-gradient(120% 82% at 50% -6%,#000 0%,rgba(0,0,0,.42) 46%,transparent 80%);
+}
+/* ---------- 吸顶头条 ---------- */
+.cp-head{
+  position:sticky;top:0;z-index:20;
+  display:flex;align-items:center;gap:10px;
+  height:54px;padding:0 24px;
+  font-size:13px;color:var(--cp-mute);
+  background:var(--cp-head-bg);
+  border-bottom:1px solid var(--cp-line-soft);
+  -webkit-backdrop-filter:blur(16px) saturate(150%);
+  backdrop-filter:blur(16px) saturate(150%);
+  transition:box-shadow .22s ease,border-color .22s ease;
+}
+.cp-head.is-scrolled{box-shadow:0 14px 34px -24px var(--cp-shadow);border-bottom-color:var(--cp-line);}
+.cp-dot{
+  width:9px;height:9px;border-radius:50%;flex:none;
+  background:radial-gradient(circle at 30% 30%,var(--cp-accent-2),var(--cp-primary));
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--cp-accent-2) 14%,transparent),
+             0 0 10px color-mix(in srgb,var(--cp-accent-2) 40%,transparent);
+}
+.cp-brand{color:var(--cp-ink);font-weight:600;font-size:12.5px;letter-spacing:.06em;flex:none;}
+.cp-sep{width:1px;height:12px;background:var(--cp-line);flex:none;}
+.cp-title{
+  flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  color:var(--cp-ink);font-weight:600;font-size:13.5px;letter-spacing:.005em;
+}
+.cp-meta{
+  flex:none;padding:3px 10px;border-radius:999px;
+  border:1px solid var(--cp-line-soft);background:var(--cp-chip-bg);
+  color:var(--cp-mute);font-size:11.5px;letter-spacing:.03em;white-space:nowrap;
+  font-variant-numeric:tabular-nums;
+}
+.cp-meta:empty{display:none;}
+.cp-progress{position:absolute;left:0;right:0;bottom:-1px;height:2px;overflow:hidden;}
+.cp-progress>span{
+  display:block;height:100%;width:100%;transform:scaleX(0);transform-origin:0 50%;
+  background:linear-gradient(90deg,var(--cp-accent),var(--cp-accent-2));
+  transition:transform .12s linear;border-radius:0 2px 2px 0;
+}
+/* ---------- 正文骨架 ---------- */
+.cp-body{
+  position:relative;z-index:1;
+  max-width:var(--cp-measure);margin:0 auto;
+  padding:44px 30px 46px;
+  font-size:16.5px;line-height:1.86;letter-spacing:.008em;color:var(--cp-ink-2);
+  animation:cp-rise .5s cubic-bezier(.22,.8,.36,1) both;
+}
+@keyframes cp-rise{from{opacity:0;transform:translateY(10px);}}
+.cp-body h1,.cp-body h2,.cp-body h3,.cp-body h4,.cp-body h5,.cp-body h6{
+  color:var(--cp-ink);font-weight:650;line-height:1.36;letter-spacing:-.008em;
+  margin:1.9em 0 .62em;
+}
+.cp-body h1{font-size:1.72em;margin-top:1.5em;}
+.cp-body h2{font-size:1.32em;position:relative;padding-left:.62em;}
+.cp-body h3{font-size:1.12em;}
+.cp-body h4{font-size:1em;}
+.cp-body h5,.cp-body h6{font-size:.95em;color:var(--cp-mute);}
+.cp-body h1:first-child,.cp-body h2:first-child{margin-top:0;}
+/* h2 左侧 accent 短棒：给密集小标题一个节奏锚点（同全屏层标题短棒配方） */
+.cp-body h2::before{
+  content:'';position:absolute;left:0;top:.18em;bottom:.18em;width:3px;border-radius:999px;
+  background:linear-gradient(180deg,var(--cp-accent),color-mix(in srgb,var(--cp-accent) 18%,transparent));
+}
+.cp-body p{margin:.85em 0;}
+/* 首段导语：略大一号＋提亮，读长文时先给一个落脚点 */
+.cp-body>p:first-of-type{font-size:1.06em;line-height:1.8;color:var(--cp-ink);}
+.cp-body strong,.cp-body b{color:var(--cp-ink-strong);font-weight:650;}
+.cp-body a{
+  color:var(--cp-accent);text-decoration:underline;text-decoration-thickness:1px;
+  text-underline-offset:3px;text-decoration-color:color-mix(in srgb,var(--cp-accent) 45%,transparent);
+  transition:text-decoration-thickness .15s ease,text-decoration-color .15s ease;
+}
+.cp-body a:hover{text-decoration-thickness:2px;text-decoration-color:currentColor;}
+.cp-body ul,.cp-body ol{margin:.75em 0;padding-left:1.35em;}
+.cp-body li{margin:.34em 0;}
+.cp-body li::marker{color:var(--cp-accent);}
+.cp-body ul ul,.cp-body ol ol,.cp-body ul ol,.cp-body ol ul{margin:.2em 0;}
+.cp-body dt{color:var(--cp-ink);font-weight:600;}
+.cp-body dd{margin:.2em 0 .6em 1.2em;}
+.cp-body blockquote{
+  margin:1.1em 0;padding:12px 18px;
+  border-left:2px solid color-mix(in srgb,var(--cp-accent) 60%,transparent);
+  border-radius:0 12px 12px 0;background:var(--cp-surface);color:var(--cp-ink-2);
+}
+.cp-body blockquote p{margin:.35em 0;}
+.cp-body code{
+  font-family:ui-monospace,"Cascadia Mono",Consolas,"Courier New",monospace;
+  font-size:.88em;background:var(--cp-code-bg);border-radius:5px;padding:.12em .38em;
+}
+.cp-body pre{
+  margin:1.05em 0;padding:14px 16px;overflow:auto;
+  background:var(--cp-pre-bg);border:1px solid var(--cp-line-soft);border-radius:12px;
+  font-size:13.5px;line-height:1.72;
+  box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 4%,transparent);
+}
+.cp-body pre code{background:transparent;padding:0;font-size:inherit;}
+.cp-body table{
+  display:block;width:100%;margin:1.15em 0;overflow-x:auto;
+  border:1px solid var(--cp-line-soft);border-radius:12px;
+  border-collapse:separate;border-spacing:0;font-size:.94em;
+}
+.cp-body thead th{background:var(--cp-chip-bg);color:var(--cp-ink);font-weight:600;}
+.cp-body th,.cp-body td{
+  padding:9px 14px;text-align:left;vertical-align:top;
+  border-bottom:1px solid var(--cp-line-soft);
+}
+.cp-body tbody tr:last-child td{border-bottom:0;}
+.cp-body img{max-width:100%;height:auto;border-radius:10px;box-shadow:var(--cp-glow);vertical-align:middle;}
+.cp-body hr{margin:2.1em 0;border:0;height:1px;background:linear-gradient(90deg,transparent,var(--cp-line),transparent);}
+.cp-body figure{margin:1.2em 0;}
+.cp-body figcaption{margin-top:.4em;font-size:.86em;color:var(--cp-mute);text-align:center;}
+.cp-body svg{max-width:100%;height:auto;}
+.cp-body .katex{color:inherit;}
+/* 长公式横向滚动而不是把整页撑宽（display 公式在窄屏几乎必然溢出） */
+.cp-body .katex-display{margin:1.15em 0;padding:2px 0;overflow-x:auto;overflow-y:hidden;}
+.cp-body .katex-display>.katex{display:block;}
+/* ---------- 页脚与回顶 ---------- */
+.cp-foot{
+  position:relative;z-index:1;
+  display:flex;align-items:center;gap:14px;
+  max-width:var(--cp-measure);margin:0 auto;padding:6px 30px 64px;
+  color:var(--cp-mute);font-size:11.5px;letter-spacing:.1em;
+}
+.cp-foot>span:first-child,.cp-foot>span:last-child{
+  flex:1 1 auto;height:1px;
+  background:linear-gradient(90deg,transparent,var(--cp-line-soft),transparent);
+}
+.cp-foot-label{flex:none;}
+.cp-top{
+  position:fixed;right:26px;bottom:26px;z-index:30;
+  width:40px;height:40px;display:grid;place-items:center;
+  border-radius:50%;border:1px solid var(--cp-line);background:var(--cp-bar-bg);
+  color:var(--cp-mute);cursor:pointer;
+  -webkit-backdrop-filter:blur(14px) saturate(140%);
+  backdrop-filter:blur(14px) saturate(140%);
+  box-shadow:0 12px 26px -14px var(--cp-shadow);
+  opacity:0;visibility:hidden;transform:translateY(8px);
+  transition:opacity .2s ease,transform .2s ease,visibility .2s,color .15s ease,border-color .15s ease;
+}
+.cp-top.is-on{opacity:1;visibility:visible;transform:none;}
+.cp-top:hover{color:var(--cp-accent);border-color:color-mix(in srgb,var(--cp-accent) 45%,transparent);}
+.cp-top svg{width:18px;height:18px;display:block;}
+::selection{background:var(--cp-sel);color:inherit;}
+::-webkit-scrollbar{width:11px;height:11px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{
+  background:var(--cp-line);border-radius:999px;
+  border:3px solid transparent;background-clip:padding-box;
+}
+::-webkit-scrollbar-thumb:hover{
+  background:color-mix(in srgb,var(--cp-accent) 55%,transparent);
+  border:3px solid transparent;background-clip:padding-box;
+}
+@media (max-width:720px){
+  .cp-head{gap:8px;height:50px;padding:0 16px;}
+  .cp-brand,.cp-sep,.cp-meta{display:none;}
+  .cp-body{padding:30px 20px 34px;font-size:16px;}
+  .cp-foot{padding:6px 20px 52px;}
+  .cp-top{right:16px;bottom:16px;width:36px;height:36px;}
+  .cp-body>p:first-of-type{font-size:1.03em;}
+}
+@media (max-width:420px){
+  .cp-body{padding:24px 16px 30px;}
+  .cp-body h1{font-size:1.5em;}
+}
+@media (prefers-reduced-motion:reduce){
+  .cp-body{animation:none;}
+  .cp-top,.cp-progress>span{transition:none;}
+}
+@media print{
+  html,body{background:#fff!important;color:#111;scrollbar-color:#ccc transparent;}
+  html[data-theme="light"]{--cp-ink:#000;--cp-ink-2:#111;--cp-ink-strong:#000;--cp-line:#ddd;--cp-line-soft:#e5e5e5;--cp-code-bg:#f3f3f3;--cp-pre-bg:#fafafa;--cp-surface:#f7f7f7;}
+  body{background-image:none;}
+  body::before{display:none;}
+  .cp-head,.cp-top,.cp-foot{display:none;}
+  .cp-body{max-width:none;padding:0;font-size:12pt;color:#111;animation:none;}
+  .cp-body h1,.cp-body h2,.cp-body h3,.cp-body h4{color:#000;}
+  .cp-body a{color:#000;}
+}
+`;
+
+// 阅读辅助脚本：只做「滚动进度 / 顶栏到位态 / 字数时长 / 回到顶部」，不碰内容。
+// 沙箱 iframe（allow-scripts，无 same-origin）与 file:// 单文件两种场景都能跑。
+const CONTENT_PREVIEW_BOOT = `
+(function(){
+  var head=document.querySelector('.cp-head');
+  var bar=document.querySelector('.cp-progress > span');
+  var topBtn=document.getElementById('cpTop');
+  var meta=document.getElementById('cpMeta');
+  var body=document.querySelector('.cp-body');
+  var queued=false;
+  function paint(){
+    queued=false;
+    var doc=document.documentElement;
+    var max=(doc.scrollHeight||0)-(window.innerHeight||0);
+    var y=window.pageYOffset||doc.scrollTop||0;
+    var p=max>4?Math.min(1,Math.max(0,y/max)):0;
+    if(bar) bar.style.transform='scaleX('+p.toFixed(4)+')';
+    if(head) head.classList.toggle('is-scrolled', y>4);
+    if(topBtn) topBtn.classList.toggle('is-on', y>360);
+  }
+  function requestPaint(){
+    if(queued) return;
+    queued=true;
+    if(window.requestAnimationFrame) window.requestAnimationFrame(paint);
+    else setTimeout(paint,16);
+  }
+  window.addEventListener('scroll',requestPaint,{passive:true});
+  window.addEventListener('resize',requestPaint);
+  window.addEventListener('load',requestPaint);
+  if(meta&&body){
+    var n=String(body.textContent||'').replace(/\\s+/g,'').length;
+    if(n>=240) meta.textContent=n+' 字 · 约 '+Math.max(1,Math.round(n/380))+' 分钟';
+  }
+  if(topBtn){
+    topBtn.addEventListener('click',function(){
+      try{ window.scrollTo({top:0,behavior:'smooth'}); }catch(e){ window.scrollTo(0,0); }
+    });
+  }
+  paint();
+})();
+`;
+
 function _buildContentPreviewPage(title, contentHtml, ctx) {
+  const theme = (ctx && ctx.theme) === 'light' ? 'light' : 'dark';
   const bodyAttr = (ctx && ctx.nodeId) ? ' data-node-id="' + escapeHtml(ctx.nodeId) + '"' : '';
   const scriptHtml = (ctx && typeof _buildNodeFsPreviewScript === 'function')
     ? '<script>' + _buildNodeFsPreviewScript(ctx) + '</script>'
     : '';
-  return '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">'
+  return '<!DOCTYPE html><html lang="zh-CN" data-theme="' + theme + '"><head><meta charset="UTF-8">'
     + '<meta name="viewport" content="width=device-width, initial-scale=1.0">'
+    + '<meta name="color-scheme" content="' + (theme === 'light' ? 'light' : 'dark') + '">'
     + '<title>' + escapeHtml(title) + ' · PhyMathia</title>'
     + '<link rel="stylesheet" href="/vendor/katex/katex.min.css">'
-    + '<style>'
-    + 'html,body{margin:0;padding:0;background:#0b1026;color:#cfd6f4;font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;}'
-    + 'body{min-height:100vh;background-attachment:fixed;background-image:'
-    + 'radial-gradient(110% 70% at 10% 0%,rgba(14,116,233,.16),transparent 55%),'
-    + 'radial-gradient(90% 60% at 96% 0%,rgba(109,40,217,.13),transparent 52%),'
-    + 'radial-gradient(130% 90% at 78% 100%,rgba(15,118,110,.15),transparent 58%);}'
-    + '::selection{background:rgba(45,212,191,.32);}'
-    + '.cp-head{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:9px;padding:11px 20px;'
-    + 'font-size:13px;color:#8b93b8;background:rgba(9,13,32,.58);border-bottom:1px solid rgba(139,147,184,.16);'
-    + '-webkit-backdrop-filter:blur(14px) saturate(140%);backdrop-filter:blur(14px) saturate(140%);}'
-    + '.cp-dot{width:9px;height:9px;border-radius:50%;flex:none;background:radial-gradient(circle at 30% 30%,#5eead4,#0e74e9);box-shadow:0 0 8px rgba(45,212,191,.45);}'
-    + '.cp-brand{color:#cfd6f4;font-weight:600;letter-spacing:.02em;flex:none;}'
-    + '.cp-sep{opacity:.45;flex:none;}'
-    + '.cp-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}'
-    + '.cp-body{max-width:880px;margin:0 auto;padding:30px 34px 80px;line-height:1.75;font-size:15px;overflow-wrap:break-word;}'
-    + '.cp-body h1,.cp-body h2,.cp-body h3,.cp-body h4,.cp-body h5,.cp-body h6{line-height:1.4;margin:1.4em 0 .6em;}'
-    + '.cp-body p{margin:.7em 0;}'
-    + '.cp-body a{color:#7ab8ff;}'
-    + '.cp-body code{background:rgba(139,147,184,.16);border-radius:4px;padding:1px 5px;font-size:.92em;}'
-    + '.cp-body pre{background:rgba(139,147,184,.12);border:1px solid rgba(139,147,184,.18);border-radius:8px;padding:12px 14px;overflow-x:auto;}'
-    + '.cp-body pre code{background:transparent;padding:0;}'
-    + '.cp-body blockquote{margin:.8em 0;padding:2px 14px;border-left:3px solid rgba(139,147,184,.4);color:#a7b0d6;}'
-    + '.cp-body img{max-width:100%;}'
-    + '.cp-body table{border-collapse:collapse;margin:.9em 0;max-width:100%;display:block;overflow-x:auto;}'
-    + '.cp-body th,.cp-body td{border:1px solid rgba(139,147,184,.3);padding:6px 10px;}'
-    + '.cp-body svg{max-width:100%;}'
-    + '.katex{color:#cfd6f4;}'
-    + '</style></head><body>'
-    + '<div class="cp-head"><span class="cp-dot"></span><span class="cp-brand">PhyMathia</span>'
-    + '<span class="cp-sep">·</span><span class="cp-title">' + escapeHtml(title) + '</span></div>'
-    + '<div class="cp-body"' + bodyAttr + '>' + contentHtml + '</div>' + scriptHtml + '</body></html>';
+    + '<style>' + CONTENT_PREVIEW_STYLE + '</style></head><body>'
+    + '<header class="cp-head"><span class="cp-dot"></span><span class="cp-brand">PhyMathia</span>'
+    + '<span class="cp-sep"></span><span class="cp-title">' + escapeHtml(title) + '</span>'
+    + '<span class="cp-meta" id="cpMeta"></span>'
+    + '<span class="cp-progress" aria-hidden="true"><span></span></span></header>'
+    + '<main class="cp-body"' + bodyAttr + '>' + contentHtml + '</main>'
+    + '<footer class="cp-foot"><span></span><span class="cp-foot-label">PhyMathia · 阅读模式</span><span></span></footer>'
+    + '<button class="cp-top" id="cpTop" type="button" title="回到顶部" aria-label="回到顶部">'
+    + '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5l7 7-1.4 1.4L13 8.8V19h-2V8.8L6.4 13.4 5 12z" fill="currentColor"/></svg></button>'
+    + '<script>' + CONTENT_PREVIEW_BOOT + '</script>'
+    + scriptHtml + '</body></html>';
 }
 
 // ===== 输入节点（素材篮，2026-10-22 重做）=====

@@ -7,16 +7,19 @@
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { height: 100%; }
+  :root { --cp-shell-bg: #080d20; --cp-shell-ink: #c6cfe8; --cp-shell-mute: #8b93b8; }
+  html[data-theme="light"] { --cp-shell-bg: #f8f3ea; --cp-shell-ink: #4a4133; --cp-shell-mute: #7d6f59; }
   body {
     display: flex; flex-direction: column;
-    /* 底色与 _buildContentPreviewPage 的极光纱底同源（graph-custom.js），加载闪帧/缺内容态不露旧色 */
-    background: #0b1026; color: #cfd6f4;
+    /* 底色与 _buildContentPreviewPage 的极光纱底同源（graph-custom.js），加载闪帧/缺内容态不露旧色；
+       浅色主题靠主应用写进 sessionStorage 的 theme 键先在首帧换色（见下） */
+    background: var(--cp-shell-bg); color: var(--cp-shell-ink);
     font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
   }
   #contentFrame { width: 100%; height: 100%; border: 0; display: block; flex: 1; }
   #hint {
     flex: 1; display: flex; align-items: center; justify-content: center;
-    color: #8b93b8; font-size: 14px; padding: 24px; text-align: center;
+    color: var(--cp-shell-mute); font-size: 14px; padding: 24px; text-align: center;
   }
 </style>
 </head>
@@ -29,6 +32,12 @@
 // 交接）只进入 sandbox iframe 展示，不与本页 origin 交互。
 // 注意勿退回 Blob URL 直开：Blob 文档继承主站 origin（viz-preview.md 同款结论）。
 try {
+  // 首帧底色跟随主应用明暗（2026-11-14）：主应用开窗前把主题写进同域 sessionStorage，
+  // 这里先换色再塞 srcdoc，浅色主题不会先闪一版深底
+  if (sessionStorage.getItem('phymathia_content_preview_theme') === 'light') {
+    document.documentElement.setAttribute('data-theme', 'light');
+  }
+  sessionStorage.removeItem('phymathia_content_preview_theme');
   var page = sessionStorage.getItem('phymathia_content_preview');
   sessionStorage.removeItem('phymathia_content_preview');
   if (page) {
