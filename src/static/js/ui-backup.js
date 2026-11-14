@@ -342,6 +342,37 @@ async function _pushBackupToExistingApis(data) {
   }
 }
 
+// ===== 导入模式分段胶囊（T451，2026-11-14）=====
+// 旧实现是原生 <select>：只有「合并/替换」两项，下拉把另一个选项藏起来，还自带
+// 一层浏览器原生弹层（深色主题下是系统亮色列表）。改成两选一胶囊后与检测页
+// chips / 难度卡片同语言；状态只活在内存里——导入是一次性动作，刷新回默认合并，
+// 与旧 select 每次加载都回 merge 的语义一致（刻意不落 localStorage）。
+let _importMode = 'merge';
+
+function _importModeGet() {
+  return _importMode === 'replace' ? 'replace' : 'merge';
+}
+
+function _importModeHint(mode) {
+  return mode === 'replace'
+    ? '先清空本账号现有的会话、知识、公式与检测记录，再写入备份'
+    : '同名条目以备份为准，备份里没有的保持不变';
+}
+
+function pickImportMode(mode) {
+  _importMode = mode === 'replace' ? 'replace' : 'merge';
+  const seg = document.getElementById('importModeSeg');
+  if (seg && seg.querySelectorAll) {
+    Array.prototype.slice.call(seg.querySelectorAll('.pm-seg-btn')).forEach(btn => {
+      const on = String((btn.dataset || {}).value) === _importMode;
+      if (btn.classList) btn.classList.toggle('active', on);
+      if (btn.setAttribute) btn.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+  }
+  const hint = document.getElementById('importModeHint');
+  if (hint) hint.textContent = _importModeHint(_importMode);
+}
+
 async function importData(event) {
   if (phyIsReadonly()) { phyReadonlyBlock('导入备份'); return; }
   const file = event.target.files[0];
@@ -354,8 +385,7 @@ async function importData(event) {
         alert('导入失败：文件格式不正确，缺少有效数据');
         return;
       }
-      const modeSelect = document.getElementById('importModeSelect');
-      const mode = modeSelect && modeSelect.value ? modeSelect.value : 'merge';
+      const mode = _importModeGet();
       let serverResp = null;
       try {
         serverResp = await fetch('/api/backup/import', {

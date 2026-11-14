@@ -710,16 +710,14 @@ function _settingsLoadMemoryEnabled() {
     }).catch(() => {});
   } catch (e) {}
 }
-// 兼容保留：回收站页直接铺开原 #trashRetentionSelect，改值走它自己的 onchange→
-// saveTrashRetention()。本函数不再被页面调用，但保留给旧代码／回归脚本。
+// 兼容保留：回收站页的保留天数控件 T451 起是自绘下拉（#trashRetentionPicker），
+// 唯一写入口是 trash.js 的 setTrashRetentionDays（同步控件外观 → saveTrashRetention）。
+// 本函数不再被页面调用，保留给旧代码／回归脚本。
 function settingsSaveTrashRetention(value) {
   if (_settingsGuard()) return;
-  const sel = document.getElementById('trashRetentionSelect');
-  if (!sel) return;
-  sel.value = String(value);
-  // 不重画本页：saveTrashRetention 是异步写服务端后才落本地键，立刻重画会把
-  // 下拉框弹回旧值；用户当前选中的值保持可见，失败由原函数的 renderTrashList 兜底。
-  try { if (typeof saveTrashRetention === 'function') saveTrashRetention(); } catch (e) {}
+  if (typeof setTrashRetentionDays === 'function') { setTrashRetentionDays(value); return; }
+  // 控件/模块缺席时退回原链路（回归脚本按需桩掉上面那个）
+  try { if (typeof saveTrashRetention === 'function') saveTrashRetention(value); } catch (e) {}
 }
 function settingsRestartOnboarding() {
   closeSettingsDrawer();

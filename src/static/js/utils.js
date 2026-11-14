@@ -277,3 +277,122 @@ window.phyIsBrowserFullscreen = phyIsBrowserFullscreen;
 window.phyRequestBrowserFullscreen = phyRequestBrowserFullscreen;
 window.phyExitBrowserFullscreen = phyExitBrowserFullscreen;
 window.phyToggleBrowserFullscreen = phyToggleBrowserFullscreen;
+
+// ===== 自绘下拉（T451，2026-11-14）=====
+// 原生 <select> 的弹层列表由浏览器自己渲染，不吃页面 CSS——深色主题里会弹出一层
+// 系统亮色列表，跟抽屉的磨砂/胶囊语言完全是两套（2026-10-08 统计范围那次已踩过，
+// 当时在 token-usage.js 单做了一份；本组件是通用版，样式见 styles.css「自绘下拉」段）。
+//
+// 标记契约（静态写在 index.html，不许 JS 现拼）：外层 .pm-select 带
+//   id            控件 id（各 API 的第一个参数）
+//   data-pm-value 当前值（字符串；单一事实源，替代原生 select.value）
+//   data-pm-change 改值后要调的回调函数名（可省；以「选项值字符串」为唯一实参，
+//                 与原生 onchange 读 e.target.value 同语义）
+// 内部固定三层：.pm-select-btn（含 .pm-select-label 文案位 + .pm-select-caret 箭头）
+// 与 .pm-select-menu > .pm-select-item[data-value]。选中态＝.pm-select-item.active
+// ＋ aria-selected，展开态＝外层 .open（箭头翻转靠它）。
+function _pmSelectEls(id) {
+  const wrap = document.getElementById(id);
+  if (!wrap) return null;
+  return {
+    wrap: wrap,
+    btn: wrap.querySelector ? wrap.querySelector('.pm-select-btn') : null,
+    label: wrap.querySelector ? wrap.querySelector('.pm-select-label') : null,
+    menu: wrap.querySelector ? wrap.querySelector('.pm-select-menu') : null
+  };
+}
+
+function _pmSelectItems(els) {
+  if (!els || !els.menu || !els.menu.querySelectorAll) return [];
+  return Array.prototype.slice.call(els.menu.querySelectorAll('.pm-select-item'));
+}
+
+function pmSelectValue(id) {
+  const els = _pmSelectEls(id);
+  return els ? String(els.wrap.dataset ? els.wrap.dataset.pmValue : '') : '';
+}
+
+// 收起所有（含自己）：exceptId 传自己＝「只收别人」，传 null/省略＝全收
+function pmSelectCloseAll(exceptId) {
+  if (typeof document === 'undefined' || !document.querySelectorAll) return;
+  Array.prototype.slice.call(document.querySelectorAll('.pm-select')).forEach(wrap => {
+    if (!wrap || wrap.id === exceptId) return;
+    if (wrap.classList) wrap.classList.remove('open');
+    const menu = wrap.querySelector ? wrap.querySelector('.pm-select-menu') : null;
+    if (menu) menu.hidden = true;
+    const btn = wrap.querySelector ? wrap.querySelector('.pm-select-btn') : null;
+    if (btn && btn.setAttribute) btn.setAttribute('aria-expanded', 'false');
+  });
+}
+
+let _pmSelectDismissBound = false;
+// 点面板外 / Esc 收起。绑一次即可，逻辑上看「点在不在任意 .pm-select 里」，
+// 所以在按钮上点击不会先开后立刻被收（toggle 的冒泡顺序同 token-range 先例）。
+function _pmSelectBindDismiss() {
+  if (_pmSelectDismissBound || typeof document === 'undefined' || !document.addEventListener) return;
+  _pmSelectDismissBound = true;
+  document.addEventListener('click', (e) => {
+    const t = e && e.target;
+    if (typeof Node !== 'undefined' && t instanceof Node && t.closest && t.closest('.pm-select')) return;
+    pmSelectCloseAll(null);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e && e.key === 'Escape') pmSelectCloseAll(null);
+  });
+}
+
+function pmSelectToggle(id) {
+  const els = _pmSelectEls(id);
+  if (!els || !els.menu) return;
+  const willOpen = !!els.menu.hidden;
+  _pmSelectBindDismiss();
+  pmSelectCloseAll(willOpen ? id : null);
+  els.menu.hidden = !willOpen;
+  if (els.wrap.classList) els.wrap.classList[willOpen ? 'add' : 'remove']('open');
+  if (els.btn && els.btn.setAttribute) els.btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+}
+
+// 只改控件外观与 data-pm-value，不触发回调——服务端回读校正、只读回滚、失败还原
+// 都该走这里（否则会把「校正」当成用户改值再存一次）。
+function pmSelectSetValue(id, value, labelText) {
+  const els = _pmSelectEls(id);
+  if (!els) return;
+  const v = String(value == null ? '' : value);
+  if (els.wrap.dataset) els.wrap.dataset.pmValue = v;
+  let matched = null;
+  _pmSelectItems(els).forEach(item => {
+    const on = String((item.dataset || {}).value) === v;
+    if (on) matched = item;
+    if (item.classList) item.classList.toggle('active', on);
+    if (item.setAttribute) item.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  if (els.label) {
+    // 优先用选项自身文案（单一事实源在 index.html），兜底用调用方给的 labelText，
+    // 都没有就保留原样——宁可不换字，也别把值当文案印出去。
+    const text = labelText != null ? String(labelText)
+      : (matched && matched.textContent != null ? String(matched.textContent) : '');
+    if (text) els.label.textContent = text;
+  }
+}
+
+// 用户点选：先落 UI 再回调（回调里可能起网络请求；UI 不该等它）
+function pmSelectPick(id, value) {
+  const els = _pmSelectEls(id);
+  if (!els) return;
+  pmSelectSetValue(id, value);
+  pmSelectCloseAll(null);
+  const cb = els.wrap.dataset ? els.wrap.dataset.pmChange : '';
+  if (!cb) return;
+  let fn = null;
+  try { if (typeof window !== 'undefined' && typeof window[cb] === 'function') fn = window[cb]; } catch (e) {}
+  if (!fn) {
+    try { if (typeof globalThis !== 'undefined' && typeof globalThis[cb] === 'function') fn = globalThis[cb]; } catch (e) {}
+  }
+  if (fn) fn(String(value));
+}
+
+window.pmSelectValue = pmSelectValue;
+window.pmSelectToggle = pmSelectToggle;
+window.pmSelectSetValue = pmSelectSetValue;
+window.pmSelectPick = pmSelectPick;
+window.pmSelectCloseAll = pmSelectCloseAll;

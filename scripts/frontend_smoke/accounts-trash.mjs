@@ -534,13 +534,14 @@ check('回收站：清空消息条目（T182）——key 寻址/kind 徽标/clea
   return true;
 });
 
-check('回收站：静态契约（磁贴/弹窗骨架/保留天数下拉默认7/构建注册/确认文案指向回收站/只读守卫）', () => {
+check('回收站：静态契约（磁贴/弹窗骨架/保留天数控件默认7/构建注册/确认文案指向回收站/只读守卫）', () => {
   const idx = fs.readFileSync('src/static/index.html', 'utf8');
   for (const frag of ['id="trashTile"', 'id="trashTileSub"', 'openTrashPanel()', 'id="trashDialog"',
-    'id="trashList"', 'id="trashRetentionSelect"', 'onclick="emptyTrash()"']) {
+    'id="trashList"', 'id="trashRetentionPicker"', 'onclick="emptyTrash()"']) {
     if (!idx.includes(frag)) throw new Error('index.html 缺回收站骨架：' + frag);
   }
-  if (!idx.includes('value="7" selected')) throw new Error('保留天数下拉默认必须 7 天');
+  // T451：保留天数控件是自绘下拉，默认值落在 data-pm-value（原 select 的 selected）
+  if (!idx.includes('id="trashRetentionPicker" data-pm-value="7"')) throw new Error('保留天数控件默认必须 7 天');
   if (!fs.readFileSync('scripts/build_frontend.mjs', 'utf8').includes("'trash.js',")) throw new Error('trash.js 未注册进构建清单');
   if (!fs.readFileSync('src/static/css/styles.css', 'utf8').includes('.trash-toolbar')) throw new Error('缺回收站工具行样式');
   if (!fs.readFileSync('src/static/js/config.js', 'utf8').includes("STORAGE_KEY_TRASH_RETENTION = 'phymathia_trash_retention'")) throw new Error('config.js 缺保留天数缓存键');
@@ -568,6 +569,97 @@ check('回收站：静态契约（磁贴/弹窗骨架/保留天数下拉默认7/
   if (!mainpy.includes('trash.purge_expired_all()')) throw new Error('main.py 缺启动期回收站清理');
   // 主沙箱（构建产物）里 trash.js 已随包装载
   if (typeof sandbox._trashRowHtml !== 'function') throw new Error('trash.js 未进 app.js 构建产物');
+  return true;
+});
+
+// T451（2026-11-14）：自绘下拉组件的独立上下文——utils.js 只依赖 window/document，
+// 这里按最小桩装一份，断言「值→文案/高亮/回调」这条链，不碰主沙箱的 loose DOM。
+function _pmSelectContext() {
+  const mkItem = (v, text) => {
+    const cls = new Set();
+    return {
+      dataset: { value: v }, textContent: text, attrs: {},
+      classList: { toggle: (c, on) => { if (on) cls.add(c); else cls.delete(c); }, contains: (c) => cls.has(c) },
+      setAttribute(k, val) { this.attrs[k] = val; }
+    };
+  };
+  const items = [mkItem('0', '不保留（删除即彻底清除）'), mkItem('7', '7 天'), mkItem('30', '30 天')];
+  const label = { textContent: '7 天' };
+  const btn = { attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } };
+  const openCls = new Set();
+  const menu = { hidden: true, querySelectorAll: (sel) => (sel === '.pm-select-item' ? items : []) };
+  const wrap = {
+    id: 'p', dataset: { pmValue: '7', pmChange: 'cb' },
+    classList: { add: (c) => openCls.add(c), remove: (c) => openCls.delete(c), contains: (c) => openCls.has(c) },
+    querySelector: (sel) => (sel === '.pm-select-btn' ? btn : sel === '.pm-select-label' ? label : sel === '.pm-select-menu' ? menu : null)
+  };
+  const calls = [];
+  const s = { console };
+  s.window = s;
+  s.document = {
+    getElementById: (id) => (id === 'p' ? wrap : null),
+    querySelectorAll: (sel) => (sel === '.pm-select' ? [wrap] : []),
+    addEventListener: () => {},
+    createElement: () => ({ set textContent(v) { this.innerHTML = String(v); }, innerHTML: '' })
+  };
+  s.cb = (v) => calls.push(v);
+  vm.createContext(s);
+  vm.runInContext(fs.readFileSync('src/static/js/utils.js', 'utf8'), s, { filename: 'utils.js' });
+  return { s, wrap, menu, btn, label, items, calls, openCls };
+}
+
+check('T451 自绘控件：保留天数下拉组件行为（值→文案/高亮/回调/开合）', () => {
+  const { s, wrap, menu, btn, label, items, calls, openCls } = _pmSelectContext();
+  for (const fn of ['pmSelectValue', 'pmSelectToggle', 'pmSelectSetValue', 'pmSelectPick']) {
+    if (typeof s[fn] !== 'function') throw new Error('utils.js 缺组件函数：' + fn);
+  }
+  // 程序化同步（服务端回读校正）：改文案与高亮，但**不触发**改值回调
+  s.pmSelectSetValue('p', 30);
+  if (wrap.dataset.pmValue !== '30') throw new Error('data-pm-value 未跟随：' + wrap.dataset.pmValue);
+  if (label.textContent !== '30 天') throw new Error('文案应取选项自身：' + label.textContent);
+  if (!items[2].classList.contains('active') || items[1].classList.contains('active')) throw new Error('高亮未单选');
+  if (items[2].attrs['aria-selected'] !== 'true') throw new Error('选中项缺 aria-selected');
+  if (calls.length) throw new Error('程序化同步不得触发改值回调');
+  // 用户点选：先落 UI 再回调（实参为选项值字符串），并收起弹层
+  s.pmSelectToggle('p');
+  if (menu.hidden || !openCls.has('open') || btn.attrs['aria-expanded'] !== 'true') throw new Error('展开态不对');
+  s.pmSelectPick('p', '0');
+  if (calls.join(',') !== '0') throw new Error('回调应收到选项值：' + calls.join(','));
+  if (label.textContent !== '不保留（删除即彻底清除）') throw new Error('点选后文案未换：' + label.textContent);
+  if (!menu.hidden || openCls.has('open') || btn.attrs['aria-expanded'] !== 'false') throw new Error('点选后应收起');
+  if (s.pmSelectValue('p') !== '0') throw new Error('pmSelectValue 未跟随：' + s.pmSelectValue('p'));
+  return true;
+});
+
+check('T451 自绘控件：两处原生 select 已退役且接线正确（静态契约）', () => {
+  const idx = fs.readFileSync('src/static/index.html', 'utf8');
+  if (idx.includes('id="trashRetentionSelect"') || idx.includes('id="importModeSelect"')) {
+    throw new Error('原生 select 应已退役（T451 换自绘控件）');
+  }
+  // 回收站：7 档选项 + 弹层挂极光玻璃（磨砂语言）+ 改值回调仍是 saveTrashRetention
+  const picker = idx.slice(idx.indexOf('id="trashRetentionPicker"'), idx.indexOf('id="trashList"'));
+  if ((picker.match(/pmSelectPick\('trashRetentionPicker'/g) || []).length !== 7) throw new Error('保留天数选项应为 7 档');
+  if (!picker.includes('data-pm-change="saveTrashRetention"')) throw new Error('保留天数回调应指向 saveTrashRetention');
+  if (!picker.includes('pm-select-menu aurora-glass aurora-glass--compact')) throw new Error('下拉弹层必须挂极光玻璃');
+  if (!picker.includes('class="pm-select-item active" role="option" aria-selected="true" data-value="7"')) throw new Error('默认高亮必须停在 7 天');
+  // 数据面板：导入模式两选一胶囊
+  if (!idx.includes('id="importModeSeg"') || !idx.includes("pickImportMode('replace')")) throw new Error('导入模式应为分段胶囊');
+  if (!idx.includes('id="importModeHint"')) throw new Error('导入模式缺后果说明行');
+  // 写入口：trash.js 的服务端回读走 pmSelectSetValue，settings.js 兼容函数进 setTrashRetentionDays
+  const trashSrc = fs.readFileSync('src/static/js/trash.js', 'utf8');
+  if (!trashSrc.includes("pmSelectSetValue('trashRetentionPicker'")) throw new Error('trash.js 未用组件校正控件');
+  if (!trashSrc.includes('function setTrashRetentionDays')) throw new Error('trash.js 缺唯一写入口 setTrashRetentionDays');
+  const settingsSrc = fs.readFileSync('src/static/js/settings.js', 'utf8');
+  if (!settingsSrc.includes('setTrashRetentionDays(value)')) throw new Error('settings.js 兼容函数未指向新写入口');
+  const backupSrc = fs.readFileSync('src/static/js/ui-backup.js', 'utf8');
+  if (!backupSrc.includes('const mode = _importModeGet();')) throw new Error('importData 未读分段胶囊状态');
+  if (backupSrc.includes("getElementById('importModeSelect')")) throw new Error('importData 仍在读退役的 select');
+  // 样式：共用件落 styles.css，且不许再有「按原生 select 调」的回收站规则
+  const cssSrc = fs.readFileSync('src/static/css/styles.css', 'utf8');
+  for (const frag of ['.pm-select-menu', '.pm-select-item.active', '.pm-seg-btn.active', '.data-import-mode-hint']) {
+    if (!cssSrc.includes(frag)) throw new Error('styles.css 缺共用控件样式：' + frag);
+  }
+  if (cssSrc.includes('.trash-toolbar select')) throw new Error('回收站工具行仍有原生 select 规则');
   return true;
 });
 

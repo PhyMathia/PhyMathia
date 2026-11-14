@@ -2300,10 +2300,106 @@
     .accounts-row-loading { font-size: var(--fs-sm); color: var(--text-secondary); text-align: center; padding: 14px 0; }
     .accounts-act-browse { color: var(--accent); border-color: var(--accent); }
 
+    /* ====== 自绘下拉 / 分段胶囊（T451，2026-11-14）======
+       原生 <select> 的弹层列表由浏览器自己渲染、不吃任何页面 CSS——深色主题里
+       会弹出一层系统亮色列表，与抽屉的磨砂/胶囊语言完全是两套（2026-10-08 统计
+       范围换自绘下拉时已得出同一结论，那份是 token-usage.js 私有的）。这里提成
+       共用件：回收站「自动保留」用下拉（7 档），数据面板「导入模式」用两选一胶囊。
+       底色/磨砂/阴影一律交给 .aurora-glass 家族（弹层元素上直接挂
+       aurora-glass aurora-glass--compact），本段只管结构、描边与选中态。
+       逻辑在 utils.js 的 pmSelect*（开合/选中/点外收起/Esc 收起）。 */
+    .pm-select { position: relative; display: inline-flex; }
+
+    .pm-select-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--r-pill);
+      background: var(--surface-container);
+      color: var(--text-primary);
+      font-size: var(--fs-xs);
+      cursor: pointer;
+      transition: border-color var(--dur-base) var(--ease-out);
+    }
+    .pm-select-btn:hover { border-color: var(--accent); }
+    .pm-select-btn:focus-visible { outline: none; border-color: var(--accent); }
+    .pm-select-caret { flex-shrink: 0; transition: transform var(--dur-base) var(--ease-out); }
+    .pm-select.open .pm-select-caret { transform: rotate(180deg); }
+
+    .pm-select-menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      z-index: var(--z-popover);
+      min-width: 100%;
+      width: max-content;
+      padding: 4px;
+      display: grid;
+      gap: 2px;
+      border-radius: var(--r-md);
+    }
+    /* 显式 display 会盖过 hidden 属性的 UA 样式，收起必须写死 */
+    .pm-select-menu[hidden] { display: none; }
+
+    .pm-select-item {
+      padding: 7px 12px;
+      border: none;
+      border-radius: var(--r-sm);
+      background: none;
+      color: var(--text-primary);
+      font-size: var(--fs-xs);
+      text-align: left;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .pm-select-item:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+    .pm-select-item.active {
+      color: var(--accent);
+      font-weight: 600;
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+    }
+
+    /* 分段胶囊（两选一）：底槽托两颗药丸，选中态提亮——与检测页 chips 同一造型 */
+    .pm-seg {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      padding: 3px;
+      border: 1px solid var(--border);
+      border-radius: var(--r-pill);
+      background: var(--surface-container);
+    }
+    .pm-seg-btn {
+      padding: 5px 12px;
+      border: none;
+      border-radius: var(--r-pill);
+      background: none;
+      color: var(--text-secondary);
+      font-size: var(--fs-xs);
+      white-space: nowrap;
+      cursor: pointer;
+      transition: color var(--dur-base) var(--ease-out), background var(--dur-base) var(--ease-out);
+    }
+    .pm-seg-btn:hover { color: var(--text-primary); }
+    .pm-seg-btn:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent); }
+    .pm-seg-btn.active {
+      color: var(--accent);
+      font-weight: 600;
+      background: color-mix(in srgb, var(--accent) 16%, transparent);
+    }
+
+    /* 数据面板「导入模式」这一组：标题 + 胶囊 + 一行后果说明（替换是破坏性操作，
+       说明随选中项变，文案在 ui-backup.js 的 _importModeHint） */
+    .data-import-mode { margin-top: 10px; }
+    .data-import-mode-head { font-size: var(--fs-sm); color: var(--text-secondary); margin-bottom: 6px; }
+    .data-import-mode-hint { margin-top: 6px; font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.5; }
+
     /* ====== 回收站弹窗（2026-10-07）：复用 accounts-* 行样式，只补工具行 ====== */
     .trash-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
-    .trash-toolbar label { font-size: var(--fs-sm); color: var(--text-secondary); white-space: nowrap; }
-    .trash-toolbar select { flex: 0 1 auto; min-width: 0; }
+    .trash-toolbar-label { font-size: var(--fs-sm); color: var(--text-secondary); white-space: nowrap; }
+    .trash-toolbar .pm-select { flex: 0 1 auto; min-width: 0; }
     .trash-empty-btn { margin-left: auto; }
     .trash-row-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     /* 清空消息条目的种类徽标（T182）：与整画布条目一眼区分 */

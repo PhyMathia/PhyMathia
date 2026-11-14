@@ -116,6 +116,8 @@ const ctx = {
   memoryGetProfile: () => Promise.resolve({ enabled: true }),
   memorySetEnabled: (v) => { calls.push('memorySetEnabled:' + v); return Promise.resolve({}); },
   saveTrashRetention: () => calls.push('saveTrashRetention'),
+  // T451：保留天数控件的唯一写入口（trash.js），settings 的兼容函数直接转交它
+  setTrashRetentionDays: (v) => calls.push('setTrashRetentionDays:' + v),
   _setPanelTriggerState: () => {},
   _closeHeaderMenus: () => {},
   _closeKnowledgeQuizSubmenu: () => {},
@@ -295,9 +297,8 @@ try {
   quizSource === 'mixed' && store.get('phymathia_quiz_source') === 'mixed'
     ? ok('检测出题源：调现有 changeQuizSourcePreference') : bad('检测出题源', quizSource);
   ctx.settingsSaveTrashRetention('30');
-  const trashSel = ctx.document.getElementById('trashRetentionSelect');
-  trashSel.value === '30' && calls.includes('saveTrashRetention')
-    ? ok('回收站天数：回写原控件并复用 saveTrashRetention') : bad('回收站天数', trashSel.value);
+  calls.includes('setTrashRetentionDays:30')
+    ? ok('回收站天数：转交唯一写入口 setTrashRetentionDays（T451 自绘下拉）') : bad('回收站天数', calls.join(','));
 
   ctx.settingsOpenLegacy('model');
   calls.includes('toggleModelPanel') && !overlay.classList.contains('show')

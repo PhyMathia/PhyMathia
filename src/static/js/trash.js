@@ -139,8 +139,8 @@ async function renderTrashList() {
   if (retention != null && Number.isFinite(parseInt(retention, 10))) {
     try { localStorage.setItem(STORAGE_KEY_TRASH_RETENTION, String(parseInt(retention, 10))); } catch (e) {}
     _trashSetTileSub(retention);
-    const sel = document.getElementById('trashRetentionSelect');
-    if (sel && sel.value !== String(retention)) sel.value = String(retention);
+    // 服务端是保留天数的真源：回读后校正面板控件（只改外观，不触发保存回调）
+    if (typeof pmSelectSetValue === 'function') pmSelectSetValue('trashRetentionPicker', parseInt(retention, 10));
   }
   if (!_trashCache) {
     box.innerHTML = '<div class="accounts-row-loading">读取失败，请稍后重试</div>';
@@ -194,26 +194,42 @@ function emptyTrash() {
     .catch(() => toastMsg('清空失败，请稍后重试', 3000));
 }
 
-function saveTrashRetention() {
+// 保留天数控件（T451 自绘下拉）的唯一写入口：先同步控件外观，再走原保存链。
+// settings.js 的兼容函数、回归脚本都从这里进；days 缺省时读控件当前值。
+function setTrashRetentionDays(days) {
+  const n = parseInt(days, 10);
+  if (!Number.isFinite(n) || n < 0 || n > 365) return;
+  if (typeof pmSelectSetValue === 'function') pmSelectSetValue('trashRetentionPicker', n);
+  saveTrashRetention(n);
+}
+
+function saveTrashRetention(days) {
   if (_trashReadonlyGuard()) { renderTrashList(); return; }
-  const sel = document.getElementById('trashRetentionSelect');
-  if (!sel) return;
-  const days = parseInt(sel.value, 10);
-  if (!Number.isFinite(days) || days < 0 || days > 365) return;
+  // 回调（data-pm-change）直接给值；旧调用不带参时读控件 data-pm-value
+  const raw = (days != null) ? days
+    : ((typeof pmSelectValue === 'function') ? pmSelectValue('trashRetentionPicker') : '');
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 0 || n > 365) return;
   fetch('/api/trash/settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ days })
+    body: JSON.stringify({ days: n })
   }).then(r => { if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
     .then(d => {
-      const n = (d && d.retentionDays != null) ? d.retentionDays : days;
-      try { localStorage.setItem(STORAGE_KEY_TRASH_RETENTION, String(n)); } catch (e) {}
-      _trashSetTileSub(n);
-      toastMsg(n === 0
+      const saved = (d && d.retentionDays != null) ? d.retentionDays : n;
+      try { localStorage.setItem(STORAGE_KEY_TRASH_RETENTION, String(saved)); } catch (e) {}
+      _trashSetTileSub(saved);
+      // 服务端可能把值规整过（clamp），控件跟服务端落定的值对齐
+      if (typeof pmSelectSetValue === 'function') pmSelectSetValue('trashRetentionPicker', saved);
+      toastMsg(saved === 0
         ? '已关闭回收站：以后删除的画布不再保留'
-        : '保留天数已设为 ' + n + ' 天（对之后删除的画布生效）', 2500);
+        : '保留天数已设为 ' + saved + ' 天（对之后删除的画布生效）', 2500);
     })
-    .catch(() => { toastMsg('设置失败，已还原', 3000); renderTrashList(); });
+    .catch(() => {
+      toastMsg('设置失败，已还原', 3000);
+      // 失败还原：面板按服务端/本地缓存重画（renderTrashList 内含控件校正）
+      renderTrashList();
+    });
 }
 
 // ===== 已删账号（墓碑）：恢复 = 目录移回 + 注册表重登记，账号 id 不变 =====
@@ -259,6 +275,7 @@ if (typeof window !== 'undefined') {
   window.purgeTrashItem = purgeTrashItem;
   window.emptyTrash = emptyTrash;
   window.saveTrashRetention = saveTrashRetention;
+  window.setTrashRetentionDays = setTrashRetentionDays;
   window.restoreDeletedAccount = restoreDeletedAccount;
   window.purgeDeletedAccount = purgeDeletedAccount;
 }
