@@ -1693,8 +1693,10 @@ const GRAPH_MAX_ZOOM = 4;
 // 这里只等比放大/缩小卡内**文字**（标题、正文、编辑框），卡宽不变、换行更少/更多。
 // 实现走一条 CSS 变量 --graph-text-scale：节点文本字号在 graph-override.css 里统一写成
 // calc(基准 * var(--graph-text-scale))，所以改一个变量全画布即时生效，无需重渲染 DOM。
-// 档位是拍过的等比序列（85/92/100/110/120/132%），不用任意倍率——按钮连点也不会漂成 97.3%。
-const GRAPH_TEXT_SCALES = [0.85, 0.925, 1, 1.1, 1.2, 1.32];
+// 档位是拍过的等比序列（100/110/120/132/145%），不用任意倍率——按钮连点也不会漂成 97.3%。
+// 2026-11-15 用户二拍：**最小档就是 100%**（85%/92% 两档「太小的看不清」已删，缩字对阅读
+// 没有意义）；顶端加 145% 一档。删掉的档位不进序列，旧存值由 _loadGraphTextScale 归一。
+const GRAPH_TEXT_SCALES = [1, 1.1, 1.2, 1.32, 1.45];
 let _graphTextScale = 1;
 
 function _graphTextScaleIndex() {
@@ -1730,6 +1732,14 @@ function _loadGraphTextScale() {
     const raw = parseFloat(localStorage.getItem(STORAGE_KEY_GRAPH_TEXT_SCALE));
     if (isFinite(raw) && raw > 0.5 && raw < 2) _graphTextScale = raw;
   } catch (e) {}
+  // 归一（2026-11-15 二拍后必备）：旧版本存过 0.85 / 0.925（<100%）或别的非档位值，
+  // 不归一会让用户停在一个「点 A− 也回不到 100%、点 A+ 又跳档」的夹缝里。这里落到
+  // 最近档并回写，等于把退役档位自愈成 100%。
+  const snapped = GRAPH_TEXT_SCALES[_graphTextScaleIndex()];
+  if (snapped !== _graphTextScale) {
+    _graphTextScale = snapped;
+    _saveGraphTextScale();
+  }
 }
 
 function _saveGraphTextScale() {
