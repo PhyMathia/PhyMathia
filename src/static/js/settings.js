@@ -432,13 +432,13 @@ function _settingsPageModel() {
       (base ? '<span class="settings-model-baseurl" title="' + _settingsEsc(base) + '">' + _settingsEsc(base) + '</span>' : '') +
     '</div></div>';
   detail += '<div class="settings-model-subhead"><span>模型列表</span>' +
-    '<button type="button" class="settings-model-mini" onclick="settingsModelToggleAdd()" title="手动输入模型 ID，补进当前供应商">' + (_settingsModelAddOpen ? '收起' : '手动添加模型') + '</button></div>';
+    '<button type="button" class="settings-model-mini" onclick="settingsModelToggleAdd()" title="添加到当前供应商">' + (_settingsModelAddOpen ? '收起' : '手动添加模型') + '</button></div>';
   // 行内补模型：两个框各管一件事——左框模型 ID（可逗号批量），右框显示名（留空＝用 ID）。
   // 解析与写入全在 models.js 的 addModelToGroup（重复跳过、密钥沿用该供应商组密钥）。
   if (_settingsModelAddOpen) {
     detail += '<div class="settings-model-addrow">' +
-      '<input type="text" id="settingsAddModelInput" placeholder="模型 ID，多个用逗号分隔" title="发给上游的真实 ID；重复自动跳过，密钥沿用组密钥" onkeydown="if(event.key===\'Enter\')settingsModelAddSubmit()">' +
-      '<input type="text" id="settingsAddModelLabelInput" class="settings-model-addname" placeholder="显示名（留空＝ID）" title="只给你自己看的别名；多个用逗号按顺序对应 ID" onkeydown="if(event.key===\'Enter\')settingsModelAddSubmit()">' +
+      '<input type="text" id="settingsAddModelInput" placeholder="模型 ID，多个用逗号分隔" title="发给上游的真实名称" onkeydown="if(event.key===\'Enter\')settingsModelAddSubmit()">' +
+      '<input type="text" id="settingsAddModelLabelInput" class="settings-model-addname" placeholder="显示名（留空＝ID）" title="多个按逗号顺序对应" onkeydown="if(event.key===\'Enter\')settingsModelAddSubmit()">' +
       '<button type="button" class="settings-model-mini" onclick="settingsModelAddSubmit()">添加</button>' +
       '<span class="settings-model-addhint" id="settingsModelAddHint"></span></div>';
   }
