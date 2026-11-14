@@ -3162,75 +3162,86 @@
     }
 
     /* ---------- 家族：inkstone 砚石·墨韵（山影主题默认） ----------
-     * 青黑哑光石面：低饱和（saturate 115%）、石不漂移（animation: none）、极淡的青灰
-     * 石纹洗染替代彩色色斑；浅色＝淡青灰石面。投影收敛、内描边细弱＝哑光语言。 */
+     * 2026-11-15 重做（用户「美化山影」；实测口径见 docs/日志/2026-11-15.md）：
+     * 旧版面板比底图还暗（合成线性 0.53% ≈ 底图 0.69 倍＝陷进去而非浮起来），且强调色
+     * 青绿与青蓝底同色相、同明度带＝全屏没有落点。本轮只动「材质＋色」两条杠杆：
+     *   ① 面板提亮：tint 由 rgba(14,22,24,.62) → rgba(40,46,52,.70)，合成约 2.2 倍，
+     *      并从中性石墨取色（旧版偏苔绿）、saturate 115%→104%（降绿味，保石不漂移）；
+     *   ② 强调色换朱砂：全屏唯一暖色，一个点就够，不做渐变不做发光。取色刻意偏亮
+     *      （#cf6a4d 而非深朱砂 #b8553f）：--accent 在本应用里同时当「文字色」用
+     *      （327 处 color: var(--accent)，如提问钮/标签），深朱砂压在深卡面上只有 2.5:1
+     *      ＝发闷看不清；#cf6a4d 在同一底上约 3.8:1、在玻璃面板上约 4.7:1，仍读得出朱砂。
+     * 圆角/模糊半径/字族一律不动（圆角归糖果、宋体归素纸，山影的签名留给结构）。
+     * 投影收敛、内描边细弱＝哑光语言；石纹洗染（--aurora-*）保留但更淡。 */
     html[data-panel-skin="inkstone"] {
-      --accent: #55b3a8;
+      --accent: #cf6a4d;
       --bg-panel: #0d1517;
       --bg-dark: color-mix(in srgb, var(--bg-panel) 82%, transparent);
-      --accent-hover: #7cc9bf;
-      --field-bg: rgba(13, 22, 24, 0.46);
-      --field-bg-strong: rgba(13, 22, 24, 0.78);
+      --accent-hover: #dd7f63;
+      --field-bg: rgba(26, 34, 38, 0.50);
+      --field-bg-strong: rgba(26, 34, 38, 0.76);
     }
     html[data-theme="light"][data-panel-skin="inkstone"] {
-      --accent: #3d7a72;
+      --accent: #9c4530;
       --bg-panel: #eef1ee;
       --bg-dark: color-mix(in srgb, var(--bg-panel) 90%, transparent);
-      --accent-hover: #4f8d85;
-      --field-bg: rgba(238, 243, 240, 0.55);
-      --field-bg-strong: rgba(238, 243, 240, 0.78);
+      --accent-hover: #b4563c;
+      --field-bg: rgba(250, 248, 244, 0.60);
+      --field-bg-strong: rgba(250, 248, 244, 0.86);
     }
     html[data-panel-skin="inkstone"] .aurora-glass {
       --aurora-1: rgba(72, 104, 104, 0.10);
       --aurora-2: rgba(58, 84, 92, 0.08);
       --aurora-3: rgba(88, 108, 96, 0.08);
-      --glass-tint: rgba(14, 22, 24, 0.62);
-      --glass-veil: linear-gradient(180deg, rgba(198, 216, 214, 0.03), rgba(4, 8, 9, 0.13) 84%);
-      --glass-inner-line: rgba(150, 176, 172, 0.12);
+      --glass-tint: rgba(40, 46, 52, 0.70);
+      --glass-veil: linear-gradient(180deg, rgba(206, 216, 220, 0.035), rgba(6, 8, 10, 0.09) 84%);
+      --glass-inner-line: rgba(168, 186, 190, 0.14);
       --glass-shadow: rgba(3, 7, 8, 0.50);
-      -webkit-backdrop-filter: blur(16px) saturate(115%);
-      backdrop-filter: blur(16px) saturate(115%);
+      -webkit-backdrop-filter: blur(16px) saturate(104%);
+      backdrop-filter: blur(16px) saturate(104%);
       box-shadow:
         0 18px 44px var(--glass-shadow),
         inset 0 1px 0 var(--glass-inner-line),
-        inset 0 0 0 1px rgba(150, 176, 172, 0.14);
+        inset 0 0 0 1px rgba(168, 186, 190, 0.16);
       animation: none;
     }
     html[data-theme="light"][data-panel-skin="inkstone"] .aurora-glass {
       --aurora-1: rgba(96, 128, 124, 0.06);
       --aurora-2: rgba(110, 130, 118, 0.05);
       --aurora-3: rgba(88, 112, 104, 0.05);
-      --glass-tint: rgba(238, 241, 238, 0.78);
-      --glass-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.42), rgba(238, 241, 238, 0.10) 72%);
-      --glass-inner-line: rgba(255, 255, 253, 0.90);
-      --glass-shadow: rgba(80, 96, 92, 0.18);
+      --glass-tint: rgba(244, 241, 235, 0.86);
+      --glass-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.30), rgba(238, 235, 228, 0.06) 72%);
+      --glass-inner-line: rgba(255, 255, 253, 0.92);
+      --glass-shadow: rgba(84, 92, 88, 0.16);
+      -webkit-backdrop-filter: blur(16px) saturate(96%);
+      backdrop-filter: blur(16px) saturate(96%);
       box-shadow:
         0 16px 36px var(--glass-shadow),
         inset 0 1px 0 var(--glass-inner-line),
-        inset 0 0 0 1px rgba(110, 134, 130, 0.24);
+        inset 0 0 0 1px rgba(120, 132, 126, 0.22);
       animation: none;
     }
-    html[data-panel-skin="inkstone"] .aurora-glass--dialog { --glass-tint: rgba(13, 21, 23, 0.88); }
-    html[data-panel-skin="inkstone"] .aurora-glass--panel { --glass-tint: rgba(13, 21, 23, 0.70); }
-    html[data-theme="light"][data-panel-skin="inkstone"] .aurora-glass--dialog { --glass-tint: rgba(240, 243, 240, 0.94); }
-    html[data-theme="light"][data-panel-skin="inkstone"] .aurora-glass--panel { --glass-tint: rgba(240, 243, 240, 0.82); }
+    html[data-panel-skin="inkstone"] .aurora-glass--dialog { --glass-tint: rgba(36, 42, 48, 0.86); }
+    html[data-panel-skin="inkstone"] .aurora-glass--panel { --glass-tint: rgba(40, 46, 52, 0.74); }
+    html[data-theme="light"][data-panel-skin="inkstone"] .aurora-glass--dialog { --glass-tint: rgba(246, 243, 237, 0.95); }
+    html[data-theme="light"][data-panel-skin="inkstone"] .aurora-glass--panel { --glass-tint: rgba(244, 241, 235, 0.90); }
     html[data-panel-skin="inkstone"] .aurora-glass--plain {
       --aurora-1: transparent;
       --aurora-2: transparent;
       --aurora-3: transparent;
-      --glass-tint: rgba(24, 38, 39, 0.58);
+      --glass-tint: rgba(50, 58, 64, 0.58);
       animation: none;
     }
     html[data-theme="light"][data-panel-skin="inkstone"] .aurora-glass--plain {
       --aurora-1: transparent;
       --aurora-2: transparent;
       --aurora-3: transparent;
-      --glass-tint: rgba(228, 233, 229, 0.76);
+      --glass-tint: rgba(240, 237, 231, 0.74);
       animation: none;
     }
     @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-      html[data-panel-skin="inkstone"] .aurora-glass { --glass-tint: rgba(9, 15, 16, 0.88); }
-      html[data-theme="light"][data-panel-skin="inkstone"] .aurora-glass { --glass-tint: rgba(236, 240, 237, 0.96); }
+      html[data-panel-skin="inkstone"] .aurora-glass { --glass-tint: rgba(32, 38, 42, 0.92); }
+      html[data-theme="light"][data-panel-skin="inkstone"] .aurora-glass { --glass-tint: rgba(244, 241, 235, 0.97); }
     }
 
     /* ---------- 家族：neon 霓虹夜光 ----------

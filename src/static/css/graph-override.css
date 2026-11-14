@@ -8071,25 +8071,35 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
  * 青黑哑光石面：低饱和、零发光——材质靠「顶面斜光（sheen）＋细石纹描边＋收敛投影」，
  * 与面板 inkstone 族同一语言。属性语义色保留：模块粗边/左条/选中环照走 var(--node-attr)，
  * 卡面保持中性石色不做粉彩化（石面吃色会脏）。浅色＝淡青灰石面，从 --node-glass-base
- * （白玻璃）起混、墨青配比 28% 保色相（避开「暖米底吃冷墨」老坑），投影换深墨派生。 */
+ * （白玻璃）起混、墨青配比 20% 保色相（避开「暖米底吃冷墨」老坑）；浅色 sheen 比 face
+ * 更浅（12% vs 20%），顶部受光、向下略沉——旧版反着来（38% 比 28% 更深），整块读成一块
+ * 均匀的苔绿板。投影换深墨派生。2026-11-15：墨色改走本皮肤的 --is-ink（石板青），
+ * 描边配比同时压淡（40%→26%），淡墨卡面不再被一条深绿粗边框住。 */
 [data-node-skin="inkstone"] {
-  --is-face: color-mix(in srgb, var(--bg-panel) 78%, var(--ink-teal) 22%);
+  /* 2026-11-15：砚石材质单独一支墨（--is-ink），不再借用户配方色板的 --ink-teal。
+     旧借法把「配方调色板里那个薄荷青」当成砚石本身的墨色，导致卡面发苔绿、根节点描边
+     是薄荷色，与换上的朱砂强调色互相打架（截图对比见 docs/日志/2026-11-15.md）。
+     新值石板青（色相 ~195°，低彩度）＝面板石墨 tint 的同族色，两者现在是一块料。
+     --ink-teal 本身不动：那是 graph-recipes.js 给用户挑的配方色。 */
+  --is-ink: #79a9b3;
+  --is-face: color-mix(in srgb, var(--bg-panel) 78%, var(--is-ink) 22%);
   --is-sheen: color-mix(in srgb, var(--is-face) 86%, var(--text-primary) 14%);
-  --is-line: color-mix(in srgb, var(--ink-teal) 38%, transparent);
-  --is-line-hover: color-mix(in srgb, var(--ink-teal) 68%, transparent);
-  --is-line-soft: color-mix(in srgb, var(--ink-teal) 28%, transparent);
-  --is-accent: color-mix(in srgb, var(--ink-teal) 50%, var(--text-primary));
+  --is-line: color-mix(in srgb, var(--is-ink) 38%, transparent);
+  --is-line-hover: color-mix(in srgb, var(--is-ink) 68%, transparent);
+  --is-line-soft: color-mix(in srgb, var(--is-ink) 28%, transparent);
+  --is-accent: color-mix(in srgb, var(--is-ink) 50%, var(--text-primary));
   --is-shadow: color-mix(in srgb, var(--overlay-bg) 62%, transparent);
   --is-shadow-deep: color-mix(in srgb, var(--overlay-bg) 70%, transparent);
   --is-edge: color-mix(in srgb, var(--text-primary) 10%, transparent);
 }
 [data-theme="light"][data-node-skin="inkstone"] {
-  --is-face: color-mix(in srgb, var(--node-glass-base) 72%, var(--ink-teal) 28%);
-  --is-sheen: color-mix(in srgb, var(--node-glass-base) 62%, var(--ink-teal) 38%);
-  --is-line: color-mix(in srgb, var(--ink-teal) 44%, transparent);
-  --is-line-hover: color-mix(in srgb, var(--ink-teal) 74%, transparent);
-  --is-line-soft: color-mix(in srgb, var(--ink-teal) 34%, transparent);
-  --is-accent: color-mix(in srgb, var(--ink-teal) 68%, var(--text-primary));
+  --is-ink: #35626b;
+  --is-face: color-mix(in srgb, var(--node-glass-base) 80%, var(--is-ink) 20%);
+  --is-sheen: color-mix(in srgb, var(--node-glass-base) 88%, var(--is-ink) 12%);
+  --is-line: color-mix(in srgb, var(--is-ink) 26%, transparent);
+  --is-line-hover: color-mix(in srgb, var(--is-ink) 46%, transparent);
+  --is-line-soft: color-mix(in srgb, var(--is-ink) 18%, transparent);
+  --is-accent: color-mix(in srgb, var(--is-ink) 58%, var(--text-primary));
   --is-shadow: color-mix(in srgb, var(--text-primary) 15%, transparent);
   --is-shadow-deep: color-mix(in srgb, var(--text-primary) 18%, transparent);
   --is-edge: color-mix(in srgb, var(--text-primary) 26%, transparent);
