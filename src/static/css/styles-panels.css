@@ -6790,11 +6790,14 @@ html[data-theme="light"][data-panel-skin="candy"] .thinking-slider {
   background: none;
   backdrop-filter: none !important; box-shadow: none !important;
 }
-/* 原面板自带的标题与「关闭」在抽屉里是多余的：页头已有标题、右上角统一关闭 */
+/* 原面板自带的标题、说明句与「关闭」在抽屉里是多余的：页头已有标题与副标题、右上角统一关闭。
+   .data-panel-intro 是 T450——数据面板正文那句「画布和知识数据自动存储在服务端…」
+   与数据页页头副标题几乎一字不差；独立浮层不走 .settings-embedded，仍显示。 */
 .settings-content .settings-embedded .kp-header,
 .settings-content .settings-embedded .md-actions,
 .settings-content .settings-embedded .model-dialog > h3,
-.settings-content .settings-embedded .model-section-title { display: none !important; }
+.settings-content .settings-embedded .model-section-title,
+.settings-content .settings-embedded .data-panel-intro { display: none !important; }
 /* 内部滚动交给抽屉内容区；记忆面板的 .memory-body 原本是 flex:1 + 自带 padding */
 .settings-content .settings-embedded .memory-body { padding: 0 !important; overflow: visible !important; flex: none !important; }
 .settings-content .settings-embedded .accounts-list { max-height: none !important; overflow: visible !important; }
