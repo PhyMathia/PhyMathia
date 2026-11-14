@@ -45,7 +45,7 @@ const SETTINGS_TAB_IDS = SETTINGS_GROUPS.reduce((a, g) => a.concat(g.items.map(i
 let _settingsOpen = false;
 let _settingsTab = 'appearance';
 let _settingsModelProvider = '';   // 模型设置页左栏当前选中的供应商（只存内存，不落盘）
-let _settingsModelAddOpen = false; // 「＋ 添加模型」行内输入行的展开态（只存内存，切供应商时收回）
+let _settingsModelAddOpen = false; // 「手动添加模型」行内输入行的展开态（只存内存，切供应商时收回）
 
 // ====== 复杂表单内嵌（2026-11-11 四轮：用户「不要只是一个跳转入口」）======
 // 四页各对应一个原面板节点。挂载＝把同一节点 append 进 #settingsEmbedSlot（不 clone），
@@ -432,7 +432,7 @@ function _settingsPageModel() {
       (base ? '<span class="settings-model-baseurl" title="' + _settingsEsc(base) + '">' + _settingsEsc(base) + '</span>' : '') +
     '</div></div>';
   detail += '<div class="settings-model-subhead"><span>模型列表</span>' +
-    '<button type="button" class="settings-model-mini" onclick="settingsModelToggleAdd()" title="给当前供应商补一个模型 ID">' + (_settingsModelAddOpen ? '收起' : '＋ 添加模型') + '</button></div>';
+    '<button type="button" class="settings-model-mini" onclick="settingsModelToggleAdd()" title="手动输入模型 ID，补进当前供应商">' + (_settingsModelAddOpen ? '收起' : '手动添加模型') + '</button></div>';
   // 行内补模型：只往当前供应商的组里加 ID，不走添加供应商大弹窗；解析与写入全在
   // models.js 的 addModelToGroup（逗号/换行分隔、「id | 显示名」、重复跳过）。
   if (_settingsModelAddOpen) {
@@ -772,7 +772,7 @@ function settingsModelAction(kind, arg, val) {
   // 保存/删除后 models.js 会 renderModelList() 派发 phymathia:models-changed 让本页重画；
   // 打开弹窗类动作无需重画，抽屉由捕获相监听保持打开。
 }
-// 「＋ 添加模型」行内展开/收起：只切本页状态，不转发到添加供应商大弹窗
+// 「手动添加模型」行内展开/收起：只切本页状态，不转发到添加供应商大弹窗
 function settingsModelToggleAdd() {
   if (_settingsGuard()) return;
   _settingsModelAddOpen = !_settingsModelAddOpen;

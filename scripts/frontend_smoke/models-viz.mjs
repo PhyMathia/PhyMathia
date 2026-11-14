@@ -616,9 +616,9 @@ check('model-switch：停用写同一份配置 + 清槽位引用 + 重新启用'
   return true;
 });
 
-// 2026-11-14 用户实报：设置抽屉模型页「＋ 添加模型」弹的是添加供应商大弹窗。
+// 2026-11-14 用户实报：设置抽屉模型页「＋ 添加模型」（现更名「手动添加模型」）弹的是添加供应商大弹窗。
 // 拍板改为组内行内补模型（手动输 ID、不显眼但要有）——接线与行为两组断言。
-check('model-add：设置抽屉「＋ 添加模型」行内接线（不再转发添加供应商大弹窗）', () => {
+check('model-add：设置抽屉「手动添加模型」行内接线（不再转发添加供应商大弹窗）', () => {
   const sjs = fs.readFileSync('src/static/js/settings.js', 'utf8');
   // subhead 的 mini 按钮必须接行内开关，且不得再把组内入口转给 settingsModelAction
   const subhead = sjs.split('\n').find(l => l.includes('settings-model-mini') && l.includes('添加模型'));
