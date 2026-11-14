@@ -627,9 +627,12 @@ check('model-add：设置抽屉「手动添加模型」行内接线（不再转�
   // 顶部「＋ 添加供应商」保持大弹窗语义不动（源码 onclick 里引号带转义，断言裸标识符）
   const top = sjs.split('\n').find(l => l.includes('settings-model-primary'));
   if (!top || !top.includes('settingsModelAction') || top.includes('settingsModelToggleAdd')) throw new Error('顶部添加供应商按钮语义变了');
-  for (const t of ['settingsModelToggleAdd', 'settingsModelAddSubmit', 'settings-model-addrow', 'settingsAddModelInput']) {
+  for (const t of ['settingsModelToggleAdd', 'settingsModelAddSubmit', 'settings-model-addrow', 'settingsAddModelInput', 'settingsAddModelLabelInput']) {
     if (!sjs.includes(t)) throw new Error('settings.js 缺：' + t);
   }
+  // 双框契约：显示名数量对不上要在提交口拦下（就地提示），ID 框不认「|」
+  if (!sjs.includes('一一对应')) throw new Error('显示名数量校验提示丢了');
+  if (!sjs.includes("raw.includes('|')")) throw new Error('ID 框「|」拦截丢了');
   const mjs = fs.readFileSync('src/static/js/models.js', 'utf8');
   for (const t of ['function addModelToGroup', 'addModelsForProvider(provider']) {
     if (!mjs.includes(t)) throw new Error('models.js 缺：' + t);
@@ -637,13 +640,13 @@ check('model-add：设置抽屉「手动添加模型」行内接线（不再转�
   return true;
 });
 
-check('model-add：addModelToGroup 组内快捷补模型（多只解析/重复跳过/密钥与地址继承组）', () => {
+check('model-add：addModelToGroup 双框补模型（按序对应/留空用 ID/重复跳过/密钥与地址继承组）', () => {
   const preset = sandbox.window.MODEL_PRESETS.deepseek;
   if (sandbox.addModelToGroup('deepseek', '') !== -1) throw new Error('空输入应返回 -1');
   if (sandbox.addModelToGroup('deepseek', ' ， \n') !== -1) throw new Error('纯分隔符应返回 -1');
   // 组内先有一只带组密钥的条目 → 新模型应继承组密钥与组 baseUrl
   sandbox.addModelsForProvider('deepseek', 'sk-group-A', preset.baseUrl, [{ model: 'm-base' }]);
-  const n = sandbox.addModelToGroup('deepseek', 'm-new-1, m-new-2 | 别名二, m-base');
+  const n = sandbox.addModelToGroup('deepseek', 'm-new-1, m-new-2, m-base', '新一, 别名二');
   if (n !== 2) throw new Error('应新增 2 只（重复的 m-base 跳过）: ' + n);
   const all = sandbox.getAllModels().filter(m => m.provider === 'deepseek');
   if (all.length !== 3) throw new Error('组内应为 3 只: ' + all.length);
@@ -654,9 +657,13 @@ check('model-add：addModelToGroup 组内快捷补模型（多只解析/重复�
     if (raw.apiKey !== 'sk-group-A') throw new Error('组密钥未继承: ' + m.model);
     if (raw.baseUrl !== preset.baseUrl) throw new Error('baseUrl 未沿用组配置: ' + m.model);
   }
-  // 「id | 显示名」别名要落进原始条目的 label（投影无 label 字段，同样走 getModelById）
+  // 名称框按序对应要落进原始条目的 label（投影无 label 字段，同样走 getModelById）
   const raw2 = all.map(m => sandbox.getModelById(m.id)).find(c => c && c.model === 'm-new-2');
-  if (!raw2 || raw2.label !== '别名二') throw new Error('「id | 显示名」解析丢失');
+  if (!raw2 || raw2.label !== '别名二') throw new Error('显示名按序对应丢失');
+  // 名称留空 → label 自动回退成 ID 本身
+  if (sandbox.addModelToGroup('deepseek', 'm-new-3') !== 1) throw new Error('留空名称应新增 1 只');
+  const raw3 = sandbox.getAllModels().filter(m => m.provider === 'deepseek').map(m => sandbox.getModelById(m.id)).find(c => c && c.model === 'm-new-3');
+  if (!raw3 || raw3.label !== 'm-new-3') throw new Error('留空名称应回退用 ID');
   if (sandbox.addModelToGroup('deepseek', 'm-base, m-new-1') !== 0) throw new Error('全重复应返回 0');
   for (const k of ['phymathia_user_models', 'phymathia_model_group_keys', 'phymathia_active_models']) {
     sandbox.localStorage.removeItem(k);

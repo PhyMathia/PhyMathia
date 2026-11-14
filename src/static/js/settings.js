@@ -433,11 +433,12 @@ function _settingsPageModel() {
     '</div></div>';
   detail += '<div class="settings-model-subhead"><span>模型列表</span>' +
     '<button type="button" class="settings-model-mini" onclick="settingsModelToggleAdd()" title="手动输入模型 ID，补进当前供应商">' + (_settingsModelAddOpen ? '收起' : '手动添加模型') + '</button></div>';
-  // 行内补模型：只往当前供应商的组里加 ID，不走添加供应商大弹窗；解析与写入全在
-  // models.js 的 addModelToGroup（逗号/换行分隔、「id | 显示名」、重复跳过）。
+  // 行内补模型：两个框各管一件事——左框模型 ID（可逗号批量），右框显示名（留空＝用 ID）。
+  // 解析与写入全在 models.js 的 addModelToGroup（重复跳过、密钥沿用该供应商组密钥）。
   if (_settingsModelAddOpen) {
     detail += '<div class="settings-model-addrow">' +
-      '<input type="text" id="settingsAddModelInput" placeholder="输入模型 ID，可写「id | 显示名」" title="多个用逗号或换行分隔；重复的自动跳过，密钥沿用该供应商已保存的分组密钥" onkeydown="if(event.key===\'Enter\')settingsModelAddSubmit()">' +
+      '<input type="text" id="settingsAddModelInput" placeholder="模型 ID，多个用逗号分隔" title="发给上游的真实 ID；重复自动跳过，密钥沿用组密钥" onkeydown="if(event.key===\'Enter\')settingsModelAddSubmit()">' +
+      '<input type="text" id="settingsAddModelLabelInput" class="settings-model-addname" placeholder="显示名（留空＝ID）" title="只给你自己看的别名；多个用逗号按顺序对应 ID" onkeydown="if(event.key===\'Enter\')settingsModelAddSubmit()">' +
       '<button type="button" class="settings-model-mini" onclick="settingsModelAddSubmit()">添加</button>' +
       '<span class="settings-model-addhint" id="settingsModelAddHint"></span></div>';
   }
@@ -784,20 +785,23 @@ function settingsModelToggleAdd() {
 }
 // 行内提交：解析与写入全在 models.js 的 addModelToGroup（重复跳过、密钥继承组）；
 // renderModelList 派发 phymathia:models-changed 让本页重画（展开态已先收掉）。
-// 空输入就地提示、不关行。
+// 空输入／ID 框带「|」／显示名数量对不上就地提示、不关行。
 function settingsModelAddSubmit() {
   if (_settingsGuard()) return;
   const input = document.getElementById('settingsAddModelInput');
+  const nameInput = document.getElementById('settingsAddModelLabelInput');
   const hint = document.getElementById('settingsModelAddHint');
   const raw = input ? String(input.value || '') : '';
-  if (!raw.trim()) {
-    if (hint) hint.textContent = '先填个模型 ID';
-    if (input && typeof input.focus === 'function') input.focus();
-    return;
-  }
+  const rawNames = nameInput ? String(nameInput.value || '') : '';
+  const say = (text, el) => { if (hint) hint.textContent = text; if (el && typeof el.focus === 'function') el.focus(); };
+  if (!raw.trim()) { say('先填个模型 ID', input); return; }
+  if (raw.includes('|')) { say('显示名请填右边的框——ID 框不用「|」', input); return; }
+  const idCount = raw.split(/[,，\n]+/).map(s => s.trim()).filter(Boolean).length;
+  const nameCount = rawNames.split(/[,，\n]+/).map(s => s.trim()).filter(Boolean).length;
+  if (nameCount && nameCount !== idCount) { say('显示名要和 ID 一一对应（' + idCount + ' 个），或整个留空', nameInput); return; }
   _settingsModelAddOpen = false;
   try {
-    if (typeof addModelToGroup === 'function') { addModelToGroup(_settingsModelProvider, raw); return; }
+    if (typeof addModelToGroup === 'function') { addModelToGroup(_settingsModelProvider, raw, rawNames); return; }
   } catch (e) {}
   renderSettingsPage();
 }

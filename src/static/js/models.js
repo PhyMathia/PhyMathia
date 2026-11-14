@@ -1599,13 +1599,15 @@ function saveNewModel() {
 }
 
 // 组内快捷补模型（设置抽屉模型页「手动添加模型」行内入口，2026-11-14 用户拍板：
-// 该按钮语义是往当前供应商的组里加模型，不是再开添加供应商大弹窗）。文本解析
-// 复用 _parseExtraModelInput（逗号/换行分隔、「id | 显示名」），写入全走
-// addModelsForProvider（重复跳过、密钥继承组密钥、baseUrl 沿用组配置→预设回落）。
-// 返回实际新增条数；-1＝入参没解析出任何模型。
-function addModelToGroup(provider, rawText) {
-  const entries = _parseExtraModelInput(rawText);
-  if (!entries.length) return -1;
+// 该按钮语义是往当前供应商的组里加模型，不是再开添加供应商大弹窗；同日再拍板改
+// 双框——ID 框逗号批量、名称框按序一一对应，留空自动用 ID，不再写「id | 显示名」）。
+// 写入全走 addModelsForProvider（重复跳过、密钥继承组密钥、baseUrl 沿用组配置→预设回落）。
+// 返回实际新增条数；-1＝ID 框没解析出任何模型。
+function addModelToGroup(provider, rawIds, rawNames) {
+  const ids = String(rawIds || '').split(/[,，\n]+/).map(s => s.trim()).filter(Boolean);
+  if (!ids.length) return -1;
+  const names = String(rawNames || '').split(/[,，\n]+/).map(s => s.trim()).filter(Boolean);
+  const entries = ids.map((id, i) => ({ model: id, label: names[i] || '' }));
   const cfg = (Array.isArray(userModelConfigs) ? userModelConfigs : []).find(c => c && c.provider === provider);
   const added = addModelsForProvider(provider, '', (cfg && cfg.baseUrl) || '', entries);
   renderModelList();
