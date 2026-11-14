@@ -7943,19 +7943,30 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   --cd-accent: color-mix(in srgb, var(--text-primary) 70%, transparent);
   --cd-shadow: color-mix(in srgb, var(--overlay-bg) 42%, transparent);
 }
-/* 2026-10-01 三/四调：用户两轮要求更亮——边线 28/44/46%→14/24/28%，投影 12%→10% */
+/* 2026-11-15 糖果浅色重做：卡面底从暖白纸 #fffcf6 改奶糖粉（--bg-panel 同源），底色与墨色
+ * 一并跟族；属性色比例 20%→26%。
+ * ★ 卡面透明度 62%→86% 是这一版的关键：浅色壁纸是亮粉彩云，卡片只有 62% 不透明时亮度与
+ *   壁纸几乎相同，读数＝「糊在白背景上的一张白纸」（深色卡之所以立得住，是因为它比壁纸暗）。
+ *   抬到 86% 让卡片成为「实心奶糖块」，靠粉调弥散影浮起来——这比加深投影更有效，也不动属性色义。 */
+[data-theme="light"][data-node-skin="candy"] {
+  --node-glass-base: rgba(253, 244, 248, 0.94);
+}
+/* 2026-10-01 三/四调：用户两轮要求更亮——边线 28/44/46%→14/24/28%，投影 12%→10%。
+ * 2026-11-15：投影改 accent 派生（粉调）——原 text-primary 10%（紫褐）在亮底上读成灰边。 */
 [data-theme="light"][data-node-skin="candy"] {
   --cd-line: color-mix(in srgb, var(--text-primary) 14%, transparent);
   --cd-line-strong: color-mix(in srgb, var(--text-primary) 24%, transparent);
   --cd-accent: color-mix(in srgb, var(--text-primary) 28%, transparent);
-  --cd-shadow: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  --cd-shadow: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 /* 含属性色的变量下沉到节点级：浅色改半透明白纱（2026-10-01 五调）——
  * 磨砂感＝半透明卡面＋backdrop blur 透出背景；此前 94% 不透明白底把磨砂糊死＝用户指「看不出磨砂」。
  * 亮度不受影响：浅色画布底本就亮，白纱透出的仍是亮背景；属性色调改挂纯半透明（与深色同构造）。 */
 [data-theme="light"][data-node-skin="candy"] .graph-node {
-  --cd-face-a: color-mix(in srgb, var(--node-attr) 20%, transparent);
-  --cd-face-b: color-mix(in srgb, var(--node-glass-base) 62%, transparent);
+  /* 属性色 26%→42%（2026-11-15）：浅色下 26% 的粉彩盖在亮壁纸上几乎读成白，卡面失去「糖果色」；
+   * 42% 是「明确是淡紫蓝/淡杏、但深色正文仍清晰」的那一档（真机 2x 逐档比对 34/42/50 定）。 */
+  --cd-face-a: color-mix(in srgb, var(--node-attr) 42%, transparent);
+  --cd-face-b: color-mix(in srgb, color-mix(in srgb, var(--bg-panel) 90%, var(--accent)) 86%, transparent);
   --cd-module-line: color-mix(in srgb, var(--node-attr) 45%, var(--node-glass-base));
   --cd-module-line-hover: color-mix(in srgb, var(--node-attr) 56%, var(--node-glass-base));
 }
@@ -8020,6 +8031,20 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
     0 0 0 5px color-mix(in srgb, var(--node-attr) 34%, transparent),
     0 0 0 12px color-mix(in srgb, var(--node-attr) 14%, transparent),
     0 14px 40px var(--cd-shadow) !important;
+}
+/* 糖霜光泽（2026-11-15 仅浅色）：软糖表面的那层反光——左上 120° 对角白反光 + 顶部 1px 白内高光。
+ * 深色卡不需要它：深色靠「比壁纸暗 + 属性色柔光」立住；浅色卡与亮壁纸同亮，没有表面就没有体积。
+ * ★ :not(:hover):not(.selected) 是必须的：本块特异性 (0,5,0)/(0,6,0) 高于 hover/selected，
+ *   不加排除会把选中光圈和悬停柔光一起吃掉。 */
+[data-theme="light"][data-node-skin="candy"] .graph-node:not(:hover):not(.selected),
+[data-theme="light"][data-node-skin="candy"] .graph-node.graph-node-module:not(:hover):not(.selected) {
+  background:
+    linear-gradient(120deg, rgba(255, 255, 255, 0.50), rgba(255, 255, 255, 0) 26%),
+    linear-gradient(170deg, var(--cd-face-a), var(--cd-face-b)) !important;
+  box-shadow:
+    0 0 30px color-mix(in srgb, var(--node-attr) 22%, transparent),
+    0 22px 40px -16px var(--cd-shadow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.96) !important;
 }
 [data-node-skin="candy"] .graph-node textarea,
 [data-node-skin="candy"] .graph-node input {

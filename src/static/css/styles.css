@@ -3317,13 +3317,41 @@
       --field-bg: rgba(34, 26, 40, 0.46);
       --field-bg-strong: rgba(34, 26, 40, 0.78);
     }
+    /* 2026-11-15 浅色重做「奶糖」：此前浅色只换了 accent/bg-panel 五个令牌，墨色与边线
+     * 仍是素纸的暖棕（--text-primary #2a2418 / --border rgba(160,145,120)），侧栏更是纯白
+     * —— 粉 + 棕 + 白三色温打架，读出来是「暖白纸面上撒了点粉」，与素纸撞车（用户：
+     * 「浅色很普通，没有糖果的特色」）。本块把墨/边/侧栏/输入框/按钮底一并跟糖果族，
+     * 底色改带粉紫的奶糖白，色相统一在 330° 一带。
+     * ★ 只写浅色块：深色块未改这几类令牌，主题壁纸冒烟的「深色改过浅色必须回填」不触发。 */
     html[data-theme="light"][data-panel-skin="candy"] {
-      --accent: #c05c86;
-      --bg-panel: #fdf9f6;
+      --accent: #c9557f;
+      --bg-panel: #fdf4f8;
       --bg-dark: color-mix(in srgb, var(--bg-panel) 90%, transparent);
-      --accent-hover: #cf739a;
-      --field-bg: rgba(252, 245, 248, 0.55);
-      --field-bg-strong: rgba(252, 245, 248, 0.78);
+      --accent-hover: #db6b92;
+      --field-bg: rgba(253, 244, 248, 0.62);
+      --field-bg-strong: rgba(253, 244, 248, 0.88);
+      --text-primary: #43263a;
+      --text-secondary: #86637a;
+      --border: color-mix(in srgb, var(--accent) 26%, transparent);
+      --sidebar-bg: #fdf4f8;
+      --input-bg: rgba(255, 250, 253, 0.86);
+      --overlay-bg: rgba(250, 241, 247, 0.36);
+      --btn-bg: color-mix(in srgb, var(--accent) 9%, transparent);
+      --btn-border: color-mix(in srgb, var(--accent) 24%, transparent);
+      --hover-bg: color-mix(in srgb, var(--accent) 10%, transparent);
+      --hover-bg2: color-mix(in srgb, var(--accent) 16%, transparent);
+      --sidebar-hover: color-mix(in srgb, var(--accent) 11%, transparent);
+    }
+    /* 圆角签名深浅共用（2026-11-15）：素纸 1–6、星夜 6–22、糖果独占大圆档。
+     * 11-12 四期加过一版，11-13「精准退糖果」把它连带撤掉了，浅色因此连「软」也没了。
+     * --r-* 属「有意深浅共用」类令牌，冒烟不要求浅色回填。 */
+    html[data-panel-skin="candy"] {
+      --r-xs: 6px;
+      --r-sm: 9px;
+      --r-md: 12px;
+      --r-lg: 20px;
+      --r-xl: 26px;
+      --r-2xl: 30px;
     }
     html[data-panel-skin="candy"] .aurora-glass {
       --aurora-1: rgba(244, 164, 180, 0.12);
@@ -3340,23 +3368,29 @@
         inset 0 1px 0 var(--glass-inner-line),
         inset 0 0 0 1px rgba(244, 164, 180, 0.22);
     }
+    /* 浅色色斑（2026-11-15 重做）：旧值 0.10/0.08/0.08 在亮壁纸前等于没有，玻璃能读出的只有
+     * 「白」——浅色「普通」的一半是这个。三团提到 0.26/0.20/0.16 并删掉薄荷绿（11-12 已判
+     * 「与粉紫相撞发脏」，当时撤过一版但浅色块里这行一直没跟着删），色相收在 粉→香芋→蜜桃。
+     * 底色从暖白 #fdf9f6 改奶糖粉 #fdf4f8；阴影与描边同步去棕（人眼读「粉卡压出灰影」＝脏）。 */
     html[data-theme="light"][data-panel-skin="candy"] .aurora-glass {
-      --aurora-1: rgba(244, 164, 180, 0.10);
-      --aurora-2: rgba(166, 214, 196, 0.08);
-      --aurora-3: rgba(196, 178, 246, 0.08);
-      --glass-tint: rgba(253, 249, 246, 0.80);
-      --glass-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.46), rgba(253, 249, 246, 0.12) 72%);
-      --glass-inner-line: rgba(255, 253, 250, 0.92);
-      --glass-shadow: rgba(128, 96, 108, 0.16);
+      --aurora-1: rgba(246, 150, 184, 0.34);
+      --aurora-2: rgba(198, 170, 246, 0.28);
+      --aurora-3: rgba(252, 198, 168, 0.22);
+      --glass-tint: rgba(253, 244, 248, 0.86);
+      --glass-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.50), rgba(253, 244, 248, 0.10) 72%);
+      --glass-inner-line: rgba(255, 255, 255, 0.95);
+      --glass-shadow: rgba(178, 106, 140, 0.20);
       box-shadow:
-        0 16px 36px var(--glass-shadow),
+        0 18px 40px -14px var(--glass-shadow),
         inset 0 1px 0 var(--glass-inner-line),
-        inset 0 0 0 1px rgba(214, 130, 156, 0.24);
+        inset 0 0 0 1px rgba(214, 138, 170, 0.26),
+        /* 糖果的「柔光」：深色靠属性色内发光，浅色这一层是它的同构——粉光只从边缘渗进来 */
+        inset 0 0 34px -10px rgba(246, 150, 184, 0.32);
     }
     html[data-panel-skin="candy"] .aurora-glass--dialog { --glass-tint: rgba(30, 24, 36, 0.88); }
     html[data-panel-skin="candy"] .aurora-glass--panel { --glass-tint: rgba(30, 24, 36, 0.70); }
-    html[data-theme="light"][data-panel-skin="candy"] .aurora-glass--dialog { --glass-tint: rgba(253, 250, 247, 0.94); }
-    html[data-theme="light"][data-panel-skin="candy"] .aurora-glass--panel { --glass-tint: rgba(253, 250, 247, 0.82); }
+    html[data-theme="light"][data-panel-skin="candy"] .aurora-glass--dialog { --glass-tint: rgba(253, 247, 251, 0.96); }
+    html[data-theme="light"][data-panel-skin="candy"] .aurora-glass--panel { --glass-tint: rgba(253, 247, 251, 0.88); }
     html[data-panel-skin="candy"] .aurora-glass--plain {
       --aurora-1: transparent;
       --aurora-2: transparent;
@@ -3368,12 +3402,12 @@
       --aurora-1: transparent;
       --aurora-2: transparent;
       --aurora-3: transparent;
-      --glass-tint: rgba(250, 240, 238, 0.76);
+      --glass-tint: rgba(252, 242, 248, 0.80);
       animation: none;
     }
     @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
       html[data-panel-skin="candy"] .aurora-glass { --glass-tint: rgba(24, 18, 30, 0.88); }
-      html[data-theme="light"][data-panel-skin="candy"] .aurora-glass { --glass-tint: rgba(252, 246, 244, 0.96); }
+      html[data-theme="light"][data-panel-skin="candy"] .aurora-glass { --glass-tint: rgba(252, 243, 248, 0.97); }
     }
 
     /* ====== 星夜专属材质（data-wallpaper="night" × 默认族）======
