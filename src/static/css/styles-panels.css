@@ -6617,7 +6617,9 @@ html[data-theme="light"][data-panel-skin="candy"] .thinking-slider {
    background-image 一并重置。 */
 .settings-overlay { position: fixed; inset: 0; z-index: 9000; background: rgba(0, 0, 0, .45); opacity: 0; pointer-events: none; transition: opacity .18s ease; }
 .settings-overlay.show { opacity: 1; pointer-events: auto; }
-.settings-drawer { position: absolute; top: 0; right: 0; height: 100%; width: min(720px, 94vw); display: flex; flex-direction: column; border-left: 1px solid var(--border); color: var(--text-primary); transform: translateX(102%); transition: transform .22s ease; }
+/* T448：抽屉 720→880——模型页右栏标题要和「更新列表/删除分组」两个文字按钮同行，
+   720 下标题只剩约 80px 必截断；全局加宽各页签一起呼吸，小屏仍走 94vw（≤640px 全屏）。 */
+.settings-drawer { position: absolute; top: 0; right: 0; height: 100%; width: min(880px, 94vw); display: flex; flex-direction: column; border-left: 1px solid var(--border); color: var(--text-primary); transform: translateX(102%); transition: transform .22s ease; }
 .settings-overlay.show .settings-drawer { transform: none; }
 .settings-drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 15px 20px; border-bottom: 1px solid var(--border); flex: none; }
 .settings-drawer-title { font-size: var(--fs-xl); font-weight: 500; }
@@ -6686,7 +6688,7 @@ html[data-theme="light"][data-panel-skin="candy"] .thinking-slider {
 .settings-model-top p { font-size: var(--fs-md); color: var(--text-secondary); margin: 0; line-height: 1.6; }
 .settings-model-primary { flex: none; padding: 8px 13px; border: 1px solid var(--border); border-radius: var(--r-md); background: color-mix(in srgb, var(--text-primary) 10%, transparent); color: var(--text-primary); font-size: var(--fs-md); font-family: inherit; cursor: pointer; white-space: nowrap; }
 .settings-model-primary:hover { border-color: var(--accent); }
-.settings-model-board { display: grid; grid-template-columns: 176px minmax(0, 1fr); gap: 14px; min-height: 320px; padding: 14px; border: 1px solid var(--border); border-radius: var(--r-lg); background: color-mix(in srgb, var(--text-primary) 4%, transparent); }
+.settings-model-board { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 14px; min-height: 320px; padding: 14px; border: 1px solid var(--border); border-radius: var(--r-lg); background: color-mix(in srgb, var(--text-primary) 4%, transparent); }
 .settings-model-side { min-width: 0; padding-right: 12px; border-right: 1px solid var(--border); overflow-y: auto; }
 .settings-model-group-label { font-size: var(--fs-xs); color: var(--text-secondary); padding: 8px 8px 6px; letter-spacing: .4px; }
 .settings-model-vendor { display: flex; align-items: center; gap: 7px; width: 100%; padding: 8px; border: 1px solid transparent; border-radius: var(--r-md); background: transparent; color: var(--text-secondary); font-size: var(--fs-sm); font-family: inherit; text-align: left; cursor: pointer; }
