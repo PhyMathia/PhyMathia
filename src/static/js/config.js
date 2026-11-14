@@ -213,6 +213,11 @@ const STORAGE_KEY_THEME_SPLIT = 'phymathia_theme_split';
 const STORAGE_KEY_STYLE_FAMILY_DARK = 'phymathia_style_family_dark';
 const STORAGE_KEY_STYLE_FAMILY_LIGHT = 'phymathia_style_family_light';
 const STORAGE_KEY_LEVEL = 'phymathia_level';
+// 新窗口阅读页自己的明暗偏好（2026-11-14）：存 JSON `{theme:'light'|'dark', app:'light'|'dark'}`
+// ——app 记「切的时候主应用是什么明暗」，换了全站主题就不再套用（阅读页回到跟随）。
+// 写入发生在同源外壳 content-preview.html（沙箱 iframe 无存储权限），那边按字面量镜像
+// 这条键名——改键名要两边一起改（graph-custom.js 只读）。
+const STORAGE_KEY_READER_THEME = 'phymathia_reader_theme';
 const STORAGE_KEY_SESSIONS = 'phymathia_sessions';
 // 公式渲染自愈修复字典（render.js）：{ 坏公式原文: 修好公式 }，启发式/AI 修复共用，
 // 命中即原位换修好版——只动显示不改存盘内容（2026-10-12）

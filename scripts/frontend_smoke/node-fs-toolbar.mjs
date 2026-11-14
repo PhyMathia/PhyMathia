@@ -214,6 +214,10 @@ export function run() {
       if (plain.includes('node-fs-action') || plain.includes('data-node-id')) return false;
       const ctxd = sandbox._buildContentPreviewPage('标题', '<p>正文</p>', { nodeId: 'n1', token: 'tok_smoke', title: '标题', bridge: true });
       if (!ctxd.includes('data-node-id="n1"') || !ctxd.includes('tok_smoke') || !ctxd.includes('node-fs-action')) return false;
+      // 2026-11-14：阅读页随主题明暗＋页内明暗开关；ctx 不带 theme 时仍落深色（viewer 老调用）
+      const light = sandbox._buildContentPreviewPage('标题', '<p>正文</p>', { nodeId: 'n1', theme: 'light' });
+      if (!light.includes('data-theme="light"') || !light.includes('id="cpTheme"')) return false;
+      if (!sandbox._buildContentPreviewPage('标题', '<p>正文</p>').includes('data-theme="dark"')) return false;
       return true;
     } finally {
       sandbox.escapeHtml = realEsc;

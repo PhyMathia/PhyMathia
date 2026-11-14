@@ -684,6 +684,34 @@ function _nodeFsSourceText(node, message) {
   return node.content || '';
 }
 
+// 阅读页明暗（2026-11-14）：用户在新窗口里手动切过就认他的选择（由同源外壳落盘，见
+// content-preview.html），没切过跟随主应用。存的是 {theme, app}——app 记「当时主应用是
+// 什么明暗」，用户之后换过全站主题就不再套用它，自动回到跟随（否则会变成改不回来的坑）。
+// localStorage 读不到（隐私模式/被禁）也回落跟随。
+function _nodeFsReaderTheme() {
+  const appTheme = _nodeFsAppTheme();
+  try {
+    const key = typeof STORAGE_KEY_READER_THEME !== 'undefined' ? STORAGE_KEY_READER_THEME : 'phymathia_reader_theme';
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const saved = JSON.parse(raw);
+      if (saved && (saved.theme === 'light' || saved.theme === 'dark') && saved.app === appTheme) {
+        return saved.theme;
+      }
+    }
+  } catch (e) { /* 解析失败或存储不可用：回落跟随主应用 */ }
+  return appTheme;
+}
+
+// 主应用当前明暗（桩环境没有真 DOM 时按深色，绝不抛错——冒烟与 viewer 老调用都走这条）
+function _nodeFsAppTheme() {
+  try {
+    if (typeof document !== 'undefined' && document.documentElement
+      && document.documentElement.getAttribute('data-theme') === 'light') return 'light';
+  } catch (e) { /* 无 DOM：深色 */ }
+  return 'dark';
+}
+
 // 头部全屏钮（渲染侧注入点：_customNodeHeaderHtml 与 _renderNodeHtml 内联头部）。
 // viz 模块不注入——它的卡片工具栏本就自带全屏/新窗口，重复挂两份反而混乱
 function _nodeFsTogglesHtml(node, message) {
@@ -781,10 +809,9 @@ async function openNodeNewWindow(nodeId) {
   // readonly 随快照带进预览页：查阅模式下预览浮条不亮「追问」（startQuestionWorkflow
   // 在主应用侧还会再拦一道，双保险）
   const ro = typeof phyIsReadonly === 'function' && phyIsReadonly();
-  // 阅读页跟随主应用明暗（2026-11-14 推翻 10-14 的「深色定版」）：读 html[data-theme]，
-  // 缺省按深色——viewer 家族不经过这里，行为不变
-  const theme = (typeof document !== 'undefined' && document.documentElement
-    && document.documentElement.getAttribute('data-theme') === 'light') ? 'light' : 'dark';
+  // 阅读页跟随主应用明暗（2026-11-14 推翻 10-14 的「深色定版」）：手动切过按用户的
+  // 选择，没切过读 html[data-theme]；viewer 家族不经过这里，行为不变
+  const theme = _nodeFsReaderTheme();
   let ctx = null;
   if (typeof _buildNodeFsPreviewScript === 'function') {
     ctx = isFile
@@ -960,6 +987,18 @@ body::before{
   font-variant-numeric:tabular-nums;
 }
 .cp-meta:empty{display:none;}
+/* 页内明暗开关：切换写进 --cp-* 令牌，与主应用主题互不影响 */
+.cp-theme{
+  flex:none;width:28px;height:28px;display:grid;place-items:center;padding:0;
+  border:1px solid transparent;border-radius:9px;background:transparent;
+  color:var(--cp-mute);cursor:pointer;
+  transition:color .15s ease,background .15s ease,border-color .15s ease;
+}
+.cp-theme:hover{color:var(--cp-accent);background:var(--cp-chip-bg);border-color:var(--cp-line);}
+.cp-theme svg{width:15px;height:15px;display:block;}
+.cp-theme .cp-i-sun{display:none;}
+html[data-theme="dark"] .cp-theme .cp-i-sun{display:block;}
+html[data-theme="dark"] .cp-theme .cp-i-moon{display:none;}
 .cp-progress{position:absolute;left:0;right:0;bottom:-1px;height:2px;overflow:hidden;}
 .cp-progress>span{
   display:block;height:100%;width:100%;transform:scaleX(0);transform-origin:0 50%;
@@ -1146,17 +1185,46 @@ const CONTENT_PREVIEW_BOOT = `
       try{ window.scrollTo({top:0,behavior:'smooth'}); }catch(e){ window.scrollTo(0,0); }
     });
   }
+  /* 页内明暗开关（2026-11-14）：只改本页 data-theme，不碰主应用主题。
+     沙箱 iframe 是 opaque origin、拿不到存储，把选择交给同源外壳落盘——
+     下次开新窗口由主应用读同一键决定初始明暗 */
+  var themeBtn=document.getElementById('cpTheme');
+  function syncThemeTitle(){
+    if(!themeBtn) return;
+    var light=document.documentElement.getAttribute('data-theme')==='light';
+    themeBtn.title=light?'切换为深色':'切换为浅色';
+    themeBtn.setAttribute('aria-label',themeBtn.title);
+  }
+  syncThemeTitle();
+  if(themeBtn){
+    themeBtn.addEventListener('click',function(){
+      var root=document.documentElement;
+      var next=root.getAttribute('data-theme')==='light'?'dark':'light';
+      root.setAttribute('data-theme',next);
+      syncThemeTitle();
+      try{
+        if(window.parent&&window.parent!==window){
+          window.parent.postMessage({__phymathia:1,kind:'cp-theme',theme:next,
+            app:root.getAttribute('data-app-theme')||''},'*');
+        }
+      }catch(e){}
+    });
+  }
   paint();
 })();
 `;
 
 function _buildContentPreviewPage(title, contentHtml, ctx) {
   const theme = (ctx && ctx.theme) === 'light' ? 'light' : 'dark';
+  // 副属性 data-app-theme 记「开窗时主应用是什么明暗」：页内手动切过的偏好只在同一个
+  // 主应用主题下生效，用户在设置里换了全站主题，阅读页自动回到跟随（见 node-fs-toolbar
+  // 那枚开关与 content-preview.html 的落盘逻辑）
+  const appTheme = _nodeFsAppTheme();
   const bodyAttr = (ctx && ctx.nodeId) ? ' data-node-id="' + escapeHtml(ctx.nodeId) + '"' : '';
   const scriptHtml = (ctx && typeof _buildNodeFsPreviewScript === 'function')
     ? '<script>' + _buildNodeFsPreviewScript(ctx) + '</script>'
     : '';
-  return '<!DOCTYPE html><html lang="zh-CN" data-theme="' + theme + '"><head><meta charset="UTF-8">'
+  return '<!DOCTYPE html><html lang="zh-CN" data-theme="' + theme + '" data-app-theme="' + appTheme + '"><head><meta charset="UTF-8">'
     + '<meta name="viewport" content="width=device-width, initial-scale=1.0">'
     + '<meta name="color-scheme" content="' + (theme === 'light' ? 'light' : 'dark') + '">'
     + '<title>' + escapeHtml(title) + ' · PhyMathia</title>'
@@ -1165,6 +1233,12 @@ function _buildContentPreviewPage(title, contentHtml, ctx) {
     + '<header class="cp-head"><span class="cp-dot"></span><span class="cp-brand">PhyMathia</span>'
     + '<span class="cp-sep"></span><span class="cp-title">' + escapeHtml(title) + '</span>'
     + '<span class="cp-meta" id="cpMeta"></span>'
+    + '<button class="cp-theme" id="cpTheme" type="button" title="' + (theme === 'light' ? '切换为深色' : '切换为浅色') + '" aria-label="切换明暗">'
+    + '<svg class="cp-i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">'
+    + '<circle cx="12" cy="12" r="4.1"/><path d="M12 3.2v2M12 18.8v2M3.2 12h2M18.8 12h2M5.9 5.9l1.4 1.4M16.7 16.7l1.4 1.4M18.1 5.9l-1.4 1.4M7.3 16.7l-1.4 1.4"/></svg>'
+    + '<svg class="cp-i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<path d="M20.2 14.6A8.6 8.6 0 0 1 9.4 3.8a8.6 8.6 0 1 0 10.8 10.8z"/></svg>'
+    + '</button>'
     + '<span class="cp-progress" aria-hidden="true"><span></span></span></header>'
     + '<main class="cp-body"' + bodyAttr + '>' + contentHtml + '</main>'
     + '<footer class="cp-foot"><span></span><span class="cp-foot-label">PhyMathia · 阅读模式</span><span></span></footer>'

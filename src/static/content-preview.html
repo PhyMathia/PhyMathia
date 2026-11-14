@@ -58,7 +58,20 @@ window.addEventListener('message', function (ev) {
   var frame = document.getElementById('contentFrame');
   if (!frame || ev.source !== frame.contentWindow) return;
   var d = ev.data;
-  if (!d || d.__phymathia !== 1 || d.kind !== 'node-fs-action') return;
+  if (!d || d.__phymathia !== 1) return;
+  // 阅读页自己的明暗开关（2026-11-14）：只落盘、不转发主应用。沙箱 iframe 是 opaque
+  // origin 拿不到存储，而本页与主应用同源——键名与 config.js 的 STORAGE_KEY_READER_THEME
+  // 一致（那边只读，改名要两边一起改）
+  if (d.kind === 'cp-theme') {
+    try {
+      localStorage.setItem('phymathia_reader_theme', JSON.stringify({
+        theme: d.theme === 'light' ? 'light' : 'dark',
+        app: d.app === 'light' ? 'light' : 'dark'
+      }));
+    } catch (e0) { /* 存储被禁：仅本次有效 */ }
+    return;
+  }
+  if (d.kind !== 'node-fs-action') return;
   var ackIntoFrame = function (payload) {
     try { frame.contentWindow.postMessage(payload, '*'); } catch (e2) { /* 沙箱侧无从投递 */ }
   };
