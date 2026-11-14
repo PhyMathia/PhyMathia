@@ -7949,7 +7949,9 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
  *   壁纸几乎相同，读数＝「糊在白背景上的一张白纸」（深色卡之所以立得住，是因为它比壁纸暗）。
  *   抬到 86% 让卡片成为「实心奶糖块」，靠粉调弥散影浮起来——这比加深投影更有效，也不动属性色义。 */
 [data-theme="light"][data-node-skin="candy"] {
-  --node-glass-base: rgba(253, 244, 248, 0.94);
+  /* 2026-11-15 第二拍：奶糖白抬到 97%（原 94%）——浅色「雾蒙蒙」的一半来自卡面半透，
+   * 壁纸的柔焦云透过 6% 也是糊的；抬到 97% 后 blur(16px) 实际已看不出，卡面读作实底。 */
+  --node-glass-base: rgba(255, 252, 254, 0.97);
 }
 /* 2026-10-01 三/四调：用户两轮要求更亮——边线 28/44/46%→14/24/28%，投影 12%→10%。
  * 2026-11-15：投影改 accent 派生（粉调）——原 text-primary 10%（紫褐）在亮底上读成灰边。 */
@@ -7963,10 +7965,10 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
  * 磨砂感＝半透明卡面＋backdrop blur 透出背景；此前 94% 不透明白底把磨砂糊死＝用户指「看不出磨砂」。
  * 亮度不受影响：浅色画布底本就亮，白纱透出的仍是亮背景；属性色调改挂纯半透明（与深色同构造）。 */
 [data-theme="light"][data-node-skin="candy"] .graph-node {
-  /* 属性色 26%→42%（2026-11-15）：浅色下 26% 的粉彩盖在亮壁纸上几乎读成白，卡面失去「糖果色」；
-   * 42% 是「明确是淡紫蓝/淡杏、但深色正文仍清晰」的那一档（真机 2x 逐档比对 34/42/50 定）。 */
-  --cd-face-a: color-mix(in srgb, var(--node-attr) 42%, transparent);
-  --cd-face-b: color-mix(in srgb, color-mix(in srgb, var(--bg-panel) 90%, var(--accent)) 86%, transparent);
+  /* 属性色 26%→42%→36%（2026-11-15 两拍）：42% 有糖果色但整卡偏暗，用户报「亮度不够」；
+   * 36% 保住淡紫蓝/淡杏的识别度，卡面亮度回到 213（原 206）。 */
+  --cd-face-a: color-mix(in srgb, var(--node-attr) 36%, transparent);
+  --cd-face-b: color-mix(in srgb, color-mix(in srgb, var(--bg-panel) 93%, var(--accent)) 96%, transparent);
   --cd-module-line: color-mix(in srgb, var(--node-attr) 45%, var(--node-glass-base));
   --cd-module-line-hover: color-mix(in srgb, var(--node-attr) 56%, var(--node-glass-base));
 }
