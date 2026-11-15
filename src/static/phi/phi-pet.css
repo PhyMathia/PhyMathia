@@ -108,6 +108,31 @@ html[data-panel-skin] .phi-pet {
   --phi-lamp-off-dark: var(--accent);
 }
 
+/* 山影（inkstone）例外（2026-11-15）：这条通用联动的前提是「家族 accent 是够饱和的彩色」，
+   而山影的 accent 是**月白 #cfdde0**——壳体一起吃 accent 就变成一团近白，轮廓、眼睛、
+   明暗面全糊在一起（用户实报「桌宠长得不好看了，白色的」）。
+   改成砚石自己的语言：**墨身 + 月白描边**——身体走石板青（与节点卡同一支墨），
+   月白只当轮廓光与受光面（正好是这套主题「墨体、留白点睛」的做法）。
+   眼睛保持琥珀（通用块已定，蓝色在青灰壳上会隐身，这条沿用）。 */
+html[data-panel-skin="inkstone"] .phi-pet {
+  --phi-body: #41626a;
+  --phi-body-hi: #74a0a8;
+  --phi-body-shadow: #0d1a1d;
+  --phi-outline: #cfdde0;
+  --phi-lamp-off: #74a0a8;
+  --phi-lamp-off-dark: #41626a;
+}
+html[data-theme="light"][data-panel-skin="inkstone"] .phi-pet {
+  --phi-body: #5f7f86;
+  --phi-body-hi: #9dbbc0;
+  --phi-body-shadow: #2b4247;
+  /* 浅色描边不能再取月白（#e7eff1 与纸面几乎同色，轮廓直接消失）——取淡石青，
+     在暖白纸上是「墨线」而不是「高光」 */
+  --phi-outline: #a9c4c9;
+  --phi-lamp-off: #9dbbc0;
+  --phi-lamp-off-dark: #5f7f86;
+}
+
 .phi-code-symbols {
   position: absolute;
   inset: 0;
