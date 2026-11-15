@@ -2065,6 +2065,36 @@
       height: 13px;
     }
 
+    /* ====== 全局 toast 的手动关闭钮（2026-11-15）=====
+       与复制钮同款磁贴，同样只对报错类显示。给「自动消失失灵」留一条确定退路：
+       用户不必等倒计时、也不必刷新页面，点 × 立即收掉（ui.js::_toastDismiss）。 */
+    #phymathia_toast .toast-close-btn {
+      display: none;
+      flex: none;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      margin: 0 0 0 -4px;
+      padding: 0;
+      border: none;
+      border-radius: var(--r-sm);
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 16px;
+      line-height: 1;
+      pointer-events: auto;
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+    #phymathia_toast.toast-copyable .toast-close-btn {
+      display: inline-flex;
+    }
+    #phymathia_toast .toast-close-btn:hover {
+      background: var(--btn-active-bg);
+      color: var(--accent);
+    }
+
     /* ====== 完成通知卡片 ====== */
 
     .completion-card {

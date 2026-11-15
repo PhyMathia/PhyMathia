@@ -423,9 +423,23 @@ document.addEventListener('click', (e) => {
 // 常量——没传时长时报错类走长档（TOAST_MS_LONG），且悬停暂停自动消失，
 // 不然 2.5s/3.6s 也来不及点复制。
 //
+// 「有时不自动关闭」四处兜底（2026-11-15 用户实报，错误文案是上游 429 并发超限）：
+//   ① 旧版 mouseenter 直接 clearTimeout，恢复全靠 mouseleave；鼠标移出浏览器窗口、
+//      切标签/切程序、被弹层盖住时这个事件会丢，倒计时被取消后再没人装回去＝永久停留。
+//      现在暂停有上限（8s），且失焦／页面隐藏／指针离开文档都强制恢复。
+//   ② 淡出只改 opacity，透明条仍 pointer-events:auto 继续吃鼠标事件（还会干扰下一条
+//      提示的计时）；淡出时一并关掉交互。
+//   ③ 全站共用一条 toast，并发失败会接连弹同文案报错，每次把 3.6s 重新计时，看着
+//      像赖着不走；相同报错 1.2s 内只留第一条。
+//   ④ 报错 toast 加手动关闭 ×，任何异常都留一条确定退路。
+// 下面两个值不是第三/第四档「显示时长」——utils.js 的 TOAST_MS / TOAST_MS_LONG 仍是
+// 全仓唯二的显示时长常量，这里只是去重窗口与暂停上限。
+//
 // 结构走 innerHTML 拼 + toast 自身事件委托（不 createElement 子节点、不 querySelector
 // 持有引用）：冒烟沙箱的 document 桩是裸对象，子节点 API 一概没有，委托处理器只在
 // 真实点击时才跑，桩环境天然摸不到。
+const TOAST_DEDUPE_MS = 1200;     // 相同报错去重窗口：一批并发失败只占一次显示
+const TOAST_MAX_PAUSE_MS = 8000;  // 悬停暂停上限：mouseleave 丢了也不能永远挂着
 function _toastIsErrorMsg(msg) {
   return /失败|错误|无法|异常|超时|Error|error|拒绝/.test(String(msg == null ? '' : msg));
 }
@@ -478,28 +492,46 @@ function showToast(msg, duration = null, opts) {
     // 底色/阴影归玻璃类，内联样式里不能再写 background（会整块盖掉极光层）
     toast.className = 'aurora-glass aurora-glass--compact';
     toast.style.cssText = 'position:fixed;bottom:120px;left:50%;transform:translateX(-50%) translateY(10px);color:var(--text-primary);border:1px solid var(--border-color);border-radius:10px;padding:10px 20px;font-size:13px;z-index:9999;opacity:0;transition:opacity 0.3s,transform 0.3s;pointer-events:none;white-space:normal;max-width:min(92vw,560px);word-break:break-word;display:flex;align-items:center;gap:10px;';
-    // 文案与复制钮每次整块重渲（innerHTML 拼），按钮显隐由 .toast-copyable 类驱动
+    // 文案与按钮每次整块重渲（innerHTML 拼），按钮显隐由 .toast-copyable 类驱动
     // （CSS 默认 display:none），避免持有子节点引用
-    // 事件委托：点复制钮只认按钮自身，toast 其余区域不拦点击
+    // 事件委托：只认按钮自身，toast 其余区域不拦点击
     toast.addEventListener('click', (e) => {
       const t = e && e.target;
-      if (t && typeof t.closest === 'function' && t.closest('.toast-copy-btn')) {
-        _copyToastText(toast, t.closest('.toast-copy-btn'));
-      }
+      if (!t || typeof t.closest !== 'function') return;
+      if (t.closest('.toast-close-btn')) { _toastDismiss(toast); return; }
+      if (t.closest('.toast-copy-btn')) _copyToastText(toast, t.closest('.toast-copy-btn'));
     });
     // 悬停暂停自动消失（复制型 toast 才收得到 mouseenter：见下方 pointer-events 切换）
     toast.addEventListener('mouseenter', () => {
+      if (toast._hiding) return;
       clearTimeout(toast._timer);
       toast._remaining = Math.max(0, (toast._deadline || 0) - Date.now());
+      toast._paused = true;
+      // 兜底①：mouseleave 丢了也不能永远挂着——暂停最多 8 秒
+      clearTimeout(toast._pauseTimer);
+      toast._pauseTimer = setTimeout(() => _toastResume(toast), TOAST_MAX_PAUSE_MS);
     });
-    toast.addEventListener('mouseleave', () => {
-      if (toast._hiding) return;   // 已进入消失动画，不用续命
-      _toastArm(toast, toast._remaining == null ? 0 : toast._remaining);
-    });
+    toast.addEventListener('mouseleave', () => _toastResume(toast));
+    // 指针直接移出浏览器窗口时 relatedTarget 为 null，mouseleave 未必派发
+    toast.addEventListener('mouseout', (e) => { if (!e.relatedTarget) _toastResume(toast); });
+    // 失焦／切标签时同样补一次恢复，不等鼠标回来
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('blur', () => _toastResume(toast));
+    }
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', () => { if (document.hidden) _toastResume(toast); });
+    }
     document.body.appendChild(toast);
   }
+  // 兜底③：一批并发失败会接连弹同文案报错，旧版每次都重置 3.6s＝看着永不关闭；
+  // 只认报错类，普通提示（含连点反馈）行为不变；已淡出的不算重复。
+  if (wantCopy && !toast._hiding && toast._lastText === text
+      && Date.now() - (toast._lastAt || 0) < TOAST_DEDUPE_MS) return;
+  toast._lastText = text;
+  toast._lastAt = Date.now();
   toast.innerHTML = '<span class="toast-msg-text">' + escapeHtml(text)
-    + '</span><button type="button" class="toast-copy-btn" title="复制" aria-label="复制">' + copyIcon + '</button>';
+    + '</span><button type="button" class="toast-copy-btn" title="复制" aria-label="复制">' + copyIcon + '</button>'
+    + '<button type="button" class="toast-close-btn" title="关闭" aria-label="关闭提示">&times;</button>';
   // T426①：CSS 只截显示到 3 行，完整文案仍在 .toast-msg-text 里供复制；悬停看全文
   toast.title = text;
   toast.className = 'aurora-glass aurora-glass--compact' + (wantCopy ? ' toast-copyable' : '');
@@ -516,13 +548,39 @@ function showToast(msg, duration = null, opts) {
 
 function _toastArm(toast, ms) {
   clearTimeout(toast._timer);
+  clearTimeout(toast._pauseTimer);
+  toast._paused = false;
   toast._deadline = Date.now() + ms;
   toast._hiding = false;
   toast._timer = setTimeout(() => {
     toast._hiding = true;
     toast.style.opacity = '0';
     toast.style.transform = 'translateX(-50%) translateY(10px)';
+    // 兜底②：淡出不是移除节点，透明条若仍可交互会继续吃鼠标事件、
+    // 干扰下一条提示的计时，一并关掉（下次 showToast 会按类重新放开）。
+    toast.style.pointerEvents = 'none';
   }, ms);
+}
+
+// 暂停后的统一恢复口：mouseleave / 指针移出文档 / 失焦 / 页面隐藏 / 暂停超时都走这里。
+// 只在真正处于暂停态时续命，避免多条恢复路径重复装计时器。
+function _toastResume(toast) {
+  if (!toast._paused) return;
+  toast._paused = false;
+  clearTimeout(toast._pauseTimer);
+  if (toast._hiding) return;   // 已进入消失动画，不用续命
+  _toastArm(toast, toast._remaining == null ? 0 : toast._remaining);
+}
+
+// 兜底④：报错 toast 的手动关闭 × ——所有自动路径都失灵时用户仍能自己收掉。
+function _toastDismiss(toast) {
+  clearTimeout(toast._timer);
+  clearTimeout(toast._pauseTimer);
+  toast._paused = false;
+  toast._hiding = true;
+  toast.style.opacity = '0';
+  toast.style.transform = 'translateX(-50%) translateY(10px)';
+  toast.style.pointerEvents = 'none';
 }
 
 function showCompletionCard(title, subtitle, duration = 4000) {

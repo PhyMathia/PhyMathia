@@ -2284,6 +2284,21 @@ check('错误 toast 带复制钮：报错一键复制、非报错无钮、时长
   return true;
 });
 
+// T300②：报错 toast「有时不自动关闭」（2026-11-15 用户实报，文案是上游 429 并发超限）。
+// 纯静态契约：四处兜底都在 ui.js / styles.css 里，删任何一处都会让那个现象回来。
+check('报错 toast 不会赖着不走：暂停有兜底／淡出禁交互／重复报错去重／可手动关闭', () => {
+  const src = fs.readFileSync('src/static/js/ui.js', 'utf8');
+  if (!src.includes('TOAST_MAX_PAUSE_MS') || !src.includes('function _toastResume')) throw new Error('悬停暂停缺兜底恢复（mouseleave 丢了就永久停留）');
+  if (!src.includes("addEventListener('blur'") || !src.includes('visibilitychange')) throw new Error('窗口失焦／页面隐藏未恢复计时');
+  if (!src.includes('toast._paused = true')) throw new Error('悬停未标暂停态，多条恢复路径会重复装计时器');
+  if (!src.includes("toast.style.pointerEvents = 'none'")) throw new Error('淡出后未关掉交互（透明条仍吃鼠标事件）');
+  if (!src.includes('TOAST_DEDUPE_MS') || !src.includes('toast._lastText')) throw new Error('相同报错未去重（并发失败会反复重置倒计时）');
+  if (!src.includes('function _toastDismiss')) throw new Error('缺手动关闭出口');
+  const css = fs.readFileSync('src/static/css/styles.css', 'utf8');
+  if (!css.includes('#phymathia_toast .toast-close-btn')) throw new Error('CSS 缺关闭钮规则');
+  return true;
+});
+
 check('aurora-glass--dialog：表单类弹窗档（深浅两套 + 可读性优先的底色 + 降级）', () => {
   const css = fs.readFileSync('src/static/css/styles.css', 'utf8');
   if (!/\.aurora-glass--dialog \{/.test(css)) throw new Error('缺 --dialog 弹窗变体');
