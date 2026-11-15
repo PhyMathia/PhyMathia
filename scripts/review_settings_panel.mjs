@@ -200,7 +200,7 @@ try {
   const expect = {
     appearance: '深浅模式', level: '难度等级', model: '模型设置', memory: '记忆与画像',
     phi: '深度思考', quiz: '出题素材源', canvas: '允许 AI 自动判断回答方式',
-    hotkeys: '解锁编辑',
+    hotkeys: '只读浏览',
     data: '数据管理', account: '账号与查阅',
     trash: '自动保留', about: '版本', help: '新手引导'
   };
@@ -355,17 +355,18 @@ try {
   // 2026-11-15 用户拍板：一页一把锁（默认锁定、不落盘）＋ 点框即录 ＋ 恢复默认
   ctx.settingsSelectTab('hotkeys');
   const kh0 = content.innerHTML;
-  kh0.includes('解锁编辑') && !kh0.includes('onfocus="settingsHotkeyFocus')
-    ? ok('快捷键页：默认锁定只读，键位框不可聚焦') : bad('快捷键默认锁定', kh0.slice(0, 160));
+  // 2026-11-15 二轮：锁条按钮改图标（unlock/lock SVG＋aria-label），判定不再认按钮文字
+  kh0.includes('aria-label="解锁编辑"') && kh0.includes('settings-hk-lockbtn') && !kh0.includes('onfocus="settingsHotkeyFocus')
+    ? ok('快捷键页：默认锁定只读（unlock 图标钮），键位框不可聚焦') : bad('快捷键默认锁定', kh0.slice(0, 160));
   kh0.includes('恢复全部默认') && kh0.includes('系统固定')
     ? ok('快捷键页：恢复全部默认入口与系统固定说明就位') : bad('快捷键页骨架', kh0.slice(0, 160));
   ctx.settingsHotkeyToggleLock();
   const kh1 = content.innerHTML;
-  kh1.includes('重新锁定') && kh1.includes('onfocus="settingsHotkeyFocus')
+  kh1.includes('aria-label="重新锁定"') && kh1.includes('onfocus="settingsHotkeyFocus')
     ? ok('快捷键页：解锁后键位框可聚焦（点框即录）') : bad('快捷键解锁', kh1.slice(0, 160));
   ctx.settingsSelectTab('about');
   ctx.settingsSelectTab('hotkeys');
-  content.innerHTML.includes('解锁编辑')
+  content.innerHTML.includes('aria-label="解锁编辑"')
     ? ok('快捷键页：切走再切回自动重新上锁') : bad('切页回锁', '仍停在解锁态');
   // 入口转发（会收抽屉，放最后；收完重开给只读段用）
   ctx.settingsOpenKnowledge();

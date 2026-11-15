@@ -383,7 +383,10 @@ const UI_ICON_SVG = {
   globe: makeLineIcon('<circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><ellipse cx="12" cy="12" rx="4.5" ry="9"></ellipse>'),
   user: makeLineIcon('<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle>'),
   // Φ 模式菜单「失败自动换备用模型」开关：双向循环＝换一个再来，与 reset（单向环）区分
-  repeat: makeLineIcon('<path d="M17 2l4 4-4 4"></path><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><path d="M7 22l-4-4 4-4"></path><path d="M21 13v2a4 4 0 0 1-4 4H3"></path>')
+  repeat: makeLineIcon('<path d="M17 2l4 4-4 4"></path><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><path d="M7 22l-4-4 4-4"></path><path d="M21 13v2a4 4 0 0 1-4 4H3"></path>'),
+  // 快捷键页锁条按钮（2026-11-15 用户拍板：按钮不用文字用图标）——unlock 开着锁舌＝点去解锁，lock 闭着锁舌＝点去重新锁定
+  lock: makeLineIcon('<rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path>'),
+  unlock: makeLineIcon('<rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path>')
 };
 const LEVEL_ICON_SVG = {
   'middle': UI_ICON_SVG.school,

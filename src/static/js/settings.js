@@ -812,10 +812,12 @@ function _settingsPageHotkeys() {
   return _sHead('快捷键', '查看和自定义全站快捷键。改动立即生效，速查面板与右键菜单提示会一起变。')
     + '<div class="settings-hk-lockbar' + (_settingsHotkeyUnlocked ? ' is-unlocked' : '') + '">'
       + '<span class="settings-hk-lockbar-text">' + (_settingsHotkeyUnlocked
-        ? '编辑中 · 点键位框后直接按下新组合键，按 Esc 取消。改完点「重新锁定」。'
-        : '只读浏览 · 快捷键照常能用，只是不能改。要修改键位，先点右侧「解锁编辑」。') + '</span>'
-      + '<button type="button" class="settings-hk-lockbtn" onclick="settingsHotkeyToggleLock()">'
-      + (_settingsHotkeyUnlocked ? '重新锁定' : '解锁编辑') + '</button></div>'
+        ? '编辑中 · 点键位框后直接按下新组合键，按 Esc 取消。改完点右侧锁图标重新锁定。'
+        : '只读浏览 · 快捷键照常能用，只是不能改。要修改键位，先点右侧锁图标解锁编辑。') + '</span>'
+      + '<button type="button" class="settings-hk-lockbtn" onclick="settingsHotkeyToggleLock()"'
+      + ' title="' + (_settingsHotkeyUnlocked ? '重新锁定' : '解锁编辑') + '"'
+      + ' aria-label="' + (_settingsHotkeyUnlocked ? '重新锁定' : '解锁编辑') + '">'
+      + _settingsIcon(_settingsHotkeyUnlocked ? 'lock' : 'unlock') + '</button></div>'
     + '<div class="settings-hk-tools">'
       + '<input class="settings-hk-search" type="text" placeholder="搜索功能或键位" value="'
       + _settingsEsc(_settingsHotkeyQuery) + '" oninput="settingsHotkeyFilter(this.value)" aria-label="搜索快捷键">'

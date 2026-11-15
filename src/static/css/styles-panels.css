@@ -6833,8 +6833,9 @@ body:has(.settings-overlay.show) .memory-dialog-overlay { z-index: calc(var(--z-
 .settings-hk-lockbar { display: flex; align-items: center; gap: 14px; padding: 10px 12px; margin-bottom: 16px; border: 1px solid var(--border); border-radius: var(--r-md); background: color-mix(in srgb, var(--text-primary) 5%, transparent); }
 .settings-hk-lockbar.is-unlocked { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .settings-hk-lockbar-text { flex: 1; min-width: 0; font-size: var(--fs-sm); color: var(--text-primary); line-height: 1.5; }
-.settings-hk-lockbtn { flex: none; padding: 6px 12px; border: 1px solid var(--border); border-radius: var(--r-md); background: transparent; color: var(--text-primary); font-family: inherit; font-size: var(--fs-sm); cursor: pointer; }
+.settings-hk-lockbtn { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--border); border-radius: var(--r-md); background: transparent; color: var(--text-primary); cursor: pointer; }
 .settings-hk-lockbtn:hover { border-color: var(--accent); color: var(--accent); }
+.settings-hk-lockbtn svg { width: 15px; height: 15px; display: block; }
 .settings-hk-tools { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
 .settings-hk-search { flex: 1; min-width: 0; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--r-md); background: transparent; color: var(--text-primary); font-family: inherit; font-size: var(--fs-sm); }
 .settings-hk-search:focus { outline: none; border-color: var(--accent); }
