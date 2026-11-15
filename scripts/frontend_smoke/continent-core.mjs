@@ -1994,14 +1994,14 @@ check('aurora-glass 载体扩编：侧边栏/顶栏/二级栏（载体不得自�
   }
   if (!vm.includes('只读快照：不能添加节点')) throw new Error('查看器封禁面板时缺用户提示');
   // 2026-11-15 用户回拍：修改历史面板 fixed 左下，触发钮必须同侧（左簇直钮），
-  // 不得再塞回右下 ⋯；⋯ 留作低频画布工具收纳位（折叠/展开全部、视图复位）。
+  // 不得再塞回右下 ⋯；⋯ 留作低频画布工具收纳位（折叠/展开全部、快捷键速查）。
   const leftBar = gi.slice(gi.indexOf('toolbarEdit.innerHTML'), gi.indexOf('graphCanvas.appendChild(toolbarEdit)'));
   if (!/toggleGraphHistoryPanel\(\)/.test(leftBar)) throw new Error('修改历史按钮应在左簇（与左下方面板同侧）');
   const moreMenu = gi.slice(gi.indexOf('graph-tool-more-menu'), gi.indexOf('graphCanvas.appendChild(toolbar)'));
   if (/toggleGraphHistoryPanel\(\)/.test(moreMenu)) throw new Error('⋯ 菜单里不应再重复放修改历史');
-  for (const fn of ['graphToggleAllNodesMinimize()', 'graphViewReset()']) {
-    if (!moreMenu.includes(fn)) throw new Error('⋯ 菜单缺新工具：' + fn);
-  }
+  if (!moreMenu.includes('graphToggleAllNodesMinimize()')) throw new Error('⋯ 菜单缺折叠/展开全部节点');
+  // 2026-11-15 三拍：视图复位已退役（自动整理收尾自带 fitGraph），别再把它加回菜单
+  if (/graphViewReset|视图复位/.test(moreMenu)) throw new Error('⋯ 菜单不应再有已退役的「视图复位」');
   return true;
 });
 

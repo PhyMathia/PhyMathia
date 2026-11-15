@@ -128,7 +128,7 @@ function renderGraphCanvas(streaming) {
     // ⋯ 菜单＝低频画布工具的「收纳位」（2026-11-15 用户二拍：这个位置要留着）。
     // 修改历史原先也窝在这里，但它的面板是 fixed 左下（left:16 / bottom:72），
     // 点一下要横跨整屏才看得见结果——已挪回左簇做直钮，与面板上下相邻。
-    // 这里留审查（图体检）＋两项批量视图动作；自动整理是窄屏专属副本。
+    // 这里留审查（图体检）＋折叠/展开全部节点与快捷键速查；自动整理是窄屏专属副本。
     + '<div class="graph-tool-more-menu" role="menu" hidden>'
     + '<button class="graph-more-item graph-more-item--compact" role="menuitem" onclick="autoArrangeGraph();closeGraphToolbarMore()">'
     + svgHead + '<rect x="4" y="4" width="6" height="6" rx="1.5"></rect><rect x="14" y="4" width="6" height="6" rx="1.5"></rect>'
@@ -141,10 +141,6 @@ function renderGraphCanvas(streaming) {
     + svgHead + '<polyline points="4 14 10 14 10 20"></polyline><polyline points="20 10 14 10 14 4"></polyline>'
     + '<line x1="14" y1="10" x2="21" y2="3"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>'
     + '<span id="graphMoreMinimizeLabel">折叠全部节点</span></button>'
-    + '<button class="graph-more-item" role="menuitem" onclick="graphViewReset();closeGraphToolbarMore()">'
-    + svgHead + '<polyline points="1 4 1 10 7 10"></polyline>'
-    + '<path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>'
-    + '<span>视图复位</span></button>'
     // 快捷键速查（2026-11-15，backlog #469）：内容由 hotkeys.js 注册表自动渲染，
     // 只列真实支持的键。也可直接按 ? 打开。
     + '<button class="graph-more-item" role="menuitem" onclick="phyOpenHotkeyHelp();closeGraphToolbarMore()">'
@@ -1913,24 +1909,11 @@ function graphToggleAllNodesMinimize() {
   _syncGraphToolbarMoreLabels();
 }
 
-// 视图复位：缩放回 100% ＋ 卡片字号回默认 100%。两者都有独立入口（读数钮 / A±），
-// 但调乱之后没有「一键回默认」，收在 ⋯ 里当低频急救。不碰 pan 与布局，图不会挪位。
-function graphViewReset() {
-  const state = (typeof _graphState === 'function') ? _graphState() : null;
-  const zoom = state ? (state.zoom || 1) : 1;
-  const zoomChanged = Math.abs(zoom - 1) >= 0.005;
-  if (zoomChanged) zoomGraph(1 / zoom);
-  const scaleChanged = _graphTextScale !== 1;
-  if (scaleChanged) {
-    _graphTextScale = 1;
-    _saveGraphTextScale();
-    _applyGraphTextScale();
-    _afterGraphTextScaleChange();
-  }
-  if (typeof showToast === 'function') {
-    showToast(zoomChanged || scaleChanged ? '视图已复位：缩放与字号回到 100%' : '视图已是默认（缩放、字号都是 100%）');
-  }
-}
+// 2026-11-15 三拍：「视图复位」已退役（用户拍板删除）。自动整理收尾本就调
+// fitGraph()（graph-render-layout.js:423）重新适配并居中，视图层面不需要第二个入口；
+// 而把 zoom 硬拉 100% 反而会覆盖 fit 按图幅算出的倍率、并因中心锚缩放挪动 pan。
+// 字号回默认仍有独立入口：右键「字号 N%」（graph-contextmenu.js）与 A− / A+。
+// 别再把这一项加回 ⋯——来龙去脉见 docs/dev/canvas-modules.md（三）节。
 
 // 打开菜单时按当前状态改「折叠 / 展开全部节点」的文案，避免点开才发现方向反了。
 function _syncGraphToolbarMoreLabels() {
