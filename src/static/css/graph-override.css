@@ -968,39 +968,76 @@
   border-color: rgba(120, 100, 70, 0.2) !important;
 }
 
-/* ---------- 7.1 浅色工具按钮承托（2026-11-15 用户三拍，方案 A）----------
+/* ---------- 7.1 浅色工具按钮承托（方案 A，7.2 升到 B 分档）----------
    用户反馈「深色还可以，浅色有些主题不够清晰」：深色有 55% 压暗纱垫底，浅色按
    2026-10-04 拍板是裸壁纸，按钮又是 9-24 拍板的静息透明裸图标，对比度全交给壁纸
    亮度决定——素纸/糖果这类亮壁纸的高光会吃掉细线图标与边框。这里**只**给浅色
-   静息态补一层纸片底板＋实色描边＋极轻投影，深色一字不改。
+   静息态补一层底板＋实色描边＋极轻投影，深色一字不改。
+   承托只认 --chrome-surface / --chrome-ink 两个令牌，其余全部 color-mix 派生；
+   7.2 按壁纸套覆盖这两个值即可分档，不必再复制规则。
    刻意不写进上面那条 [data-theme="light"] .graph-tool-btn 块：它特指性 (0,2,1) 高于
    基础 :hover，写 background/color 会把悬停与 .active 的反馈一起压掉（冒烟有断言守着）。
    用 :not() 只在静息态命中，hover / :focus-visible / .active / [aria-pressed=true]
    自动让位给既有状态样式——Φ 激活的金色圆、选择文字与联系模式的 accent 底原样保留。
    容器仍只留布局（不挂底色/磨砂），符合 9-24 拍板；承托落在按钮自身。 */
 [data-theme="light"] .graph-canvas-toolbar .graph-tool-btn:not(:hover):not(:focus-visible):not(.active):not([aria-pressed="true"]) {
-  background: var(--graph-tool-surface) !important;
-  border-color: var(--graph-tool-edge) !important;
-  box-shadow: 0 1px 2px rgba(80, 62, 32, 0.12) !important;
+  background: var(--chrome-surface) !important;
+  border-color: color-mix(in srgb, var(--chrome-ink) 45%, transparent) !important;
+  color: var(--chrome-ink) !important;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--chrome-ink) 16%, transparent) !important;
 }
 [data-theme="light"] .graph-canvas-toolbar .graph-tool-btn:hover,
 [data-theme="light"] .graph-canvas-toolbar .graph-tool-btn:focus-visible {
-  background: var(--graph-tool-surface-hover) !important;
+  background: color-mix(in srgb, var(--chrome-surface) 84%, var(--chrome-ink) 16%) !important;
   border-color: var(--accent) !important;
   color: var(--accent) !important;
-  box-shadow: 0 1px 3px rgba(80, 62, 32, 0.16) !important;
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--chrome-ink) 22%, transparent) !important;
 }
-/* 凹槽：10% 墨底 / 12% 描边在亮壁纸上几乎读不出分组，提到「看得见但不抢按钮」为止 */
+/* 凹槽／分隔线／读数都从同一对令牌派生，跟着壁纸套一起换族 */
 [data-theme="light"] .graph-tool-group {
-  background: rgba(255, 252, 245, 0.72) !important;
-  border-color: rgba(120, 100, 70, 0.34) !important;
+  background: color-mix(in srgb, var(--chrome-surface) 78%, transparent) !important;
+  border-color: color-mix(in srgb, var(--chrome-ink) 28%, transparent) !important;
 }
 [data-theme="light"] .graph-tool-sep {
-  background: rgba(120, 100, 70, 0.30) !important;
+  background: color-mix(in srgb, var(--chrome-ink) 32%, transparent) !important;
 }
-/* 缩放读数：78% 墨色在亮底上偏淡，浅色下回到全墨（它是状态文字不是图标） */
 [data-theme="light"] .graph-tool-btn.graph-zoom-readout {
-  color: var(--graph-tool-ink) !important;
+  color: var(--chrome-ink) !important;
+}
+
+/* ---------- 7.2 按壁纸套分档（2026-11-15 方案 B）----------
+   量化口径：Edge canvas 把五套浅色横版壁纸按 cover 铺成 1120×320 后，采样工具条
+   所在的底部左右区域（WCAG 相对亮度近似 0–255）与标准差：
+     素纸 233/234 sd 1.7（暖米近纯平）  糖果 224/241 sd 5（左粉云右近白）
+     霓虹 238/239 sd 7.6（冷白蓝）      山影 197/198 sd 8.6（冷灰，全场最暗）
+     星夜 204/204 sd 58（光斑最花；浅色另有 20% 奶白纱，实际约 211）
+   A 一套通吃的近白底板：亮壁纸上只比背景亮 9~15（边界全靠描边、高光易吃掉），
+   暗／花壁纸上却亮 40+（像贴了一排白块）。B 按亮度反向补：
+     亮壁纸 → 底板略压暗（暗 10~16）、不透明度 0.92 压住高光；
+     暗／花壁纸 → 底板提亮稳波动（亮 30 上下），星夜 0.90 不透明把 sd 58 压到 ~6。
+   墨色按五套签名轴各走各的，不统一成一套高对比（素纸暖棕／糖果紫红／山影墨青／
+   霓虹蓝灰／星夜靛蓝）——差异按材质→几何→结构分层，配色放最后。
+   只覆盖这两个令牌；家族块 data-panel-skin 改过的四个 INK_TOKENS 一律不碰，
+   深浅成对回填的冒烟断言不受影响。首屏 data-wallpaper 未落时走 7.1 默认值。 */
+html[data-theme="light"][data-wallpaper="paper"] {
+  --chrome-surface: rgba(230, 222, 206, 0.92);
+  --chrome-ink: #3a2e1c;
+}
+html[data-theme="light"][data-wallpaper="candy"] {
+  --chrome-surface: rgba(238, 227, 231, 0.92);
+  --chrome-ink: #4b2a3d;
+}
+html[data-theme="light"][data-wallpaper="neon"] {
+  --chrome-surface: rgba(222, 230, 238, 0.92);
+  --chrome-ink: #243746;
+}
+html[data-theme="light"][data-wallpaper="mountain"] {
+  --chrome-surface: rgba(238, 240, 238, 0.86);
+  --chrome-ink: #2b3a3f;
+}
+html[data-theme="light"][data-wallpaper="night"] {
+  --chrome-surface: rgba(245, 248, 252, 0.90);
+  --chrome-ink: #25344d;
 }
 
 /* ---------- 8. 节点交互动画（主题过渡已删 2026-10-01） ----------
@@ -1110,11 +1147,12 @@
   --ink-teal: #2f7a66;
   --ink-violet: #6e569f;
   --graph-tool-ink: #54452a;
-  /* 浅色工具按钮承托（2026-11-15 方案 A）：亮壁纸上给细线图标一层稳定纸底＋实色描边。
-     深色不定义这三个令牌，基础规则仍落回 transparent（9-24 裸装拍板在深色侧继续成立）。 */
-  --graph-tool-surface: rgba(255, 252, 245, 0.88);
-  --graph-tool-surface-hover: rgba(255, 246, 228, 0.96);
-  --graph-tool-edge: rgba(120, 100, 70, 0.42);
+  /* 浅色工具按钮承托（方案 A 起、7.2 升到 B 分档）：只认两个主令牌——
+     --chrome-surface（底板）与 --chrome-ink（墨色）；描边／悬停／凹槽／分隔线全部
+     color-mix 派生，按壁纸套只需覆盖这两个值。深色不定义，基础规则仍落回
+     transparent（9-24 裸装拍板在深色侧继续成立）；首屏 data-wallpaper 未落时走这套默认。 */
+  --chrome-surface: rgba(255, 252, 245, 0.88);
+  --chrome-ink: #54452a;
   --graph-bubble-start: rgba(120, 100, 70, 0.10);
   --graph-bubble-end: rgba(255, 253, 247, 0.98);
   --graph-bubble-border: rgba(120, 100, 70, 0.2);
