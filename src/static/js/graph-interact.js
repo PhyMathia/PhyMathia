@@ -79,7 +79,8 @@ function renderGraphCanvas(streaming) {
   // 裸图标浮层（2026-09-24 拍板：玻璃胶囊与右上角同质化）——容器只留布局不带磨砂，
   // 按钮静息透明、hover/激活才出小片；别给逐个按钮套 backdrop-filter，十来个 blur 层白烧性能。
   // 同日二拍：12 键一长条拆两簇——右下「看图 + 助手 + 产出」，左下「改图与审查」
-  // （--left 变体，graph-override.css 第 4 段）；图体检/历史面板的锚定也随触发钮挪到左下。
+  // （--left 变体，graph-override.css 第 4 段）；两个审查面板都锚在左下 fixed，
+  // 2026-11-15 二拍把「修改历史」触发钮也放回左簇与面板同侧（图体检仍收在右下 ⋯）。
   const toolbar = document.createElement('div');
   toolbar.className = 'graph-canvas-toolbar';
   // 2026-11-15 方案 B（用户拍板）：同类动作合并进凹槽、低频项收进「⋯」。
@@ -124,8 +125,10 @@ function renderGraphCanvas(streaming) {
     + '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
     + '<path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path>'
     + '</svg></button>'
-    // ⋯ 菜单：只收两项低频审查（面板是独立 absolute，不依赖触发钮位置，挪走不影响定位）；
-    // 第一项自动整理是窄屏专属副本——宽屏时 .graph-tool-arrange 露出、这份 display:none。
+    // ⋯ 菜单＝低频画布工具的「收纳位」（2026-11-15 用户二拍：这个位置要留着）。
+    // 修改历史原先也窝在这里，但它的面板是 fixed 左下（left:16 / bottom:72），
+    // 点一下要横跨整屏才看得见结果——已挪回左簇做直钮，与面板上下相邻。
+    // 这里留审查（图体检）＋两项批量视图动作；自动整理是窄屏专属副本。
     + '<div class="graph-tool-more-menu" role="menu" hidden>'
     + '<button class="graph-more-item graph-more-item--compact" role="menuitem" onclick="autoArrangeGraph();closeGraphToolbarMore()">'
     + svgHead + '<rect x="4" y="4" width="6" height="6" rx="1.5"></rect><rect x="14" y="4" width="6" height="6" rx="1.5"></rect>'
@@ -134,18 +137,23 @@ function renderGraphCanvas(streaming) {
     + '<button class="graph-more-item" role="menuitem" onclick="toggleGraphConsistencyPanel();closeGraphToolbarMore()">'
     + svgHead + '<path d="M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5z"></path><polyline points="9 12 11 14 15 10"></polyline></svg>'
     + '<span>图体检</span></button>'
-    + '<button class="graph-more-item" role="menuitem" onclick="toggleGraphHistoryPanel();closeGraphToolbarMore()">'
-    + svgHead + '<circle cx="12" cy="12" r="9"></circle><polyline points="12 7 12 12 15.5 14"></polyline></svg>'
-    + '<span>修改历史</span></button>'
+    + '<button class="graph-more-item" role="menuitem" onclick="graphToggleAllNodesMinimize();closeGraphToolbarMore()">'
+    + svgHead + '<polyline points="4 14 10 14 10 20"></polyline><polyline points="20 10 14 10 14 4"></polyline>'
+    + '<line x1="14" y1="10" x2="21" y2="3"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>'
+    + '<span id="graphMoreMinimizeLabel">折叠全部节点</span></button>'
+    + '<button class="graph-more-item" role="menuitem" onclick="graphViewReset();closeGraphToolbarMore()">'
+    + svgHead + '<polyline points="1 4 1 10 7 10"></polyline>'
+    + '<path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>'
+    + '<span>视图复位</span></button>'
     + '</div>';
   graphCanvas.appendChild(toolbar);
   _zoomReadoutEl = toolbar.querySelector('.graph-zoom-readout');
   const toolbarEdit = document.createElement('div');
   toolbarEdit.className = 'graph-canvas-toolbar graph-canvas-toolbar--left';
-  // 左簇只留「改图」三件（选择文字 / 联系 / 分组）；图体检与修改历史属低频审查，
-  // 2026-11-15 随方案 B 收进右下簇的 ⋯ 菜单——两簇合计露出 7+3 个入口，原来是 9+5。
-  // 联系模式的图标同时从「两弧夹一线」换成标准链环（lucide link）：原图在 19px 下
-  // 两条弧与中线糊成一坨，用户反馈的「看不清」有一半出在这类自绘形上。
+  // 左簇＝改图三件（选择文字 / 联系 / 分组）＋修改历史（2026-11-15 用户回拍）。
+  // 历史面板固定在左下（left:16 / bottom:72），按钮挪回左簇后与面板同侧、上下相邻，
+  // 还省掉一次菜单点击；图体检仍属低频审查，留在右下 ⋯ 里。联系模式的图标同时从
+  // 「两弧夹一线」换成标准链环（lucide link）：原图在 19px 下两条弧与中线糊成一坨。
   toolbarEdit.innerHTML = '<button class="graph-tool-btn graph-select-btn" onclick="graphToggleTextSelection()" data-tip="选择文字" aria-label="选择文字" aria-pressed="false">'
     + svgHead + '<path d="M8 4v16"></path><path d="M16 4v16"></path><path d="M12 2v20"></path>'
     + '</svg></button>'
@@ -155,6 +163,10 @@ function renderGraphCanvas(streaming) {
     + '<button class="graph-tool-btn" onclick="graphCreateGroup()" data-tip="建成分组" aria-label="将选中节点创建为分组">'
     + svgHead + '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>'
     + '<line x1="12" y1="11" x2="12" y2="17"></line><line x1="9" y1="14" x2="15" y2="14"></line>'
+    + '</svg></button>'
+    + '<span class="graph-tool-sep" aria-hidden="true"></span>'
+    + '<button class="graph-tool-btn graph-history-btn" onclick="toggleGraphHistoryPanel()" data-tip="修改历史" aria-label="修改历史">'
+    + svgHead + '<circle cx="12" cy="12" r="9"></circle><polyline points="12 7 12 12 15.5 14"></polyline>'
     + '</svg></button>';
   graphCanvas.appendChild(toolbarEdit);
   // 工具条新建完同步一次字号按钮的 tooltip（顶层应用时它还不存在）
@@ -311,6 +323,10 @@ function _branchSourcePort(node, branchType) {
   return 'out-0';
 }
 
+// 批量折叠（⋯ 菜单）时抑制逐卡重画：下面每收一张卡都会量测＋重画边，N 张卡就是
+// N 次全量重画。批量入口把这个标志置起，收尾统一跑一次（var 避免跨文件顶层 TDZ）。
+var _graphBatchMinimize = false;
+
 function _toggleGraphNodeMinimize(node) {
   const nextMinimized = !node.minimized;
   node.minimized = nextMinimized;
@@ -373,9 +389,12 @@ function _toggleGraphNodeMinimize(node) {
       toggle.textContent = nextMinimized ? '+' : '−';
       toggle.title = nextMinimized ? '展开' : '最小化';
     }
-    _measureNodes();
-    _updateNodeTransforms();
-    _redrawEdges();
+    // 批量折叠时逐卡重画让给收尾那一次（大图上一键收几十张卡不至于卡住）
+    if (!_graphBatchMinimize) {
+      _measureNodes();
+      _updateNodeTransforms();
+      _redrawEdges();
+    }
   }
 }
 
@@ -1855,6 +1874,66 @@ function graphZoomReset() {
   zoomGraph(1 / cur);
 }
 
+// ===== ⋯ 菜单里的批量画布动作（2026-11-15）=====
+// 折叠 / 展开全部：口径与右键多选菜单一致（任一未折叠 → 全折，否则全展），只动
+// _canMinimizeGraphNode 允许的节点；持久化与 DOM 更新仍走 _toggleGraphNodeMinimize，
+// 逐卡重画由 _graphBatchMinimize 抑制，收尾统一跑一次（大图一键收几十张卡不卡）。
+function graphToggleAllNodesMinimize() {
+  const nodes = (typeof graphView !== 'undefined' && graphView && Array.isArray(graphView.nodes))
+    ? graphView.nodes : [];
+  const canMin = (typeof _canMinimizeGraphNode === 'function') ? _canMinimizeGraphNode : function () { return true; };
+  const toggleable = nodes.filter(n => canMin(n));
+  if (!toggleable.length) {
+    if (typeof showToast === 'function') showToast('这张图没有可折叠的节点');
+    return;
+  }
+  const anyExpanded = toggleable.some(n => !n.minimized);
+  let changed = 0;
+  _graphBatchMinimize = true;
+  try {
+    toggleable.forEach(n => {
+      if (!!n.minimized !== anyExpanded) { _toggleGraphNodeMinimize(n); changed++; }
+    });
+  } finally {
+    _graphBatchMinimize = false;
+    try {
+      if (typeof _measureNodes === 'function') _measureNodes();
+      if (typeof _updateNodeTransforms === 'function') _updateNodeTransforms();
+      if (typeof _redrawEdges === 'function') _redrawEdges();
+    } catch (e) { /* 半渲染态不致命，下一帧常规重绘会补上 */ }
+  }
+  if (typeof showToast === 'function') showToast((anyExpanded ? '已折叠 ' : '已展开 ') + changed + ' 个节点');
+  _syncGraphToolbarMoreLabels();
+}
+
+// 视图复位：缩放回 100% ＋ 卡片字号回默认 100%。两者都有独立入口（读数钮 / A±），
+// 但调乱之后没有「一键回默认」，收在 ⋯ 里当低频急救。不碰 pan 与布局，图不会挪位。
+function graphViewReset() {
+  const state = (typeof _graphState === 'function') ? _graphState() : null;
+  const zoom = state ? (state.zoom || 1) : 1;
+  const zoomChanged = Math.abs(zoom - 1) >= 0.005;
+  if (zoomChanged) zoomGraph(1 / zoom);
+  const scaleChanged = _graphTextScale !== 1;
+  if (scaleChanged) {
+    _graphTextScale = 1;
+    _saveGraphTextScale();
+    _applyGraphTextScale();
+    _afterGraphTextScaleChange();
+  }
+  if (typeof showToast === 'function') {
+    showToast(zoomChanged || scaleChanged ? '视图已复位：缩放与字号回到 100%' : '视图已是默认（缩放、字号都是 100%）');
+  }
+}
+
+// 打开菜单时按当前状态改「折叠 / 展开全部节点」的文案，避免点开才发现方向反了。
+function _syncGraphToolbarMoreLabels() {
+  const label = document.getElementById('graphMoreMinimizeLabel');
+  if (!label || typeof graphView === 'undefined' || !graphView || !Array.isArray(graphView.nodes)) return;
+  const canMin = (typeof _canMinimizeGraphNode === 'function') ? _canMinimizeGraphNode : function () { return true; };
+  const toggleable = graphView.nodes.filter(n => canMin(n));
+  label.textContent = toggleable.some(n => !n.minimized) ? '折叠全部节点' : '展开全部节点';
+}
+
 function toggleGraphToolbarMore(ev) {
   if (ev && ev.stopPropagation) ev.stopPropagation();
   const menu = document.querySelector('.graph-tool-more-menu');
@@ -1864,7 +1943,10 @@ function toggleGraphToolbarMore(ev) {
   menu.hidden = !open;
   btn.setAttribute('aria-expanded', open ? 'true' : 'false');
   btn.classList.toggle('active', open);
-  if (open) _bindGraphToolbarMoreOutside();
+  if (open) {
+    _bindGraphToolbarMoreOutside();
+    _syncGraphToolbarMoreLabels();
+  }
 }
 
 function closeGraphToolbarMore() {
