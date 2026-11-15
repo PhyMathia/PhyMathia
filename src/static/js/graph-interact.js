@@ -82,51 +82,78 @@ function renderGraphCanvas(streaming) {
   // （--left 变体，graph-override.css 第 4 段）；图体检/历史面板的锚定也随触发钮挪到左下。
   const toolbar = document.createElement('div');
   toolbar.className = 'graph-canvas-toolbar';
-  toolbar.innerHTML = '<button class="graph-tool-btn graph-search-btn" onclick="toggleGraphSearchPanel()" title="搜索节点" aria-label="搜索节点" aria-pressed="false">'
-    + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
-    + '<circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>'
+  // 2026-11-15 方案 B（用户拍板）：同类动作合并进凹槽、低频项收进「⋯」。
+  // 动机是「看不清」——三个叠加的原因：①细线图标静息无底板、浮在壁纸纹理上发虚；
+  // ②9 枚按钮等距平铺，「+ −」（改视野）与「A− A+」（改字号）语义不同却同权重挨着；
+  // ③SVG 线性图标与 ⌂ ⌗ 这类 Unicode 字形混排，小字号下后者笔画糊成一团。
+  // 对策：视野（− 比例 + 适应）与字号各成一槽，槽自带浅底＝给图标承托；⌂/⌗ 换成
+  // 同族线性图标（四角展开＝适应画布、方格＝整理）；散钮仍裸图标（2026-09-24 拍板不可回退）。
+  // 缩放比例显示在槽中间——「现在多大」不用点按钮也看得见，也顺带把 −/+ 的语义钉死。
+  const svgHead = '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">';
+  toolbar.innerHTML = '<button class="graph-tool-btn graph-search-btn" onclick="toggleGraphSearchPanel()" data-tip="搜索节点" aria-label="搜索节点" aria-pressed="false">'
+    + svgHead + '<circle cx="11" cy="11" r="7"></circle><line x1="20" y1="20" x2="16.65" y2="16.65"></line>'
     + '</svg></button>'
-    + '<button class="graph-tool-btn graph-tool-glyph-lg" onclick="zoomGraph(1.2)" title="放大">+</button>'
-    + '<button class="graph-tool-btn graph-tool-glyph-lg" onclick="zoomGraph(0.85)" title="缩小">−</button>'
-    + '<button class="graph-tool-btn graph-tool-glyph-lg graph-tool-fit-btn" onclick="fitGraph()" title="适配画布">⌂</button>'
-    // 字号档（2026-11-15）：只改卡内文字，不动画布几何。与 +/− 缩放并排但不混用图标，
-    // 用 A− / A+ 字面量区分「看字号」和「看全景」两件事
-    + '<button class="graph-tool-btn graph-text-btn" onclick="graphTextScaleStep(-1)" data-text-scale-btn="-1" title="字号调小" aria-label="字号调小">A−</button>'
-    + '<button class="graph-tool-btn graph-text-btn" onclick="graphTextScaleStep(1)" data-text-scale-btn="1" title="字号调大" aria-label="字号调大">A+</button>'
-    + '<button class="graph-tool-btn" onclick="autoArrangeGraph()" title="自动整理">⌗</button>'
-    + '<button class="graph-tool-btn graph-harness-btn" onclick="toggleGraphPet()" title="Φ 网络助手" aria-label="Φ 网络助手" aria-pressed="true">'
+    + '<div class="graph-tool-group" role="group" aria-label="视野">'
+    + '<button class="graph-tool-btn graph-zoom-step" onclick="zoomGraph(0.85)" data-tip="缩小" aria-label="缩小">'
+    + svgHead + '<path d="M6 12h12"></path></svg></button>'
+    + '<button class="graph-tool-btn graph-zoom-readout" onclick="graphZoomReset()" data-tip="回到 100%" aria-label="当前缩放 100%，点击复位">100%</button>'
+    + '<button class="graph-tool-btn graph-zoom-step" onclick="zoomGraph(1.2)" data-tip="放大" aria-label="放大">'
+    + svgHead + '<path d="M12 6v12"></path><path d="M6 12h12"></path></svg></button>'
+    + '<span class="graph-tool-sep" aria-hidden="true"></span>'
+    + '<button class="graph-tool-btn" onclick="fitGraph()" data-tip="适应画布" aria-label="适应画布">'
+    + svgHead + '<path d="M9 4H5a1 1 0 0 0-1 1v4"></path><path d="M15 4h4a1 1 0 0 1 1 1v4"></path>'
+    + '<path d="M9 20H5a1 1 0 0 1-1-1v-4"></path><path d="M15 20h4a1 1 0 0 0 1-1v-4"></path></svg></button>'
+    + '</div>'
+    + '<div class="graph-tool-group" role="group" aria-label="字号">'
+    + '<button class="graph-tool-btn graph-text-btn" onclick="graphTextScaleStep(-1)" data-text-scale-btn="-1" data-tip="字号调小" aria-label="字号调小">A−</button>'
+    + '<button class="graph-tool-btn graph-text-btn" onclick="graphTextScaleStep(1)" data-text-scale-btn="1" data-tip="字号调大" aria-label="字号调大">A+</button>'
+    + '</div>'
+    + '<button class="graph-tool-btn graph-tool-more" onclick="toggleGraphToolbarMore(event)" data-tip="更多" aria-label="更多工具" aria-haspopup="true" aria-expanded="false">'
+    + svgHead + '<circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"></circle>'
+    + '<circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"></circle></svg></button>'
+    + '<button class="graph-tool-btn graph-harness-btn" onclick="toggleGraphPet()" data-tip="Φ 网络助手" aria-label="Φ 网络助手" aria-pressed="true">'
     + '<span class="graph-harness-btn-phi">Φ</span></button>'
-    + '<button class="graph-tool-btn graph-export-btn" onclick="toggleGraphExportMenu()" title="导出" aria-label="导出">'
-    + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+    + '<button class="graph-tool-btn graph-export-btn" onclick="toggleGraphExportMenu()" data-tip="导出" aria-label="导出">'
+    + '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
     + '<path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path>'
-    + '</svg></button>';
+    + '</svg></button>'
+    // ⋯ 菜单：自动整理 + 从左上簇收进来的两项低频审查（面板是独立 absolute，
+    // 不依赖触发钮位置，挪走不影响定位）
+    + '<div class="graph-tool-more-menu" role="menu" hidden>'
+    + '<button class="graph-more-item" role="menuitem" onclick="autoArrangeGraph();closeGraphToolbarMore()">'
+    + svgHead + '<rect x="4" y="4" width="6" height="6" rx="1.5"></rect><rect x="14" y="4" width="6" height="6" rx="1.5"></rect>'
+    + '<rect x="4" y="14" width="6" height="6" rx="1.5"></rect><rect x="14" y="14" width="6" height="6" rx="1.5"></rect></svg>'
+    + '<span>自动整理</span></button>'
+    + '<button class="graph-more-item" role="menuitem" onclick="toggleGraphConsistencyPanel();closeGraphToolbarMore()">'
+    + svgHead + '<path d="M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5z"></path><polyline points="9 12 11 14 15 10"></polyline></svg>'
+    + '<span>图体检</span></button>'
+    + '<button class="graph-more-item" role="menuitem" onclick="toggleGraphHistoryPanel();closeGraphToolbarMore()">'
+    + svgHead + '<circle cx="12" cy="12" r="9"></circle><polyline points="12 7 12 12 15.5 14"></polyline></svg>'
+    + '<span>修改历史</span></button>'
+    + '</div>';
   graphCanvas.appendChild(toolbar);
+  _zoomReadoutEl = toolbar.querySelector('.graph-zoom-readout');
   const toolbarEdit = document.createElement('div');
   toolbarEdit.className = 'graph-canvas-toolbar graph-canvas-toolbar--left';
-  toolbarEdit.innerHTML = '<button class="graph-tool-btn" onclick="toggleGraphConsistencyPanel()" title="图体检（孤儿/断链/重复标签）">'
-    + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
-    + '<path d="M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5z"></path><polyline points="9 12 11 14 15 10"></polyline>'
+  // 左簇只留「改图」三件（选择文字 / 联系 / 分组）；图体检与修改历史属低频审查，
+  // 2026-11-15 随方案 B 收进右下簇的 ⋯ 菜单——两簇合计露出 6+3 个入口，原来是 9+5。
+  // 联系模式的图标同时从「两弧夹一线」换成标准链环（lucide link）：原图在 19px 下
+  // 两条弧与中线糊成一坨，用户反馈的「看不清」有一半出在这类自绘形上。
+  toolbarEdit.innerHTML = '<button class="graph-tool-btn graph-select-btn" onclick="graphToggleTextSelection()" data-tip="选择文字" aria-label="选择文字" aria-pressed="false">'
+    + svgHead + '<path d="M8 4v16"></path><path d="M16 4v16"></path><path d="M12 2v20"></path>'
     + '</svg></button>'
-    + '<button class="graph-tool-btn" onclick="toggleGraphHistoryPanel()" title="修改历史（撤销/重做/回到任意版本）">'
-    + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
-    + '<circle cx="12" cy="12" r="9"></circle><polyline points="12 7 12 12 15.5 14"></polyline>'
-    + '</svg></button>'
-    + '<button class="graph-tool-btn graph-select-btn" onclick="graphToggleTextSelection()" title="选择文字" aria-label="选择文字" aria-pressed="false">'
-    + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
-    + '<path d="M8 4v16"></path><path d="M16 4v16"></path><path d="M12 2v20"></path>'
-    + '</svg></button>'
-    + '<button class="graph-tool-btn graph-link-btn" onclick="toggleGraphLinkMode()" title="联系模式（点两个节点添加联系箭头）" aria-label="联系模式" aria-pressed="false">'
-    + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
-    + '<path d="M9 12h6"></path><path d="M9 12a3 3 0 1 1-3-3"></path><path d="M15 12a3 3 0 1 0 3-3"></path><line x1="12" y1="5" x2="12" y2="19"></line>'
-    + '</svg></button>'
-    + '<button class="graph-tool-btn" onclick="graphCreateGroup()" title="将选中节点创建为分组" aria-label="将选中节点创建为分组">'
-    + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
-    + '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>'
+    + '<button class="graph-tool-btn graph-link-btn" onclick="toggleGraphLinkMode()" data-tip="联系两点" aria-label="联系模式" aria-pressed="false">'
+    + svgHead + '<path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5"></path>'
+    + '<path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5"></path></svg></button>'
+    + '<button class="graph-tool-btn" onclick="graphCreateGroup()" data-tip="建成分组" aria-label="将选中节点创建为分组">'
+    + svgHead + '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>'
     + '<line x1="12" y1="11" x2="12" y2="17"></line><line x1="9" y1="14" x2="15" y2="14"></line>'
     + '</svg></button>';
   graphCanvas.appendChild(toolbarEdit);
   // 工具条新建完同步一次字号按钮的 tooltip（顶层应用时它还不存在）
   _applyGraphTextScale();
+  // 缩放读数同理：首帧的 _applyGraphTransform 在 rAF 里，这次先把上次的 zoom 填上，免得闪一个 100%
+  _syncGraphZoomReadout(_graphState().zoom);
   _applyGraphTextSelectionMode();
   _applyGraphLinkMode();
   if (typeof window.syncGraphPetToggleButton === 'function') window.syncGraphPetToggleButton();
@@ -1721,7 +1748,9 @@ function _applyGraphTextScale() {
     if (host && host.querySelectorAll) {
       host.querySelectorAll('[data-text-scale-btn]').forEach(btn => {
         const dir = btn.getAttribute('data-text-scale-btn');
-        btn.setAttribute('title', (dir === '1' ? '字号调大' : '字号调小') + '（当前 ' + pct + '%）');
+        // 走 data-tip（自绘短标签）而不是 title：两者同时存在会先弹系统 tooltip 再弹自定义，
+        // 变成两个重叠的提示框。aria-label 仍留固定值，读屏不受影响。
+        btn.setAttribute('data-tip', (dir === '1' ? '字号调大' : '字号调小') + ' ' + pct + '%');
       });
     }
   } catch (e) {}
@@ -1791,6 +1820,74 @@ function graphTextScaleReset() {
 // 由后续 renderGraphCanvas 生成，所以首屏渲染就已经是用户上次的档位（无闪变）。
 _loadGraphTextScale();
 _applyGraphTextScale();
+
+// ===== 工具栏缩放读数与「更多」菜单（2026-11-15 方案 B）=====
+// 读数是一个 <button>（点一下回 100%），它由 _applyGraphTransform 每帧同步——
+// 滚轮缩放、双击、刘海手势、适应画布全都走那个公共入口，不必逐个调用点去埋。
+// var 而非 let：_applyGraphTransform（graph-render.js，构建顺序在本文件之前）可能在
+// 本文件的顶层 let 执行之前就被调用，那时 let 处于 TDZ 会直接抛 ReferenceError；
+// var 提升到 undefined，函数里一句空值早退即可。
+var _zoomReadoutEl = null;
+
+function _syncGraphZoomReadout(zoom) {
+  if (!_zoomReadoutEl) return;
+  const text = Math.round((zoom || 1) * 100) + '%';
+  // 逐帧比较再写：pan 也走本函数，值没变就不碰 DOM（T380 同款口径）
+  if (_zoomReadoutEl.textContent !== text) _zoomReadoutEl.textContent = text;
+  _zoomReadoutEl.setAttribute('aria-label', '当前缩放 ' + text + '，点击复位到 100%');
+}
+
+// 读数点一下回 100%：不引入第二份缩放状态，借 zoomGraph 的「乘 1/当前」——
+// 居中缩放与落盘都由它负责，这里只管边界（已 100% 就只说一句）
+function graphZoomReset() {
+  const cur = _graphState().zoom || 1;
+  if (Math.abs(cur - 1) < 0.005) {
+    if (typeof showToast === 'function') showToast('缩放已是 100%');
+    return;
+  }
+  zoomGraph(1 / cur);
+}
+
+function toggleGraphToolbarMore(ev) {
+  if (ev && ev.stopPropagation) ev.stopPropagation();
+  const menu = document.querySelector('.graph-tool-more-menu');
+  const btn = document.querySelector('.graph-tool-more');
+  if (!menu || !btn) return;
+  const open = menu.hidden;
+  menu.hidden = !open;
+  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  btn.classList.toggle('active', open);
+  if (open) _bindGraphToolbarMoreOutside();
+}
+
+function closeGraphToolbarMore() {
+  const menu = document.querySelector('.graph-tool-more-menu');
+  const btn = document.querySelector('.graph-tool-more');
+  if (menu) menu.hidden = true;
+  if (btn) {
+    btn.setAttribute('aria-expanded', 'false');
+    btn.classList.remove('active');
+  }
+}
+
+// 外部点击 / Esc 关闭。只在第一次打开时挂一次（capture 阶段）：菜单项自己的 click
+// 必须活着——若在 capture 就把菜单隐藏，click 的目标已经不在树上，那一项就点不动了，
+// 所以菜单与 ⋯ 钮自身要从关闭条件里排除。
+let _moreOutsideBound = false;
+function _bindGraphToolbarMoreOutside() {
+  if (_moreOutsideBound) return;
+  _moreOutsideBound = true;
+  document.addEventListener('pointerdown', function (e) {
+    const menu = document.querySelector('.graph-tool-more-menu');
+    if (!menu || menu.hidden) return;
+    const t = e.target;
+    if (t && t.closest && (t.closest('.graph-tool-more-menu') || t.closest('.graph-tool-more'))) return;
+    closeGraphToolbarMore();
+  }, true);
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeGraphToolbarMore();
+  });
+}
 
 function zoomGraph(factor, centerX, centerY) {
   const state = _graphState();

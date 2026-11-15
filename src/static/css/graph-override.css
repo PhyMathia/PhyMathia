@@ -505,6 +505,7 @@
   top: auto !important;
   left: auto !important;
   display: flex !important;
+  align-items: center !important;
   gap: 4px !important;
   z-index: var(--z-toolbar) !important;
 }
@@ -525,8 +526,10 @@
   /* 图标墨色走主题变量：浅色是暖棕墨（--graph-tool-ink #54452a），不再是近黑的 #2a2418——
      纯黑线性图标压在暖米色玻璃上像"贴上去的"，暖棕墨与环境同调又保住 8:1 以上对比度 */
   color: var(--graph-tool-ink) !important;
-  font-size: 18px !important;
+  font-size: 19px !important;
   font-weight: 400 !important;
+  /* 自绘短标签（data-tip）的定位锚点 */
+  position: relative !important;
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
@@ -551,43 +554,193 @@
 }
 
 .graph-tool-btn svg {
-  width: 18px !important;
-  height: 18px !important;
+  width: 19px !important;
+  height: 19px !important;
   flex: none !important;
   pointer-events: none !important;
 }
-.graph-tool-btn.graph-tool-glyph-lg {
-  font-size: 21px !important;
+
+/* ---------- 4.1 凹槽（2026-11-15 方案 B）----------
+   用户反馈「工具栏看不清」，拆因后三条：细线图标静息无承托、浮在壁纸纹理上发虚；
+   9 枚等距平铺让「+ −」（改视野）与「A− A+」（改字号）同权重挨着；⌂ ⌗ 这类 Unicode
+   字形在 19px 下糊成一团。对策是同族动作并进一个凹槽：槽自带 8% 文字色底，等于给
+   图标一层承托；槽内的分隔线再切「比例/适应」。散钮（搜索/更多/Φ/导出）保持裸图标，
+   2026-09-24 那条拍板（容器不挂底色、按钮静息透明）一字不改——底色只给凹槽，
+   冒烟对 .graph-canvas-toolbar 与 .graph-tool-btn 的裸装断言因此仍成立。
+   底色走 color-mix(--text-primary)：深色主题是淡白、浅色主题是淡墨，一套值两个方向都对。 */
+.graph-tool-group {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 1px !important;
+  padding: 2px !important;
+  border-radius: var(--r-md) !important;
+  background: color-mix(in srgb, var(--graph-tool-ink) 10%, transparent) !important;
+  border: 1px solid color-mix(in srgb, var(--graph-tool-ink) 12%, transparent) !important;
+}
+
+/* 槽内按钮收到 32px（不写 background/border-color：让基础 :hover 与 .active 继续管，
+   否则同特指性下本条靠后会压掉悬停底板——浅色主题上表现为「点了没反应」） */
+.graph-tool-group .graph-tool-btn {
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: var(--r-xs) !important;
+}
+
+.graph-tool-sep {
+  width: 1px !important;
+  height: 16px !important;
+  margin: 0 2px !important;
+  flex: none !important;
+  background: color-mix(in srgb, var(--text-primary) 14%, transparent) !important;
+}
+
+/* 缩放读数：点一下回 100%。比图标暗一档（78% 墨色）——它是「状态」不是「按钮」，
+   但仍是可点的，所以挂在 button 上、保留 aria-label。tabular-nums 防 88%→100% 抖动。 */
+.graph-tool-btn.graph-zoom-readout {
+  width: auto !important;
+  min-width: 44px !important;
+  padding: 0 4px !important;
+  font-family: inherit !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
   line-height: 1 !important;
-  font-weight: 600 !important;
+  letter-spacing: 0.01em !important;
+  font-variant-numeric: tabular-nums !important;
+  color: color-mix(in srgb, var(--graph-tool-ink) 78%, transparent) !important;
+  pointer-events: auto !important;
 }
-.graph-tool-btn.graph-tool-fit-btn {
-  font-weight: 800 !important;
-  transform: translateY(-1px);
-}
-/* 字号档按钮（2026-11-15）：A− / A+ 两枚字母钮，字号比旁边的 +/− 小一号、字重更实，
-   视觉上区分「改文字」与「改视野」两件事；点小/点大后由 JS 把当前百分比写进 tooltip */
+
+/* 字号档按钮（2026-11-15）：A− / A+ 仍是单行字面量——与 +/− 混淆的问题已由凹槽分组
+   解决（各占一槽、中间还有分隔线），不必再叠上标：19px 图标旁的上标小到像「A·」，
+   反而更难认。点小/点大后由 JS 把当前百分比写进 data-tip。 */
 .graph-tool-btn.graph-text-btn {
-  font-size: 15px !important;
-  font-weight: 700 !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
   line-height: 1 !important;
   letter-spacing: -0.02em !important;
 }
-/* 工具条从 7 钮涨到 9 钮（字号档 A− / A+，2026-11-15）：桌面 38px 一排仍宽裕，
-   但 375px 屏上 9×38 + 8×4 = 374px 会顶出右缘——窄屏压到 32px / 间距 2px
-   （9×32 + 8×2 + 8 = 312px，320px 屏也放得下），图标与字号同步缩一档 */
+
+/* ---------- 4.2 悬停短标签（替代原生 title）----------
+   系统 title 要悬停约一秒才出、样式也跟主题无关；这里自绘一个 180ms 后浮出的短标签
+   （文案 ≤9 字，AGENTS.md 硬规则 9）。延迟只挂在 :hover 上——离开时立刻消失，
+   否则鼠标移开后标签还要赖 0.18 秒。@media (hover: hover) 圈住，触屏上不留残影。 */
+@media (hover: hover) {
+  .graph-tool-btn[data-tip]::after {
+    content: attr(data-tip);
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 8px);
+    transform: translateX(-50%) translateY(3px);
+    padding: 4px 8px;
+    border-radius: var(--r-xs);
+    border: 1px solid var(--border);
+    background: var(--panel-bg);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.3;
+    letter-spacing: 0;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.14s ease, transform 0.14s ease;
+    z-index: 1;
+  }
+  .graph-tool-btn[data-tip]:hover::after,
+  .graph-tool-btn[data-tip]:focus-visible::after {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+    transition-delay: 0.18s;
+  }
+  /* 贴右缘的两枚（Φ / 导出）改右对齐：居中会让标签溢出视口右边界 */
+  .graph-canvas-toolbar > .graph-tool-btn:nth-last-child(-n+2)[data-tip]::after {
+    left: auto;
+    right: 0;
+    transform: translateY(3px);
+  }
+  .graph-canvas-toolbar > .graph-tool-btn:nth-last-child(-n+2)[data-tip]:hover::after {
+    transform: translateY(0);
+  }
+}
+
+/* ---------- 4.3 「更多」菜单（收低频审查项）----------
+   贴着工具栏右上展开（从右缘对齐、向上翻），槽内一条一项。
+   [hidden] 必须显式 display:none——本条把 display 定成 flex，会盖掉浏览器默认的
+   [hidden]{display:none}，菜单就永远收不回去。 */
+.graph-tool-more-menu {
+  position: absolute !important;
+  right: 0 !important;
+  bottom: calc(100% + 10px) !important;
+  min-width: 158px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 1px !important;
+  padding: 5px !important;
+  border-radius: var(--r-md) !important;
+  border: 1px solid var(--border) !important;
+  background: var(--panel-bg) !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.26) !important;
+  z-index: 2 !important;
+}
+
+.graph-tool-more-menu[hidden] {
+  display: none !important;
+}
+
+.graph-more-item {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  width: 100% !important;
+  padding: 7px 9px !important;
+  border: none !important;
+  border-radius: var(--r-xs) !important;
+  background: transparent !important;
+  color: var(--text-primary) !important;
+  font-family: inherit !important;
+  font-size: var(--fs-sm) !important;
+  text-align: left !important;
+  cursor: pointer !important;
+  transition: background 0.14s, color 0.14s !important;
+}
+
+.graph-more-item:hover {
+  background: var(--btn-active-bg) !important;
+  color: var(--accent) !important;
+}
+
+.graph-more-item svg {
+  width: 16px !important;
+  height: 16px !important;
+  flex: none !important;
+  opacity: 0.9;
+}
+/* 窄屏（2026-11-15 随方案 B 重算）：桌面 38px 一排宽裕，但右簇现在含两个凹槽，
+   375px 屏上会顶出右缘。压到 28px / 槽内边距 1px / 间距 1px 后右簇约 306px，
+   320px 屏（可用 312px）也放得下；左簇同时抬到右簇上方一行并改回左对齐——
+   两簇若挤在同一行，320px 屏上必然重叠，而右簇之上还要留「更多」菜单的翻出空间。 */
 @media (max-width: 560px) {
   .graph-canvas-toolbar {
-    gap: 2px !important;
+    gap: 1px !important;
     right: 8px !important;
     bottom: 8px !important;
   }
-  .graph-canvas-toolbar .graph-tool-btn {
-    width: 32px !important;
-    height: 32px !important;
+  .graph-canvas-toolbar--left {
+    left: 8px !important;
+    right: auto !important;
+    bottom: 46px !important;
   }
-  .graph-canvas-toolbar .graph-tool-btn.graph-tool-glyph-lg {
-    font-size: 18px !important;
+  .graph-canvas-toolbar .graph-tool-btn {
+    width: 28px !important;
+    height: 28px !important;
+  }
+  .graph-tool-group {
+    padding: 1px !important;
+  }
+  .graph-tool-btn.graph-zoom-readout {
+    min-width: 34px !important;
+    font-size: 11px !important;
   }
   .graph-canvas-toolbar .graph-tool-btn.graph-text-btn {
     font-size: 13px !important;
@@ -595,6 +748,9 @@
   .graph-canvas-toolbar .graph-tool-btn svg {
     width: 16px !important;
     height: 16px !important;
+  }
+  .graph-tool-more-menu {
+    min-width: 140px !important;
   }
 }
 .chat-header .header-actions .header-btn.run-gen-btn,

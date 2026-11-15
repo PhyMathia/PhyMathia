@@ -2001,6 +2001,10 @@ function _applyGraphTransform() {
   }
   graphInner.style.transform = 'translate(' + state.pan.x + 'px, ' + state.pan.y + 'px) scale(' + state.zoom + ')';
   graphView.zoom = state.zoom;
+  // 工具栏的缩放读数（2026-11-15 方案 B）：所有写 pan/zoom 的路径都必经本函数，
+  // 挂在这里＝滚轮/双击/刘海/适应画布自动都有，不用逐个调用点埋同步。
+  // 本文件在构建顺序里早于 graph-interact.js，用 typeof 守卫免悬空引用（同 _renderGraphHarnessPreview 惯例）
+  if (typeof _syncGraphZoomReadout === 'function') _syncGraphZoomReadout(state.zoom);
   if (typeof graphCanvas !== 'undefined' && graphCanvas) {
     graphCanvas.classList.toggle('graph-heavy-zoom', (state.zoom || 1) > GRAPH_HEAVY_ZOOM_THRESHOLD);
   }
