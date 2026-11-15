@@ -431,6 +431,11 @@
          不能用 var()，那几处保留字面量） */
       --white: #fff;
 
+      /* 强调色「上面」的文字色（2026-11-15 山影月白 accent 引入）：凡「--accent 当底
+         + 文字压在上面」的规则一律用这个，别写死 var(--white)——山影的 accent 是月白
+         #cfdde0，白字压上去等于没有字。默认即白，只有把 accent 做成浅色的家族才改它。 */
+      --on-accent: #fff;
+
       /* 语义状态色：危险/成功/警告各只有一族，别再新造红绿黄。
          -fg 用于文字/描边，-bg 用于弱底，-border 用于描边组合 */
       --danger: #f43f5e;
@@ -1517,7 +1522,7 @@
     .header-btn.stop-gen-btn {
       background: var(--accent);
       border-color: var(--accent);
-      color: var(--white);
+      color: var(--on-accent);
     }
     .header-btn.stop-gen-btn:disabled {
       background: var(--btn-bg);
@@ -1529,7 +1534,7 @@
     .header-btn.stop-gen-btn:not(:disabled):hover {
       background: var(--accent-hover);
       border-color: var(--accent);
-      color: var(--white);
+      color: var(--on-accent);
     }
 
     /* 竖屏模式二级工具栏 - 默认隐藏 */
@@ -1917,7 +1922,7 @@
       padding: 0 4px;
       border-radius: var(--r-md);
       background: var(--accent);
-      color: var(--white);
+      color: var(--on-accent);
       font-size: var(--fs-xs);
       font-weight: 600;
       line-height: 15px;
@@ -2181,7 +2186,7 @@
     .am-tabs { display: flex; gap: 6px; margin-bottom: 14px; background: var(--surface-container); border-radius: var(--r-md); padding: 3px; }
     .am-tab { flex: 1; padding: 7px 10px; border: none; background: transparent; color: var(--text-secondary); font-size: var(--fs-md); border-radius: var(--r-sm); cursor: pointer; transition: background 0.15s, color 0.15s; }
     .am-tab:hover { color: var(--text-primary); }
-    .am-tab.active { background: var(--accent); color: var(--white); }
+    .am-tab.active { background: var(--accent); color: var(--on-accent); }
     #amPresetPane[hidden], #amManualPane[hidden] { display: none !important; }
     .am-provider-meta { font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.5; margin: -6px 0 12px; word-break: break-all; }
     .am-provider-meta a { color: var(--accent); text-decoration: none; }
@@ -2260,7 +2265,7 @@
     .model-wizard { width: min(470px, calc(100vw - 32px)); max-height: min(86vh, 720px); overflow-y: auto; }
     .mw-lede { font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.6; margin: -6px 0 14px; }
     .mw-step-title { display: flex; align-items: center; gap: 7px; font-size: var(--fs-md); font-weight: 600; color: var(--text-primary); margin: 14px 0 8px; }
-    .mw-step-num { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: var(--r-pill); background: var(--accent); color: var(--white); font-size: var(--fs-2xs); font-weight: 700; flex-shrink: 0; }
+    .mw-step-num { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: var(--r-pill); background: var(--accent); color: var(--on-accent); font-size: var(--fs-2xs); font-weight: 700; flex-shrink: 0; }
     .mw-provider-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
     .mw-provider-card { display: flex; flex-direction: column; gap: 3px; text-align: left; padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-container); color: var(--text-primary); cursor: pointer; transition: border-color 0.15s, background 0.15s; }
     .mw-provider-card:hover { border-color: var(--accent); }
@@ -2438,7 +2443,7 @@
     .browse-bar-exit {
       flex-shrink: 0;
       background: var(--accent);
-      color: var(--bg-solid, #fff);
+      color: var(--bg-solid, var(--on-accent));
       border: none;
       border-radius: var(--r-pill);
       font-size: var(--fs-sm);
@@ -2533,7 +2538,7 @@
     .socratic-modal-submit {
       background: var(--accent);
       border-color: var(--accent);
-      color: var(--white);
+      color: var(--on-accent);
     }
     .md-field label { display: block; font-size: var(--fs-xs); color: var(--text-secondary); margin-bottom: 4px; }
     /* 半透明底：模型面板/添加模型弹窗都接极光玻璃，实底控件会把极光压掉 */
@@ -2541,7 +2546,7 @@
     .md-field input:focus,.md-field select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--btn-active-border); }
     .md-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
     .md-btn { padding: var(--sp-3) var(--sp-7); border-radius: var(--r-md); border: 1px solid var(--border); font-size: var(--fs-md); cursor: pointer; background: var(--surface-container); color: var(--text-primary); transition: background var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), filter var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);}
-    .md-btn-save { background: var(--accent); color: var(--white); border-color: var(--accent); }
+    .md-btn-save { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
     .md-btn-cancel:hover { background: var(--btn-active-bg); }
     .header-btn.model-btn {
       background: var(--btn-active-bg);
@@ -2573,7 +2578,7 @@
     .chat-header .header-actions #stopBtn {
       background: var(--accent) !important;
       border-color: var(--accent) !important;
-      color: var(--white) !important;
+      color: var(--on-accent) !important;
     }
     .chat-header .header-actions .header-btn.stop-gen-btn:disabled,
     .chat-header .header-actions #stopBtn:disabled {
@@ -2587,7 +2592,7 @@
     .chat-header .header-actions #stopBtn:not(:disabled):hover {
       background: var(--accent-hover) !important;
       border-color: var(--accent) !important;
-      color: var(--white) !important;
+      color: var(--on-accent) !important;
     }
 
     /* ====== 内容渲染区（KaTeX / Mermaid / 进阶·苏格拉底按钮 / 极光玻璃）======
@@ -2759,7 +2764,7 @@
     .socratic-confidence button.active {
       background: var(--accent);
       border-color: var(--accent);
-      color: var(--white);
+      color: var(--on-accent);
     }
 
     /* ====== 极光磨砂玻璃（共享语言）======
@@ -3167,25 +3172,30 @@
      * 青绿与青蓝底同色相、同明度带＝全屏没有落点。本轮只动「材质＋色」两条杠杆：
      *   ① 面板提亮：tint 由 rgba(14,22,24,.62) → rgba(40,46,52,.70)，合成约 2.2 倍，
      *      并从中性石墨取色（旧版偏苔绿）、saturate 115%→104%（降绿味，保石不漂移）；
-     *   ② 强调色换朱砂：全屏唯一暖色，一个点就够，不做渐变不做发光。取色刻意偏亮
-     *      （#cf6a4d 而非深朱砂 #b8553f）：--accent 在本应用里同时当「文字色」用
-     *      （327 处 color: var(--accent)，如提问钮/标签），深朱砂压在深卡面上只有 2.5:1
-     *      ＝发闷看不清；#cf6a4d 在同一底上约 3.8:1、在玻璃面板上约 4.7:1，仍读得出朱砂。
+     *   ② 强调色＝月白（2026-11-15 第二拍，用户否掉朱砂后从八版并排里选的 5 号）：
+     *      不做色相强调，改做**明度强调**——墨底上一枚近白，等于画里那点留白/题字。
+     *      代价是「accent 当底 + 白字」全部失效，故同批引入 --on-accent（见根令牌注释），
+     *      凡 accent 作底的规则改用它。浅色下月白会消失，译文取「墨青」#4f6b74（同一条
+     *      明度逻辑的暗端），白字压得上去，对比约 5.7:1。
      * 圆角/模糊半径/字族一律不动（圆角归糖果、宋体归素纸，山影的签名留给结构）。
      * 投影收敛、内描边细弱＝哑光语言；石纹洗染（--aurora-*）保留但更淡。 */
     html[data-panel-skin="inkstone"] {
-      --accent: #cf6a4d;
+      --accent: #cfdde0;
       --bg-panel: #0d1517;
       --bg-dark: color-mix(in srgb, var(--bg-panel) 82%, transparent);
-      --accent-hover: #dd7f63;
+      --accent-hover: #e2ecee;
+      --on-accent: #101a1c;
       --field-bg: rgba(26, 34, 38, 0.50);
       --field-bg-strong: rgba(26, 34, 38, 0.76);
     }
     html[data-theme="light"][data-panel-skin="inkstone"] {
-      --accent: #9c4530;
+      --accent: #4f6b74;
       --bg-panel: #eef1ee;
       --bg-dark: color-mix(in srgb, var(--bg-panel) 90%, transparent);
-      --accent-hover: #b4563c;
+      --accent-hover: #628089;
+      /* 深色块把 --on-accent 改成了墨色（月白底上要深字），浅色这块 accent 是深墨青，
+         必须盖回白字，否则浅色下按钮变成「深墨底 + 更深墨字」——2026-11-15 实踩 */
+      --on-accent: #fff;
       --field-bg: rgba(250, 248, 244, 0.60);
       --field-bg-strong: rgba(250, 248, 244, 0.86);
     }
@@ -3791,7 +3801,7 @@
     }
     .progress-status .send-queue-chip:hover {
       background: var(--accent);
-      color: var(--white);
+      color: var(--on-accent);
     }
     .progress-status .send-queue-chip[hidden] { display: none; }
     @keyframes statusFadeIn {

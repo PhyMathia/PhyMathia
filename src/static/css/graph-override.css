@@ -319,7 +319,7 @@
   font-size: var(--fs-2xs) !important;
   font-weight: 800 !important;
   letter-spacing: 0.04em !important;
-  color: var(--white) !important;
+  color: var(--on-accent) !important;
   background: var(--accent) !important;
   text-transform: uppercase !important;
 }
@@ -601,7 +601,7 @@
 .chat-header .header-actions #runAllBtn {
   background: var(--accent) !important;
   border-color: var(--accent) !important;
-  color: var(--white) !important;
+  color: var(--on-accent) !important;
 }
 
 .chat-header .header-actions .header-btn.run-gen-btn:disabled,
@@ -617,7 +617,7 @@
 .chat-header .header-actions #runAllBtn:not(:disabled):hover {
   background: var(--accent-hover) !important;
   border-color: var(--accent) !important;
-  color: var(--white) !important;
+  color: var(--on-accent) !important;
 }
 
 .app-container .progress-status {
@@ -1812,7 +1812,7 @@
 
 .graph-tool-btn.graph-select-btn.active,
 .graph-tool-btn.graph-harness-btn.active {
-  color: var(--white) !important;
+  color: var(--on-accent) !important;
   border-color: var(--accent) !important;
   background: var(--accent) !important;
   box-shadow:
@@ -1823,7 +1823,7 @@
 
 [data-theme="light"] .graph-tool-btn.graph-select-btn.active,
 [data-theme="light"] .graph-tool-btn.graph-harness-btn.active {
-  color: var(--white) !important;
+  color: var(--on-accent) !important;
   border-color: var(--accent) !important;
   background: var(--accent) !important;
   box-shadow:
@@ -2044,7 +2044,7 @@
   border: 1px solid var(--accent);
   border-radius: var(--r-md);
   background: var(--accent);
-  color: var(--white);
+  color: var(--on-accent);
   font-size: var(--fs-md);
   font-weight: 700;
   cursor: pointer;
@@ -2329,7 +2329,7 @@
 }
 
 .graph-tool-btn.graph-search-btn.active {
-  color: var(--white) !important;
+  color: var(--on-accent) !important;
   border-color: var(--accent) !important;
   background: var(--accent) !important;
 }
@@ -3537,12 +3537,12 @@ html[data-theme="light"] .graph-node-fs,
 
 /* 主色只给「追问」 */
 .node-fs-btn--primary {
-  color: #fff;
+  color: var(--on-accent);
   background: var(--accent);
 }
 
 .node-fs-btn--primary:hover {
-  color: #fff;
+  color: var(--on-accent);
   background: var(--accent);
   filter: brightness(1.1);
 }
@@ -5133,7 +5133,7 @@ html[data-theme="dark"] .graph-node strong{
 .graph-source-organize-btn {
   background: var(--accent);
   border-color: var(--accent);
-  color: var(--white);
+  color: var(--on-accent);
 }
 .graph-source-organize-btn:hover { background: var(--accent-hover); }
 /* ===== 联系箭头（联系模式 / link edge）===== */

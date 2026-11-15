@@ -101,7 +101,7 @@
     .kp-undo-toast-btn {
       cursor: pointer; border: none; border-radius: var(--r-sm);
       padding: 4px 14px; font-size: var(--fs-md); font-weight: 600;
-      background: var(--accent); color: var(--white);
+      background: var(--accent); color: var(--on-accent);
     }
 
     /* Tabs */
@@ -382,7 +382,7 @@
       background: var(--bm-btn-cancel-bg); color: var(--bm-btn-cancel-color);
     }
     .bm-btn-cancel:hover { color: var(--bm-btn-cancel-hover-color); background: var(--bm-btn-cancel-hover-bg); }
-    .bm-btn-save { color: var(--white); background: var(--accent); }
+    .bm-btn-save { color: var(--on-accent); background: var(--accent); }
     .bm-btn-save:hover { background: var(--accent-hover); }
     .bm-btn-replace { color: var(--bm-btn-replace-color); background: var(--bm-btn-replace-bg); }
     .bm-btn-replace:hover { background: var(--bm-btn-replace-hover-bg); }
@@ -620,7 +620,7 @@
     .ob-btn-skip:hover { color: var(--text-primary); }
     .ob-btn-next {
       background: var(--accent);
-      color: var(--white);
+      color: var(--on-accent);
       box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 28%, transparent);
     }
     .ob-btn-next:hover {
@@ -630,7 +630,7 @@
     }
     .ob-btn-finish {
       background: var(--accent);
-      color: var(--white);
+      color: var(--on-accent);
       padding: var(--sp-3) var(--sp-7);
     }
     .ob-btn-finish:hover { filter: brightness(1.08); }
@@ -1765,7 +1765,7 @@
     .quiz-btn-primary {
       border: 1px solid transparent;
       background: var(--accent);
-      color: var(--white);
+      color: var(--on-accent);
     }
     .quiz-btn-primary:hover {
       border-color: var(--white);
@@ -6401,7 +6401,7 @@
 }
 .rw-btn:hover { background: var(--btn-hover-bg); border-color: var(--btn-hover-border); }
 .rw-btn:disabled { opacity: .5; cursor: not-allowed; }
-.rw-btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.rw-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .rw-btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 .rw-btn-ghost { background: transparent; }
 .rw-btn-mini { padding: 3px 9px; font-size: var(--fs-2xs); }
