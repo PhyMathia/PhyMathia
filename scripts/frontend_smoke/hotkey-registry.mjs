@@ -1,8 +1,9 @@
 // 快捷键注册表（hotkeys.js，2026-11-15，backlog #468/#469 及第二步扩充）契约与行为。
 // 范围：唯一事实源、只列真实支持且能执行的键、平台符号、纯按键映射、输入框让行、
 // 不抢浏览器保留键、命令面板、Space 平移接入、查看页让行、Esc 一次只关一层。
-// 全部同步用例，不写共享 localStorage 键、不 await。
-import { check, sandbox, fs } from './_runner.mjs';
+// 全部同步用例、不 await；末条用例临时写 phymathia_hotkey_overrides 并在结束前清空。
+// 2026-11-15 增补：用户改键覆盖层的生效／撞键拦截／恢复默认回滚。
+import { check, sandbox, fs, storageData } from './_runner.mjs';
 
 const readSrc = (p) => fs.readFileSync(p, 'utf8');
 
@@ -159,6 +160,40 @@ export function run() {
     }
     if (!hk.includes('stopPropagation()')) throw new Error('浮层开着时 Esc 没拦下其他浮层');
     if (!hk.includes("window.addEventListener('blur'")) throw new Error('Space 状态没在窗口失焦时清除');
+    return true;
+  });
+
+  check('hotkey-registry: 改键立即生效、撞键与保留键被拒、恢复默认回滚', () => {
+    const key = 'phymathia_hotkey_overrides';
+    // 出厂默认路径一字不变
+    if (sandbox.phyHotkeyResolve(ev('a', { ctrlKey: true })) !== 'selectAll') throw new Error('默认 Ctrl+A 映射变了');
+    // 模拟设置页刚改完：只存改过的那一条
+    sandbox.phyHotkeyRestoreCombo('selectAll', 'Mod+Alt+A');
+    if (sandbox.phyHotkeyEffective('selectAll') !== 'Mod+Alt+A') throw new Error('覆盖值没读到');
+    if (sandbox.phyHotkeyResolve(ev('a', { ctrlKey: true })) !== '') throw new Error('旧键不该还生效');
+    if (sandbox.phyHotkeyResolve(ev('a', { ctrlKey: true, altKey: true })) !== 'selectAll') throw new Error('新键没生效');
+    if (String(sandbox.phyHotkeyKey('selectAll')).indexOf('Alt') < 0) throw new Error('右键提示没跟着变');
+    if (sandbox.phyHotkeyMatch({ key: 'a', ctrlKey: true, altKey: true }, 'selectAll') !== true) {
+      throw new Error('graph-events 共用判定没读到覆盖值');
+    }
+    // 撞键 / 浏览器保留键 / 系统固定键 / 无修饰单键，一律拒绝且不写入
+    for (const [id, combo] of [
+      ['duplicate', 'Mod+Alt+A'], ['duplicate', 'Mod+T'], ['escape', 'Mod+Alt+E'], ['duplicate', 'D']
+    ]) {
+      const r = sandbox.phyHotkeyApplyCombo(id, combo);
+      if (!r || r.ok) throw new Error('本该拒绝的组合被放行：' + id + ' → ' + combo);
+    }
+    // 合法组合写入
+    const okRes = sandbox.phyHotkeyApplyCombo('duplicate', 'Mod+Alt+B');
+    if (!okRes || !okRes.ok) throw new Error('合法组合没写入：' + JSON.stringify(okRes));
+    if (sandbox.phyHotkeyCustomCount() !== 2) throw new Error('自定义计数不对');
+    // 恢复默认＝清空覆盖表，全部回到出厂映射
+    sandbox.phyHotkeyResetAllOverrides();
+    delete storageData[key];
+    if (sandbox.phyHotkeyResolve(ev('a', { ctrlKey: true })) !== 'selectAll') throw new Error('恢复默认后没回滚');
+    if (sandbox.phyHotkeyCustomCount() !== 0) throw new Error('恢复默认后仍有残留覆盖');
+    const problems = sandbox.phyHotkeySelfCheck();
+    if (problems.length) throw new Error('恢复默认后自检未通过：' + JSON.stringify(problems));
     return true;
   });
 }

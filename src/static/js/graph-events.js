@@ -114,23 +114,33 @@ function _deleteSelectedGraphGroups(groupIds) {
   renderGraphCanvas();
 }
 
+// 按键判定（2026-11-15 用户可改快捷键）：主应用一律查 hotkeys.js 的同一张表，
+// 改过的键位在这里立刻生效；viewer 子集不载 hotkeys.js，退回原始键位，
+// 查看页行为一字不变。动作执行逻辑保持原样，只把「按下的键对不对」换成查表。
+function _graphKeyMatches(event, id) {
+  if (typeof phyHotkeyMatch === 'function') return phyHotkeyMatch(event, id);
+  const mod = !!(event.ctrlKey || event.metaKey);
+  const shift = !!event.shiftKey;
+  const k = String(event.key || '').toLowerCase();
+  if (id === 'redo') return mod && ((shift && k === 'z') || (!shift && k === 'y'));
+  if (id === 'undo') return mod && !shift && k === 'z';
+  if (id === 'copy') return mod && !shift && k === 'c';
+  if (id === 'paste') return mod && !shift && k === 'v';
+  if (id === 'delete') return event.key === 'Delete' || event.key === 'Backspace';
+  return false;
+}
+
 function _handleGraphKeydown(event) {
   const target = event.target;
   const inTextInput = target && typeof target.closest === 'function'
     && target.closest('input, textarea, select, [contenteditable], iframe');
-  if ((event.ctrlKey || event.metaKey) && event.shiftKey && (event.key === 'z' || event.key === 'Z')) {
+  if (_graphKeyMatches(event, 'redo')) {
     if (inTextInput) return;
     event.preventDefault();
     if (typeof window.redoGraphAction === 'function') window.redoGraphAction();
     return;
   }
-  if ((event.ctrlKey || event.metaKey) && (event.key === 'y' || event.key === 'Y')) {
-    if (inTextInput) return;
-    event.preventDefault();
-    if (typeof window.redoGraphAction === 'function') window.redoGraphAction();
-    return;
-  }
-  if ((event.ctrlKey || event.metaKey) && !event.shiftKey && (event.key === 'z' || event.key === 'Z')) {
+  if (_graphKeyMatches(event, 'undo')) {
     if (inTextInput) return;
     event.preventDefault();
     _undoGraphAction();
@@ -140,7 +150,7 @@ function _handleGraphKeydown(event) {
   // 节点复制/粘贴（ComfyUI 式剪贴板，2026-10-15）：图谱选择集 ↔ 节点剪贴板
   // （localStorage 镜像，跨画布/刷新都在）。有文字选择期放行给浏览器复制文本；
   // 输入框内一律不劫持（inTextInput 已先返回）；只读查看页的粘贴禁断在落地函数内。
-  if ((event.ctrlKey || event.metaKey) && !event.shiftKey && (event.key === 'c' || event.key === 'C')) {
+  if (_graphKeyMatches(event, 'copy')) {
     if (inTextInput) return;
     if (typeof window.getSelection === 'function' && String(window.getSelection() || '').trim()) return;
     if (!graphView.selectedNodeIds || !graphView.selectedNodeIds.size) return;
@@ -151,7 +161,7 @@ function _handleGraphKeydown(event) {
     if (typeof graphCopySelectedNodes === 'function') graphCopySelectedNodes(picked);
     return;
   }
-  if ((event.ctrlKey || event.metaKey) && !event.shiftKey && (event.key === 'v' || event.key === 'V')) {
+  if (_graphKeyMatches(event, 'paste')) {
     if (inTextInput) return;
     if (typeof _graphClipCount !== 'function' || !_graphClipCount()) return;
     event.preventDefault();
@@ -164,7 +174,7 @@ function _handleGraphKeydown(event) {
       typeof _clientToGraphLocal === 'function' ? _clientToGraphLocal(cx, cy) : { x: 0, y: 0 });
     return;
   }
-  if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+  if (!_graphKeyMatches(event, 'delete')) return;
   if (!graphCanvas || (!graphView.selectedNodeIds.size && !graphView.selectedGroupIds.size)) return;
   if (inTextInput) return;
   event.preventDefault();

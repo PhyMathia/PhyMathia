@@ -237,6 +237,10 @@ const STORAGE_KEY_QUIZ_SOURCE = 'phymathia_quiz_source';
 const STORAGE_KEY_TRASH_RETENTION = 'phymathia_trash_retention';
 // 统一设置面板上次停留的分组页（2026-11-11）：全局键，经账号垫片自然分账号
 const STORAGE_KEY_SETTINGS_TAB = 'phymathia_settings_tab';
+// 用户自定义快捷键（2026-11-15）：只存「改过的那几条」的 JSON，形状 { [动作id]: 'Mod+Alt+D' }。
+// 没改过的行永远读 hotkeys.js 的出厂默认表，程序升级调整默认键位时自动跟上；
+// 恢复默认＝把这张表清空。全局键（不带会话后缀），经账号垫片自然分账号。
+const STORAGE_KEY_HOTKEY_OVERRIDES = 'phymathia_hotkey_overrides';
 const ONBOARDING_KEY = 'phymathia_onboarding_done';
 const STORAGE_KEY_DEVICE_ID = 'phymathia_device_id';
 // 节点配方库（P1）：全局键（不带会话后缀），localStorage 与服务端 /api/kv/node_recipes 双写

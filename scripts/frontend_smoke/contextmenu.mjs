@@ -560,15 +560,17 @@ check('graph-contextmenu: M2 语义补强接线（新增项 / 高亮 / 导出锚
     if (!code.includes(sym)) throw new Error('打包产物缺符号: ' + sym);
   }
   if (!code.includes('phymathia_node_clipboard')) throw new Error('打包产物缺剪贴板镜像键');
-  // 快捷键接线（graph-events.js 的 _handleGraphKeydown）：Ctrl+C/Ctrl+V 分支 +
-  // 文字选择期/输入框放行 + selectMode 早退在前
+  // 快捷键接线（graph-events.js 的 _handleGraphKeydown）：复制/粘贴分支 +
+  // 文字选择期/输入框放行 + selectMode 早退在前。
+  // 2026-11-15 起按键判定统一查 hotkeys.js 的覆盖表（用户可改键），
+  // 不再写死 event.key === 'c'/'v'；动作落地函数与放行条件保持原样。
   const wf = fs.readFileSync('src/static/js/graph-events.js', 'utf8');
   const kh = wf.indexOf('function _handleGraphKeydown');
   if (kh < 0) throw new Error('_handleGraphKeydown 未找到');
   const khBody = wf.slice(kh, wf.indexOf('function _initGraphCanvasEvents'));
   for (const frag of [
-    "event.key === 'c' || event.key === 'C'",
-    "event.key === 'v' || event.key === 'V'",
+    "_graphKeyMatches(event, 'copy')",
+    "_graphKeyMatches(event, 'paste')",
     'graphCopySelectedNodes(picked)',
     'graphPasteNodeClipboard(',
     "String(window.getSelection() || '').trim()",
@@ -576,7 +578,7 @@ check('graph-contextmenu: M2 语义补强接线（新增项 / 高亮 / 导出锚
     if (!khBody.includes(frag)) throw new Error('Ctrl+C/Ctrl+V 接线缺: ' + frag);
   }
   const selModeAt = khBody.indexOf('if (graphView.selectMode) return;');
-  const copyAt = khBody.indexOf("event.key === 'c' || event.key === 'C'");
+  const copyAt = khBody.indexOf("_graphKeyMatches(event, 'copy')");
   if (selModeAt < 0 || copyAt < 0 || copyAt < selModeAt) {
     throw new Error('复制分支必须排在 selectMode 早退之后（选文字模式不劫持 Ctrl+C）');
   }

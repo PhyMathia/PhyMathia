@@ -141,6 +141,21 @@ const ctx = {
   renderTrashList: () => { calls.push('renderTrashList'); return Promise.resolve(); },
   // 2026-11-11 二轮：模型设置页的桩（只读检查，不加载 models.js）
   setTimeout: (fn) => { timers.push(fn); if (typeof fn === 'function') fn(); return 0; },
+  // 2026-11-15 快捷键页：这个 vm 单跑 settings.js（不载 hotkeys.js），给只读桩。
+  // 键位表的唯一事实源在 hotkeys.js，桩只负责让新页能渲染出真实结构。
+  phyHotkeyList: () => [
+    { id: 'undo', combo: 'Ctrl+Z', label: '撤销上一步', scope: '全局', source: '所有编辑器', action: 'undo', editable: true, custom: false, defaultCombo: 'Ctrl+Z' },
+    { id: 'search', combo: 'Ctrl+F', label: '打开画布搜索', scope: '全局', source: '浏览器', action: 'search', editable: true, custom: false, defaultCombo: 'Ctrl+F' },
+    { id: 'escape', combo: 'Esc', label: '关闭当前浮层', scope: '全局', source: '所有软件', action: '', editable: false, custom: false, defaultCombo: 'Esc' }
+  ],
+  phyHotkeyCustomCount: () => 0,
+  phyHotkeyEventCombo: () => '',
+  phyHotkeyApplyCombo: () => ({ ok: true, combo: 'Ctrl+Alt+D' }),
+  phyHotkeyOverrides: () => ({}),
+  phyHotkeyRestoreCombo: () => {},
+  phyHotkeyClearOverride: () => {},
+  phyHotkeyResetAllOverrides: () => {},
+  phyHotkeyDefaultCombo: (id) => (id === 'undo' ? 'Ctrl+Z' : 'Ctrl+F'),
   MODEL_PRESETS: { zhipu: { name: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4' } },
   getAllModels: () => [
     { id: 'm1', name: '智谱 GLM · GLM-5.3', desc: '智谱 GLM', tags: ['GLM-5.3'], provider: 'zhipu', hasKey: true, enabled: true },
@@ -179,12 +194,13 @@ try {
   ctx.openSettingsDrawer();
   overlay.classList.contains('show') ? ok('打开抽屉：show 类就位') : bad('打开抽屉', '缺 show');
   const navItems = (nav.innerHTML.match(/settings-nav-item/g) || []).length;
-  navItems === 12 ? ok('左栏渲染 12 个入口') : bad('左栏入口数', String(navItems));
+  navItems === 13 ? ok('左栏渲染 13 个入口（含快捷键）') : bad('左栏入口数', String(navItems));
   content.innerHTML.includes('外观') ? ok('默认停在「外观」页') : bad('默认页', content.innerHTML.slice(0, 80));
 
   const expect = {
     appearance: '深浅模式', level: '难度等级', model: '模型设置', memory: '记忆与画像',
     phi: '深度思考', quiz: '出题素材源', canvas: '允许 AI 自动判断回答方式',
+    hotkeys: '解锁编辑',
     data: '数据管理', account: '账号与查阅',
     trash: '自动保留', about: '版本', help: '新手引导'
   };
@@ -336,6 +352,21 @@ try {
   ctx.settingsSelectTab('help');
   content.innerHTML.includes('settingsOpenKnowledge') && content.innerHTML.includes('issues')
     ? ok('帮助页：知识总览与 GitHub 反馈入口') : bad('帮助页入口', content.innerHTML.slice(0, 160));
+  // 2026-11-15 用户拍板：一页一把锁（默认锁定、不落盘）＋ 点框即录 ＋ 恢复默认
+  ctx.settingsSelectTab('hotkeys');
+  const kh0 = content.innerHTML;
+  kh0.includes('解锁编辑') && !kh0.includes('onfocus="settingsHotkeyFocus')
+    ? ok('快捷键页：默认锁定只读，键位框不可聚焦') : bad('快捷键默认锁定', kh0.slice(0, 160));
+  kh0.includes('恢复全部默认') && kh0.includes('系统固定')
+    ? ok('快捷键页：恢复全部默认入口与系统固定说明就位') : bad('快捷键页骨架', kh0.slice(0, 160));
+  ctx.settingsHotkeyToggleLock();
+  const kh1 = content.innerHTML;
+  kh1.includes('重新锁定') && kh1.includes('onfocus="settingsHotkeyFocus')
+    ? ok('快捷键页：解锁后键位框可聚焦（点框即录）') : bad('快捷键解锁', kh1.slice(0, 160));
+  ctx.settingsSelectTab('about');
+  ctx.settingsSelectTab('hotkeys');
+  content.innerHTML.includes('解锁编辑')
+    ? ok('快捷键页：切走再切回自动重新上锁') : bad('切页回锁', '仍停在解锁态');
   // 入口转发（会收抽屉，放最后；收完重开给只读段用）
   ctx.settingsOpenKnowledge();
   calls.includes('toggleKnowledgePanel') ? ok('帮助入口：知识总览调现有 toggleKnowledgePanel') : bad('知识总览', '未调用');

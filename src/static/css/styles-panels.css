@@ -6827,3 +6827,40 @@ body:has(.settings-overlay.show) .memory-dialog-overlay { z-index: calc(var(--z-
 .settings-github-desc { font-size: var(--fs-sm); color: var(--text-secondary); margin-top: 2px; line-height: 1.5; }
 .settings-github-link .settings-action-arrow { flex: none; }
 
+/* ====== 设置抽屉 · 快捷键页（2026-11-15 用户拍板）======
+   一页一把锁：默认只读；解锁后键位框可聚焦，聚焦即录制，按键直接落表。
+   只用 --r-* / --fs-* / --border / --text-* / --accent 令牌，五套主题自动跟随。 */
+.settings-hk-lockbar { display: flex; align-items: center; gap: 14px; padding: 10px 12px; margin-bottom: 16px; border: 1px solid var(--border); border-radius: var(--r-md); background: color-mix(in srgb, var(--text-primary) 5%, transparent); }
+.settings-hk-lockbar.is-unlocked { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.settings-hk-lockbar-text { flex: 1; min-width: 0; font-size: var(--fs-sm); color: var(--text-primary); line-height: 1.5; }
+.settings-hk-lockbtn { flex: none; padding: 6px 12px; border: 1px solid var(--border); border-radius: var(--r-md); background: transparent; color: var(--text-primary); font-family: inherit; font-size: var(--fs-sm); cursor: pointer; }
+.settings-hk-lockbtn:hover { border-color: var(--accent); color: var(--accent); }
+.settings-hk-tools { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+.settings-hk-search { flex: 1; min-width: 0; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--r-md); background: transparent; color: var(--text-primary); font-family: inherit; font-size: var(--fs-sm); }
+.settings-hk-search:focus { outline: none; border-color: var(--accent); }
+.settings-hk-count { flex: none; font-size: var(--fs-sm); color: var(--text-secondary); }
+.settings-hk-group { padding: 16px 0 6px; font-size: var(--fs-sm); color: var(--text-secondary); letter-spacing: .3px; }
+.settings-hk-row { display: flex; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border); }
+.settings-hk-info { flex: 1; min-width: 0; }
+.settings-hk-label { font-size: var(--fs-md); color: var(--text-primary); }
+.settings-hk-desc { margin-top: 3px; font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.5; }
+.settings-hk-tag { display: inline-block; margin-left: 8px; padding: 1px 7px; border: 1px solid var(--accent); border-radius: var(--r-pill); font-size: var(--fs-xs); color: var(--accent); }
+.settings-hk-fixed { margin-left: 8px; font-size: var(--fs-xs); color: var(--text-secondary); }
+.settings-hk-key { flex: none; min-width: 118px; padding: 5px 9px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-container); color: var(--text-primary); font-family: inherit; font-size: var(--fs-sm); text-align: center; }
+button.settings-hk-key { cursor: pointer; }
+button.settings-hk-key:hover { border-color: var(--accent); }
+button.settings-hk-key:focus { outline: none; border-color: var(--accent); }
+.settings-hk-key.is-locked { opacity: .72; }
+.settings-hk-key.is-recording { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.settings-hk-ops { flex: none; min-width: 54px; text-align: right; }
+.settings-hk-mini, .settings-hk-resetall, .settings-hk-confirm button, .settings-hk-toast button { padding: 5px 10px; border: 1px solid var(--border); border-radius: var(--r-md); background: transparent; color: var(--text-primary); font-family: inherit; font-size: var(--fs-sm); cursor: pointer; }
+.settings-hk-mini:hover, .settings-hk-resetall:hover, .settings-hk-confirm button:hover, .settings-hk-toast button:hover { border-color: var(--accent); color: var(--accent); }
+.settings-hk-resetall:disabled { opacity: .4; cursor: default; }
+.settings-hk-foot { display: flex; align-items: center; gap: 12px; margin-top: 16px; font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.5; }
+.settings-hk-foot > span { flex: 1; }
+.settings-hk-confirm, .settings-hk-toast { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--r-md); font-size: var(--fs-sm); color: var(--text-primary); }
+.settings-hk-confirm { border-color: var(--accent); }
+.settings-hk-toast.is-bad { border-color: var(--text-secondary); }
+.settings-hk-confirm > span, .settings-hk-toast > span { flex: 1; min-width: 0; }
+.settings-hk-empty { padding: 18px 0; font-size: var(--fs-sm); color: var(--text-secondary); }
+

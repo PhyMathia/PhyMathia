@@ -57,18 +57,156 @@ function phyHotkeyMod(combo) {
   return s.replace(/Mod\+/g, 'Ctrl+');
 }
 
+// ===== 用户自定义键位（2026-11-15）：唯一事实源仍是上面这张表 =====
+// 只存「改过的那几条」，形状 { [id]: 'Mod+Alt+D' }；没改过的行永远读出厂默认，
+// 程序升级调整默认键位时自动跟上。恢复默认＝把这张表清空。
+// 可改范围＝带 Ctrl/⌘ 的组合键；单字符键、按住型操作与浏览器/输入框职责键固定。
+const PHY_HOTKEY_EDITABLE = [
+  'undo', 'redo', 'copy', 'paste',
+  'selectAll', 'duplicate', 'group', 'ungroup', 'search', 'export',
+  'viewCanvas', 'viewContinent', 'viewKnowledge', 'palette'
+];
+// hotkeys.js 自己派发的动作；undo/redo/copy/paste/delete 让给 graph-events.js，
+// escape/fullscreen/send 等由各自既有链路处理，绝不重复接管。
+const PHY_HOTKEY_OWNED = [
+  'help', 'fit', 'zoomReset', 'pan',
+  'selectAll', 'duplicate', 'group', 'ungroup', 'search', 'export',
+  'viewCanvas', 'viewContinent', 'viewKnowledge', 'palette'
+];
+const PHY_HOTKEY_RESERVED = [
+  'Mod+N', 'Mod+T', 'Mod+W', 'Mod+L', 'Mod+R', 'Mod+P', 'Mod+Q', 'Mod+I',
+  'Mod+Shift+N', 'Mod+Shift+T', 'Mod+Shift+Q', 'Mod+Shift+I', 'Mod+Shift+W',
+  'Mod+Alt+I', 'Mod+Alt+J'
+];
+const _PHY_COMBO_RE = /^Mod\+(?:Alt\+)?(?:Shift\+)?[A-Z0-9]$/;
+const _PHY_SHIFT_DIGITS = { '!': '1', '@': '2', '#': '3', '$': '4', '%': '5', '^': '6', '&': '7', '*': '8', '(': '9', ')': '0' };
+
+function _phyHotkeyStoreKey() {
+  try {
+    if (typeof STORAGE_KEY_HOTKEY_OVERRIDES !== 'undefined') return STORAGE_KEY_HOTKEY_OVERRIDES;
+  } catch (e) {}
+  return 'phymathia_hotkey_overrides';
+}
+function phyHotkeyOverrides() {
+  try {
+    const raw = (typeof localStorage !== 'undefined') ? localStorage.getItem(_phyHotkeyStoreKey()) : null;
+    if (!raw) return {};
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return {};
+    const out = {};
+    PHY_HOTKEYS.forEach(function (r) {
+      const v = obj[r.id];
+      if (typeof v === 'string' && _PHY_COMBO_RE.test(v) && PHY_HOTKEY_EDITABLE.indexOf(r.id) !== -1) out[r.id] = v;
+    });
+    return out;
+  } catch (e) { return {}; }
+}
+function _phyHotkeySaveOverrides(ov) {
+  try {
+    const s = JSON.stringify(ov || {});
+    if (typeof safeLocalStorageSet === 'function') safeLocalStorageSet(_phyHotkeyStoreKey(), s);
+    else if (typeof localStorage !== 'undefined') localStorage.setItem(_phyHotkeyStoreKey(), s);
+  } catch (e) {}
+}
+function phyHotkeyEffective(id) {
+  const ov = phyHotkeyOverrides()[id];
+  if (ov) return ov;
+  const row = PHY_HOTKEYS.find(function (r) { return r.id === id; });
+  return row ? row.combo : '';
+}
+function phyHotkeyCandidates(id) {
+  return String(phyHotkeyEffective(id)).split(' / ').map(function (s) { return s.trim(); }).filter(Boolean);
+}
+// 事件 → 规范组合。无修饰的单键不计 Shift（Shift+/ 就是 '?'，Shift+F 就是 'F'）；
+// 带修饰键时 Shift+数字给的是 !@#…，按物理键还原成数字，Ctrl+Shift+1 才认得出来。
+function phyHotkeyEventCombo(e) {
+  if (!e) return '';
+  const k = String(e.key || '');
+  if (!k || /^(Control|Shift|Alt|Meta|Ctrl|AltGraph|CapsLock)$/.test(k)) return '';
+  const mod = !!(e.ctrlKey || e.metaKey);
+  const alt = !!e.altKey;
+  let main;
+  if (k === ' ') main = 'Space';
+  else if (k === 'Escape') main = 'Esc';
+  else if (k === 'Delete') main = 'Del';
+  else if (k === 'Backspace') main = 'Backspace';
+  else if (k === 'Enter') main = 'Enter';
+  else if (k.length === 1) main = k.toUpperCase();
+  else main = k;
+  if ((mod || alt) && e.shiftKey && _PHY_SHIFT_DIGITS[main]) main = _PHY_SHIFT_DIGITS[main];
+  const parts = [];
+  if (mod) parts.push('Mod');
+  if (alt) parts.push('Alt');
+  if ((mod || alt) && e.shiftKey) parts.push('Shift');
+  parts.push(main);
+  return parts.join('+');
+}
+function phyHotkeyMatchCombo(id, combo) {
+  if (!id || !combo) return false;
+  return phyHotkeyCandidates(id).indexOf(combo) !== -1;
+}
+function phyHotkeyMatch(e, id) {
+  return phyHotkeyMatchCombo(id, phyHotkeyEventCombo(e));
+}
+function phyHotkeyApplyCombo(id, combo) {
+  const row = PHY_HOTKEYS.find(function (r) { return r.id === id; });
+  if (!row || PHY_HOTKEY_EDITABLE.indexOf(id) === -1) {
+    return { ok: false, reason: '这条快捷键由系统固定，不能修改' };
+  }
+  const c = String(combo || '').trim();
+  if (!_PHY_COMBO_RE.test(c)) {
+    return { ok: false, reason: '请用 Ctrl / ⌘ 加一个字母或数字（可再配 Alt、Shift）' };
+  }
+  if (PHY_HOTKEY_RESERVED.indexOf(c) !== -1) {
+    return { ok: false, reason: '这个组合被浏览器占用了，换一个' };
+  }
+  const hit = PHY_HOTKEYS.filter(function (r) {
+    return r.id !== id && phyHotkeyCandidates(r.id).indexOf(c) !== -1;
+  })[0];
+  if (hit) return { ok: false, reason: '已被「' + hit.label + '」占用，换一个组合键' };
+  const ov = phyHotkeyOverrides();
+  ov[id] = c;
+  _phyHotkeySaveOverrides(ov);
+  return { ok: true, combo: phyHotkeyMod(c) };
+}
+// 回滚到已知合法状态，绕过校验（撤销／单条还原／全部恢复都走这里）
+function phyHotkeyRestoreCombo(id, combo) {
+  const ov = phyHotkeyOverrides();
+  if (combo) ov[id] = combo; else delete ov[id];
+  _phyHotkeySaveOverrides(ov);
+}
+function phyHotkeyClearOverride(id) {
+  phyHotkeyRestoreCombo(id, null);
+}
+function phyHotkeyResetAllOverrides() {
+  _phyHotkeySaveOverrides({});
+}
+function phyHotkeyCustomCount() {
+  return Object.keys(phyHotkeyOverrides()).length;
+}
+function phyHotkeyDefaultCombo(id) {
+  const row = PHY_HOTKEYS.find(function (r) { return r.id === id; });
+  return row ? phyHotkeyMod(row.combo) : '';
+}
+
 // brief=true 用于右键菜单这类窄容器（只显示主写法）；速查面板始终列全。
 function phyHotkeyKey(id, brief) {
   const row = PHY_HOTKEYS.find(function (r) { return r.id === id; });
   if (!row) return '';
-  return phyHotkeyMod(brief && row.short ? row.short : row.combo);
+  // 自定义键只有一个写法，short（默认写法的窄容器缩写）不再适用。
+  const custom = !!phyHotkeyOverrides()[id];
+  return phyHotkeyMod(custom ? phyHotkeyEffective(id) : (brief && row.short ? row.short : row.combo));
 }
 
 function phyHotkeyList() {
+  const ov = phyHotkeyOverrides();
   return PHY_HOTKEYS.map(function (r) {
     return {
-      id: r.id, combo: phyHotkeyMod(r.combo), label: r.label,
+      id: r.id, combo: phyHotkeyMod(phyHotkeyEffective(r.id)), label: r.label,
       scope: r.scope, source: r.source, action: r.action || '',
+      editable: PHY_HOTKEY_EDITABLE.indexOf(r.id) !== -1,
+      custom: !!ov[r.id],
+      defaultCombo: phyHotkeyMod(r.combo),
     };
   });
 }
@@ -96,9 +234,11 @@ function phyHotkeySelfCheck() {
   const seen = new Map();
   const problems = [];
   PHY_HOTKEYS.forEach(function (r) {
-    const k = r.scope + '|' + r.combo;
-    if (seen.has(k)) problems.push(r.id + ' 与 ' + seen.get(k) + ' 重复：' + r.combo);
-    else seen.set(k, r.id);
+    phyHotkeyCandidates(r.id).forEach(function (combo) {
+      const k = r.scope + '|' + combo;
+      if (seen.has(k)) problems.push(r.id + ' 与 ' + seen.get(k) + ' 重复：' + combo);
+      else seen.set(k, r.id);
+    });
     if (r.action && typeof PHY_HOTKEY_ACTIONS[r.action] !== 'function') {
       problems.push(r.id + ' 的动作未实现：' + r.action);
     }
@@ -216,28 +356,18 @@ function phyHotkeyRun(id) {
 }
 
 // 纯映射：按键事件 → 动作 id，不改状态、不执行，便于冒烟精确断言。
-// 已有的 Ctrl+Z/Y/C/V 仍由 graph-events.js 处理，这里不重复接管。
+// 2026-11-15 起由写死的 if 链改成查「出厂默认表 ＋ 用户改键」：设置页改完
+// 立刻生效，速查面板／右键提示／命令面板读的是同一份 effective 值。
+// 已有的 Ctrl+Z/Y/C/V 仍由 graph-events.js 处理（它也查同一张表），这里不重复接管。
 function phyHotkeyResolve(e) {
   if (!e) return '';
-  const typing = phyIsTypingTarget(e);
-  const mod = !!(e.ctrlKey || e.metaKey);
-  const shift = !!e.shiftKey;
-  const key = String(e.key || '').toLowerCase();
-  if (!mod && !e.altKey && !typing) {
-    if (e.key === '?') return 'help';
-    if (key === 'f') return 'fit';
-    if (key === '0') return 'zoomReset';
-    if (e.key === ' ' || e.code === 'Space') return 'pan';
-  }
-  if (!mod || e.altKey || typing) return '';
-  if (key === 'a' && !shift) return 'selectAll';
-  if (key === 'd' && !shift) return 'duplicate';
-  if (key === 'f' && !shift) return 'search';
-  if (key === 'k' && !shift) return 'palette';
-  if (key === 's' && !shift) return 'export';
-  if (key === 'g') return shift ? 'ungroup' : 'group';
-  if (shift && (e.key === '1' || e.key === '2' || e.key === '3')) {
-    return { '1': 'viewCanvas', '2': 'viewContinent', '3': 'viewKnowledge' }[e.key] || '';
+  if (phyIsTypingTarget(e)) return '';
+  const combo = phyHotkeyEventCombo(e);
+  if (!combo) return '';
+  if (combo === 'Space') return 'pan';
+  for (const id of PHY_HOTKEY_OWNED) {
+    if (id === 'pan') continue;
+    if (phyHotkeyMatchCombo(id, combo)) return id;
   }
   return '';
 }
@@ -455,6 +585,18 @@ window.phyHotkeySelfCheck = phyHotkeySelfCheck;
 window.phyHotkeyResolve = phyHotkeyResolve;
 window.phyHotkeyDispatch = phyHotkeyDispatch;
 window.phyHotkeyRun = phyHotkeyRun;
+window.phyHotkeyEffective = phyHotkeyEffective;
+window.phyHotkeyCandidates = phyHotkeyCandidates;
+window.phyHotkeyEventCombo = phyHotkeyEventCombo;
+window.phyHotkeyMatch = phyHotkeyMatch;
+window.phyHotkeyMatchCombo = phyHotkeyMatchCombo;
+window.phyHotkeyOverrides = phyHotkeyOverrides;
+window.phyHotkeyApplyCombo = phyHotkeyApplyCombo;
+window.phyHotkeyRestoreCombo = phyHotkeyRestoreCombo;
+window.phyHotkeyClearOverride = phyHotkeyClearOverride;
+window.phyHotkeyResetAllOverrides = phyHotkeyResetAllOverrides;
+window.phyHotkeyCustomCount = phyHotkeyCustomCount;
+window.phyHotkeyDefaultCombo = phyHotkeyDefaultCombo;
 window.phyIsTypingTarget = phyIsTypingTarget;
 window.phyIsSpacePanning = phyIsSpacePanning;
 window.phyEscClaim = phyEscClaim;

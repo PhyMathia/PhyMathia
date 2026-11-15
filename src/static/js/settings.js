@@ -28,7 +28,8 @@ const SETTINGS_GROUPS = [
     { id: 'memory', label: '记忆与画像', icon: 'user' },
     { id: 'phi', label: 'Φ 助手', icon: 'sparkles' },
     { id: 'quiz', label: '知识检测', icon: 'check' },
-    { id: 'canvas', label: '画布与追问', icon: 'curve' }
+    { id: 'canvas', label: '画布与追问', icon: 'curve' },
+    { id: 'hotkeys', label: '快捷键', icon: 'key' }
   ]},
   { label: '数据', items: [
     { id: 'data', label: '数据管理', icon: 'database' },
@@ -176,6 +177,7 @@ function _settingsCloseLegacyPanels() {
 
 function openSettingsDrawer(e) {
   try { if (e && e.stopPropagation) e.stopPropagation(); } catch (err) {}
+  _settingsHotkeyReset();
   _settingsCloseLegacyPanels();
   const saved = _settingsLsGet(STORAGE_KEY_SETTINGS_TAB, 'appearance');
   _settingsTab = SETTINGS_TAB_IDS.indexOf(saved) !== -1 ? saved : 'appearance';
@@ -191,6 +193,7 @@ function openSettingsDrawer(e) {
 }
 
 function closeSettingsDrawer() {
+  _settingsHotkeyReset();
   // 先把临时挂进来的原面板归位：否则关掉抽屉后，顶栏／侧栏旧入口打开的是空面板。
   _settingsRestoreEmbedded();
   const overlay = document.getElementById('settingsOverlay');
@@ -211,6 +214,7 @@ function toggleSettingsDrawer(e) {
 function settingsSelectTab(id, e) {
   try { if (e && e.stopPropagation) e.stopPropagation(); } catch (err) {}
   if (SETTINGS_TAB_IDS.indexOf(id) === -1) return;
+  if (id !== 'hotkeys') _settingsHotkeyReset();
   _settingsTab = id;
   _settingsLsSet(STORAGE_KEY_SETTINGS_TAB, id);
   renderSettingsPage();
@@ -565,7 +569,7 @@ function _settingsPageHelp() {
       { label: '知识总览 · 知识点与公式速查', onclick: 'settingsOpenKnowledge()' },
       { label: '到 GitHub 提问题或建议', onclick: "settingsOpenExternal('https://github.com/PhyMathia/PhyMathia/issues')" }
     ])) +
-    '<div class="settings-note">画布右键菜单里会标出该操作对应的快捷键；快捷键目前是内置的，不能自定义。</div>';
+    '<div class="settings-note">画布右键菜单里会标出该操作对应的快捷键；想改键位去「功能 → 快捷键」，先解锁再点键位框。</div>';
 }
 
 // ====== 画布与追问（2026-11-13 用户拍板）======
@@ -589,10 +593,246 @@ function settingsSetFollowupAutoRoute(on) {
   renderSettingsPage();
 }
 
+// ====== 快捷键（2026-11-15 用户拍板：一页一把锁 ＋ 点框即录）======
+// 锁只管「能不能改」，不管「能不能用」：锁着时快捷键照常生效，列表也能看能搜。
+// 解锁态只活在内存里，关抽屉／切页自动回锁，防误触改坏。
+// 录制＝点键位框聚焦后直接按组合键；window 捕获相把这次按键全拦下，
+// 不让 hotkeys.js 的 document 捕获、graph-events.js 的 window 冒泡、抽屉 Esc 收到。
+// 数据一律取自 hotkeys.js 的唯一事实源（phyHotkeyList / phyHotkeyApplyCombo），
+// 本文件不复制第二份键位表；离线 DOM 桩里没有这些函数时页面自动退成空列表。
+let _settingsHotkeyUnlocked = false;
+let _settingsHotkeyRecording = '';
+let _settingsHotkeyConfirm = false;
+let _settingsHotkeyQuery = '';
+let _settingsHotkeyToast = null;
+let _settingsHotkeyCaptureOn = false;
+
+function _settingsHotkeyRows() {
+  try { if (typeof phyHotkeyList === 'function') return phyHotkeyList(); } catch (e) {}
+  return [];
+}
+function _settingsHotkeyCount() {
+  try { if (typeof phyHotkeyCustomCount === 'function') return phyHotkeyCustomCount(); } catch (e) {}
+  return _settingsHotkeyRows().filter(function (r) { return r.custom; }).length;
+}
+function _settingsHotkeyReset() {
+  _settingsHotkeyUnlocked = false;
+  _settingsHotkeyRecording = '';
+  _settingsHotkeyConfirm = false;
+  _settingsHotkeyToast = null;
+  _settingsHotkeyEnsureCapture(false);
+}
+function _settingsHotkeyEnsureCapture(on) {
+  try {
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+    if (on && !_settingsHotkeyCaptureOn) {
+      window.addEventListener('keydown', _settingsHotkeyOnKey, true);
+      _settingsHotkeyCaptureOn = true;
+    } else if (!on && _settingsHotkeyCaptureOn) {
+      window.removeEventListener('keydown', _settingsHotkeyOnKey, true);
+      _settingsHotkeyCaptureOn = false;
+    }
+  } catch (e) { _settingsHotkeyCaptureOn = false; }
+}
+function _settingsHotkeyDropFocus() {
+  try {
+    const a = document.activeElement;
+    if (a && typeof a.blur === 'function') a.blur();
+  } catch (e) {}
+}
+function _settingsHotkeyPaintRecording() {
+  try {
+    const list = document.getElementById('settingsHotkeyList');
+    if (!list || typeof list.querySelectorAll !== 'function') return;
+    Array.prototype.forEach.call(list.querySelectorAll('.settings-hk-key'), function (el) {
+      const on = el.getAttribute('data-hk-id') === _settingsHotkeyRecording;
+      if (el.classList && el.classList.toggle) el.classList.toggle('is-recording', on);
+      el.textContent = on ? '请按下组合键…' : (el.getAttribute('data-hk-combo') || '');
+    });
+  } catch (e) {}
+}
+function _settingsHotkeyRenderRows() {
+  try {
+    const list = document.getElementById('settingsHotkeyList');
+    if (list) list.innerHTML = _settingsHotkeyRowsHtml();
+  } catch (e) {}
+  _settingsHotkeyPaintRecording();
+}
+function _settingsHotkeyRenderToast() {
+  try {
+    const box = document.getElementById('settingsHotkeyToast');
+    if (box) box.innerHTML = _settingsHotkeyToastHtml();
+  } catch (e) {}
+}
+function _settingsHotkeyOnKey(e) {
+  if (!_settingsHotkeyRecording) return;
+  try {
+    if (e.preventDefault) e.preventDefault();
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+    if (e.stopPropagation) e.stopPropagation();
+  } catch (err) {}
+  const id = _settingsHotkeyRecording;
+  if (e.key === 'Escape') {
+    settingsHotkeyBlur();
+    _settingsHotkeyDropFocus();
+    _settingsHotkeyToast = { msg: '已取消录制，键位没变', bad: false };
+    _settingsHotkeyRenderToast();
+    return;
+  }
+  let combo = '';
+  try { if (typeof phyHotkeyEventCombo === 'function') combo = phyHotkeyEventCombo(e); } catch (err) {}
+  if (!combo) return;
+  let prev = null;
+  try { if (typeof phyHotkeyOverrides === 'function') prev = phyHotkeyOverrides()[id] || null; } catch (err) {}
+  let res = { ok: false, reason: '快捷键功能未加载' };
+  try { if (typeof phyHotkeyApplyCombo === 'function') res = phyHotkeyApplyCombo(id, combo); } catch (err) {}
+  if (!res || !res.ok) {
+    _settingsHotkeyToast = { msg: (res && res.reason) || '这个组合不能用', bad: true };
+    _settingsHotkeyPaintRecording();
+    _settingsHotkeyRenderToast();
+    return;
+  }
+  _settingsHotkeyToast = {
+    msg: '已改为 ' + res.combo + '，速查面板与右键提示会一起变',
+    bad: false, undoId: id, undoPrev: prev
+  };
+  settingsHotkeyBlur();
+  _settingsHotkeyDropFocus();
+  renderSettingsPage();
+}
+function settingsHotkeyToggleLock() {
+  if (_settingsGuard()) return;
+  _settingsHotkeyUnlocked = !_settingsHotkeyUnlocked;
+  if (!_settingsHotkeyUnlocked) settingsHotkeyBlur();
+  _settingsHotkeyConfirm = false;
+  _settingsHotkeyToast = null;
+  renderSettingsPage();
+}
+function settingsHotkeyFocus(el) {
+  if (!_settingsHotkeyUnlocked || _settingsGuard()) return;
+  const id = (typeof el === 'string') ? el
+    : (el && typeof el.getAttribute === 'function' ? el.getAttribute('data-hk-id') : '');
+  const row = _settingsHotkeyRows().filter(function (r) { return r.id === id; })[0];
+  if (!row || !row.editable || _settingsHotkeyRecording === id) return;
+  _settingsHotkeyRecording = id;
+  _settingsHotkeyToast = null;
+  _settingsHotkeyEnsureCapture(true);
+  _settingsHotkeyPaintRecording();
+  _settingsHotkeyRenderToast();
+}
+function settingsHotkeyBlur() {
+  if (!_settingsHotkeyRecording) return;
+  _settingsHotkeyRecording = '';
+  _settingsHotkeyEnsureCapture(false);
+  _settingsHotkeyPaintRecording();
+}
+function settingsHotkeyFilter(v) {
+  _settingsHotkeyQuery = String(v || '');
+  if (_settingsHotkeyRecording) settingsHotkeyBlur();
+  _settingsHotkeyRenderRows();
+}
+function settingsHotkeyResetOne(el) {
+  if (!_settingsHotkeyUnlocked || _settingsGuard()) return;
+  const id = (typeof el === 'string') ? el
+    : (el && typeof el.getAttribute === 'function' ? el.getAttribute('data-hk-id') : '');
+  let def = '';
+  try { if (typeof phyHotkeyDefaultCombo === 'function') def = phyHotkeyDefaultCombo(id); } catch (e) {}
+  try { if (typeof phyHotkeyClearOverride === 'function') phyHotkeyClearOverride(id); } catch (e) {}
+  _settingsHotkeyToast = { msg: '已还原为默认 ' + def, bad: false };
+  renderSettingsPage();
+}
+function settingsHotkeyResetAllAsk() {
+  if (!_settingsHotkeyUnlocked || _settingsGuard()) return;
+  _settingsHotkeyConfirm = true;
+  renderSettingsPage();
+}
+function settingsHotkeyResetAllCancel() {
+  _settingsHotkeyConfirm = false;
+  renderSettingsPage();
+}
+function settingsHotkeyResetAllConfirm() {
+  if (!_settingsHotkeyUnlocked || _settingsGuard()) return;
+  try { if (typeof phyHotkeyResetAllOverrides === 'function') phyHotkeyResetAllOverrides(); } catch (e) {}
+  _settingsHotkeyConfirm = false;
+  _settingsHotkeyToast = { msg: '已恢复全部默认键位', bad: false };
+  renderSettingsPage();
+}
+function settingsHotkeyUndo() {
+  if (_settingsGuard()) return;
+  const t = _settingsHotkeyToast;
+  if (!t || !t.undoId) return;
+  try { if (typeof phyHotkeyRestoreCombo === 'function') phyHotkeyRestoreCombo(t.undoId, t.undoPrev || null); } catch (e) {}
+  _settingsHotkeyToast = { msg: '已撤销刚才的修改', bad: false };
+  renderSettingsPage();
+}
+function _settingsHotkeyToastHtml() {
+  const t = _settingsHotkeyToast;
+  if (!t) return '';
+  return '<div class="settings-hk-toast' + (t.bad ? ' is-bad' : '') + '"><span>' + _settingsEsc(t.msg) + '</span>'
+    + (t.undoId ? '<button type="button" onclick="settingsHotkeyUndo()">撤销</button>' : '')
+    + '</div>';
+}
+function _settingsHotkeyConfirmHtml() {
+  if (!_settingsHotkeyConfirm) return '';
+  return '<div class="settings-hk-confirm"><span>把所有快捷键恢复成出厂设置？你改过的 '
+    + _settingsHotkeyCount() + ' 条会全部丢失。</span>'
+    + '<button type="button" onclick="settingsHotkeyResetAllConfirm()">确认恢复</button>'
+    + '<button type="button" onclick="settingsHotkeyResetAllCancel()">取消</button></div>';
+}
+function _settingsHotkeyRowsHtml() {
+  const rows = _settingsHotkeyRows();
+  const q = _settingsHotkeyQuery.trim().toLowerCase();
+  let html = '', last = '';
+  rows.forEach(function (r) {
+    if (q && (r.label + ' ' + r.combo + ' ' + r.scope + ' ' + r.source).toLowerCase().indexOf(q) < 0) return;
+    if (r.scope !== last) {
+      html += '<div class="settings-hk-group">' + _settingsEsc(r.scope) + '</div>';
+      last = r.scope;
+    }
+    const id = _settingsEsc(r.id), combo = _settingsEsc(r.combo);
+    const keyHtml = (r.editable && _settingsHotkeyUnlocked)
+      ? '<button type="button" class="settings-hk-key" data-hk-id="' + id + '" data-hk-combo="' + combo + '"'
+        + ' onfocus="settingsHotkeyFocus(this)" onclick="settingsHotkeyFocus(this)"'
+        + ' onblur="settingsHotkeyBlur()" title="点这里，然后按下新的组合键">' + combo + '</button>'
+      : '<span class="settings-hk-key is-locked" data-hk-id="' + id + '" data-hk-combo="' + combo + '">' + combo + '</span>';
+    const tag = r.custom ? '<span class="settings-hk-tag">已改</span>' : '';
+    const fixed = r.editable ? '' : '<span class="settings-hk-fixed">系统固定</span>';
+    const reset = (r.custom && _settingsHotkeyUnlocked)
+      ? '<button type="button" class="settings-hk-mini" data-hk-id="' + id + '"'
+        + ' onclick="settingsHotkeyResetOne(this)">还原</button>' : '';
+    html += '<div class="settings-hk-row"><div class="settings-hk-info">'
+      + '<div class="settings-hk-label">' + _settingsEsc(r.label) + tag + '</div>'
+      + '<div class="settings-hk-desc">' + _settingsEsc(r.scope + ' · ' + r.source) + fixed + '</div></div>'
+      + keyHtml + '<div class="settings-hk-ops">' + reset + '</div></div>';
+  });
+  return html || '<div class="settings-hk-empty">没有匹配的快捷键</div>';
+}
+function _settingsPageHotkeys() {
+  const n = _settingsHotkeyCount();
+  return _sHead('快捷键', '查看和自定义全站快捷键。改动立即生效，速查面板与右键菜单提示会一起变。')
+    + '<div class="settings-hk-lockbar' + (_settingsHotkeyUnlocked ? ' is-unlocked' : '') + '">'
+      + '<span class="settings-hk-lockbar-text">' + (_settingsHotkeyUnlocked
+        ? '编辑中 · 点键位框后直接按下新组合键，按 Esc 取消。改完点「重新锁定」。'
+        : '只读浏览 · 快捷键照常能用，只是不能改。要修改键位，先点右侧「解锁编辑」。') + '</span>'
+      + '<button type="button" class="settings-hk-lockbtn" onclick="settingsHotkeyToggleLock()">'
+      + (_settingsHotkeyUnlocked ? '重新锁定' : '解锁编辑') + '</button></div>'
+    + '<div class="settings-hk-tools">'
+      + '<input class="settings-hk-search" type="text" placeholder="搜索功能或键位" value="'
+      + _settingsEsc(_settingsHotkeyQuery) + '" oninput="settingsHotkeyFilter(this.value)" aria-label="搜索快捷键">'
+      + '<span class="settings-hk-count">' + (n ? '已修改 ' + n + ' 条' : '全部为默认键位') + '</span></div>'
+    + '<div class="settings-hk-list" id="settingsHotkeyList">' + _settingsHotkeyRowsHtml() + '</div>'
+    + '<div id="settingsHotkeyConfirm">' + _settingsHotkeyConfirmHtml() + '</div>'
+    + '<div id="settingsHotkeyToast">' + _settingsHotkeyToastHtml() + '</div>'
+    + '<div class="settings-hk-foot"><button type="button" class="settings-hk-resetall"'
+      + ' onclick="settingsHotkeyResetAllAsk()"' + (_settingsHotkeyUnlocked && n ? '' : ' disabled') + '>恢复全部默认</button>'
+      + '<span>只保存你改过的那几条；没动过的行随程序升级自动更新。关掉设置页自动重新上锁。</span></div>'
+    + '<div class="settings-note">系统固定的键不参与修改：Esc 关浮层、Space 平移、F11 全屏、输入框里的 Enter 发送，以及不带 Ctrl / ⌘ 的单字符键。浏览器保留组合（Ctrl+N/T/W/R/L/P 等）录制时也会被拦下。</div>';
+}
+
 const _SETTINGS_PAGES = {
   appearance: _settingsPageAppearance, level: _settingsPageLevel, model: _settingsPageModel,
   memory: _settingsPageMemory, phi: _settingsPagePhi, quiz: _settingsPageQuiz,
-  canvas: _settingsPageCanvas,
+  canvas: _settingsPageCanvas, hotkeys: _settingsPageHotkeys,
   data: _settingsPageData, account: _settingsPageAccount, trash: _settingsPageTrash,
   about: _settingsPageAbout, help: _settingsPageHelp
 };
@@ -870,5 +1110,14 @@ try {
     window.settingsModelToggleAdd = settingsModelToggleAdd;
     window.settingsModelAddSubmit = settingsModelAddSubmit;
     window.settingsModelRefresh = settingsModelRefresh;
+    window.settingsHotkeyToggleLock = settingsHotkeyToggleLock;
+    window.settingsHotkeyFocus = settingsHotkeyFocus;
+    window.settingsHotkeyBlur = settingsHotkeyBlur;
+    window.settingsHotkeyFilter = settingsHotkeyFilter;
+    window.settingsHotkeyResetOne = settingsHotkeyResetOne;
+    window.settingsHotkeyResetAllAsk = settingsHotkeyResetAllAsk;
+    window.settingsHotkeyResetAllCancel = settingsHotkeyResetAllCancel;
+    window.settingsHotkeyResetAllConfirm = settingsHotkeyResetAllConfirm;
+    window.settingsHotkeyUndo = settingsHotkeyUndo;
   }
 } catch (e) {}
