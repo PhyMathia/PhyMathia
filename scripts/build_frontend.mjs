@@ -18,6 +18,10 @@ const entries = [
   'config.js',
   'memory.js',
   'utils.js',
+  // 快捷键注册表（2026-11-15，backlog #468）：纯工具层，定义全站唯一事实源与 ? 速查。
+  // 加载期只挂一个 document keydown 捕获监听 + 一次冲突自检，不碰任何既有状态；
+  // 排在其余业务文件之前，保证任何监听触发时工具函数都已就位。viewer 子集不载。
+  'hotkeys.js',
   'session.js',
   'send-queue.js',
   'tasks.js',

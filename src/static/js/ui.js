@@ -665,13 +665,16 @@ document.addEventListener('keydown', (e) => {
       }
       return;
     }
+    // 2026-11-15 #468：一次 Esc 只关最上面那一层。原来两个 if 都不 return，
+    // 全屏叠着阅读层时按一次会把两层一起关掉；阅读层层级更高，先判它。
+    if (document.querySelector('.graph-node-fs-overlay') && typeof closeNodeFullscreen === 'function') {
+      closeNodeFullscreen();
+      return;
+    }
     const overlay = document.getElementById('vizFullscreenOverlay');
     if (overlay && overlay.classList.contains('active')) {
       closeVizFullscreen();
-    }
-    // 节点全屏阅读层（graph-custom.js）：与 viz 全屏遮罩同级，Esc 退出
-    if (document.querySelector('.graph-node-fs-overlay') && typeof closeNodeFullscreen === 'function') {
-      closeNodeFullscreen();
+      return;
     }
   }
 });

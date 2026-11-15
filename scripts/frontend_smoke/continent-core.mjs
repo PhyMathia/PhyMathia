@@ -1915,15 +1915,18 @@ check('quiz-relearn：引导浮卡的可见倒计时与生命周期（旧版 60 
 
 check('graph-contextmenu：菜单视觉层（图标列 + 快捷键提示 + 静态断言）', () => {
   const src = fs.readFileSync('src/static/js/graph-contextmenu.js', 'utf8');
-  for (const frag of ["iconEl.className = 'graph-context-menu-icon'", 'graph-context-menu-kbd', 'GRAPH_CTX_ICONS', 'GRAPH_CTX_KEYS']) {
+  // 2026-11-15 #468：菜单不再手抄第二份按键字符串，改声明「对应注册表哪条」。
+  for (const frag of ["iconEl.className = 'graph-context-menu-icon'", 'graph-context-menu-kbd', 'GRAPH_CTX_ICONS', 'GRAPH_CTX_KEY_IDS', 'graphCtxKeyHint(item.key)']) {
     if (!src.includes(frag)) throw new Error('菜单视觉层缺: ' + frag);
   }
   // 图标取自 config.js 的线性图标表；未知键静默留白（不阻断菜单）
   const del = sandbox._graphCtxIconSvg('delete');
   if (!del || !del.includes('<svg')) throw new Error('删除项未取到图标');
   if (sandbox._graphCtxIconSvg('不存在的键') !== '') throw new Error('未知键应留白');
-  // GRAPH_CTX_KEYS 是顶层 const（不挂沙箱全局），走词法读取
-  if (vm.runInContext('GRAPH_CTX_KEYS.delete', sandbox) !== 'Del') throw new Error('删除项快捷键提示应对齐真实键位');
+  // 映射表是顶层 const（不挂沙箱全局），走词法读取；提示值由注册表实时算出。
+  if (vm.runInContext('GRAPH_CTX_KEY_IDS.delete', sandbox) !== 'delete') throw new Error('删除项没映射到注册表条目');
+  const delHint = vm.runInContext("graphCtxKeyHint('delete')", sandbox);
+  if (delHint !== 'Del' && delHint !== 'Del / Backspace') throw new Error('删除项快捷键提示应对齐真实键位：' + delHint);
   if (vm.runInContext('GRAPH_CTX_ICONS.delete', sandbox) !== 'trash') throw new Error('删除项应映射到 trash 图标');
   const cssSrc = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
   for (const frag of ['.graph-context-menu-icon', '.graph-context-menu-kbd', 'graphCtxMenuIn', 'backdrop-filter']) {

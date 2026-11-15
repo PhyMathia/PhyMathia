@@ -489,14 +489,20 @@ const GRAPH_CTX_ICONS = {
   'delete-link': 'trash',
 };
 
-// 与 _handleGraphKeydown 真实支持的快捷键一致（不写不存在的提示）
-const GRAPH_CTX_KEYS = {
-  undo: 'Ctrl+Z',
-  redo: 'Ctrl+Y',
-  delete: 'Del',
-  duplicate: 'Ctrl+C',
-  'paste-clip': 'Ctrl+V',
+// 按键提示统一从全站注册表取（2026-11-15，backlog #468）：这里只声明「菜单项对应哪条」，
+// 具体写法、Ctrl/⌘ 平台符号、重做的第二种写法都活在 hotkeys.js 里，菜单不再手抄第二份。
+// viewer 子集不载 hotkeys.js 时退回空提示，绝不显示不存在的键。
+const GRAPH_CTX_KEY_IDS = {
+  undo: 'undo',
+  redo: 'redo',
+  delete: 'delete',
+  duplicate: 'copy',
+  'paste-clip': 'paste',
 };
+function graphCtxKeyHint(itemKey) {
+  const id = GRAPH_CTX_KEY_IDS[itemKey];
+  return (typeof phyHotkeyKey === 'function' && id) ? phyHotkeyKey(id, true) : '';
+}
 
 function _graphCtxIconSvg(key) {
   const iconName = GRAPH_CTX_ICONS[key];
@@ -954,7 +960,7 @@ function openGraphContextMenu(event) {
     labelEl.className = 'graph-context-menu-label';
     labelEl.textContent = item.label;
     btn.appendChild(labelEl);
-    const keyHint = GRAPH_CTX_KEYS[item.key];
+    const keyHint = graphCtxKeyHint(item.key);
     if (keyHint) {
       const kbd = document.createElement('kbd');
       kbd.className = 'graph-context-menu-kbd';

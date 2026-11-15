@@ -145,6 +145,13 @@ function renderGraphCanvas(streaming) {
     + svgHead + '<polyline points="1 4 1 10 7 10"></polyline>'
     + '<path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>'
     + '<span>视图复位</span></button>'
+    // 快捷键速查（2026-11-15，backlog #469）：内容由 hotkeys.js 注册表自动渲染，
+    // 只列真实支持的键。也可直接按 ? 打开。
+    + '<button class="graph-more-item" role="menuitem" onclick="phyOpenHotkeyHelp();closeGraphToolbarMore()">'
+    + svgHead + '<circle cx="12" cy="12" r="9"></circle>'
+    + '<path d="M9.6 9.2a2.5 2.5 0 1 1 3.9 2.1c-1 .7-1.5 1.2-1.5 2.3"></path>'
+    + '<line x1="12" y1="17" x2="12" y2="17"></line></svg>'
+    + '<span>快捷键速查（?）</span></button>'
     + '</div>';
   graphCanvas.appendChild(toolbar);
   _zoomReadoutEl = toolbar.querySelector('.graph-zoom-readout');

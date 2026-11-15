@@ -601,6 +601,11 @@
       if (f) loadFile(f);
     });
     document.addEventListener('keydown', function (e) {
+      // 输入框内一律让行（2026-11-15，backlog #468）：公式里的 / 与字母 f 属于正文，
+      // 不能被「搜索」「适配画布」抢走；带修饰键的组合也让给浏览器原生行为。
+      var _t = e && e.target;
+      if (_t && _t.closest && _t.closest('input, textarea, select, [contenteditable], iframe')) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.key === 'f' && !e.ctrlKey && !e.metaKey) { if (typeof window.fitGraph === 'function') window.fitGraph(); }
       if (e.key === '/' ) { e.preventDefault(); if (typeof window.toggleGraphSearchPanel === 'function') window.toggleGraphSearchPanel(); }
     });
