@@ -108,6 +108,13 @@ function renderGraphCanvas(streaming) {
     + '<button class="graph-tool-btn graph-text-btn" onclick="graphTextScaleStep(-1)" data-text-scale-btn="-1" data-tip="字号调小" aria-label="字号调小">A−</button>'
     + '<button class="graph-tool-btn graph-text-btn" onclick="graphTextScaleStep(1)" data-text-scale-btn="1" data-tip="字号调大" aria-label="字号调大">A+</button>'
     + '</div>'
+    // 自动整理是高频动作（2026-11-15 用户回拍）：方案 B 初版把它收进 ⋯，用一次就得多点一下，
+    // 拿回主栏做散钮，位置沿用改版前的相对次序（字号槽之后、Φ 之前）。只有 ≤560px 窄屏
+    // 空间实在放不下才降级进 ⋯（见 CSS .graph-more-item--compact），宽屏永远直接可见。
+    + '<button class="graph-tool-btn graph-tool-arrange" onclick="autoArrangeGraph()" data-tip="自动整理" aria-label="自动整理">'
+    + svgHead + '<rect x="4" y="4" width="6" height="6" rx="1.5"></rect><rect x="14" y="4" width="6" height="6" rx="1.5"></rect>'
+    + '<rect x="4" y="14" width="6" height="6" rx="1.5"></rect><rect x="14" y="14" width="6" height="6" rx="1.5"></rect>'
+    + '</svg></button>'
     + '<button class="graph-tool-btn graph-tool-more" onclick="toggleGraphToolbarMore(event)" data-tip="更多" aria-label="更多工具" aria-haspopup="true" aria-expanded="false">'
     + svgHead + '<circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"></circle>'
     + '<circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"></circle></svg></button>'
@@ -117,10 +124,10 @@ function renderGraphCanvas(streaming) {
     + '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
     + '<path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path>'
     + '</svg></button>'
-    // ⋯ 菜单：自动整理 + 从左上簇收进来的两项低频审查（面板是独立 absolute，
-    // 不依赖触发钮位置，挪走不影响定位）
+    // ⋯ 菜单：只收两项低频审查（面板是独立 absolute，不依赖触发钮位置，挪走不影响定位）；
+    // 第一项自动整理是窄屏专属副本——宽屏时 .graph-tool-arrange 露出、这份 display:none。
     + '<div class="graph-tool-more-menu" role="menu" hidden>'
-    + '<button class="graph-more-item" role="menuitem" onclick="autoArrangeGraph();closeGraphToolbarMore()">'
+    + '<button class="graph-more-item graph-more-item--compact" role="menuitem" onclick="autoArrangeGraph();closeGraphToolbarMore()">'
     + svgHead + '<rect x="4" y="4" width="6" height="6" rx="1.5"></rect><rect x="14" y="4" width="6" height="6" rx="1.5"></rect>'
     + '<rect x="4" y="14" width="6" height="6" rx="1.5"></rect><rect x="14" y="14" width="6" height="6" rx="1.5"></rect></svg>'
     + '<span>自动整理</span></button>'
@@ -136,7 +143,7 @@ function renderGraphCanvas(streaming) {
   const toolbarEdit = document.createElement('div');
   toolbarEdit.className = 'graph-canvas-toolbar graph-canvas-toolbar--left';
   // 左簇只留「改图」三件（选择文字 / 联系 / 分组）；图体检与修改历史属低频审查，
-  // 2026-11-15 随方案 B 收进右下簇的 ⋯ 菜单——两簇合计露出 6+3 个入口，原来是 9+5。
+  // 2026-11-15 随方案 B 收进右下簇的 ⋯ 菜单——两簇合计露出 7+3 个入口，原来是 9+5。
   // 联系模式的图标同时从「两弧夹一线」换成标准链环（lucide link）：原图在 19px 下
   // 两条弧与中线糊成一坨，用户反馈的「看不清」有一半出在这类自绘形上。
   toolbarEdit.innerHTML = '<button class="graph-tool-btn graph-select-btn" onclick="graphToggleTextSelection()" data-tip="选择文字" aria-label="选择文字" aria-pressed="false">'

@@ -716,20 +716,38 @@
   flex: none !important;
   opacity: 0.9;
 }
-/* 窄屏（2026-11-15 随方案 B 重算）：桌面 38px 一排宽裕，但右簇现在含两个凹槽，
-   375px 屏上会顶出右缘。压到 28px / 槽内边距 1px / 间距 1px 后右簇约 306px，
-   320px 屏（可用 312px）也放得下；左簇同时抬到右簇上方一行并改回左对齐——
-   两簇若挤在同一行，320px 屏上必然重叠，而右簇之上还要留「更多」菜单的翻出空间。 */
+
+/* 自动整理双份入口（2026-11-15 用户回拍「常用项不该收起来」）：宽屏在主栏露散钮、
+   ⋯ 里这份隐藏；只在 ≤560px 反过来。两份共用 onclick，display:none 的那份不进 tab
+   序，不会重复触发。为什么要有副本：窄屏右簇已经压到 306px，320px 屏只剩 312px 可用，
+   再加一枚 28px 散钮＋1px gap 就顶出右缘了。 */
+.graph-more-item--compact {
+  display: none !important;
+}
+@media (max-width: 560px) {
+  .graph-canvas-toolbar .graph-tool-arrange {
+    display: none !important;
+  }
+  .graph-tool-more-menu .graph-more-item--compact {
+    display: flex !important;
+  }
+}
+/* 窄屏（2026-11-15 随方案 B 重算，同日追加自动整理后用 Playwright 量过 rect 再修）：
+   桌面 38px 一排宽裕，但右簇含两个凹槽，375px 屏上会顶出右缘。压到 28px / 槽内边距
+   1px 后，原来 gap:1px + sep margin:2px 实测宽 319px（不是先前估的 306px）——320px 屏
+   可用 312px，左缘会被切掉 7px；且右簇实测高 42px，左簇 bottom:46px 仍与它叠 4px。
+   现改外层 gap:0（−6px）、sep margin 0 1px（−2px）→ 311px 刚好；左簇抬到 56px 留
+   6px 间隙。两簇若挤同一行，320px 屏必然重叠，右簇之上还要留「⋯」菜单的翻出空间。 */
 @media (max-width: 560px) {
   .graph-canvas-toolbar {
-    gap: 1px !important;
+    gap: 0 !important;
     right: 8px !important;
     bottom: 8px !important;
   }
   .graph-canvas-toolbar--left {
     left: 8px !important;
     right: auto !important;
-    bottom: 46px !important;
+    bottom: 56px !important;
   }
   .graph-canvas-toolbar .graph-tool-btn {
     width: 28px !important;
@@ -741,6 +759,9 @@
   .graph-tool-btn.graph-zoom-readout {
     min-width: 34px !important;
     font-size: 11px !important;
+  }
+  .graph-tool-sep {
+    margin: 0 1px !important;
   }
   .graph-canvas-toolbar .graph-tool-btn.graph-text-btn {
     font-size: 13px !important;
