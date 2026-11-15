@@ -226,16 +226,39 @@ export async function run() {
       return true;
     }]);
 
-    serial.push(['面板手动口：定稿清空只清历史，不动当前图', async () => {
+    serial.push(['面板手动口：清空历史内核只清历史，不动当前图（直接调内核，绕过武装）', async () => {
       seed(3);
       els.graphHistoryList = _mkEl('div');
       els.graphHistoryPos = _mkEl('span');
       els.graphHistoryDiffText = _mkEl('div');
       runCtx('openGraphHistoryPanel();');
       await runCtx('settleGraphHistoryNow()');
-      if (runCtx('graphUndoStack.length') !== 0) throw new Error('定稿清空没清掉历史');
-      if ((mem.customNodes || []).length !== 3) throw new Error('定稿清空把图状态也动了');
+      if (runCtx('graphUndoStack.length') !== 0) throw new Error('清空历史内核没清掉历史');
+      if ((mem.customNodes || []).length !== 3) throw new Error('清空历史内核把图状态也动了');
       runCtx('closeGraphHistoryPanel();');
+      return true;
+    }]);
+
+    serial.push(['2026-11-15 两步确认：第一下只武装、第二下才真清，关面板解除武装', async () => {
+      seed(3);
+      els.graphHistoryList = _mkEl('div');
+      els.graphHistoryPos = _mkEl('span');
+      els.graphHistoryDiffText = _mkEl('div');
+      runCtx('openGraphHistoryPanel();');
+      // 第一下：armed 态立起，历史一条不少（沙箱无真按钮，武装逻辑由变量驱动）
+      runCtx('requestGraphHistoryClear();');
+      if (!runCtx('graphHistoryClearArmed')) throw new Error('第一下没进 armed 态');
+      if (runCtx('graphUndoStack.length') !== 3) throw new Error('第一下就把历史清了');
+      // 第二下：真清，armed 解除，图状态不动
+      await runCtx('requestGraphHistoryClear();');
+      if (runCtx('graphUndoStack.length') !== 0) throw new Error('第二下没清掉历史');
+      if (runCtx('graphHistoryClearArmed')) throw new Error('清空后 armed 没解除');
+      if ((mem.customNodes || []).length !== 3) throw new Error('两步清空把图状态也动了');
+      // 再武装后关面板：确认态不跨次打开残留
+      runCtx('requestGraphHistoryClear();');
+      if (!runCtx('graphHistoryClearArmed')) throw new Error('再武装失败');
+      runCtx('closeGraphHistoryPanel();');
+      if (runCtx('graphHistoryClearArmed')) throw new Error('关面板没解除武装');
       return true;
     }]);
 

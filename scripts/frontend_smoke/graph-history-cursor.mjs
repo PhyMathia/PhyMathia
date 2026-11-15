@@ -118,7 +118,7 @@ export async function run() {
       return true;
     });
 
-    check('T365: 历史面板渲染——位置指示／当前位置标记／未来区段／回到最新都在', () => {
+    check('T365: 历史面板渲染——步数指示／你在这里标记／未来区段／回到最新都在（2026-11-15 表达层改口）', () => {
       reset();
       for (const k of Object.keys(els)) delete els[k];
       els.graphHistoryList = { className: '', innerHTML: '', hidden: false };
@@ -134,19 +134,49 @@ export async function run() {
       runCtx('openGraphHistoryPanel(); graphHistoryLastSignature = ""; _refreshGraphHistoryPanel();');
       const list = els.graphHistoryList.innerHTML;
       try {
-        if (els.graphHistoryPos.textContent !== '位置 2 / 4') {
-          throw new Error('位置指示不对：' + els.graphHistoryPos.textContent);
+        if (els.graphHistoryPos.textContent !== '第 2 步 · 共 4 步') {
+          throw new Error('步数指示不对：' + els.graphHistoryPos.textContent);
         }
-        if (!list.includes('以下为未来') || !list.includes('可重做 2 步')) throw new Error('未来区段分隔条缺失');
-        if (!list.includes('当前位置')) throw new Error('游标位没有「当前位置」标记');
+        if (!list.includes('后面还有 2 步') || !list.includes('可重做')) throw new Error('未来区段分隔条缺失');
+        if (!list.includes('你在这里')) throw new Error('游标位没有「你在这里」标记');
         if (!list.includes('回到最新')) throw new Error('「最新状态」行没有回到最新按钮');
         if (!list.includes('回到此版本')) throw new Error('历史行没有回到此版本按钮');
-        // 回到最新位渲染：锚点行消失、未来分隔条消失、位置到末尾
+        // 时间线行：步序号在、未来行带 future 类（淡化＋虚线轨道由 CSS 吃这个类）
+        if (!list.includes('第 1 步') || !list.includes('第 4 步')) throw new Error('行步序号缺失');
+        if (!list.includes('graph-history-item future')) throw new Error('未来行没标 future 类');
+        // 回到最新位渲染：锚点行消失、未来分隔条消失、步数到末尾
         runCtx('graphHistoryCursor = 3; graphHistoryLive = null; graphHistoryLastSignature = ""; _refreshGraphHistoryPanel();');
-        if (els.graphHistoryPos.textContent !== '位置 4 / 4') {
-          throw new Error('最新位位置指示不对：' + els.graphHistoryPos.textContent);
+        if (els.graphHistoryPos.textContent !== '第 4 步 · 共 4 步') {
+          throw new Error('最新位步数指示不对：' + els.graphHistoryPos.textContent);
         }
-        if (els.graphHistoryList.innerHTML.includes('以下为未来')) throw new Error('最新位不应有未来区段');
+        if (els.graphHistoryList.innerHTML.includes('后面还有')) throw new Error('最新位不应有未来区段');
+        if (els.graphHistoryList.innerHTML.includes('graph-history-item future')) throw new Error('最新位不应有未来行');
+      } finally {
+        runCtx('closeGraphHistoryPanel();');
+      }
+      return true;
+    });
+
+    check('2026-11-15 表达层：日期感知时间（今天/昨天/更早）＋空历史引导', () => {
+      reset();
+      for (const k of Object.keys(els)) delete els[k];
+      els.graphHistoryList = { className: '', innerHTML: '', hidden: false };
+      els.graphHistoryDiffText = { className: '', innerHTML: '', hidden: false };
+      els.graphHistoryPos = { className: '', textContent: '', hidden: false };
+      // 空历史：引导整块替掉 lone「当前状态」行，位置读「暂无记录」
+      runCtx('openGraphHistoryPanel(); graphHistoryLastSignature = ""; _refreshGraphHistoryPanel();');
+      try {
+        if (!els.graphHistoryList.innerHTML.includes('还没有修改记录')) throw new Error('空历史没有引导文案');
+        if (!els.graphHistoryList.innerHTML.includes('可随时回退')) throw new Error('引导没说「可随时回退」');
+        if (els.graphHistoryPos.textContent !== '暂无记录') throw new Error('空历史位置文案不对：' + els.graphHistoryPos.textContent);
+        // 日期感知三档（不钉具体钟点，只钉格式——沙箱时区不定）
+        const today = runCtx('_graphHistoryTime(Date.now())');
+        if (!/^\d{2}:\d{2}:\d{2}$/.test(today)) throw new Error('今天应为 HH:MM:SS：' + today);
+        const yesterday = runCtx('_graphHistoryTime(Date.now() - 86400000)');
+        if (!/^昨天 \d{2}:\d{2}$/.test(yesterday)) throw new Error('昨天应为「昨天 HH:MM」：' + yesterday);
+        const older = runCtx('_graphHistoryTime(Date.now() - 3 * 86400000)');
+        if (!/^\d{2}-\d{2} \d{2}:\d{2}$/.test(older)) throw new Error('更早应为 MM-DD HH:MM：' + older);
+        if (runCtx('_graphHistoryTime(0)') !== '') throw new Error('无时间戳应返回空串');
       } finally {
         runCtx('closeGraphHistoryPanel();');
       }

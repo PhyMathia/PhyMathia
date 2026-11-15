@@ -123,8 +123,8 @@ function _showGraphHistoryCompare(versionIndex) {
   graphHistoryPreviewing = versionIndex;
   graphHistoryDiffModel = model;
   graphHistoryDiffSummary = (model.dir === "step")
-    ? "版本 " + (versionIndex + 1) + " 这一步改了什么：" + model.diff.summary
-    : "版本 " + (versionIndex + 1) + " 与当前差异：" + model.diff.summary;
+    ? "第 " + (versionIndex + 1) + " 步改了什么：" + model.diff.summary
+    : "回到第 " + (versionIndex + 1) + " 步会怎样：" + model.diff.summary;
   if (typeof window.applyGraphHistoryDiff === "function") {
     window.applyGraphHistoryDiff(model.diff, { dir: model.dir });
   }
@@ -256,16 +256,18 @@ function _renderGraphHistoryFooter() {
   const counts = model.counts || {};
   const step = model.dir === "step";
   const cntLabel = function (will) { return _graphDiffWillLabel(will, model.dir); };
-  const title = step
-    ? '对比：这一步改了什么——「' + esc(_graphHistoryVersionTitle(model)) + '」'
-    : '对比：回到「' + esc(_graphHistoryVersionTitle(model)) + '」会怎样';
+  // 头部说人话（2026-11-15）：主标题只认步序号「对比：第 N 步」，版本的时间＋摘要
+  // 降为副标题；方向由底部分段胶囊与计数措辞表达，不再挤进标题长句。
+  const title = '对比：第 ' + (model.index + 1) + ' 步';
   const head = '<div class="graph-history-diff-head">'
     + '<div class="graph-history-diff-title">' + title + '</div>'
     + '<div class="graph-history-diff-counts">'
     + '<span class="g-hd-count will-vanish">' + cntLabel('vanish') + ' ' + (counts.vanish || 0) + '</span>'
     + '<span class="g-hd-count will-return">' + cntLabel('return') + ' ' + (counts.ret || 0) + '</span>'
     + '<span class="g-hd-count will-change">' + cntLabel('change') + ' ' + (counts.change || 0) + '</span>'
-    + '</div></div>';
+    + '</div>'
+    + '<div class="graph-history-diff-sub">' + esc(_graphHistoryVersionTitle(model)) + '</div>'
+    + '</div>';
   // 行保持 div（role=button）：别退回 button，嵌套按钮的教训在这里（T389 实踩）。
   const list = model.items.length
     ? '<div class="graph-history-diff-list">' + model.items.map(function (it, i) {
@@ -287,14 +289,18 @@ function _renderGraphHistoryFooter() {
     + '<span class="g-hd-legend will-vanish">− ' + cntLabel('vanish') + '</span>'
     + '<span class="g-hd-legend will-change">✎ ' + cntLabel('change') + '</span>'
     + '</div>';
-  // 两向切换（简化批次）：back＝回到这里会怎样（默认）／step＝这一步改了什么
-  const stepDisabled = model.index < 1 ? ' disabled title="第一步之前没有更早的版本"' : '';
+  // 底部固定操作条（2026-11-15）：两向切换改分段胶囊（T451 自绘分段同款语言），
+  // 主按钮「回到这一步」accent 实底突出，「退出对比」次级。函数与 onclick 全沿用。
+  const stepDisabled = model.index < 1 ? ' disabled title="第一步没有更早版本"' : '';
   const actions = '<div class="graph-history-diff-actions">'
+    + '<div class="g-hd-seg" role="group" aria-label="对比方向">'
     + '<button type="button" class="g-hd-dir' + (step ? '' : ' active') + '" onclick="setGraphHistoryCompareDir(\'back\')">回到这里会怎样</button>'
     + '<button type="button" class="g-hd-dir' + (step ? ' active' : '') + '"' + stepDisabled + ' onclick="setGraphHistoryCompareDir(\'step\')">这一步改了什么</button>'
+    + '</div>'
+    + '<div class="g-hd-actions-row">'
     + '<button type="button" class="g-hd-jump" onclick="jumpGraphVersion(' + model.index + ')">回到这一步</button>'
     + '<button type="button" class="graph-history-exit-preview" onclick="exitGraphVersionPreview()">✕ 退出对比</button>'
-    + '</div>';
+    + '</div></div>';
   const html = head + legend + list + actions;
   if (html === graphHistoryFooterLastHtml) return;
   graphHistoryFooterLastHtml = html;
@@ -435,11 +441,19 @@ window.forkGraphHistoryVersion = forkGraphHistoryVersion;
 // 收藏与 30 步上限的择优挤出、排版偏好键、差异清单「恢复这一颗」全部删除；恢复固定
 // 「保留当前排版」（见 _restoreGraphVersion），旧数据里已起的名字仍照显示。
 
+// 日期感知时间（2026-11-15 表达层重做）：今天 HH:MM:SS／昨天 HH:MM／更早 MM-DD HH:MM。
+// 旧版只有 HH:MM:SS，跨天的步骤分不清是哪天；行时间仍是「形成这一版的上一动作启动
+// 时间」（3.3 口径不变），这里只改展示格式。时钟偏差导致的「未来」时间按今天读。
 function _graphHistoryTime(ts) {
   if (!ts) return "";
   const d = new Date(ts);
   const pad = function (n) { return n < 10 ? "0" + n : String(n); };
-  return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+  const dayStart = function (x) { return new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime(); };
+  const days = Math.round((dayStart(new Date()) - dayStart(d)) / 86400000);
+  const hm = pad(d.getHours()) + ":" + pad(d.getMinutes());
+  if (days <= 0) return hm + ":" + pad(d.getSeconds());
+  if (days === 1) return "昨天 " + hm;
+  return pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + hm;
 }
 
 function openGraphHistoryPanel() {
@@ -455,7 +469,7 @@ function openGraphHistoryPanel() {
       + '<div class="graph-history-tools">'
       + '<button type="button" onclick="undoGraphAction()" title="Ctrl+Z">↩ 撤销</button>'
       + '<button type="button" onclick="redoGraphAction()" title="Ctrl+Y / Ctrl+Shift+Z">↪ 重做</button>'
-      + '<button type="button" class="graph-history-settle" onclick="settleGraphHistoryNow()" title="清空修改历史，保留当前图状态（定稿）">定稿清空</button>'
+      + '<button type="button" class="graph-history-settle" onclick="requestGraphHistoryClear(event)" title="清空历史，图保留">清空历史</button>'
       + '</div>'
       + '<div class="graph-history-list" id="graphHistoryList"></div>'
       + '<div class="graph-history-diff" id="graphHistoryDiffText"></div>';
@@ -477,6 +491,7 @@ function closeGraphHistoryPanel() {
   if (typeof window.clearGraphDiffHighlights === "function") window.clearGraphDiffHighlights();
   graphHistoryPreviewing = -1;
   graphHistoryDiffSummary = "";
+  disarmGraphHistoryClear();   // 确认态不跨次打开残留（2026-11-15）
 }
 
 // ===== 退出结算（1.3 / §6）：正常关闭只写标记，下次打开时结算 =====
@@ -606,6 +621,53 @@ async function settleGraphHistoryNow() {
   return _settleClearGraphHistory("历史已清空（定稿）· 当前图状态保留");
 }
 
+// ===== 「清空历史」内联二次确认（2026-11-15 表达层重做，仿 Φ 清空对话条 T92/T118）=====
+// armed 态由变量持有（不只活 DOM）：面板重渲染/切画布不会把确认态冲掉；armed 期间
+// 换了画布立即解除——确认态不许跨画布误清。settleGraphHistoryNow 内核一字不动，
+// 冒烟直接调内核的用例保持绿；包装只管「点两下才真清」的表达层。
+let graphHistoryClearArmed = false;
+let graphHistoryClearArmTimer = null;
+let graphHistoryClearArmedSid = "";
+
+function _renderGraphHistorySettleBtn() {
+  // 只改真 DOM 里的按钮：冒烟沙箱里面板是宽松代理，querySelector 不存在或返回 null，
+  // nodeType 守卫直接跳过（Φ 同款）；armed 变量照常驱动两步逻辑。
+  const btn = (graphHistoryPanel && typeof graphHistoryPanel.querySelector === "function")
+    ? graphHistoryPanel.querySelector(".graph-history-settle") : null;
+  if (!btn || btn.nodeType !== 1) return;
+  if (graphHistoryClearArmed) {
+    btn.classList.add("armed");
+    btn.textContent = "再点一次确认清空";
+    btn.title = "再点一次确认";
+  } else {
+    btn.classList.remove("armed");
+    btn.textContent = "清空历史";
+    btn.title = "清空历史，图保留";
+  }
+}
+
+function disarmGraphHistoryClear() {
+  graphHistoryClearArmed = false;
+  graphHistoryClearArmedSid = "";
+  if (graphHistoryClearArmTimer) { clearTimeout(graphHistoryClearArmTimer); graphHistoryClearArmTimer = null; }
+  _renderGraphHistorySettleBtn();
+}
+
+// onclick 包装：第一下武装（按钮变红、4 秒不点自动解除），第二下才真清。
+function requestGraphHistoryClear(event) {
+  if (event && typeof event.stopPropagation === "function") event.stopPropagation();
+  if (!graphHistoryClearArmed) {
+    graphHistoryClearArmed = true;
+    graphHistoryClearArmedSid = graphHistorySession || _currentSessionId();
+    _renderGraphHistorySettleBtn();
+    if (graphHistoryClearArmTimer) clearTimeout(graphHistoryClearArmTimer);
+    graphHistoryClearArmTimer = setTimeout(disarmGraphHistoryClear, 4000);
+    return false;
+  }
+  disarmGraphHistoryClear();
+  return settleGraphHistoryNow();
+}
+
 function _scrollGraphHistoryToCurrent() {
   // R9：打开面板默认停在最老一行，当前步在最下面。滚到「当前位置」那一行。
   const listEl = document.getElementById("graphHistoryList");
@@ -617,9 +679,24 @@ function _scrollGraphHistoryToCurrent() {
   }
 }
 
+// comparing 类（2026-11-15）：进入对比后列表收成顶部窄条、差异区接管剩余高度（CSS 负责）。
+// className 整串写：冒烟沙箱的宽松元素没有 classList，字符串比较两边都稳。
+function _syncGraphHistoryPanelMode() {
+  if (!graphHistoryPanel) return;
+  const base = "graph-history-panel aurora-glass aurora-glass--dialog";
+  const want = (graphHistoryPreviewing >= 0 && graphHistoryDiffModel) ? base + " comparing" : base;
+  if (graphHistoryPanel.className !== want) graphHistoryPanel.className = want;
+}
+
 function _refreshGraphHistoryPanel() {
   if (!graphHistoryPanel || graphHistoryPanel.hidden) return;
   const versions = _graphVersions();
+  // armed 期间换了画布立即解除：确认态不许跨画布误清（_graphVersions 已把内存账本
+  // 切到当前会话，这里对的是切换后的 graphHistorySession）
+  if (graphHistoryClearArmed && graphHistoryClearArmedSid && graphHistorySession !== graphHistoryClearArmedSid) {
+    disarmGraphHistoryClear();
+  }
+  _syncGraphHistoryPanelMode();
   const sig = graphHistoryPreviewing + "|" + graphHistoryCursor + "|" + graphHistoryCompareDir + "|"
     + ((graphHistoryDiffModel && graphHistoryDiffModel.focusIndex) || -1) + "|"
     + graphHistoryDropped + "|"
@@ -634,7 +711,12 @@ function _refreshGraphHistoryPanel() {
   graphHistoryLastSignature = sig;
   const listEl = document.getElementById("graphHistoryList");
   const posEl = document.getElementById("graphHistoryPos");
-  if (posEl) posEl.textContent = "位置 " + (graphHistoryCursor + 1) + " / " + (graphUndoStack.length + 1);
+  // 说人话（2026-11-15）：「位置 3 / 8」→「第 3 步 · 共 8 步」；空历史读「暂无记录」
+  if (posEl) {
+    posEl.textContent = graphUndoStack.length
+      ? "第 " + (graphHistoryCursor + 1) + " 步 · 共 " + (graphUndoStack.length + 1) + " 步"
+      : "暂无记录";
+  }
   // 容量提示（4.3）：已记几条、本地存档多大、更早的有多少被挤出
   const capEl = document.getElementById("graphHistoryCap");
   if (capEl) {
@@ -643,6 +725,16 @@ function _refreshGraphHistoryPanel() {
   }
   if (!listEl) return;
   const esc = typeof window.escapeHtml === "function" ? window.escapeHtml : function (s) { return String(s); };
+  // 空历史引导（2026-11-15）：不留白面板——告诉用户记录怎么产生、可以回退。
+  // 此时 _graphVersions 仍会补一行「当前状态」，但它没有信息量，用引导整块替掉。
+  if (!graphUndoStack.length) {
+    listEl.innerHTML = '<div class="graph-history-empty">'
+      + '<div class="graph-history-empty-title">还没有修改记录</div>'
+      + '<div class="graph-history-empty-text">提问、编辑或让 Φ 改图后，每一步都会记在这里，可随时回退。</div>'
+      + '</div>';
+    _renderGraphHistoryFooter();
+    return;
+  }
   const futureCount = graphUndoStack.length - graphHistoryCursor; // 游标之后的可重做步数
   listEl.innerHTML = versions.map(function (v) {
     const label = _graphHistorySourceLabel(v.meta && v.meta.source);
@@ -650,18 +742,22 @@ function _refreshGraphHistoryPanel() {
     const summary = esc((v.meta && (v.meta.name || v.meta.summary)) || "");
     const time = _graphHistoryTime(v.meta && v.meta.ts);
     const counts = v.counts ? _graphDiffCountText(v.counts) : "";
-    // T365：游标所在行＝「你在这里」（历史行加当前标记、隐藏动作钮）；isLive 行沿用旧样式
+    // T365：游标所在行＝「你在这里」；isLive 行（停在最新时的当前状态行）同样标
     const atCursor = (v.index === graphHistoryCursor) || v.isLive;
-    const cls = atCursor ? "graph-history-item current" : "graph-history-item";
+    // 未来行（2026-11-15）：游标之后的行整体淡化＋虚线轨道，分隔条说「后面还有 N 步」
+    const isFuture = !atCursor && v.index > graphHistoryCursor;
+    let cls = "graph-history-item";
+    if (atCursor) cls += " current";
+    if (isFuture) cls += " future";
+    if (graphHistoryPreviewing === v.index) cls += " previewing";
     const srcCls = "src-" + ((v.meta && v.meta.source) || "user");
-    const previewCls = (graphHistoryPreviewing === v.index) ? " previewing" : "";
     // 每行都能「另开」（4.1）；收藏与「与上一步对比」已随简化批次退役（对比面板内两向切换）
     const forkBtn = '<button type="button" class="graph-history-branch" onclick="forkGraphHistoryVersion(' + v.index + ')"'
-      + ' title="从这一步另开一张画布，原画布一字不动">⧉ 另开</button>';
+      + ' title="另开一张画布">⧉ 另开</button>';
     let actions = '';
     if (!atCursor) {
       actions = '<div class="graph-history-actions">'
-        + '<button type="button" onclick="previewGraphVersion(' + v.index + ')">对比</button>'
+        + '<button type="button" onclick="previewGraphVersion(' + v.index + ')" title="看看差在哪">对比</button>'
         + '<button type="button" onclick="jumpGraphVersion(' + v.index + ')">'
         + (v.index >= graphUndoStack.length ? '回到最新' : '回到此版本') + '</button>'
         + forkBtn
@@ -672,18 +768,23 @@ function _refreshGraphHistoryPanel() {
     }
     // 未来区段分隔条：游标后第一行之前插入，把「可重做」的未来显式摆出来
     const divider = (v.index === graphHistoryCursor + 1 && futureCount > 0)
-      ? '<div class="graph-history-future-divider">以下为未来 · 可重做 ' + futureCount + ' 步</div>'
+      ? '<div class="graph-history-future-divider">后面还有 ' + futureCount + ' 步 · 可重做</div>'
       : '';
-    const cursorTag = (v.index === graphHistoryCursor && !v.isLive)
-      ? '<span class="graph-history-badge graph-history-cursor-tag">当前位置</span>' : '';
-      return divider + '<div class="' + cls + previewCls + '">'
-      + '<div class="graph-history-head"><span class="graph-history-badge ' + srcCls + '">' + label + '</span>'
+    const cursorTag = atCursor
+      ? '<span class="graph-history-badge graph-history-cursor-tag">你在这里</span>' : '';
+    // 时间线行（2026-11-15）：步序号＋来源徽标＋日期感知时间／两行摘要／计数＋悬停动作。
+    // 轨道与圆点由 CSS 伪元素画（::before 竖线、::after 步骤点），不加 DOM。
+    return divider + '<div class="' + cls + '">'
+      + '<div class="graph-history-head">'
+      + '<span class="graph-history-step">第 ' + (v.index + 1) + ' 步</span>'
+      + '<span class="graph-history-badge ' + srcCls + '">' + label + '</span>'
       + cursorTag
-      + '<span class="graph-history-summary">' + summary + '</span>'
-      + (counts ? '<span class="graph-history-counts">' + esc(counts) + '</span>' : '')
       + '<span class="graph-history-time">' + time + '</span></div>'
+      + '<div class="graph-history-summary">' + summary + '</div>'
+      + '<div class="graph-history-foot">'
+      + (counts ? '<span class="graph-history-counts">' + esc(counts) + '</span>' : '')
       + actions
-      + '</div>';
+      + '</div></div>';
   }).join('');
   if (graphHistoryLastScrollCursor !== graphHistoryCursor) {
     graphHistoryLastScrollCursor = graphHistoryCursor;
@@ -691,6 +792,17 @@ function _refreshGraphHistoryPanel() {
   }
   _renderGraphHistoryFooter();
 }
+
+// Esc（2026-11-15，侧栏多选同款守卫写法）：面板开着时先退对比、再关面板；
+// 面板没开不劫持这个键（Esc 在别处还有别的含义），焦点在输入面时让给输入面自己。
+document.addEventListener("keydown", function (e) {
+  if (e.key !== "Escape" || !graphHistoryPanel || graphHistoryPanel.hidden) return;
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+  e.preventDefault();
+  if (graphHistoryPreviewing >= 0) { exitGraphVersionPreview(); return; }
+  closeGraphHistoryPanel();
+});
 
 window.undoGraphAction = _undoGraphAction;
 window.redoGraphAction = _redoGraphAction;
@@ -705,6 +817,9 @@ window.getGraphVersionList = _graphVersions;
 // 单节点恢复、排版开关已随同日简化批次退役）
 window.focusGraphHistoryDiff = focusGraphHistoryDiff;
 window.settleGraphHistoryNow = settleGraphHistoryNow;
+// 2026-11-15 表达层重做：清空历史的内联二次确认包装（内核 settleGraphHistoryNow 不动）
+window.requestGraphHistoryClear = requestGraphHistoryClear;
+window.disarmGraphHistoryClear = disarmGraphHistoryClear;
 window.markGraphHistoryCleanExit = markGraphHistoryCleanExit;
 window.settleGraphHistoryOnOpen = settleGraphHistoryOnOpen;
 window.getGraphHistoryFingerprint = _graphHistoryExitFingerprint;

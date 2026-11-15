@@ -167,13 +167,18 @@ export async function run() {
       runCtx('openGraphHistoryPanel(); graphHistoryLastSignature = ""; _refreshGraphHistoryPanel();');
       runCtx('_previewGraphVersion(0);');
       const html = els.graphHistoryDiffText.innerHTML;
-      if (!html.includes('对比：回到')) throw new Error('清单没有标题');
+      // 2026-11-15 表达层：标题只认步序号「对比：第 N 步」，版本时间＋摘要降副标题
+      if (!html.includes('对比：第 1 步')) throw new Error('清单没有步序号标题');
+      if (!html.includes('graph-history-diff-sub')) throw new Error('被对比版本副标题缺失');
       if (!html.includes('会消失') || !html.includes('会回来') || !html.includes('会改写')) throw new Error('三向分组/图例缺失');
       if (!html.includes('g-hd-count')) throw new Error('计数行缺失');
       // 简化批次：两向切换钮在；步进/幽灵开关/「恢复这一颗」不再渲染
       if (!html.includes("setGraphHistoryCompareDir('back')") || !html.includes("setGraphHistoryCompareDir('step')")) {
         throw new Error('两向切换钮缺失');
       }
+      // 2026-11-15：两向切换收进分段胶囊，面板进 comparing 态（列表收窄条由 CSS 吃）
+      if (!html.includes('g-hd-seg')) throw new Error('两向切换不是分段胶囊');
+      if (!runCtx('graphHistoryPanel.className').includes('comparing')) throw new Error('面板没进 comparing 态');
       if (!html.includes('jumpGraphVersion(0)')) throw new Error('回到这一步缺失');
       if (html.includes('stepGraphHistoryDiff') || html.includes('toggleGraphHistoryGhosts') || html.includes('recoverGraphHistoryNode')) {
         throw new Error('已退役的步进/幽灵/单节点恢复还出现在对比面板');
@@ -184,7 +189,9 @@ export async function run() {
       if (model.counts.vanish !== 1 || model.counts.ret !== 1 || model.counts.change !== 1) {
         throw new Error('计数没从清单数：' + JSON.stringify(model.counts));
       }
-      runCtx('exitGraphVersionPreview(); closeGraphHistoryPanel();');
+      runCtx('exitGraphVersionPreview();');
+      if (runCtx('graphHistoryPanel.className').includes('comparing')) throw new Error('退出对比后 comparing 态没摘');
+      runCtx('closeGraphHistoryPanel();');
       return true;
     });
 
