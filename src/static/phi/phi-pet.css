@@ -15,6 +15,9 @@
 @property --phi-kb-key { syntax: '<color>'; inherits: true; initial-value: #334155; }
 @property --phi-kb-key-border { syntax: '<color>'; inherits: true; initial-value: #0f172a; }
 @property --phi-kb-shadow { syntax: '<color>'; inherits: true; initial-value: rgba(15, 23, 42, 0.6); }
+/* 落地投影的「地色」（2026-11-15）：原来只有深蓝/暖棕两套硬编码，落在霓虹紫、糖果粉、
+   山影青绿的浅底上是异色脏影。改由家族 accent 派生（见下方家族块），这条变量只为过渡注册。 */
+@property --phi-floor { syntax: '<color>'; inherits: true; initial-value: #020617; }
 
 .phi-pet {
   position: absolute;
@@ -26,7 +29,9 @@
 }
 
 /* 落地投影：与 .phi-pet 同级（不随漂浮上移），只随高度缩放/变淡。
-   由 phi-pet.js 在 init 时插入，避免动 harness.js 的内联模板。 */
+   由 phi-pet.js 在 init 时插入，避免动 harness.js 的内联模板。
+   2026-11-15：色相从硬编码两套改成 --phi-floor 派生 —— 深色默认深蓝底（原样），
+   浅色默认暖棕（原样），挂家族的族由下方 html[data-panel-skin] 块按 accent 覆盖。 */
 .phi-shadow {
   position: absolute;
   left: 33%;
@@ -34,14 +39,19 @@
   width: 34%;
   height: 7%;
   border-radius: 50%;
-  background: radial-gradient(50% 50% at 50% 50%, rgba(2, 6, 23, 0.5), rgba(2, 6, 23, 0.18) 58%, transparent 76%);
+  --phi-floor: #020617;
+  background: radial-gradient(50% 50% at 50% 50%,
+    color-mix(in srgb, var(--phi-floor) 50%, transparent),
+    color-mix(in srgb, var(--phi-floor) 18%, transparent) 58%,
+    transparent 76%);
   filter: blur(1.5px);
   pointer-events: none;
   opacity: 0.42; /* 减动效时动画被关掉，靠这条兜底保持与常态同深 */
   animation: phi-shadow-breathe 4.6s ease-in-out infinite;
+  transition: --phi-floor 0.35s ease;
 }
 [data-theme="light"] .phi-shadow {
-  background: radial-gradient(50% 50% at 50% 50%, rgba(124, 45, 18, 0.34), rgba(124, 45, 18, 0.12) 58%, transparent 76%);
+  --phi-floor: #7c2d12;
 }
 
 /* Φ 主题色板（深色=深蓝、浅色=暖橘；致敬 Claude Code buddy） */
@@ -74,7 +84,11 @@
 }
 /* 浅色模式：暖橘+暖棕描边（朋友版）、柔和投影；眼睛浅蓝；熄灭灯泡保持原灰（深色模式则跟随身体上部颜色） */
 [data-theme="light"] .phi-pet {
-  --phi-outline: #fdba74; /* 浅色描边（用户反馈）：浅橙色，不深色 */
+  /* 2026-11-15 描边方向翻转：原来是「浅橙 #fdba74」——在米褐/米黄纸面上与背景对比只有
+     1.44（等于没有轮廓），像素硬边整个化掉。浅色底上要与背景拉开，方向必须是往墨里压
+     （墨线勾边），不是往白里提（那是深色底才成立的轮廓光）。取身体色混 45% 墨，
+     五族实测描边 vs 背景 3.8–9.6、vs 身体 2.0–2.6（见当日日志实测表）。 */
+  --phi-outline: color-mix(in srgb, var(--phi-body) 45%, #1c1409);
   --phi-body-shadow: #9a3412;
   --phi-body: #ea580c;
   --phi-body-hi: #fdba74;
@@ -106,6 +120,37 @@ html[data-panel-skin] .phi-pet {
   --phi-eye-dark: #d97706;
   --phi-lamp-off: color-mix(in srgb, var(--accent) 68%, #fff);
   --phi-lamp-off-dark: var(--accent);
+  /* 工作态键盘跟族（2026-11-15）：原来 --phi-kb-* 只有明暗两套，五族共用同一块浅灰白
+     ——桌宠换了壳、它手下的键盘没换，在素纸米黄／山影灰绿上是一块突兀白板（键与键盘底
+     对比实测只有 1.08，键格几乎看不见）。改成用 accent 当染色剂：底混 12%、键混 26%
+     仍保持深色键盘的读数，键缝（key-border）另行压暗到几乎纯黑，靠缝识别键格。 */
+  --phi-kb-bg: color-mix(in srgb, var(--accent) 12%, #0d131c);
+  --phi-kb-border: color-mix(in srgb, var(--accent) 50%, #6b7280);
+  --phi-kb-key: color-mix(in srgb, var(--accent) 26%, #1b2430);
+  --phi-kb-key-border: color-mix(in srgb, var(--accent) 18%, #04070b);
+  --phi-kb-shadow: rgba(0, 0, 0, 0.6);
+}
+html[data-panel-skin] .phi-shadow {
+  --phi-floor: color-mix(in srgb, var(--accent) 26%, #020617);
+}
+
+/* 家族 × 浅色（2026-11-15 新增）：特异性 (0,3,1)，压得住上面的通用家族块，
+   又比 inkstone 浅色块（同为 0,3,1、源序更后）低，砚石仍可单独开例外。
+   ★ 这条的存在理由：一条 `accent 混 58% 白` 的描边公式打在十格上，深色底成立
+   （亮边＝轮廓光），浅色底方向反了（浅底往白提＝描边正好落成背景色）。实测四族
+   浅色描边对比只有 1.18–1.56，放大看桌宠退化成「一团色块」。 */
+html[data-theme="light"][data-panel-skin] .phi-pet {
+  --phi-outline: color-mix(in srgb, var(--accent) 45%, #1c1409);
+  /* 浅色键盘：底带族色（混 14%）、键全白（键必须比底亮一档），键缝用族色压深，
+     比原来「#e2e8f0 键 + #f1f5f9 底」（对比 1.08）能看出格线。 */
+  --phi-kb-bg: color-mix(in srgb, var(--accent) 14%, #f2ece1);
+  --phi-kb-border: color-mix(in srgb, var(--accent) 40%, #a89880);
+  --phi-kb-key: #ffffff;
+  --phi-kb-key-border: color-mix(in srgb, var(--accent) 55%, #6b5c4a);
+  --phi-kb-shadow: rgba(80, 60, 40, 0.18);
+}
+html[data-theme="light"][data-panel-skin] .phi-shadow {
+  --phi-floor: color-mix(in srgb, var(--accent) 42%, #3b2a1a);
 }
 
 /* 山影（inkstone）例外（2026-11-15）：这条通用联动的前提是「家族 accent 是够饱和的彩色」，
@@ -126,9 +171,9 @@ html[data-theme="light"][data-panel-skin="inkstone"] .phi-pet {
   --phi-body: #5f7f86;
   --phi-body-hi: #9dbbc0;
   --phi-body-shadow: #2b4247;
-  /* 浅色描边不能再取月白（#e7eff1 与纸面几乎同色，轮廓直接消失）——取淡石青，
-     在暖白纸上是「墨线」而不是「高光」 */
-  --phi-outline: #a9c4c9;
+  /* 浅色描边交给上面「家族 × 浅色」的混墨公式（accent #4f6b74 混 45% 墨 = #333b39）。
+     2026-11-15 之前这里是手写的 #a9c4c9，与纸面对比只有 1.18——方向对（要墨线不要高光）
+     但明度没压够，等于仍然没勾边，本轮并入通用公式删掉这个特例值。 */
   --phi-lamp-off: #9dbbc0;
   --phi-lamp-off-dark: #5f7f86;
 }
@@ -837,17 +882,25 @@ html[data-theme="light"] .phi-pet-root {
   color: #1f2937;
   text-shadow: 0 0 6px rgba(255, 255, 255, 0.9);
 }
+/* 2026-11-15 浅色下代码符号压暗：原来五色是 #fde047 黄 / #93c5fd 蓝 / #c4b5fd 紫 /
+   #86efac 绿，在高亮纸面上明度太接近背景，飘在半空的 { } 基本看不见。色相保留
+   （语法高亮的黄蓝紫绿是语义，不跟族色走），只把每一色换到同色相的深档，并给一圈
+   极薄的纸白描边保证压在深色桌宠上也读得出。 */
 [data-theme="light"] .phi-code-symbol {
-  text-shadow: 0 0 14px rgba(250, 204, 21, 0.35);
+  color: #a16207;
+  text-shadow: 0 0 3px rgba(255, 255, 255, 0.55), 0 0 12px rgba(161, 98, 7, 0.35);
 }
 [data-theme="light"] .phi-code-symbol-2 {
-  text-shadow: 0 0 10px rgba(96, 165, 250, 0.35);
+  color: #1d4ed8;
+  text-shadow: 0 0 3px rgba(255, 255, 255, 0.55), 0 0 10px rgba(29, 78, 216, 0.3);
 }
 [data-theme="light"] .phi-code-symbol-3 {
-  text-shadow: 0 0 10px rgba(167, 139, 250, 0.35);
+  color: #6d28d9;
+  text-shadow: 0 0 3px rgba(255, 255, 255, 0.55), 0 0 10px rgba(109, 40, 217, 0.3);
 }
 [data-theme="light"] .phi-code-symbol-5 {
-  text-shadow: 0 0 10px rgba(74, 222, 128, 0.35);
+  color: #15803d;
+  text-shadow: 0 0 3px rgba(255, 255, 255, 0.55), 0 0 10px rgba(21, 128, 61, 0.3);
 }
 [data-theme="light"] .phi-lamp-on {
   filter: brightness(1.25) saturate(1.15) drop-shadow(0 0 2px rgba(253, 224, 71, 0.9));
