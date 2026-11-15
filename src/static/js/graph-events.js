@@ -226,6 +226,13 @@ function _initGraphCanvasEvents() {
     if (e.target.closest('.graph-add-port-btn')) return;
     if (e.target.closest('button, a, input, textarea, select, iframe, .graph-regen-btn')) return;
     if (e.target.closest('.graph-group input, .graph-group button')) return;
+    // 按住 Space 时一律走画布平移（Figma / Miro 口径）：拖在节点上也不会把节点拖走。
+    // 放在端口/按钮热区排除之后、正文与 resize 判定之前，原生编辑交互不受影响。
+    // hotkeys.js 未加载（viewer 子集 / 冒烟沙箱）时 typeof 守卫让行为原样退回。
+    if (typeof phyIsSpacePanning === 'function' && phyIsSpacePanning()) {
+      _startCanvasPan(e);
+      return;
+    }
     if (e.target.closest('.graph-node-full-content, .graph-blank-content, .graph-node-label, .graph-node-sub')) return;
     if (e.target.closest('.graph-group-resize-handle')) {
       const groupEl = e.target.closest('.graph-group');

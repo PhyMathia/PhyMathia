@@ -1,27 +1,45 @@
-// 快捷键注册表（2026-11-15，backlog #468 / #469）：全站唯一事实源。
+// 快捷键注册表（2026-11-15，backlog #468 / #469；同日第二步扩充）：全站唯一事实源。
 //
 // 设计口径：
-// 1) 只登记「代码里真实存在」的键。速查面板、右键菜单按键提示都从这张表渲染，
+// 1) 只登记「代码里真实存在」的键。速查面板、右键菜单按键提示、命令面板都从这张表渲染，
 //    不许再手写第二份字符串——提示一旦与实现分家，用户就再也不信快捷键了。
 // 2) combo 里的 Mod 代表 Ctrl / ⌘，渲染时按平台替换；同一动作全应用只写一个键。
-// 3) 分层借力：通用层照抄所有软件、画布层借 Figma/Miro/ComfyUI、应用特有层才自创。
-//    自创键不靠死记，统一由 Ctrl+K 类入口兜底（本轮未实现命令面板，先立 ? 速查）。
-// 4) 本文件只进 app.js 主包（viewer 子集不载）；所有对外函数以 typeof 守卫被调用，
+// 3) 分层借力：通用层照抄所有软件、画布层借 Figma/Miro/ComfyUI、应用特有层才自创，
+//    自创键成族（Ctrl+Shift+1/2/3）且全部能在 Ctrl+K 命令面板里搜到。
+// 4) 输入框内一律让行；浏览器保留键（Ctrl+N/T/W/L/R/P、Ctrl+Shift+I）一律不碰。
+// 5) 本文件只进 app.js 主包（viewer 子集不载）；所有对外函数以 typeof 守卫被调用，
 //    viewer / 冒烟沙箱里行为自动退回原样，不改一处既有交互。
 
 const PHY_HOTKEYS = [
-  { id: 'undo',       combo: 'Mod+Z',               label: '撤销上一步',             scope: '画布',   source: '所有编辑器' },
-  { id: 'redo',       combo: 'Mod+Y / Mod+Shift+Z', short: 'Mod+Y', label: '重做',   scope: '画布',   source: '所有编辑器' },
-  { id: 'copy',       combo: 'Mod+C',               label: '复制选中节点到剪贴板',   scope: '画布',   source: 'Figma / ComfyUI' },
-  { id: 'paste',      combo: 'Mod+V',               label: '粘贴节点',               scope: '画布',   source: 'Figma / ComfyUI' },
-  { id: 'delete',     combo: 'Del / Backspace',     short: 'Del',   label: '删除选中节点或分组', scope: '画布',   source: '所有编辑器' },
-  { id: 'escape',     combo: 'Esc',                 label: '关闭当前浮层 / 取消',    scope: '全局',   source: '所有软件' },
-  { id: 'fullscreen', combo: 'F11',                 label: '整页全屏',               scope: '全局',   source: '浏览器' },
-  { id: 'submit',     combo: 'Mod+Enter',           label: '提交当前回答',           scope: '输入框', source: 'Slack / Gmail' },
-  { id: 'send',       combo: 'Enter',               label: '发送（Shift+Enter 换行）', scope: '输入框', source: '聊天应用' },
-  { id: 'fit',        combo: 'F',                   label: '适配画布到窗口',         scope: '查看页', source: '看图器' },
-  { id: 'search',     combo: '/',                   label: '打开画布搜索',           scope: '查看页', source: 'GitHub / Gmail' },
-  { id: 'help',       combo: '?',                   label: '打开本速查表',           scope: '全局',   source: 'GitHub / Slack' },
+  // 通用层：所有软件都一样，照抄，零学习成本
+  { id: 'undo',           combo: 'Mod+Z',           label: '撤销上一步',                 scope: '全局',     source: '所有编辑器',       action: 'undo' },
+  { id: 'redo',           combo: 'Mod+Y / Mod+Shift+Z', short: 'Mod+Y', label: '重做', scope: '全局',     source: '所有编辑器',       action: 'redo' },
+  { id: 'copy',           combo: 'Mod+C',           label: '复制选中节点到剪贴板',       scope: '画布',     source: 'Figma / ComfyUI',  action: 'copy' },
+  { id: 'paste',          combo: 'Mod+V',           label: '粘贴节点',                   scope: '画布',     source: 'Figma / ComfyUI',  action: 'paste' },
+  { id: 'delete',         combo: 'Del / Backspace', short: 'Del', label: '删除选中节点或分组', scope: '画布', source: '所有编辑器',     action: 'delete' },
+  { id: 'escape',         combo: 'Esc',             label: '关闭当前浮层 / 取消',        scope: '全局',     source: '所有软件' },
+  { id: 'fullscreen',     combo: 'F11',             label: '整页全屏',                   scope: '全局',     source: '浏览器' },
+  { id: 'send',           combo: 'Enter / Mod+Enter', label: '发送或提交当前回答（Shift+Enter 换行）', scope: '输入框', source: '聊天应用 / Slack' },
+  // 画布层：向同类软件借肌肉记忆
+  { id: 'selectAll',      combo: 'Mod+A',           label: '全选节点（输入框内仍是全选文字）', scope: '画布', source: '所有编辑器',     action: 'selectAll' },
+  { id: 'duplicate',      combo: 'Mod+D',           label: '原地复制一份选中节点',       scope: '画布',     source: 'Figma / Sketch',   action: 'duplicate' },
+  { id: 'group',          combo: 'Mod+G',           label: '把选中节点设为分组',         scope: '画布',     source: 'Figma',            action: 'group' },
+  { id: 'ungroup',        combo: 'Mod+Shift+G',     label: '取消选中的分组（不删节点）', scope: '画布',     source: 'Figma',            action: 'ungroup' },
+  { id: 'fit',            combo: 'F',               label: '适配画布到窗口',             scope: '全局',     source: '看图器 / Figma',   action: 'fit' },
+  { id: 'zoomReset',      combo: '0',               label: '缩放复位到 100%',            scope: '画布',     source: 'Figma / 浏览器',   action: 'zoomReset' },
+  { id: 'search',         combo: 'Mod+F',           label: '打开画布搜索',               scope: '全局',     source: '浏览器 / GitHub',  action: 'search' },
+  { id: 'export',         combo: 'Mod+S',           label: '打开导出菜单',               scope: '全局',     source: '所有软件',         action: 'export' },
+  { id: 'pan',            combo: 'Space + 拖拽',    label: '按住空格拖动画布（节点上也能平移）', scope: '画布', source: 'Figma / Miro / PS' },
+  { id: 'search_viewer',  combo: '/',               label: '打开画布搜索',               scope: '查看页',   source: 'GitHub / Gmail' },
+  // 同一个键在不同作用域做不同的事，如实登记，不硬把两套撤销栈并成一套
+  { id: 'undo_continent', combo: 'Mod+Z',           label: '撤销上一次航线操作（仅大陆内）', scope: '知识大陆', source: '大陆自有撤销栈' },
+  // 应用特有层：本项目独有，才自创，成族且全部能在命令面板搜到
+  { id: 'viewCanvas',     combo: 'Mod+Shift+1',     label: '回到探索网画布',             scope: '视图',     source: '本项目',           action: 'viewCanvas' },
+  { id: 'viewContinent',  combo: 'Mod+Shift+2',     label: '打开 / 关闭知识大陆',        scope: '视图',     source: '本项目',           action: 'viewContinent' },
+  { id: 'viewKnowledge',  combo: 'Mod+Shift+3',     label: '打开 / 关闭知识总览',        scope: '视图',     source: '本项目',           action: 'viewKnowledge' },
+  // 兜底：记不住就搜
+  { id: 'help',           combo: '?',               label: '打开快捷键速查',             scope: '全局',     source: 'GitHub / Slack',   action: 'help' },
+  { id: 'palette',        combo: 'Mod+K',           label: '打开命令面板（可搜全部动作）', scope: '全局',   source: 'VS Code / Notion', action: 'palette' },
 ];
 
 function phyHotkeyIsMac() {
@@ -48,12 +66,14 @@ function phyHotkeyKey(id, brief) {
 
 function phyHotkeyList() {
   return PHY_HOTKEYS.map(function (r) {
-    return { id: r.id, combo: phyHotkeyMod(r.combo), label: r.label, scope: r.scope, source: r.source };
+    return {
+      id: r.id, combo: phyHotkeyMod(r.combo), label: r.label,
+      scope: r.scope, source: r.source, action: r.action || '',
+    };
   });
 }
 
 // 输入框内一律让行：物理公式里的 / 、字母 f、Esc 取消输入都属于用户文本。
-// graph-events.js 早有同款判定，这里收成公用口径给查看页与新入口复用。
 function phyIsTypingTarget(e) {
   const t = e && e.target;
   if (!t || typeof t.closest !== 'function') return false;
@@ -61,8 +81,7 @@ function phyIsTypingTarget(e) {
   catch (err) { return false; }
 }
 
-// 同一次 Esc 只允许一个浮层响应。捕获阶段的临时菜单（右键/导出菜单）天然先到，
-// 本来就是最上层；大面板监听用 typeof 守卫接入本函数，避免一次按连关两层。
+// 同一次 Esc 只允许一个浮层响应。速查/命令面板在捕获阶段先认领。
 let _phyHotkeyEscEvent = null;
 function phyEscClaim(e) {
   if (!e || e.key !== 'Escape') return false;
@@ -71,25 +90,215 @@ function phyEscClaim(e) {
   return true;
 }
 
-// 启动自检：同一范围内登记了两次同一组合键＝提示与实现会打架，开发期直接报出来。
+// 启动自检：同一范围内登记两次同一组合键＝提示与实现会打架，开发期直接报出来。
+// 同时校验每条可执行动作都在动作表里，杜绝速查表列出根本跑不了的键。
 function phyHotkeySelfCheck() {
   const seen = new Map();
-  const dup = [];
+  const problems = [];
   PHY_HOTKEYS.forEach(function (r) {
     const k = r.scope + '|' + r.combo;
-    if (seen.has(k)) dup.push(r.id + ' 与 ' + seen.get(k) + ' 重复：' + r.combo);
+    if (seen.has(k)) problems.push(r.id + ' 与 ' + seen.get(k) + ' 重复：' + r.combo);
     else seen.set(k, r.id);
+    if (r.action && typeof PHY_HOTKEY_ACTIONS[r.action] !== 'function') {
+      problems.push(r.id + ' 的动作未实现：' + r.action);
+    }
   });
-  if (dup.length && typeof console !== 'undefined' && console.warn) {
-    console.warn('[phymathia] 快捷键注册表冲突：' + dup.join('；'));
+  if (problems.length && typeof console !== 'undefined' && console.warn) {
+    console.warn('[phymathia] 快捷键注册表自检未通过：' + problems.join('；'));
   }
-  return dup;
+  return problems;
 }
 
-// ===== ? 速查面板（DOM 按需创建，不改 index.html / 不改 CSS 文件）=====
-// 全部内容来自上面的常量表，没有用户输入；配色走全站主题令牌，五套主题自动跟随。
-let _phyHotkeyHelpEl = null;
+// ===== 动作表：全部只组合既有全局函数，零新业务逻辑 =====
+function _phyToast(msg) {
+  if (typeof showToast === 'function') showToast(msg);
+  else if (typeof _graphCtxToast === 'function') _graphCtxToast(msg);
+}
 
+function _phySelectedNodes() {
+  if (typeof graphView === 'undefined' || !graphView) return [];
+  const ids = graphView.selectedNodeIds;
+  if (!ids || !ids.size || !graphView.nodeById) return [];
+  return Array.from(ids).map(function (id) { return graphView.nodeById[id]; }).filter(Boolean);
+}
+
+function _phyGraphCenter() {
+  const hasCanvas = typeof graphCanvas !== 'undefined' && graphCanvas
+    && typeof graphCanvas.getBoundingClientRect === 'function';
+  const rect = hasCanvas ? graphCanvas.getBoundingClientRect() : null;
+  const cx = rect ? rect.left + rect.width / 2 : (typeof window !== 'undefined' ? window.innerWidth / 2 : 0);
+  const cy = rect ? rect.top + rect.height / 2 : (typeof window !== 'undefined' ? window.innerHeight / 2 : 0);
+  return typeof _clientToGraphLocal === 'function' ? _clientToGraphLocal(cx, cy) : { x: 0, y: 0 };
+}
+
+const PHY_HOTKEY_ACTIONS = {
+  help: function () { phyOpenHotkeyHelp(); },
+  palette: function () { phyOpenCommandPalette(); },
+  undo: function () { if (typeof window.undoGraphAction === 'function') window.undoGraphAction(); },
+  redo: function () { if (typeof window.redoGraphAction === 'function') window.redoGraphAction(); },
+  copy: function () {
+    const picked = _phySelectedNodes();
+    if (!picked.length) { _phyToast('先选中节点再复制'); return; }
+    if (typeof graphCopySelectedNodes === 'function') graphCopySelectedNodes(picked);
+  },
+  paste: function () {
+    if (typeof graphPasteNodeClipboard === 'function') graphPasteNodeClipboard(_phyGraphCenter());
+  },
+  delete: function () {
+    if (typeof graphView === 'undefined' || !graphView) return;
+    const gids = graphView.selectedGroupIds;
+    if (gids && gids.size && typeof _deleteSelectedGraphGroups === 'function') {
+      _deleteSelectedGraphGroups(Array.from(gids));
+      return;
+    }
+    const nodes = _phySelectedNodes();
+    if (nodes.length && typeof _deleteSelectedGraphNodes === 'function') {
+      _deleteSelectedGraphNodes(nodes.map(function (n) { return n.id; }));
+    }
+  },
+  selectAll: function () {
+    if (typeof graphView === 'undefined' || !graphView || !Array.isArray(graphView.nodes)) return;
+    graphView.selectedNodeIds = new Set(graphView.nodes.map(function (n) { return n.id; }));
+    if (graphView.selectedGroupIds) graphView.selectedGroupIds = new Set();
+    if (typeof _syncGraphSelectionClasses === 'function') _syncGraphSelectionClasses();
+  },
+  duplicate: function () {
+    const picked = _phySelectedNodes();
+    if (!picked.length) { _phyToast('先选中节点再复制一份'); return; }
+    if (typeof graphCopySelectedNodes !== 'function' || typeof graphPasteNodeClipboard !== 'function') return;
+    // 借现成的复制/粘贴链路（自带结构边补捕、撤销与落盘），再偏移 24 落回原处旁边。
+    // 用完把剪贴板还原——Ctrl+D 不该悄悄覆盖用户先前的 Ctrl+C。
+    const prev = typeof _graphClipLoad === 'function' ? _graphClipLoad() : null;
+    graphCopySelectedNodes(picked);
+    const xs = picked.map(function (n) { return Number(n.x) || 0; });
+    const ys = picked.map(function (n) { return Number(n.y) || 0; });
+    const cx = (Math.min.apply(null, xs) + Math.max.apply(null, xs)) / 2 + 24;
+    const cy = (Math.min.apply(null, ys) + Math.max.apply(null, ys)) / 2 + 24;
+    graphPasteNodeClipboard({ x: cx, y: cy });
+    if (prev && typeof _graphClipSave === 'function') _graphClipSave(prev);
+  },
+  group: function () { if (typeof graphCreateGroup === 'function') graphCreateGroup(); },
+  ungroup: function () {
+    if (typeof graphView === 'undefined' || !graphView || !graphView.selectedGroupIds
+      || !graphView.selectedGroupIds.size) { _phyToast('先选中分组再取消'); return; }
+    if (typeof _deleteSelectedGraphGroups === 'function') {
+      _deleteSelectedGraphGroups(Array.from(graphView.selectedGroupIds));
+    }
+  },
+  fit: function () { if (typeof fitGraph === 'function') fitGraph(); },
+  zoomReset: function () { if (typeof graphZoomReset === 'function') graphZoomReset(); },
+  search: function () { if (typeof openGraphSearchPanel === 'function') openGraphSearchPanel(); },
+  export: function () { if (typeof toggleGraphExportMenu === 'function') toggleGraphExportMenu(); },
+  viewCanvas: function () {
+    if (typeof closeContinentView === 'function') closeContinentView();
+    if (typeof closeKnowledgePanel === 'function') closeKnowledgePanel();
+  },
+  viewContinent: function () {
+    if (typeof document !== 'undefined' && document.querySelector('.continent-open')) {
+      if (typeof closeContinentView === 'function') closeContinentView();
+    } else if (typeof openKnowledgeContinentView === 'function') {
+      openKnowledgeContinentView();
+    }
+  },
+  viewKnowledge: function () {
+    if (typeof closeContinentView === 'function') closeContinentView();
+    if (typeof toggleKnowledgePanel === 'function') toggleKnowledgePanel();
+  },
+};
+
+function phyHotkeyRun(id) {
+  const fn = PHY_HOTKEY_ACTIONS[id];
+  if (typeof fn !== 'function') return false;
+  try { fn(); } catch (err) {
+    if (typeof console !== 'undefined' && console.warn) console.warn('[phymathia] 快捷键动作执行失败：' + id, err);
+  }
+  return true;
+}
+
+// 纯映射：按键事件 → 动作 id，不改状态、不执行，便于冒烟精确断言。
+// 已有的 Ctrl+Z/Y/C/V 仍由 graph-events.js 处理，这里不重复接管。
+function phyHotkeyResolve(e) {
+  if (!e) return '';
+  const typing = phyIsTypingTarget(e);
+  const mod = !!(e.ctrlKey || e.metaKey);
+  const shift = !!e.shiftKey;
+  const key = String(e.key || '').toLowerCase();
+  if (!mod && !e.altKey && !typing) {
+    if (e.key === '?') return 'help';
+    if (key === 'f') return 'fit';
+    if (key === '0') return 'zoomReset';
+    if (e.key === ' ' || e.code === 'Space') return 'pan';
+  }
+  if (!mod || e.altKey || typing) return '';
+  if (key === 'a' && !shift) return 'selectAll';
+  if (key === 'd' && !shift) return 'duplicate';
+  if (key === 'f' && !shift) return 'search';
+  if (key === 'k' && !shift) return 'palette';
+  if (key === 's' && !shift) return 'export';
+  if (key === 'g') return shift ? 'ungroup' : 'group';
+  if (shift && (e.key === '1' || e.key === '2' || e.key === '3')) {
+    return { '1': 'viewCanvas', '2': 'viewContinent', '3': 'viewKnowledge' }[e.key] || '';
+  }
+  return '';
+}
+
+// Space 平移状态：graph-events.js 的 pointerdown 读它，按住空格时拖节点也走画布平移。
+let _phySpaceDown = false;
+function phyIsSpacePanning() { return _phySpaceDown; }
+
+function phyHotkeyDispatch(e) {
+  const id = phyHotkeyResolve(e);
+  if (!id) return false;
+  if (id === 'pan') {
+    // 按钮/链接上的空格要留给原生激活（无障碍），不抢。
+    if (e.target && typeof e.target.closest === 'function'
+      && e.target.closest('button, a, [role="button"]')) return false;
+    _phySpaceDown = true;
+    e.preventDefault();
+    return true;
+  }
+  // Ctrl+F/S/K/D/A/G 都有浏览器默认行为，接管必须挡掉，否则会弹查找框/另存为/收藏。
+  e.preventDefault();
+  if (id === 'palette') { phyOpenCommandPalette(); return true; }
+  if (id === 'help') { phyOpenHotkeyHelp(); return true; }
+  phyHotkeyRun(id);
+  return true;
+}
+
+// ===== 浮层：速查表与命令面板共用一套样式（主题令牌，五套主题自动跟随）=====
+function _phyHotkeyStyleTag() {
+  return '<style id="phyHotkeyHelpStyle">'
+    + '.phy-hotkey-overlay{position:fixed;inset:0;z-index:10050;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.42);font-family:inherit}'
+    + '.phy-hotkey-overlay .phk-card{width:min(680px,calc(100vw - 32px));max-height:min(82vh,760px);overflow:auto;box-sizing:border-box;background:var(--bg-panel,#151b2e);color:var(--text-primary,#eef2f8);border:1px solid var(--border,rgba(255,255,255,.16));border-radius:var(--r-lg,12px);padding:18px 20px 14px}'
+    + '.phy-hotkey-overlay .phk-head{display:flex;align-items:baseline;gap:12px;margin-bottom:12px}'
+    + '.phy-hotkey-overlay .phk-title{font-size:16px;font-weight:500}'
+    + '.phy-hotkey-overlay .phk-sub{font-size:12px;color:var(--text-secondary,rgba(255,255,255,.6));flex:1}'
+    + '.phy-hotkey-overlay .phk-close{border:0;background:none;color:inherit;font-size:20px;line-height:1;cursor:pointer;opacity:.7;padding:0 4px}'
+    + '.phy-hotkey-overlay .phk-close:hover{opacity:1}'
+    + '.phy-hotkey-overlay .phk-group{margin-bottom:14px}'
+    + '.phy-hotkey-overlay .phk-group-title{font-size:12px;color:var(--accent,#4a9eff);margin-bottom:6px}'
+    + '.phy-hotkey-overlay .phk-row{display:flex;align-items:center;gap:10px;padding:5px 0;border-top:1px solid var(--border,rgba(255,255,255,.1));font-size:13px}'
+    + '.phy-hotkey-overlay .phk-label{flex:1;min-width:0}'
+    + '.phy-hotkey-overlay .phk-src{flex:0 0 132px;text-align:right;font-size:11px;color:var(--text-secondary,rgba(255,255,255,.55));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+    + '.phy-hotkey-overlay .phk-key{flex:0 0 auto;min-width:96px;text-align:center;font-family:inherit;font-size:12px;padding:3px 8px;border-radius:6px;background:var(--panel-bg,rgba(255,255,255,.08));border:1px solid var(--border,rgba(255,255,255,.18));color:var(--text-primary,#eef2f8)}'
+    + '.phy-hotkey-overlay .phk-search{width:100%;box-sizing:border-box;margin-bottom:10px;padding:9px 12px;font-size:14px;font-family:inherit;color:var(--text-primary,#eef2f8);background:var(--panel-bg,rgba(255,255,255,.08));border:1px solid var(--border,rgba(255,255,255,.18));border-radius:8px;outline:none}'
+    + '.phy-hotkey-overlay .phk-palette-row{cursor:pointer;padding:7px 8px;border-radius:6px}'
+    + '.phy-hotkey-overlay .phk-palette-row.is-active,.phy-hotkey-overlay .phk-palette-row:hover{background:var(--panel-bg,rgba(255,255,255,.1))}'
+    + '.phy-hotkey-overlay .phk-empty{font-size:13px;color:var(--text-secondary,rgba(255,255,255,.55));padding:12px 0}'
+    + '.phy-hotkey-overlay .phk-foot{font-size:11px;color:var(--text-secondary,rgba(255,255,255,.55));border-top:1px solid var(--border,rgba(255,255,255,.1));padding-top:10px}'
+    + '</style>';
+}
+
+function _phyHotkeyEnsureStyle() {
+  if (typeof document === 'undefined' || !document.getElementById) return;
+  if (document.getElementById('phyHotkeyHelpStyle')) return;
+  const holder = document.createElement('span');
+  holder.innerHTML = _phyHotkeyStyleTag();
+  const node = holder.firstChild;
+  if (node && document.head && document.head.appendChild) document.head.appendChild(node);
+}
+
+let _phyHotkeyHelpEl = null;
 function phyCloseHotkeyHelp() {
   if (_phyHotkeyHelpEl && typeof _phyHotkeyHelpEl.remove === 'function') _phyHotkeyHelpEl.remove();
   _phyHotkeyHelpEl = null;
@@ -98,7 +307,8 @@ function phyCloseHotkeyHelp() {
 function phyOpenHotkeyHelp() {
   if (typeof document === 'undefined' || !document.createElement) return;
   if (_phyHotkeyHelpEl) { phyCloseHotkeyHelp(); return; }
-  const scopes = ['全局', '画布', '输入框', '查看页'];
+  phyCloseCommandPalette();
+  const scopes = ['全局', '画布', '输入框', '视图', '查看页', '知识大陆'];
   const rows = phyHotkeyList();
   let body = '';
   scopes.forEach(function (s) {
@@ -112,30 +322,15 @@ function phyOpenHotkeyHelp() {
     });
     body += '</div>';
   });
-  const style = '<style id="phyHotkeyHelpStyle">'
-    + '#phyHotkeyHelpOverlay{position:fixed;inset:0;z-index:10050;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.42);font-family:inherit}'
-    + '#phyHotkeyHelpOverlay .phk-card{width:min(640px,calc(100vw - 32px));max-height:min(82vh,760px);overflow:auto;box-sizing:border-box;background:var(--bg-panel,#151b2e);color:var(--text-primary,#eef2f8);border:1px solid var(--border,rgba(255,255,255,.16));border-radius:var(--r-lg,12px);padding:18px 20px 14px}'
-    + '#phyHotkeyHelpOverlay .phk-head{display:flex;align-items:baseline;gap:12px;margin-bottom:12px}'
-    + '#phyHotkeyHelpOverlay .phk-title{font-size:16px;font-weight:500}'
-    + '#phyHotkeyHelpOverlay .phk-sub{font-size:12px;color:var(--text-secondary,rgba(255,255,255,.6));flex:1}'
-    + '#phyHotkeyHelpOverlay .phk-close{border:0;background:none;color:inherit;font-size:20px;line-height:1;cursor:pointer;opacity:.7;padding:0 4px}'
-    + '#phyHotkeyHelpOverlay .phk-close:hover{opacity:1}'
-    + '#phyHotkeyHelpOverlay .phk-group{margin-bottom:14px}'
-    + '#phyHotkeyHelpOverlay .phk-group-title{font-size:12px;color:var(--accent,#4a9eff);margin-bottom:6px}'
-    + '#phyHotkeyHelpOverlay .phk-row{display:flex;align-items:center;gap:10px;padding:5px 0;border-top:1px solid var(--border,rgba(255,255,255,.1));font-size:13px}'
-    + '#phyHotkeyHelpOverlay .phk-label{flex:1;min-width:0}'
-    + '#phyHotkeyHelpOverlay .phk-src{flex:0 0 132px;text-align:right;font-size:11px;color:var(--text-secondary,rgba(255,255,255,.55));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
-    + '#phyHotkeyHelpOverlay .phk-key{flex:0 0 auto;min-width:96px;text-align:center;font-family:inherit;font-size:12px;padding:3px 8px;border-radius:6px;background:var(--panel-bg,rgba(255,255,255,.08));border:1px solid var(--border,rgba(255,255,255,.18));color:var(--text-primary,#eef2f8)}'
-    + '#phyHotkeyHelpOverlay .phk-foot{font-size:11px;color:var(--text-secondary,rgba(255,255,255,.55));border-top:1px solid var(--border,rgba(255,255,255,.1));padding-top:10px}'
-    + '</style>';
+  _phyHotkeyEnsureStyle();
   const overlay = document.createElement('div');
   overlay.id = 'phyHotkeyHelpOverlay';
+  overlay.className = 'phy-hotkey-overlay';
   overlay.setAttribute('role', 'dialog');
   overlay.setAttribute('aria-label', '快捷键速查');
-  overlay.innerHTML = style
-    + '<div class="phk-card" role="document">'
+  overlay.innerHTML = '<div class="phk-card" role="document">'
     + '<div class="phk-head"><span class="phk-title">快捷键速查</span>'
-    + '<span class="phk-sub">按 ? 或 Esc 关闭</span>'
+    + '<span class="phk-sub">按 ? 或 Esc 关闭 · 记不住就按 Ctrl+K 搜</span>'
     + '<button class="phk-close" type="button" aria-label="关闭">×</button></div>'
     + '<div class="phk-body">' + body + '</div>'
     + '<div class="phk-foot">只列程序里真实支持的键 · 输入框内不抢键 · 按键写法随系统自动切换</div>'
@@ -147,31 +342,123 @@ function phyOpenHotkeyHelp() {
   _phyHotkeyHelpEl = overlay;
 }
 
+// ===== Ctrl+K 命令面板：所有登记了 action 的条目都能搜到，记不住也不用背 =====
+let _phyPaletteEl = null;
+let _phyPaletteRows = [];
+let _phyPaletteIndex = 0;
+
+function phyCloseCommandPalette() {
+  if (_phyPaletteEl && typeof _phyPaletteEl.remove === 'function') _phyPaletteEl.remove();
+  _phyPaletteEl = null;
+  _phyPaletteRows = [];
+  _phyPaletteIndex = 0;
+}
+
+function _phyPaletteRender(query) {
+  if (!_phyPaletteEl) return;
+  const q = String(query || '').trim().toLowerCase();
+  const all = phyHotkeyList().filter(function (r) { return !!r.action; });
+  _phyPaletteRows = all.filter(function (r) {
+    return !q || (r.label + ' ' + r.combo + ' ' + r.scope + ' ' + r.source).toLowerCase().indexOf(q) >= 0;
+  });
+  if (_phyPaletteIndex >= _phyPaletteRows.length) _phyPaletteIndex = 0;
+  const list = _phyPaletteEl.querySelector('.phk-palette-list');
+  if (!list) return;
+  if (!_phyPaletteRows.length) {
+    list.innerHTML = '<div class="phk-empty">没有匹配的动作</div>';
+    return;
+  }
+  list.innerHTML = _phyPaletteRows.map(function (r, i) {
+    return '<div class="phk-row phk-palette-row' + (i === _phyPaletteIndex ? ' is-active' : '') + '" data-index="' + i + '">'
+      + '<span class="phk-label">' + r.label + '</span>'
+      + '<span class="phk-src">' + r.scope + '</span>'
+      + '<kbd class="phk-key">' + r.combo + '</kbd></div>';
+  }).join('');
+  Array.prototype.forEach.call(list.querySelectorAll('.phk-palette-row'), function (el) {
+    el.addEventListener('click', function () {
+      _phyPaletteIndex = Number(el.dataset.index) || 0;
+      _phyPaletteCommit();
+    });
+  });
+}
+
+function _phyPaletteCommit() {
+  const row = _phyPaletteRows[_phyPaletteIndex];
+  if (!row) return;
+  phyCloseCommandPalette();
+  phyHotkeyRun(row.action);
+}
+
+function phyOpenCommandPalette() {
+  if (typeof document === 'undefined' || !document.createElement) return;
+  if (_phyPaletteEl) { phyCloseCommandPalette(); return; }
+  phyCloseHotkeyHelp();
+  _phyHotkeyEnsureStyle();
+  const overlay = document.createElement('div');
+  overlay.id = 'phyHotkeyPaletteOverlay';
+  overlay.className = 'phy-hotkey-overlay';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-label', '命令面板');
+  overlay.innerHTML = '<div class="phk-card" role="document">'
+    + '<div class="phk-head"><span class="phk-title">命令面板</span>'
+    + '<span class="phk-sub">输入筛选 · ↑↓ 选择 · Enter 执行 · Esc 关闭</span>'
+    + '<button class="phk-close" type="button" aria-label="关闭">×</button></div>'
+    + '<input class="phk-search" type="text" placeholder="搜索动作或按键…" autocomplete="off" aria-label="搜索动作">'
+    + '<div class="phk-palette-list"></div>'
+    + '<div class="phk-foot">只列程序里真实能执行的动作 · 记不住快捷键就搜这里</div>'
+    + '</div>';
+  overlay.addEventListener('click', function (e) {
+    if (e.target === overlay || (e.target && e.target.className === 'phk-close')) phyCloseCommandPalette();
+  });
+  const input = overlay.querySelector('.phk-search');
+  if (input) {
+    input.addEventListener('input', function () { _phyPaletteRender(input.value); });
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); _phyPaletteIndex = Math.min(_phyPaletteIndex + 1, _phyPaletteRows.length - 1); _phyPaletteRender(input.value); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); _phyPaletteIndex = Math.max(_phyPaletteIndex - 1, 0); _phyPaletteRender(input.value); }
+      else if (e.key === 'Enter') { e.preventDefault(); _phyPaletteCommit(); }
+    });
+  }
+  if (document.body && document.body.appendChild) document.body.appendChild(overlay);
+  _phyPaletteEl = overlay;
+  _phyPaletteRender('');
+  if (input && typeof input.focus === 'function') input.focus();
+}
+
 if (typeof document !== 'undefined' && document.addEventListener) {
-  // 捕获阶段：帮助面板开着时 Esc 由它独占，别的浮层不会跟着一起关。
+  // 捕获阶段：浮层开着时 Esc 由它独占，别的面板不跟着一起关。
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape' && _phyHotkeyHelpEl) {
+    if (e.key === 'Escape' && (_phyHotkeyHelpEl || _phyPaletteEl)) {
       phyEscClaim(e);
       phyCloseHotkeyHelp();
-      // 捕获阶段拦下：速查面板开着时按 Esc 只关它，底下的面板不跟着一起关。
+      phyCloseCommandPalette();
       if (typeof e.stopPropagation === 'function') e.stopPropagation();
       return;
     }
-    if (e.key !== '?' || e.ctrlKey || e.metaKey || e.altKey) return;
-    if (phyIsTypingTarget(e)) return;
-    if (_phyHotkeyHelpEl) { phyCloseHotkeyHelp(); return; }
-    e.preventDefault();
-    phyOpenHotkeyHelp();
+    phyHotkeyDispatch(e);
   }, true);
+  document.addEventListener('keyup', function (e) {
+    if (e.key === ' ' || e.code === 'Space') _phySpaceDown = false;
+  }, true);
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('blur', function () { _phySpaceDown = false; });
+  }
   phyHotkeySelfCheck();
 }
 
 window.PHY_HOTKEYS = PHY_HOTKEYS;
+window.PHY_HOTKEY_ACTIONS = PHY_HOTKEY_ACTIONS;
 window.phyHotkeyKey = phyHotkeyKey;
 window.phyHotkeyList = phyHotkeyList;
 window.phyHotkeyMod = phyHotkeyMod;
 window.phyHotkeySelfCheck = phyHotkeySelfCheck;
+window.phyHotkeyResolve = phyHotkeyResolve;
+window.phyHotkeyDispatch = phyHotkeyDispatch;
+window.phyHotkeyRun = phyHotkeyRun;
 window.phyIsTypingTarget = phyIsTypingTarget;
+window.phyIsSpacePanning = phyIsSpacePanning;
 window.phyEscClaim = phyEscClaim;
 window.phyOpenHotkeyHelp = phyOpenHotkeyHelp;
 window.phyCloseHotkeyHelp = phyCloseHotkeyHelp;
+window.phyOpenCommandPalette = phyOpenCommandPalette;
+window.phyCloseCommandPalette = phyCloseCommandPalette;
