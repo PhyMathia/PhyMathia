@@ -4875,11 +4875,15 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   margin-left: 6px;
 }
 
-/* ===== 修改历史面板（v1.1.16） ===== */
+/* ===== 修改历史面板（2026-11-15 表达层重做：时间线＋说人话＋对比独立＋窄屏抽屉） =====
+   模型口径不动（T365 游标／T219 脏标／2026-10-24 简化批次，见 canvas-modules.md）：
+   本段只改「怎么说、怎么摆」——竖向时间线轨道＋步骤圆点、日期感知时间、行内动作
+   悬停显现、对比模式列表收成窄条由差异区接管、清空两步确认、≤560px 底部抽屉。
+   底色/磨砂/阴影仍交给 .aurora-glass（面板自身不写 background 简写，会盖掉极光层）。 */
 .graph-history-panel[hidden] { display: none; }
 .graph-history-panel {
   position: fixed;
-  /* 锚定随触发钮在左下（工具栏 2026-09-24 拆两簇，历史钮在左簇） */
+  /* 锚定随触发钮在左下（⋯ 菜单里的修改历史，工具栏方案 B 低频审查位） */
   left: 16px;
   top: auto;
   bottom: 72px;
@@ -4887,7 +4891,6 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   max-height: min(78vh, calc(100vh - 140px));
   display: flex;
   flex-direction: column;
-  /* 底色/磨砂/阴影交给 .aurora-glass（本规则再写 background 简写会盖掉极光层） */
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
   z-index: var(--z-float);
@@ -4897,16 +4900,22 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
 .graph-history-head-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 10px 12px 8px;
   border-bottom: 1px solid var(--border);
 }
 .graph-history-title { font-weight: 600; color: var(--text-primary); }
-/* T365 游标位置指示（标题行右侧，「位置 3 / 8」）——时间旅行后一眼看到自己在第几步 */
+/* 游标位置（「第 3 步 · 共 8 步」，2026-11-15 说人话）——时间旅行后一眼看到自己在第几步 */
 .graph-history-pos {
   margin-left: auto;
-  margin-right: 8px;
   font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+/* T389 容量提示，简化批次后只显示「更早的 N 步已移出」（条数/KB 仪表已退役） */
+.graph-history-cap {
+  font-size: var(--fs-xs);
   color: var(--text-secondary);
   white-space: nowrap;
 }
@@ -4918,7 +4927,10 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   cursor: pointer;
   color: var(--text-secondary);
   line-height: 1;
+  padding: 0 2px;
+  border-radius: var(--r-sm);
 }
+.graph-history-close:hover { color: var(--text-primary); }
 .graph-history-tools {
   display: flex;
   flex-wrap: wrap;
@@ -4926,17 +4938,7 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
 }
-/* T389 容量提示，简化批次后只显示「更早的 N 步已移出」（条数/KB 仪表已退役） */
-.graph-history-cap {
-  font-size: var(--fs-xs);
-  color: var(--text-secondary);
-  white-space: nowrap;
-  margin-right: 8px;
-}
-.graph-history-actions .graph-history-branch { padding: 3px 8px; }
-.graph-history-current-actions { justify-content: flex-end; }
-.graph-history-tools button,
-.graph-history-actions button {
+.graph-history-tools button {
   background: var(--btn-bg);
   border: 1px solid var(--btn-border);
   color: var(--text-primary);
@@ -4945,40 +4947,112 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   font-size: var(--fs-sm);
   cursor: pointer;
 }
-.graph-history-tools button:hover,
-.graph-history-actions button:hover {
-  background: var(--btn-active-bg);
+.graph-history-tools button:hover { background: var(--btn-active-bg); }
+.graph-history-settle { margin-left: auto; }
+/* armed 态（内联二次确认，仿 Φ 清空对话条）：第一下变红提醒，第二下才真清 */
+.graph-history-settle.armed {
+  color: var(--danger-fg);
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  font-weight: 600;
 }
+.graph-history-settle.armed:hover { background: var(--danger-bg); border-color: var(--danger-fg); }
+
+/* ===== 时间线列表：轨道＋步骤圆点由行的伪元素画（::before 竖线、::after 圆点） ===== */
 .graph-history-list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: 8px 10px;
+  padding: 10px 12px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-secondary) 35%, transparent) transparent;
+}
+.graph-history-list::-webkit-scrollbar { width: 6px; }
+.graph-history-list::-webkit-scrollbar-track { background: transparent; }
+.graph-history-list::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-secondary) 35%, transparent);
+  border-radius: var(--r-pill);
+}
+.graph-history-list::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-secondary) 55%, transparent);
 }
 .graph-history-item {
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  padding: 8px 10px;
+  position: relative;
+  padding: 7px 9px 7px 26px;
   margin-bottom: 6px;
-  background: var(--harness-msg-bg);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  transition: background var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out);
 }
+/* 轨道段：上下各探出 6px 桥接行距，串成一条连续时间线 */
+.graph-history-item::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: -6px;
+  bottom: -6px;
+  width: 2px;
+  background: var(--border);
+}
+.graph-history-item:first-child::before { top: 0; }
+.graph-history-item:last-child::before { bottom: auto; height: 19px; }
+/* 步骤圆点：默认空心环，当前步 accent 实心＋光晕，未来步淡化空心 */
+.graph-history-item::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 13px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--surface-container);
+  border: 2px solid color-mix(in srgb, var(--text-secondary) 65%, transparent);
+}
+.graph-history-item:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
 .graph-history-item.current {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+}
+.graph-history-item.current:hover { background: color-mix(in srgb, var(--accent) 11%, transparent); }
+.graph-history-item.current::after {
+  background: var(--accent);
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 .graph-history-item.previewing {
   border-color: var(--graph-bubble-border);
-  box-shadow: 0 0 0 1px var(--graph-bubble-border);
+  background: color-mix(in srgb, var(--graph-bubble-border) 12%, transparent);
+}
+.graph-history-item.previewing::after { border-color: var(--graph-bubble-border); }
+/* 未来行（游标之后）：整体淡化＋虚线轨道——「这段还没发生，可以重做回去」 */
+.graph-history-item.future { opacity: 0.62; }
+.graph-history-item.future::before {
+  width: 0;
+  background: none;
+  border-left: 2px dashed color-mix(in srgb, var(--text-secondary) 45%, transparent);
+}
+.graph-history-item.future::after {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--text-secondary) 45%, transparent);
 }
 .graph-history-head {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+}
+.graph-history-step {
+  flex: none;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
 }
 .graph-history-badge {
   flex: none;
   font-size: var(--fs-xs);
   padding: 1px 6px;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-pill);
   color: var(--white);
   background: #888;
 }
@@ -4988,95 +5062,199 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
 .graph-history-badge.src-init { background: #64748b; }
 .graph-history-badge.src-now { background: #0d9488; }
 .graph-history-badge.src-fork { background: #7c3aed; }
-/* T365：游标所在历史行的「当前位置」小标（区别于整行高亮的 .current） */
-.graph-history-cursor-tag {
-  background: var(--accent);
-  opacity: 0.92;
-}
-/* T365：「未来 · 可重做 N 步」区段分隔条——时间旅行后把可返回的未来显式摆出来 */
-.graph-history-future-divider {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 10px 0 6px;
-  color: var(--text-secondary);
-  font-size: var(--fs-xs);
-  white-space: nowrap;
-}
-.graph-history-future-divider::before,
-.graph-history-future-divider::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: var(--border);
-}
-.graph-history-summary {
-  flex: 1;
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+.graph-history-badge.src-ai { background: var(--accent); }
+/* 「你在这里」小标（区别于整行高亮的 .current） */
+.graph-history-cursor-tag { background: var(--accent); opacity: 0.92; }
 .graph-history-time {
   flex: none;
+  margin-left: auto;
   color: var(--text-secondary);
   font-size: var(--fs-xs);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
+/* 摘要放宽到两行（旧版单行截断，长摘要读不出改了什么） */
+.graph-history-summary {
+  margin-top: 3px;
+  color: var(--text-primary);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  word-break: break-word;
+}
+.graph-history-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+  min-height: 24px;
+}
+/* 行内差异计数（+2 −1 ✎3） */
+.graph-history-counts {
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+/* 行内动作悬停显现（侧栏 .session-delete 同款画法）：平时收起来，行不再是按钮墙；
+   键盘 focus-within 也显现；触屏（hover:none）与窄屏常驻（见尾部媒体查询） */
 .graph-history-actions {
   display: flex;
-  gap: 6px;
-  margin-top: 6px;
+  gap: 5px;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
 }
-/* ===== 差异清单（2026-10-24，2.2/2.3）：底部从一行字换成可点列表 ===== */
+.graph-history-item:hover .graph-history-actions,
+.graph-history-item:focus-within .graph-history-actions { opacity: 1; }
+.graph-history-current-actions { justify-content: flex-end; }
+.graph-history-actions button {
+  background: var(--btn-bg);
+  border: 1px solid var(--btn-border);
+  color: var(--text-primary);
+  border-radius: var(--r-sm);
+  padding: 3px 8px;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.graph-history-actions button:hover { background: var(--btn-active-bg); border-color: var(--accent); }
+@media (hover: none) {
+  .graph-history-actions { opacity: 1; }
+}
+/* 未来区段分隔条：轨道在这里改虚线，文案说「后面还有 N 步 · 可重做」 */
+.graph-history-future-divider {
+  position: relative;
+  margin: 0 0 6px;
+  padding: 3px 0 3px 26px;
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+.graph-history-future-divider::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: -6px;
+  bottom: -6px;
+  width: 0;
+  border-left: 2px dashed color-mix(in srgb, var(--text-secondary) 45%, transparent);
+}
+/* 空历史引导：不留白面板，告诉用户记录怎么产生 */
+.graph-history-empty {
+  padding: 26px 16px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+.graph-history-empty::before {
+  content: "↩";
+  display: block;
+  font-size: 26px;
+  line-height: 1;
+  margin-bottom: 10px;
+  color: color-mix(in srgb, var(--accent) 60%, var(--text-secondary));
+}
+.graph-history-empty-title {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+.graph-history-empty-text { font-size: var(--fs-sm); line-height: 1.7; }
+
+/* ===== 对比模式（2026-11-15 独立化）：列表收成顶部窄条，差异区接管剩余高度 =====
+   footer 结构＝标题＋计数 → 可滚清单 → 底部固定操作条；T219 的 HTML 缓存机制不动。
+   对比态给面板定高：不然 flex 容器按内容收高，清单只有一两条时操作条悬在半空、
+   差异区也拿不到「剩余高度」（真机量 rect 实踩）。 */
+.graph-history-panel.comparing { height: min(78vh, calc(100vh - 140px)); }
+.graph-history-panel.comparing .graph-history-list {
+  flex: none;
+  max-height: 68px;
+  overflow: hidden;
+  padding: 6px 12px;
+}
+.graph-history-panel.comparing .graph-history-item { display: none; }
+.graph-history-panel.comparing .graph-history-item.previewing {
+  display: block;
+  margin-bottom: 0;
+  padding: 5px 9px 5px 26px;
+}
+.graph-history-panel.comparing .graph-history-item::before { top: 0; bottom: 0; }
+.graph-history-panel.comparing .graph-history-future-divider { display: none; }
+.graph-history-panel.comparing .graph-history-foot { display: none; }
+.graph-history-panel.comparing .graph-history-summary {
+  -webkit-line-clamp: 1;
+  margin-top: 2px;
+}
 .graph-history-diff {
   display: none;
   flex-direction: column;
-  gap: 6px;
-  padding: 0;
+  min-height: 0;
   border-top: 1px solid var(--border);
   color: var(--text-secondary);
   font-size: var(--fs-sm);
-  max-height: min(40vh, 340px);
-  overflow-y: auto;
 }
-.graph-history-diff:not(:empty) { display: flex; }
+.graph-history-diff:not(:empty) { display: flex; flex: 1; }
 .graph-history-diff-head {
+  flex: none;
   padding: 8px 12px 4px;
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 8px;
+  gap: 2px 8px;
   align-items: baseline;
 }
-.graph-history-diff-title {
-  color: var(--text-primary);
-  font-weight: 600;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+.graph-history-diff-title { color: var(--text-primary); font-weight: 600; }
 .graph-history-diff-counts {
   display: flex;
   gap: 8px;
+  margin-left: auto;
   font-size: var(--fs-xs);
+}
+/* 副标题：被对比版本的时间＋摘要（旧数据起的名字照显示） */
+.graph-history-diff-sub {
+  flex-basis: 100%;
+  min-width: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .g-hd-count.will-vanish, .g-hd-legend.will-vanish { color: #f87171; }
 .g-hd-count.will-return, .g-hd-legend.will-return { color: #34d399; }
 .g-hd-count.will-change, .g-hd-legend.will-change { color: #fbbf24; }
 .graph-history-diff-legend {
+  flex: none;
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  padding: 0 12px 2px;
+  padding: 0 12px 4px;
   font-size: var(--fs-xs);
   color: var(--text-secondary);
   align-items: center;
 }
 .graph-history-diff-list {
+  flex: 1;
+  min-height: 48px;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 0 8px;
+  padding: 0 8px 4px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-secondary) 35%, transparent) transparent;
+}
+.graph-history-diff-list::-webkit-scrollbar { width: 6px; }
+.graph-history-diff-list::-webkit-scrollbar-track { background: transparent; }
+.graph-history-diff-list::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-secondary) 35%, transparent);
+  border-radius: var(--r-pill);
+}
+.graph-history-diff-list::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-secondary) 55%, transparent);
 }
 .graph-history-diff-item {
   display: grid;
@@ -5118,35 +5296,68 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   color: var(--text-secondary);
   font-size: var(--fs-sm);
 }
+/* 底部固定操作条：分段胶囊（两向）一行＋主按钮/退出一行，不随清单滚动 */
 .graph-history-diff-actions {
+  flex: none;
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 6px 12px 10px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 8px 12px 10px;
   border-top: 1px solid var(--border);
 }
-.graph-history-diff-actions button {
-  background: var(--btn-bg);
-  border: 1px solid var(--btn-border);
-  color: var(--text-primary);
-  border-radius: var(--r-sm);
-  padding: 3px 10px;
+/* 两向切换分段胶囊（T451 .pm-seg 同款语言）：back＝回到这里会怎样 / step＝这一步改了什么 */
+.g-hd-seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface-container);
+}
+.g-hd-dir {
+  flex: 1;
+  padding: 4px 10px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  text-align: center;
+  cursor: pointer;
+  transition: color var(--dur-base) var(--ease-out), background var(--dur-base) var(--ease-out);
+}
+.g-hd-dir:hover { color: var(--text-primary); }
+.g-hd-dir.active {
+  color: var(--accent);
+  font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.g-hd-dir:disabled { opacity: 0.45; cursor: default; }
+.g-hd-actions-row { display: flex; gap: 6px; }
+/* 主按钮 accent 实底：对比完「回到这一步」是唯一主动作，一眼可辨 */
+.g-hd-jump {
+  flex: 1;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--white);
+  font-weight: 600;
+  border-radius: var(--r-md);
+  padding: 5px 14px;
   font-size: var(--fs-sm);
   cursor: pointer;
+  transition: filter var(--dur-base) var(--ease-out);
 }
-.graph-history-diff-actions button:hover { background: var(--btn-active-bg); border-color: var(--accent); }
-/* 两向切换（简化批次）：back＝回到这里会怎样 / step＝这一步改了什么 */
-.graph-history-diff-actions .g-hd-dir.active { border-color: var(--accent); color: var(--accent); }
-.graph-history-diff-actions .g-hd-dir:disabled { opacity: 0.45; cursor: default; }
-.graph-history-diff-actions .g-hd-jump { border-color: var(--accent); color: var(--accent); }
-.graph-history-diff-actions .graph-history-exit-preview { margin-left: auto; }
+.g-hd-jump:hover { filter: brightness(1.1); }
 .graph-history-exit-preview {
   flex: none;
   background: var(--btn-bg);
   border: 1px solid var(--btn-border);
-  color: var(--text-primary);
-  border-radius: var(--r-sm);
-  padding: 3px 10px;
+  color: var(--text-secondary);
+  border-radius: var(--r-md);
+  padding: 5px 10px;
   font-size: var(--fs-sm);
   cursor: pointer;
   white-space: nowrap;
@@ -5154,18 +5365,39 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
 .graph-history-exit-preview:hover {
   background: var(--btn-active-bg);
   border-color: var(--accent);
-  color: var(--accent);
-}
-/* 行内差异计数（+2 −1 ✎3） */
-.graph-history-counts {
-  flex: none;
-  font-size: var(--fs-xs);
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
 }
 /* 单槽恢复条（R7）已随 2026-10-24 简化批次退役删除（横幅/恢复/✕ 整块） */
-.graph-history-badge.src-ai { background: var(--accent); }
-.graph-history-settle { margin-left: auto; }
+
+/* ===== 窄屏（≤560px）：面板改底部抽屉。几何用 Playwright 量 rect 校准（工具栏节教训），
+   动作常驻、行紧凑；320px 屏不溢出。抽屉盖住底栏工具栏是预期——开着时专心看历史。 ===== */
+@media (max-width: 560px) {
+  .graph-history-panel {
+    left: 8px;
+    right: 8px;
+    width: auto;
+    bottom: 8px;
+    max-height: 60vh;
+  }
+  .graph-history-head-row { padding: 8px 10px 6px; gap: 6px; }
+  .graph-history-tools { padding: 6px 10px; }
+  .graph-history-list { padding: 8px 10px; }
+  .graph-history-item { padding: 6px 8px 6px 22px; margin-bottom: 4px; }
+  .graph-history-item::before { left: 6px; top: -4px; bottom: -4px; }
+  .graph-history-item:first-child::before { top: 0; }
+  .graph-history-item:last-child::before { bottom: auto; height: 15px; }
+  .graph-history-item::after { left: 2px; top: 11px; }
+  .graph-history-future-divider { padding-left: 22px; margin-bottom: 4px; }
+  .graph-history-future-divider::before { left: 6px; top: -4px; bottom: -4px; }
+  .graph-history-actions { opacity: 1; }
+  .graph-history-foot { flex-wrap: wrap; min-height: 22px; }
+  .graph-history-diff-head { padding: 6px 10px 2px; }
+  .graph-history-diff-legend { padding: 0 10px 2px; }
+  .graph-history-diff-actions { padding: 6px 10px 8px; gap: 6px; }
+  .graph-history-panel.comparing { height: 60vh; }
+  .graph-history-panel.comparing .graph-history-list { max-height: 62px; padding: 4px 10px; }
+  .graph-history-panel.comparing .graph-history-item.previewing { padding: 4px 8px 4px 22px; }
+}
 
 /* ===== 节点/消息加粗强调（主题色） ===== */
 .graph-node strong{

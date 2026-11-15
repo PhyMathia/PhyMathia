@@ -273,6 +273,14 @@ function _flushGraphHistoryMirror() {
   } catch (e) { /* 同上 */ }
 }
 
+// 清空在途窗口（2026-11-15 真机实踩）：discardGraphHistoryForSession 先清内存再发
+// DELETE，而清内存触发的面板刷新会走 _ensureGraphHistory（栈空→重装路径）当场起飞
+// 一个 GET——GET 先于 DELETE 到达服务端时，旧镜像会被「更长才采纳」整段接回来，
+// 表现为「清空了又复活」（隔离实例两步清空验收当场复现）。wipeEpoch 只挡「起飞后
+// 才清空」，挡不住这条「清空后才起飞」；这里给在途 DELETE 的会话挂一个窗口标记，
+// 窗口内旧存档一律不采纳，DELETE 落地（成败都算）即撤标记。
+let _graphHistoryWipeInFlight = Object.create(null);
+
 // 切回会话时用存档补齐本地被截断/丢失的历史（只在存档更长时采纳——它按时间
 // 是更早开始积累的全量副本；本地更新则不动，避免回退撤销栈）。T365：游标随存档
 // 一并采纳（另一台设备停在哪就到哪）；T365 后跳转不再截断条目，本地/服务端条数
@@ -280,10 +288,15 @@ function _flushGraphHistoryMirror() {
 function _upgradeGraphHistoryFromServer(sid) {
   if (!sid) return;
   const wipeEpoch = _graphHistoryWipeEpoch; // T349：起飞后发生过清空/删除，旧存档作废
+  // 起飞时清空已在途：服务端可能先处理这个 GET 再处理 DELETE，响应哪怕落在 DELETE
+  // 完成之后（连接池不保证响应顺序）也是旧账——按「起飞时刻」定格，落地一律不采纳。
+  // 只挡在途窗口不够：窗口随 DELETE 响应关闭，迟到的旧 GET 响应会穿过去（真机实踩）。
+  const wipeInFlightAtLaunch = !!_graphHistoryWipeInFlight[sid];
   fetch('/api/kv/graph_history:' + sid)
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (data) {
       if (wipeEpoch !== _graphHistoryWipeEpoch) return;
+      if (wipeInFlightAtLaunch || _graphHistoryWipeInFlight[sid]) return; // 清空在途：旧存档不许复活
       const value = data && data.value;
       const count = (value && !Array.isArray(value) && Array.isArray(value.e)) ? value.e.length
         : (Array.isArray(value) ? value.length : 0);
@@ -309,6 +322,7 @@ function discardGraphHistoryForSession(sid) {
   }
   if (_graphHistoryMirrorTimer) { clearTimeout(_graphHistoryMirrorTimer); _graphHistoryMirrorTimer = null; }
   _graphHistoryWipeEpoch++;
+  _graphHistoryWipeInFlight[sid] = true; // 在途窗口：下面的刷新起飞的 GET 不许采纳旧镜像
   // 先删本地键再清内存：清空后的面板刷新会走 _ensureGraphHistory，此时栈已空而键还在，
   // 会被当场从 localStorage 重新装载回来（2026-10-24 定稿清空实踩）。
   try { localStorage.removeItem(_graphHistoryKey(sid)); } catch (e) { /* 配额异常不阻断清空 */ }
@@ -329,6 +343,8 @@ function discardGraphHistoryForSession(sid) {
     // 旧运行时/测试沙箱没有 AbortSignal.timeout：缺了也不该让清空链在这里断掉
     signal: (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function')
       ? AbortSignal.timeout(10000) : undefined,
-  }).catch(function () { /* 镜像删除失败静默：清空主流程不被它卡住 */ });
+  }).catch(function () { /* 镜像删除失败静默：清空主流程不被它卡住 */ })
+    .then(function () { delete _graphHistoryWipeInFlight[sid]; },
+          function () { delete _graphHistoryWipeInFlight[sid]; });
 }
 window.discardGraphHistoryForSession = discardGraphHistoryForSession;
