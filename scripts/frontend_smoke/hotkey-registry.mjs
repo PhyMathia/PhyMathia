@@ -63,7 +63,7 @@ export function run() {
     const block = registryBlock();
     if (!/id: 'send'[\s\S]{0,160}Enter \/ Mod\+Enter/.test(block)) throw new Error('发送键没合并成一条');
     if (/id: 'submit'/.test(block)) throw new Error('不该再单列 Ctrl+Enter 一条');
-    if (!/id: 'undo_continent'[\s\S]{0,160}大陆自有撤销栈/.test(block)) throw new Error('大陆独立撤销栈没如实登记');
+    if (!/id: 'undo_continent'[\s\S]{0,160}仅大陆内/.test(block)) throw new Error('大陆独立撤销栈没如实登记');
     return true;
   });
 
@@ -77,7 +77,7 @@ export function run() {
     const list = sandbox.phyHotkeyList();
     if (!Array.isArray(list) || list.length !== 24) throw new Error('速查列表条数不对');
     for (const row of list) {
-      if (!row.combo || !row.label || !row.scope || !row.source) throw new Error('速查行缺字段：' + JSON.stringify(row));
+      if (!row.combo || !row.label || !row.scope) throw new Error('速查行缺字段：' + JSON.stringify(row));
     }
     if (!sandbox.phyIsTypingTarget({ target: { closest: () => true } })) throw new Error('输入框内应判定为让行');
     if (sandbox.phyIsTypingTarget({ target: null })) throw new Error('无 target 不应判定为输入框');

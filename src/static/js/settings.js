@@ -784,7 +784,7 @@ function _settingsHotkeyRowsHtml() {
   const q = _settingsHotkeyQuery.trim().toLowerCase();
   let html = '', last = '';
   rows.forEach(function (r) {
-    if (q && (r.label + ' ' + r.combo + ' ' + r.scope + ' ' + r.source).toLowerCase().indexOf(q) < 0) return;
+    if (q && (r.label + ' ' + r.combo + ' ' + r.scope).toLowerCase().indexOf(q) < 0) return;
     if (r.scope !== last) {
       html += '<div class="settings-hk-group">' + _settingsEsc(r.scope) + '</div>';
       last = r.scope;
@@ -802,7 +802,7 @@ function _settingsHotkeyRowsHtml() {
         + ' onclick="settingsHotkeyResetOne(this)">还原</button>' : '';
     html += '<div class="settings-hk-row"><div class="settings-hk-info">'
       + '<div class="settings-hk-label">' + _settingsEsc(r.label) + tag + '</div>'
-      + '<div class="settings-hk-desc">' + _settingsEsc(r.scope + ' · ' + r.source) + fixed + '</div></div>'
+      + '<div class="settings-hk-desc">' + _settingsEsc(r.scope) + fixed + '</div></div>'
       + keyHtml + '<div class="settings-hk-ops">' + reset + '</div></div>';
   });
   return html || '<div class="settings-hk-empty">没有匹配的快捷键</div>';

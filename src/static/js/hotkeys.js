@@ -12,34 +12,34 @@
 
 const PHY_HOTKEYS = [
   // 通用层：所有软件都一样，照抄，零学习成本
-  { id: 'undo',           combo: 'Mod+Z',           label: '撤销上一步',                 scope: '全局',     source: '所有编辑器',       action: 'undo' },
-  { id: 'redo',           combo: 'Mod+Y / Mod+Shift+Z', short: 'Mod+Y', label: '重做', scope: '全局',     source: '所有编辑器',       action: 'redo' },
-  { id: 'copy',           combo: 'Mod+C',           label: '复制选中节点到剪贴板',       scope: '画布',     source: 'Figma / ComfyUI',  action: 'copy' },
-  { id: 'paste',          combo: 'Mod+V',           label: '粘贴节点',                   scope: '画布',     source: 'Figma / ComfyUI',  action: 'paste' },
-  { id: 'delete',         combo: 'Del / Backspace', short: 'Del', label: '删除选中节点或分组', scope: '画布', source: '所有编辑器',     action: 'delete' },
-  { id: 'escape',         combo: 'Esc',             label: '关闭当前浮层 / 取消',        scope: '全局',     source: '所有软件' },
-  { id: 'fullscreen',     combo: 'F11',             label: '整页全屏',                   scope: '全局',     source: '浏览器' },
-  { id: 'send',           combo: 'Enter / Mod+Enter', label: '发送或提交当前回答（Shift+Enter 换行）', scope: '输入框', source: '聊天应用 / Slack' },
+  { id: 'undo',           combo: 'Mod+Z',               label: '撤销上一步',                   scope: '全局' },
+  { id: 'redo',           combo: 'Mod+Y / Mod+Shift+Z', short: 'Mod+Y', label: '重做',         scope: '全局' },
+  { id: 'copy',           combo: 'Mod+C',               label: '复制选中节点到剪贴板',         scope: '画布', action: 'copy' },
+  { id: 'paste',          combo: 'Mod+V',               label: '粘贴节点',                     scope: '画布', action: 'paste' },
+  { id: 'delete',         combo: 'Del / Backspace',     short: 'Del', label: '删除选中节点或分组', scope: '画布', action: 'delete' },
+  { id: 'escape',         combo: 'Esc',                 label: '关闭当前浮层 / 取消',          scope: '全局' },
+  { id: 'fullscreen',     combo: 'F11',                 label: '整页全屏',                     scope: '全局' },
+  { id: 'send',           combo: 'Enter / Mod+Enter',   label: '发送或提交当前回答（Shift+Enter 换行）', scope: '输入框' },
   // 画布层：向同类软件借肌肉记忆
-  { id: 'selectAll',      combo: 'Mod+A',           label: '全选节点（输入框内仍是全选文字）', scope: '画布', source: '所有编辑器',     action: 'selectAll' },
-  { id: 'duplicate',      combo: 'Mod+D',           label: '原地复制一份选中节点',       scope: '画布',     source: 'Figma / Sketch',   action: 'duplicate' },
-  { id: 'group',          combo: 'Mod+G',           label: '把选中节点设为分组',         scope: '画布',     source: 'Figma',            action: 'group' },
-  { id: 'ungroup',        combo: 'Mod+Shift+G',     label: '取消选中的分组（不删节点）', scope: '画布',     source: 'Figma',            action: 'ungroup' },
-  { id: 'fit',            combo: 'F',               label: '适配画布到窗口',             scope: '全局',     source: '看图器 / Figma',   action: 'fit' },
-  { id: 'zoomReset',      combo: '0',               label: '缩放复位到 100%',            scope: '画布',     source: 'Figma / 浏览器',   action: 'zoomReset' },
-  { id: 'search',         combo: 'Mod+F',           label: '打开画布搜索',               scope: '全局',     source: '浏览器 / GitHub',  action: 'search' },
-  { id: 'export',         combo: 'Mod+S',           label: '打开导出菜单',               scope: '全局',     source: '所有软件',         action: 'export' },
-  { id: 'pan',            combo: 'Space + 拖拽',    label: '按住空格拖动画布（节点上也能平移）', scope: '画布', source: 'Figma / Miro / PS' },
-  { id: 'search_viewer',  combo: '/',               label: '打开画布搜索',               scope: '查看页',   source: 'GitHub / Gmail' },
+  { id: 'selectAll',      combo: 'Mod+A',               label: '全选节点（输入框内仍是全选文字）', scope: '画布', action: 'selectAll' },
+  { id: 'duplicate',      combo: 'Mod+D',               label: '原地复制一份选中节点',         scope: '画布', action: 'duplicate' },
+  { id: 'group',          combo: 'Mod+G',               label: '把选中节点设为分组',           scope: '画布', action: 'group' },
+  { id: 'ungroup',        combo: 'Mod+Shift+G',         label: '取消选中的分组（不删节点）',   scope: '画布', action: 'ungroup' },
+  { id: 'fit',            combo: 'F',                   label: '适配画布到窗口',               scope: '全局', action: 'fit' },
+  { id: 'zoomReset',      combo: '0',                   label: '缩放复位到 100%',              scope: '画布', action: 'zoomReset' },
+  { id: 'search',         combo: 'Mod+F',               label: '打开画布搜索',                 scope: '全局', action: 'search' },
+  { id: 'export',         combo: 'Mod+S',               label: '打开导出菜单',                 scope: '全局', action: 'export' },
+  { id: 'pan',            combo: 'Space + 拖拽',        label: '按住空格拖动画布（节点上也能平移）', scope: '画布' },
+  { id: 'search_viewer',  combo: '/',                   label: '打开画布搜索',                 scope: '查看页' },
   // 同一个键在不同作用域做不同的事，如实登记，不硬把两套撤销栈并成一套
-  { id: 'undo_continent', combo: 'Mod+Z',           label: '撤销上一次航线操作（仅大陆内）', scope: '知识大陆', source: '大陆自有撤销栈' },
+  { id: 'undo_continent', combo: 'Mod+Z',               label: '撤销上一次航线操作（仅大陆内）', scope: '知识大陆' },
   // 应用特有层：本项目独有，才自创，成族且全部能在命令面板搜到
-  { id: 'viewCanvas',     combo: 'Mod+Shift+1',     label: '回到探索网画布',             scope: '视图',     source: '本项目',           action: 'viewCanvas' },
-  { id: 'viewContinent',  combo: 'Mod+Shift+2',     label: '打开 / 关闭知识大陆',        scope: '视图',     source: '本项目',           action: 'viewContinent' },
-  { id: 'viewKnowledge',  combo: 'Mod+Shift+3',     label: '打开 / 关闭知识总览',        scope: '视图',     source: '本项目',           action: 'viewKnowledge' },
+  { id: 'viewCanvas',     combo: 'Mod+Shift+1',         label: '回到探索网画布',               scope: '视图', action: 'viewCanvas' },
+  { id: 'viewContinent',  combo: 'Mod+Shift+2',         label: '打开 / 关闭知识大陆',          scope: '视图', action: 'viewContinent' },
+  { id: 'viewKnowledge',  combo: 'Mod+Shift+3',         label: '打开 / 关闭知识总览',          scope: '视图', action: 'viewKnowledge' },
   // 兜底：记不住就搜
-  { id: 'help',           combo: '?',               label: '打开快捷键速查',             scope: '全局',     source: 'GitHub / Slack',   action: 'help' },
-  { id: 'palette',        combo: 'Mod+K',           label: '打开命令面板（可搜全部动作）', scope: '全局',   source: 'VS Code / Notion', action: 'palette' },
+  { id: 'help',           combo: '?',                   label: '打开快捷键速查',               scope: '全局', action: 'help' },
+  { id: 'palette',        combo: 'Mod+K',               label: '打开命令面板（可搜全部动作）', scope: '全局', action: 'palette' },
 ];
 
 function phyHotkeyIsMac() {
@@ -203,7 +203,7 @@ function phyHotkeyList() {
   return PHY_HOTKEYS.map(function (r) {
     return {
       id: r.id, combo: phyHotkeyMod(phyHotkeyEffective(r.id)), label: r.label,
-      scope: r.scope, source: r.source, action: r.action || '',
+      scope: r.scope, action: r.action || '',
       editable: PHY_HOTKEY_EDITABLE.indexOf(r.id) !== -1,
       custom: !!ov[r.id],
       defaultCombo: phyHotkeyMod(r.combo),
@@ -409,7 +409,7 @@ function _phyHotkeyStyleTag() {
     + '.phy-hotkey-overlay .phk-group-title{font-size:12px;color:var(--accent,#4a9eff);margin-bottom:6px}'
     + '.phy-hotkey-overlay .phk-row{display:flex;align-items:center;gap:10px;padding:5px 0;border-top:1px solid var(--border,rgba(255,255,255,.1));font-size:13px}'
     + '.phy-hotkey-overlay .phk-label{flex:1;min-width:0}'
-    + '.phy-hotkey-overlay .phk-src{flex:0 0 132px;text-align:right;font-size:11px;color:var(--text-secondary,rgba(255,255,255,.55));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+    + '.phy-hotkey-overlay .phk-scope{flex:0 0 132px;text-align:right;font-size:11px;color:var(--text-secondary,rgba(255,255,255,.55));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
     + '.phy-hotkey-overlay .phk-key{flex:0 0 auto;min-width:96px;text-align:center;font-family:inherit;font-size:12px;padding:3px 8px;border-radius:6px;background:var(--panel-bg,rgba(255,255,255,.08));border:1px solid var(--border,rgba(255,255,255,.18));color:var(--text-primary,#eef2f8)}'
     + '.phy-hotkey-overlay .phk-search{width:100%;box-sizing:border-box;margin-bottom:10px;padding:9px 12px;font-size:14px;font-family:inherit;color:var(--text-primary,#eef2f8);background:var(--panel-bg,rgba(255,255,255,.08));border:1px solid var(--border,rgba(255,255,255,.18));border-radius:8px;outline:none}'
     + '.phy-hotkey-overlay .phk-palette-row{cursor:pointer;padding:7px 8px;border-radius:6px}'
@@ -447,7 +447,6 @@ function phyOpenHotkeyHelp() {
     body += '<div class="phk-group"><div class="phk-group-title">' + s + '</div>';
     list.forEach(function (r) {
       body += '<div class="phk-row"><span class="phk-label">' + r.label + '</span>'
-        + '<span class="phk-src">' + r.source + '</span>'
         + '<kbd class="phk-key">' + r.combo + '</kbd></div>';
     });
     body += '</div>';
@@ -489,7 +488,7 @@ function _phyPaletteRender(query) {
   const q = String(query || '').trim().toLowerCase();
   const all = phyHotkeyList().filter(function (r) { return !!r.action; });
   _phyPaletteRows = all.filter(function (r) {
-    return !q || (r.label + ' ' + r.combo + ' ' + r.scope + ' ' + r.source).toLowerCase().indexOf(q) >= 0;
+    return !q || (r.label + ' ' + r.combo + ' ' + r.scope).toLowerCase().indexOf(q) >= 0;
   });
   if (_phyPaletteIndex >= _phyPaletteRows.length) _phyPaletteIndex = 0;
   const list = _phyPaletteEl.querySelector('.phk-palette-list');
@@ -501,7 +500,7 @@ function _phyPaletteRender(query) {
   list.innerHTML = _phyPaletteRows.map(function (r, i) {
     return '<div class="phk-row phk-palette-row' + (i === _phyPaletteIndex ? ' is-active' : '') + '" data-index="' + i + '">'
       + '<span class="phk-label">' + r.label + '</span>'
-      + '<span class="phk-src">' + r.scope + '</span>'
+      + '<span class="phk-scope">' + r.scope + '</span>'
       + '<kbd class="phk-key">' + r.combo + '</kbd></div>';
   }).join('');
   Array.prototype.forEach.call(list.querySelectorAll('.phk-palette-row'), function (el) {
