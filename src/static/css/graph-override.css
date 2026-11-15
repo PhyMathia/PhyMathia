@@ -968,6 +968,41 @@
   border-color: rgba(120, 100, 70, 0.2) !important;
 }
 
+/* ---------- 7.1 浅色工具按钮承托（2026-11-15 用户三拍，方案 A）----------
+   用户反馈「深色还可以，浅色有些主题不够清晰」：深色有 55% 压暗纱垫底，浅色按
+   2026-10-04 拍板是裸壁纸，按钮又是 9-24 拍板的静息透明裸图标，对比度全交给壁纸
+   亮度决定——素纸/糖果这类亮壁纸的高光会吃掉细线图标与边框。这里**只**给浅色
+   静息态补一层纸片底板＋实色描边＋极轻投影，深色一字不改。
+   刻意不写进上面那条 [data-theme="light"] .graph-tool-btn 块：它特指性 (0,2,1) 高于
+   基础 :hover，写 background/color 会把悬停与 .active 的反馈一起压掉（冒烟有断言守着）。
+   用 :not() 只在静息态命中，hover / :focus-visible / .active / [aria-pressed=true]
+   自动让位给既有状态样式——Φ 激活的金色圆、选择文字与联系模式的 accent 底原样保留。
+   容器仍只留布局（不挂底色/磨砂），符合 9-24 拍板；承托落在按钮自身。 */
+[data-theme="light"] .graph-canvas-toolbar .graph-tool-btn:not(:hover):not(:focus-visible):not(.active):not([aria-pressed="true"]) {
+  background: var(--graph-tool-surface) !important;
+  border-color: var(--graph-tool-edge) !important;
+  box-shadow: 0 1px 2px rgba(80, 62, 32, 0.12) !important;
+}
+[data-theme="light"] .graph-canvas-toolbar .graph-tool-btn:hover,
+[data-theme="light"] .graph-canvas-toolbar .graph-tool-btn:focus-visible {
+  background: var(--graph-tool-surface-hover) !important;
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+  box-shadow: 0 1px 3px rgba(80, 62, 32, 0.16) !important;
+}
+/* 凹槽：10% 墨底 / 12% 描边在亮壁纸上几乎读不出分组，提到「看得见但不抢按钮」为止 */
+[data-theme="light"] .graph-tool-group {
+  background: rgba(255, 252, 245, 0.72) !important;
+  border-color: rgba(120, 100, 70, 0.34) !important;
+}
+[data-theme="light"] .graph-tool-sep {
+  background: rgba(120, 100, 70, 0.30) !important;
+}
+/* 缩放读数：78% 墨色在亮底上偏淡，浅色下回到全墨（它是状态文字不是图标） */
+[data-theme="light"] .graph-tool-btn.graph-zoom-readout {
+  color: var(--graph-tool-ink) !important;
+}
+
 /* ---------- 8. 节点交互动画（主题过渡已删 2026-10-01） ----------
    这条 (0,1,0) 过渡只服务 hover 光晕/透明度等交互，主题翻转时被 styles.css 的
    html.theme-switching 毯子 (0,1,1) 压住、不参与切换。原第 9 节节点/连线上的
@@ -1075,6 +1110,11 @@
   --ink-teal: #2f7a66;
   --ink-violet: #6e569f;
   --graph-tool-ink: #54452a;
+  /* 浅色工具按钮承托（2026-11-15 方案 A）：亮壁纸上给细线图标一层稳定纸底＋实色描边。
+     深色不定义这三个令牌，基础规则仍落回 transparent（9-24 裸装拍板在深色侧继续成立）。 */
+  --graph-tool-surface: rgba(255, 252, 245, 0.88);
+  --graph-tool-surface-hover: rgba(255, 246, 228, 0.96);
+  --graph-tool-edge: rgba(120, 100, 70, 0.42);
   --graph-bubble-start: rgba(120, 100, 70, 0.10);
   --graph-bubble-end: rgba(255, 253, 247, 0.98);
   --graph-bubble-border: rgba(120, 100, 70, 0.2);
