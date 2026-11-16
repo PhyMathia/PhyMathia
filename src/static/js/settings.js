@@ -494,10 +494,29 @@ function _settingsPagePhi() {
   if (levels.map(x => x.v).indexOf(cur) === -1) cur = '';
   let fallback = false;
   try { fallback = _settingsLsGet(STORAGE_KEY_HARNESS_FALLBACK, '0') === '1'; } catch (e) {}
-  return _sHead('Φ 助手', '这两个开关原本藏在 Φ 面板的模式菜单里，收编到此处；下次 Φ 回答生效。') +
+  // T453（2026-11-16）：页面原本不说 Φ 现在用哪个模型，要自己去「模型」页找 Φ 槽。
+  // 这里读同一份槽位状态就地展示；槽空＝与主模型相同（getActiveModelForRole 返回 null
+  // 即槽空），口径与 models.js 的 getSlotThinkingForRole 一致。
+  let phiName = '', mainName = '', phiOwn = false;
+  try {
+    if (typeof getActiveModelForRole === 'function') {
+      const phiM = getActiveModelForRole('graph');
+      const mainM = getActiveModelForRole('agent');
+      if (phiM) { phiOwn = true; phiName = String(phiM.model || phiM.name || ''); }
+      if (mainM) mainName = String(mainM.model || mainM.name || '');
+    }
+  } catch (e) {}
+  const phiModelDesc = phiOwn ? phiName
+    : (mainName ? '与主模型相同 · ' + mainName : '还没配模型——先去「模型」页添加一个才能用 Φ');
+  return _sHead('Φ 助手', 'Φ 用的模型、思考深度与备用策略都在这里；改动下次 Φ 回答生效。') +
+    _sSection('Φ 正在用的模型',
+      _sRow('回答用的模型', phiModelDesc, '') +
+      _sActions([{ label: '去「模型」页调整 Φ 槽位', onclick: "settingsSelectTab('model')" }])) +
     _sSection('深度思考档位', _sChoices(levels.map(x => ({
       label: x.label, active: x.v === cur, onclick: "settingsSetThinking('" + x.v + "')"
-    })))) +
+    }))) +
+      // 2026-11-13 有过「思考强度不联动」误解先例：这里写明 Φ 档位与主模型思考强度各自独立
+      '<div class="settings-note">思考档位与「模型」页主模型的思考强度相互独立、互不联动：选了具体档位以这里为准（覆盖 Φ 槽位自己的设置），选「跟随」才照 Φ 槽位走（槽位为空时跟主模型）。</div>') +
     _sSwitch('失败自动换备用模型', '默认关；模型报错时自动换一个再试一次', fallback, 'settingsSetFallback(this.checked)');
 }
 

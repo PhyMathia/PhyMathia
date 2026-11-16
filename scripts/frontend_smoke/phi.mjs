@@ -174,6 +174,19 @@ check('设置抽屉开着时 Φ 桌宠/聊天窗口退到抽屉之后（2026-11-
   return true;
 });
 
+check('T453 Φ 设置页补信息：显示 Φ 槽位现状＋思考挡位独立性说明（2026-11-14 目检漏项）', () => {
+  const src = fs.readFileSync('src/static/js/settings.js', 'utf8');
+  const page = src.slice(src.indexOf('function _settingsPagePhi'), src.indexOf('function _settingsPageQuiz'));
+  if (page.length < 100) throw new Error('找不到 _settingsPagePhi 函数体');
+  if (!page.includes("getActiveModelForRole('graph')")) throw new Error('Φ 设置页没读 Φ 槽位——「正在用的模型」信息缺失');
+  if (!page.includes("getActiveModelForRole('agent')")) throw new Error('没读主模型——槽空时「与主模型相同」无从显示');
+  if (!page.includes("settingsSelectTab('model')")) throw new Error('缺「去模型页调整」入口');
+  if (!page.includes('相互独立') || !page.includes('互不联动')) {
+    throw new Error('思考挡位与主模型思考强度的独立性说明缺失（2026-11-13 有误解先例）');
+  }
+  return true;
+});
+
 check('T125 面板高度预算自洽：height 与 bottom 同一条预算、矮视口兜底仍在', () => {
   const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
   // 行首锚（2026-11-14）：限定选择器（如 body:has(...) .graph-harness-window）同样含

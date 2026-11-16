@@ -377,6 +377,18 @@ check('账号悬空自愈/只读副作用：静态契约（启动链/标记头/�
   if (!cfg.includes("resp.headers.get('X-Phymathia-Account-Gone')")) throw new Error('fetch 包装未识别账号悬空标记头');
   if (!cfg.includes('__phyAccountJustDeleted')) throw new Error('自删流程应跳过自动回落（与删除流程自带的重载不打架）');
   if (!fs.readFileSync('src/static/js/ui-backup.js', 'utf8').includes("phyReadonlyBlock('导出数据')")) throw new Error('ui-backup.js exportData 缺查阅态闸门');
+  const storagesrc = fs.readFileSync('src/static/js/ui-backup.js', 'utf8');
+  const sdfn = storagesrc.slice(storagesrc.indexOf('function updateStorageDebug'), storagesrc.indexOf('function _applyLocalSettings'));
+  if (sdfn.length < 100) throw new Error('找不到 updateStorageDebug 函数体');
+  if (!sdfn.includes('storageSummary') || !sdfn.includes('_setStorageDebugOpen(false)')) {
+    throw new Error('T449 存储诊断缺总占用摘要或未默认折叠——明细会裸列键名给用户');
+  }
+  if (!storagesrc.includes('function toggleStorageDebug')) throw new Error('T449 缺明细展开开关 toggleStorageDebug');
+  const panelhtml = fs.readFileSync('src/static/index.html', 'utf8');
+  if (!panelhtml.includes('id="storageSummary"') || !panelhtml.includes('id="storageDebugToggle"')) {
+    throw new Error('T449 数据面板缺摘要行／明细开关节点');
+  }
+  if (!panelhtml.includes('id="storageDebug" style="display:none;')) throw new Error('T449 明细块未默认隐藏');
   if (!fs.readFileSync('src/static/js/memory.js', 'utf8').includes("phyReadonlyBlock('清除记忆')")) throw new Error('memory.js 清除记忆缺查阅态闸门');
   // T163 后接入点按属主模块镜像：悬空标记头在 request_ctx.py，画像/查阅态在 profile_routes.py
   const ctxpy = fs.readFileSync('src/server/request_ctx.py', 'utf8');

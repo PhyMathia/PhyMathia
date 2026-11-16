@@ -177,9 +177,13 @@ function _normalizeBackup(data) {
   return result;
 }
 
+// T449（2026-11-16）：逐键名清单是开发向内容，默认只给一行总占用；明细折叠进
+// #storageDebug，点「查看明细」展开（toggleStorageDebug）。每次重画（开面板/导入后）
+// 都收回折叠态，展开位不跨次记忆——诊断信息默认不该占版面。
 function updateStorageDebug() {
   const el = document.getElementById('storageDebug');
-  if (!el) return;
+  const summary = document.getElementById('storageSummary');
+  if (!el || !summary) return;
   const keys = lsKeys().filter(k => k.startsWith('phymathia_'));
   let totalBytes = 0;
   const lines = keys.map(k => {
@@ -191,6 +195,22 @@ function updateStorageDebug() {
   lines.unshift('localStorage keys: ' + keys.length);
   lines.push('Total: ' + (totalBytes / 1024).toFixed(1) + 'KB');
   el.innerHTML = lines.join('<br>');
+  summary.textContent = '本机设置占用 ' + (totalBytes / 1024).toFixed(1) + 'KB（' + keys.length + ' 项）';
+  _setStorageDebugOpen(false);
+}
+
+function toggleStorageDebug() {
+  const el = document.getElementById('storageDebug');
+  if (!el) return;
+  _setStorageDebugOpen(el.style.display === 'none');
+}
+
+function _setStorageDebugOpen(open) {
+  const el = document.getElementById('storageDebug');
+  const btn = document.getElementById('storageDebugToggle');
+  if (!el || !btn) return;
+  el.style.display = open ? '' : 'none';
+  btn.textContent = open ? '收起明细' : '查看明细';
 }
 
 function _applyLocalSettings(data) {
