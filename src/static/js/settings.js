@@ -29,6 +29,7 @@ const SETTINGS_GROUPS = [
     { id: 'phi', label: 'Φ 助手', icon: 'sparkles' },
     { id: 'quiz', label: '知识检测', icon: 'check' },
     { id: 'canvas', label: '画布与追问', icon: 'curve' },
+    { id: 'skills', label: '技能', icon: 'sparkles' },
     { id: 'hotkeys', label: '快捷键', icon: 'key' }
   ]},
   { label: '数据', items: [
@@ -850,10 +851,198 @@ function _settingsPageHotkeys() {
     + '<div class="settings-note">系统固定的键不参与修改：Esc 关浮层、Space 平移、F11 全屏、输入框里的 Enter 发送，以及不带 Ctrl / ⌘ 的单字符键。浏览器保留组合（Ctrl+N/T/W/R/L/P 等）录制时也会被拦下。</div>';
 }
 
+// ====== 技能页（2026-11-16 skill 系统第 2 版：用户自己加技能）======
+// 三条规矩：
+// ① 内置技能只读（标「内置」，不给编辑/删除钮）——它们随程序发布，改了会被升级覆盖；
+// ② 正文原样拼进模型请求，所以有长度/条数上限，超限由服务端 400 回中文原因，直接展示；
+// ③ 读写在服务端做账号隔离，前端只负责「列 / 建 / 改 / 删」，不参与判定。
+const _skillsPage = {
+  loaded: false, loading: false, error: '', message: '',
+  items: [], limits: { name: 40, desc: 120, body: 20000, skills: 40 }, draft: null
+};
+const SKILL_SCOPE_OPTIONS = [
+  ['physics', '物理视角'], ['math', '数学视角'], ['graph', '知识图谱'],
+  ['viz', '交互可视化'], ['socratic', '苏格拉底追问'], ['learn', '进阶学习']
+];
+
+function settingsSkillsLoad(force) {
+  if (_skillsPage.loading) return;
+  if (_skillsPage.loaded && !force) return;
+  if (typeof fetch !== 'function') {
+    _skillsPage.loaded = true;
+    _skillsPage.error = '当前环境不能读取技能列表';
+    return;
+  }
+  _skillsPage.loading = true;
+  fetch('/api/skills')
+    .then(resp => (resp.ok ? resp.json() : Promise.reject(new Error('HTTP ' + resp.status))))
+    .then(data => {
+      _skillsPage.items = Array.isArray(data.skills) ? data.skills : [];
+      if (data.limits) _skillsPage.limits = data.limits;
+      _skillsPage.loaded = true;
+      _skillsPage.error = '';
+    })
+    .catch(err => {
+      _skillsPage.loaded = true;
+      _skillsPage.error = '技能列表读取失败（' + ((err && err.message) || '网络错误') + '）';
+    })
+    .then(() => {
+      _skillsPage.loading = false;
+      if (_settingsTab === 'skills') renderSettingsPage();
+    });
+}
+
+function _settingsSkillScopeLabels(scope) {
+  const map = {};
+  SKILL_SCOPE_OPTIONS.forEach(pair => { map[pair[0]] = pair[1]; });
+  return (scope || []).map(key => map[key] || key).join(' · ');
+}
+
+function _settingsSkillRowsHtml() {
+  if (_skillsPage.error) return '<div class="settings-note">' + _settingsEsc(_skillsPage.error) + '</div>';
+  if (!_skillsPage.items.length) return '<div class="settings-note">还没有技能。点上面的「新建技能」写一条。</div>';
+  return _skillsPage.items.map(item => {
+    const badge = item.builtin ? '<span style="margin-left:6px;font-size:11px;opacity:.7;border:1px solid var(--border);border-radius:999px;padding:0 6px">内置</span>' : '';
+    const ops = item.builtin
+      ? '<span style="font-size:12px;opacity:.55">只读</span>'
+      : '<button type="button" class="settings-hk-reset" onclick="settingsSkillEdit(\'' + _settingsEsc(item.id) + '\')">编辑</button>'
+        + '<button type="button" class="settings-hk-reset" onclick="settingsSkillDelete(\'' + _settingsEsc(item.id) + '\')">删除</button>';
+    return '<div style="display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border)">'
+      + '<div style="flex:1;min-width:0">'
+      + '<div style="font-size:13px;color:var(--text-primary)">' + _settingsEsc(item.name) + badge + '</div>'
+      + '<div style="font-size:12px;opacity:.75;margin-top:2px">' + _settingsEsc(item.desc || '（没有描述）') + '</div>'
+      + '<div style="font-size:11px;opacity:.55;margin-top:2px">id：' + _settingsEsc(item.id)
+      + ' · 适用：' + _settingsEsc(_settingsSkillScopeLabels(item.scope)) + ' · 正文 ' + (item.chars || 0) + ' 字</div>'
+      + '</div><div style="display:flex;gap:6px;flex-shrink:0">' + ops + '</div></div>';
+  }).join('');
+}
+
+function _settingsSkillEditorHtml() {
+  const draft = _skillsPage.draft || {};
+  const editing = !!draft.id;
+  const checks = SKILL_SCOPE_OPTIONS.map(pair => {
+    const on = (draft.scope || []).indexOf(pair[0]) >= 0;
+    return '<label style="display:inline-flex;align-items:center;gap:4px;margin:0 12px 6px 0;font-size:12px">'
+      + '<input type="checkbox" class="skillScope" value="' + pair[0] + '"' + (on ? ' checked' : '') + '>'
+      + _settingsEsc(pair[1]) + '</label>';
+  }).join('');
+  return '<div style="border:1px solid var(--border);border-radius:10px;padding:12px;margin:10px 0 16px">'
+    + '<div style="font-size:13px;margin-bottom:8px">' + (editing ? '编辑技能' : '新建技能') + '</div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    + '<input id="skillDraftName" class="settings-hk-search" style="flex:1;min-width:160px" placeholder="技能名，例如 受力分析七步" value="' + _settingsEsc(draft.name || '') + '">'
+    + '<input id="skillDraftId" class="settings-hk-search" style="flex:1;min-width:160px" placeholder="id：小写字母/数字/连字符，建好不可改" value="' + _settingsEsc(draft.id || '') + '"' + (editing ? ' readonly' : '') + '>'
+    + '</div>'
+    + '<input id="skillDraftDesc" class="settings-hk-search" style="width:100%;margin-top:8px" placeholder="一句话：什么时候用它（模型靠这句判断挂不挂）" value="' + _settingsEsc(draft.desc || '') + '">'
+    + '<div style="margin-top:10px;font-size:12px;opacity:.75">给哪些节点用（至少选一个）：</div>'
+    + '<div style="margin-top:4px">' + checks + '</div>'
+    + '<div style="margin-top:6px;font-size:12px;opacity:.75">正文（会原样交给模型）：</div>'
+    + '<textarea id="skillDraftBody" style="width:100%;min-height:180px;margin-top:4px;background:transparent;color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:8px;font-size:12px;line-height:1.6" placeholder="写清三件事：什么情况适用、按什么步骤做、哪些做法算不合格">' + _settingsEsc(draft.body || '') + '</textarea>'
+    + '<div style="display:flex;gap:8px;margin-top:8px;align-items:center">'
+    + '<button type="button" class="settings-hk-resetall" onclick="settingsSkillSave()">保存</button>'
+    + '<button type="button" class="settings-hk-reset" onclick="settingsSkillCancel()">取消</button>'
+    + '<span style="font-size:11px;opacity:.6">正文最多 ' + _skillsPage.limits.body + ' 字</span>'
+    + '</div></div>';
+}
+
+function _settingsPageSkills() {
+  if (!_skillsPage.loaded) {
+    settingsSkillsLoad();
+    return '<div class="settings-page-title">技能</div><div class="settings-note">正在读取技能列表…</div>';
+  }
+  const msg = _skillsPage.message
+    ? '<div class="settings-note" style="color:var(--accent)">' + _settingsEsc(_skillsPage.message) + '</div>' : '';
+  return '<div class="settings-page-title">技能</div>'
+    + '<div class="settings-note">技能的用法：提一个问题时，「问题分析」那一步会先看问题、后面的节点、以及这里有哪些技能，'
+    + '决定给哪个节点挂哪一条；真到那个节点生成时才把正文交出去。所以这里写的是「做法」，不是「知识」。</div>'
+    + '<div style="margin:10px 0"><button type="button" class="settings-hk-resetall" onclick="settingsSkillNew()">新建技能</button>'
+    + '<span style="margin-left:10px;font-size:12px;opacity:.6">自建上限 ' + _skillsPage.limits.skills + ' 条</span></div>'
+    + msg
+    + (_skillsPage.draft ? _settingsSkillEditorHtml() : '')
+    + _settingsSkillRowsHtml();
+}
+
+function settingsSkillNew() {
+  if (_settingsGuard && _settingsGuard()) return;
+  _skillsPage.draft = { id: '', name: '', desc: '', scope: [], body: '' };
+  _skillsPage.message = '';
+  renderSettingsPage();
+}
+
+function settingsSkillEdit(id) {
+  if (_settingsGuard && _settingsGuard()) return;
+  const item = (_skillsPage.items || []).find(row => row.id === id);
+  if (!item) return;
+  _skillsPage.draft = { id: item.id, name: item.name, desc: item.desc, scope: (item.scope || []).slice(), body: item.body || '' };
+  _skillsPage.message = '';
+  renderSettingsPage();
+}
+
+function settingsSkillCancel() {
+  _skillsPage.draft = null;
+  _skillsPage.message = '';
+  renderSettingsPage();
+}
+
+function settingsSkillSave() {
+  if (_settingsGuard && _settingsGuard()) return;
+  const val = sel => { const el = document.getElementById(sel); return el ? el.value : ''; };
+  const scope = Array.prototype.slice.call(document.querySelectorAll('.skillScope'))
+    .filter(box => box.checked).map(box => box.value);
+  const payload = {
+    id: String(val('skillDraftId') || '').trim().toLowerCase(),
+    name: val('skillDraftName'),
+    desc: val('skillDraftDesc'),
+    scope: scope,
+    body: val('skillDraftBody')
+  };
+  _skillsPage.message = '正在保存…';
+  renderSettingsPage();
+  fetch('/api/skills/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+    .then(resp => resp.json().then(data => ({ ok: resp.ok, data: data })))
+    .then(result => {
+      if (!result.ok) throw new Error((result.data && result.data.detail) || '保存失败');
+      _skillsPage.draft = null;
+      _skillsPage.message = '已保存：' + ((result.data.skill && result.data.skill.name) || payload.name) + '（下一次提问就会参与判定）';
+      _skillsPage.loaded = false;
+      settingsSkillsLoad(true);
+    })
+    .catch(err => {
+      _skillsPage.message = '保存失败：' + ((err && err.message) || '网络错误');
+      renderSettingsPage();
+    });
+}
+
+function settingsSkillDelete(id) {
+  if (_settingsGuard && _settingsGuard()) return;
+  if (typeof confirm === 'function' && !confirm('删除技能「' + id + '」？删掉后不会再被挂上，已生成的内容不受影响。')) return;
+  _skillsPage.message = '正在删除…';
+  renderSettingsPage();
+  fetch('/api/skills/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: id })
+  })
+    .then(resp => resp.json().then(data => ({ ok: resp.ok, data: data })))
+    .then(result => {
+      if (!result.ok) throw new Error((result.data && result.data.detail) || '删除失败');
+      _skillsPage.message = '已删除：' + id;
+      _skillsPage.loaded = false;
+      settingsSkillsLoad(true);
+    })
+    .catch(err => {
+      _skillsPage.message = '删除失败：' + ((err && err.message) || '网络错误');
+      renderSettingsPage();
+    });
+}
+
 const _SETTINGS_PAGES = {
   appearance: _settingsPageAppearance, level: _settingsPageLevel, model: _settingsPageModel,
   memory: _settingsPageMemory, phi: _settingsPagePhi, quiz: _settingsPageQuiz,
-  canvas: _settingsPageCanvas, hotkeys: _settingsPageHotkeys,
+  canvas: _settingsPageCanvas, hotkeys: _settingsPageHotkeys, skills: _settingsPageSkills,
   data: _settingsPageData, account: _settingsPageAccount, trash: _settingsPageTrash,
   about: _settingsPageAbout, help: _settingsPageHelp
 };

@@ -402,12 +402,12 @@ async def api_models_chat(request: Request):
                 # 只有「问题分析」这一步给候选卡：配方双阶段的概要不做路由（它的下游
                 # 是那一颗配方节点，没有六个模块可选），省一次候选段与解析。
                 if str(_wc.get("mode") or "") == "analysis" and str(_tgt.get("kind") or "") == "answer":
-                    _menu = skill_registry.menu_block(_wc.get("downstream"))
+                    _menu = skill_registry.menu_block(_wc.get("downstream"), account)
                     if _menu:
                         user_text = user_text + _menu
                         _skill_src = "menu"
                 else:
-                    _block, _sid = skill_registry.requested_block(_wc)
+                    _block, _sid = skill_registry.requested_block(_wc, account)
                     if _block:
                         user_text = user_text + _block
                         _skill_src = f"plan:{_sid}"

@@ -93,6 +93,9 @@ class AccountPaths:
     kv_dir: Path
     kv_meta_dir: Path
     trash_dir: Path
+    # 用户自建 skill（2026-11-16 skill 系统）：一个账号一个目录，一份 md 一条；
+    # 内置 skill 住代码里（src/skills），这里只放用户自己加的，删号即随目录搬进墓碑区
+    skills_dir: Path
 
 
 def validate_account_id(value) -> str:
@@ -133,6 +136,7 @@ def resolve_paths(account_id=DEFAULT_ACCOUNT) -> AccountPaths:
         kv_dir=root / "kv",
         kv_meta_dir=root / "kv" / "meta",
         trash_dir=root / "trash",
+        skills_dir=root / "skills",
     )
 
 

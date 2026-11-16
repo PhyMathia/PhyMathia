@@ -194,12 +194,13 @@ try {
   ctx.openSettingsDrawer();
   overlay.classList.contains('show') ? ok('打开抽屉：show 类就位') : bad('打开抽屉', '缺 show');
   const navItems = (nav.innerHTML.match(/settings-nav-item/g) || []).length;
-  navItems === 13 ? ok('左栏渲染 13 个入口（含快捷键）') : bad('左栏入口数', String(navItems));
+  navItems === 14 ? ok('左栏渲染 14 个入口（含快捷键与技能）') : bad('左栏入口数', String(navItems));
   content.innerHTML.includes('外观') ? ok('默认停在「外观」页') : bad('默认页', content.innerHTML.slice(0, 80));
 
   const expect = {
     appearance: '深浅模式', level: '难度等级', model: '模型设置', memory: '记忆与画像',
     phi: '深度思考', quiz: '出题素材源', canvas: '允许 AI 自动判断回答方式',
+    skills: '技能',
     hotkeys: '只读浏览',
     data: '数据管理', account: '账号与查阅',
     trash: '自动保留', about: '版本', help: '新手引导'
