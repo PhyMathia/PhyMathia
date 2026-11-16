@@ -396,7 +396,7 @@ async def api_models_chat(request: Request):
         _skill_src = ""
         _base_len = len(user_text)
         _wc = workflow_context if isinstance(workflow_context, dict) else {}
-        if skill_registry.enabled():
+        if skill_registry.enabled(account):
             try:
                 _tgt = _wc.get("target") if isinstance(_wc.get("target"), dict) else {}
                 # 只有「问题分析」这一步给候选卡：配方双阶段的概要不做路由（它的下游

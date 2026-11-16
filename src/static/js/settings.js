@@ -853,14 +853,18 @@ function _settingsPageHotkeys() {
 
 // ====== 技能页（2026-11-16 skill 系统第 2 版：用户自己加技能）======
 // 三条规矩：
-// ① 内置技能只读（标「内置」，不给编辑/删除钮）——它们随程序发布，改了会被升级覆盖；
+// ① 内置技能可编辑——保存会写一份同 id 的用户副本（覆盖内置），随时能「恢复默认」；
 // ② 正文原样拼进模型请求，所以有长度/条数上限，超限由服务端 400 回中文原因，直接展示；
-// ③ 读写在服务端做账号隔离，前端只负责「列 / 建 / 改 / 删」，不参与判定。
+// ③ 读写在服务端做账号隔离，前端只负责「列 / 建 / 改 / 删 / 开关 / 导入」，不参与判定。
+// 第 5 版（2026-11-16 夜）：总开关 + 单条开关 + 导入 + 内置可改，状态见 _skillsPage。
 const _skillsPage = {
   loaded: false, loading: false, error: '', message: '',
   items: [], byModule: {}, limits: { name: 40, desc: 120, body: 20000, skills: 40 }, draft: null,
+  routerEnabled: true, counts: null,
   // 「试一条」的状态：question 存着是为了整页重画后输入框不丢字
-  preview: { open: false, question: '', loading: false, data: null, error: '' }
+  preview: { open: false, question: '', loading: false, data: null, error: '' },
+  // 导入区：entries 是服务端解析出来的待确认条目（改名字/节点/id 都在本地先攒着）
+  importer: { open: false, loading: false, error: '', text: '', entries: [], picked: {}, result: '' }
 };
 const SKILL_SCOPE_OPTIONS = [
   ['physics', '物理视角'], ['math', '数学视角'], ['graph', '知识图谱'],
@@ -882,6 +886,8 @@ function settingsSkillsLoad(force) {
       _skillsPage.items = Array.isArray(data.skills) ? data.skills : [];
       _skillsPage.byModule = (data.byModule && typeof data.byModule === 'object') ? data.byModule : {};
       if (data.limits) _skillsPage.limits = data.limits;
+      if (typeof data.enabled === 'boolean') _skillsPage.routerEnabled = data.enabled;
+      _skillsPage.counts = (data.counts && typeof data.counts === 'object') ? data.counts : null;
       _skillsPage.loaded = true;
       _skillsPage.error = '';
     })
@@ -902,23 +908,44 @@ function _settingsSkillScopeLabels(scope) {
 }
 
 function _settingsSkillRowHtml(item) {
-  const badge = item.builtin ? '<span style="margin-left:6px;font-size:11px;opacity:.7;border:1px solid var(--border);border-radius:999px;padding:0 6px">内置</span>' : '';
-  const ops = item.builtin
-    ? '<span style="font-size:12px;opacity:.55">只读</span>'
-    : '<button type="button" class="settings-hk-reset" onclick="settingsSkillEdit(\'' + _settingsEsc(item.id) + '\')">编辑</button>'
-      + '<button type="button" class="settings-hk-reset" onclick="settingsSkillDelete(\'' + _settingsEsc(item.id) + '\')">删除</button>';
-  return '<div style="display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border)">'
+  const isUser = item.source === 'user' || (!item.builtin && item.source !== 'builtin');
+  const tags = [];
+  if (item.overridden) tags.push('改过的内置');
+  else if (item.builtin) tags.push('内置');
+  else tags.push('自建');
+  if (!item.enabled) tags.push('已关闭');
+  const badges = tags.map((text, index) => {
+    const dim = index === 0 && item.builtin && !item.overridden;
+    return '<span style="margin-left:6px;font-size:11px;opacity:' + (dim ? '.7' : '.85') + ';'
+      + 'border:1px solid var(--border);border-radius:var(--r-pill);padding:0 6px">' + _settingsEsc(text) + '</span>';
+  }).join('');
+  const id = _settingsEsc(item.id);
+  const toggle = '<button type="button" class="settings-hk-reset" style="min-width:64px"'
+    + ' onclick="settingsSkillToggle(\'' + id + '\', ' + (item.enabled ? 'false' : 'true') + ')"'
+    + ' title="' + (item.enabled ? '不再让任何节点用它' : '重新让它参与判定') + '">'
+    + (item.enabled ? '已启用' : '已关闭') + '</button>';
+  const edit = '<button type="button" class="settings-hk-reset" onclick="settingsSkillEdit(\'' + id + '\')">编辑</button>';
+  // 自建/改过的内置能删；纯内置只能关（它随程序发布）
+  const del = isUser
+    ? '<button type="button" class="settings-hk-reset" onclick="settingsSkillDelete(\'' + id + '\', '
+      + (item.overridden ? 'true' : 'false') + ')">' + (item.overridden ? '恢复默认' : '删除') + '</button>'
+    : '';
+  return '<div style="display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border)'
+    + (item.enabled ? '' : ';opacity:.62') + '">'
     + '<div style="flex:1;min-width:0">'
-    + '<div style="font-size:13px;color:var(--text-primary)">' + _settingsEsc(item.name) + badge + '</div>'
+    + '<div style="font-size:13px;color:var(--text-primary)">' + _settingsEsc(item.name) + badges + '</div>'
     + '<div style="font-size:12px;opacity:.75;margin-top:2px">' + _settingsEsc(item.desc || '（没有描述）') + '</div>'
-    + '<div style="font-size:11px;opacity:.55;margin-top:2px">id：' + _settingsEsc(item.id)
+    + '<div style="font-size:11px;opacity:.55;margin-top:2px">id：' + id
     + ' · 适用：' + _settingsEsc(_settingsSkillScopeLabels(item.scope)) + ' · 正文 ' + (item.chars || 0) + ' 字</div>'
-    + '</div><div style="display:flex;gap:6px;flex-shrink:0">' + ops + '</div></div>';
+    + '</div><div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">'
+    + toggle + edit + del + '</div></div>';
 }
 
 // 按节点分组（2026-11-16 第 4 步）：接口一直在回 byModule，前端原先平铺没用上。
 // 一条技能勾了几个节点，就在几个组里各出现一次——这正是它真实的生效范围（每个节点
 // 生成时各挂一次），合并成一行反而看不出「这个节点上有哪些候选」。
+// 第 5 版补一条：关掉的技能不进任何组（它确实不在候选里），单独归到 disabled，
+// 否则用户会以为「关了还挂在可视化下面」。
 // 纯函数：传 items/byModule 就能算，不依赖页面状态（冒烟直接用样本喂它）。
 function _settingsSkillGroups(items, byModule) {
   const list = Array.isArray(items) ? items : [];
@@ -929,38 +956,60 @@ function _settingsSkillGroups(items, byModule) {
   if (!map || typeof map !== 'object' || !Object.keys(map).length) {
     map = {};
     list.forEach(item => {
+      if (item.enabled === false) return;
       (item.scope || []).forEach(key => { (map[key] = map[key] || []).push(item.id); });
     });
   }
   const groups = SKILL_SCOPE_OPTIONS.map(pair => ({
     key: pair[0],
     label: pair[1],
-    items: (map[pair[0]] || []).map(id => byId[id]).filter(Boolean)
+    items: (map[pair[0]] || []).map(id => byId[id]).filter(item => item && item.enabled !== false)
   })).filter(group => group.items.length);
   const emptyLabels = SKILL_SCOPE_OPTIONS
     .filter(pair => !(map[pair[0]] || []).length)
     .map(pair => pair[1]);
-  return { groups: groups, emptyLabels: emptyLabels, known: Object.keys(byId).length };
+  const disabled = list.filter(item => item.enabled === false);
+  return {
+    groups: groups,
+    emptyLabels: emptyLabels,
+    known: Object.keys(byId).length,
+    disabled: disabled,
+    active: list.length - disabled.length,
+    total: list.length
+  };
 }
 
 function _settingsSkillRowsHtml() {
   if (_skillsPage.error) return '<div class="settings-note">' + _settingsEsc(_skillsPage.error) + '</div>';
-  if (!_skillsPage.items.length) return '<div class="settings-note">还没有技能。点上面的「新建技能」写一条。</div>';
-  const split = _settingsSkillGroups(_skillsPage.items, _skillsPage.byModule);
-  if (!split.groups.length) {
-    return '<div class="settings-note">这些技能都没勾「适用节点」，哪个节点都不会挂它们——点「编辑」补上。</div>';
+  if (!_skillsPage.items.length) {
+    return '<div class="settings-note">还没有技能。点「新建技能」写一条，或用「导入技能」把现成的 .md 拉进来。</div>';
   }
-  return '<div class="settings-note" style="font-size:11px">按节点分组：一条技能勾了几个节点，就会在几个组里各出现一次（每个节点生成时最多挂一条）。</div>'
-    + split.groups.map(group => '<div style="margin-top:14px">'
+  const split = _settingsSkillGroups(_skillsPage.items, _skillsPage.byModule);
+  let html = '<div class="settings-note" style="font-size:11px">按节点分组：一条技能勾了几个节点，就会在几个组里各出现一次（每个节点生成时最多挂一条）。</div>';
+  if (split.groups.length) {
+    html += split.groups.map(group => '<div style="margin-top:14px">'
       + '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px">'
       + '<span style="font-size:13px;font-weight:700;color:var(--text-primary)">' + _settingsEsc(group.label) + '</span>'
       + '<span style="font-size:11px;opacity:.55">' + group.items.length + ' 条</span></div>'
       + group.items.map(_settingsSkillRowHtml).join('')
-      + '</div>').join('')
-    + (split.emptyLabels.length
-      ? '<div class="settings-note" style="font-size:11px;margin-top:12px">还没有技能可挂的节点：'
-        + _settingsEsc(split.emptyLabels.join(' · ')) + '</div>'
-      : '');
+      + '</div>').join('');
+  } else {
+    html += '<div class="settings-note">当前没有开着的技能——下面「已关闭」里的条目可以重新打开。</div>';
+  }
+  html += split.emptyLabels.length
+    ? '<div class="settings-note" style="font-size:11px;margin-top:12px">还没有技能可挂的节点：'
+      + _settingsEsc(split.emptyLabels.join(' · ')) + '</div>'
+    : '';
+  if (split.disabled.length) {
+    html += '<div style="margin-top:16px">'
+      + '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px">'
+      + '<span style="font-size:13px;font-weight:700;color:var(--text-primary)">已关闭</span>'
+      + '<span style="font-size:11px;opacity:.55">' + split.disabled.length
+      + ' 条 · 不参与任何节点的候选与注入</span></div>'
+      + split.disabled.map(_settingsSkillRowHtml).join('')
+      + '</div>';
+  }
+  return html;
 }
 
 function _settingsSkillEditorHtml() {
@@ -974,6 +1023,16 @@ function _settingsSkillEditorHtml() {
   }).join('');
   return '<div style="border:1px solid var(--border);border-radius:10px;padding:12px;margin:10px 0 16px">'
     + '<div style="font-size:13px;margin-bottom:8px">' + (editing ? '编辑技能' : '新建技能') + '</div>'
+    + (editing
+      ? '<div class="settings-note" style="font-size:11px;margin-bottom:8px">'
+        + (draft.source === 'builtin'
+          ? '这是内置技能。保存会写一份你自己的副本（名字、适用节点、正文都能改），内置原版不动，'
+            + '随时能在列表里点「恢复默认」退回去。'
+          : (draft.overridden
+            ? '这条是你覆盖内置技能的副本；点「恢复默认」可退回内置原版。'
+            : '改完点保存，下一次提问就按新配置判定。'))
+        + '</div>'
+      : '')
     + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
     + '<input id="skillDraftName" class="settings-hk-search" style="flex:1;min-width:160px" placeholder="技能名，例如 受力分析七步" value="' + _settingsEsc(draft.name || '') + '">'
     + '<input id="skillDraftId" class="settings-hk-search" style="flex:1;min-width:160px" placeholder="id：小写字母/数字/连字符，建好不可改" value="' + _settingsEsc(draft.id || '') + '"' + (editing ? ' readonly' : '') + '>'
@@ -1102,14 +1161,356 @@ function _settingsPageSkills() {
   }
   const msg = _skillsPage.message
     ? '<div class="settings-note" style="color:var(--accent)">' + _settingsEsc(_skillsPage.message) + '</div>' : '';
+  const counts = _skillsPage.counts || {};
+  const userCount = typeof counts.user === 'number' ? counts.user : _skillsPage.items.filter(i => i.source === 'user').length;
+  const offCount = typeof counts.disabled === 'number' ? counts.disabled : _skillsPage.items.filter(i => i.enabled === false).length;
+  const routerOn = _skillsPage.routerEnabled !== false;
   return '<div class="settings-page-title">技能</div>'
     + '<div class="settings-note">技能的用法：提一个问题时，「问题分析」那一步会先看问题、后面的节点、以及这里有哪些技能，'
     + '决定给哪个节点挂哪一条；真到那个节点生成时才把正文交出去。所以这里写的是「做法」，不是「知识」。</div>'
-    + '<div style="margin:10px 0"><button type="button" class="settings-hk-resetall" onclick="settingsSkillNew()">新建技能</button>'
-    + '<span style="margin-left:10px;font-size:12px;opacity:.6">自建上限 ' + _skillsPage.limits.skills + ' 条</span></div>'
+    + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0;padding:10px 12px;'
+    + 'border:1px solid var(--border);border-radius:10px">'
+    + '<button type="button" class="' + (routerOn ? 'settings-hk-resetall' : 'settings-hk-reset') + '"'
+    + ' onclick="settingsSkillToggleRouter()" style="min-width:112px">'
+    + (routerOn ? '总开关：已开启' : '总开关：已关闭') + '</button>'
+    + '<span style="font-size:12px;opacity:.7;flex:1;min-width:180px">'
+    + (routerOn
+      ? '关掉后所有技能都不参与判定；只想停用某一条，用下面行内的「已启用」开关。'
+      : '现在没有任何技能会被挂上（连候选卡都不发）。打开它才恢复。')
+    + '</span></div>'
+    + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0">'
+    + '<button type="button" class="settings-hk-resetall" onclick="settingsSkillNew()">新建技能</button>'
+    + '<button type="button" class="settings-hk-reset" onclick="settingsSkillImportOpen()">导入技能</button>'
+    + '<span style="font-size:12px;opacity:.6">自建 ' + userCount + ' / ' + _skillsPage.limits.skills + ' 条'
+    + (offCount ? ' · 已关闭 ' + offCount + ' 条' : '') + '</span></div>'
     + msg
     + (_skillsPage.draft ? _settingsSkillEditorHtml() : '')
+    + (_skillsPage.importer.open ? _settingsSkillImportHtml() : '')
     + _settingsSkillRowsHtml();
+}
+
+// ====== 总开关 / 单条开关（2026-11-16 第 5 版）======
+function settingsSkillToggleRouter() {
+  if (_settingsGuard && _settingsGuard()) return;
+  const next = _skillsPage.routerEnabled === false; // 取反
+  _skillsPage.routerEnabled = next;
+  _skillsPage.message = next ? '正在打开技能路由…' : '正在关闭技能路由…';
+  renderSettingsPage();
+  fetch('/api/skills/router', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: next })
+  })
+    .then(resp => resp.json().then(data => ({ ok: resp.ok, data: data })))
+    .then(result => {
+      if (!result.ok) throw new Error((result.data && result.data.detail) || '保存失败');
+      _skillsPage.routerEnabled = result.data.enabled !== false;
+      _skillsPage.message = _skillsPage.routerEnabled
+        ? '技能路由已打开（下一条提问就会参与判定）'
+        : '技能路由已关闭（技能还在，只是不再挂到任何节点）';
+      if (result.data && result.data.notes) _skillsPage.message += ' ' + result.data.notes;
+      _skillsPage.loaded = false;
+      settingsSkillsLoad(true);
+    })
+    .catch(err => {
+      _skillsPage.routerEnabled = !next;
+      _skillsPage.message = '总开关保存失败：' + ((err && err.message) || '网络错误');
+      renderSettingsPage();
+    });
+}
+
+function settingsSkillToggle(id, on) {
+  if (_settingsGuard && _settingsGuard()) return;
+  const item = (_skillsPage.items || []).find(row => row.id === id);
+  _skillsPage.message = on ? ('正在启用 ' + id + '…') : ('正在关闭 ' + id + '…');
+  renderSettingsPage();
+  fetch('/api/skills/toggle', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: id, enabled: !!on })
+  })
+    .then(resp => resp.json().then(data => ({ ok: resp.ok, data: data })))
+    .then(result => {
+      if (!result.ok) throw new Error((result.data && result.data.detail) || '保存失败');
+      _skillsPage.message = (on ? '已启用：' : '已关闭：') + ((item && item.name) || id)
+        + (on ? '（下一次提问就会参与判定）' : '（不再挂到任何节点，随时可打开）');
+      _skillsPage.loaded = false;
+      settingsSkillsLoad(true);
+    })
+    .catch(err => {
+      _skillsPage.message = '开关保存失败：' + ((err && err.message) || '网络错误');
+      renderSettingsPage();
+    });
+}
+
+// ====== 导入（2026-11-16 第 5 版）======
+// 两步：① 选文件/粘贴 → 服务端解析成条目（`dryRun`，不落盘）；② 在这里改名字/id/节点、
+// 勾掉不要的，再点「导入」才真正写盘。解析规则只在 Python 一份（skill_registry.parse_import），
+// 前端不抄第二套，否则「导入看到的」和「保存后的」会分叉。
+function _settingsSkillImportHtml() {
+  const st = _skillsPage.importer;
+  let body = '<div class="settings-note" style="font-size:12px">'
+    + '支持 .md / .txt，一次最多 ' + 20 + ' 条。带 <code>--- id/name/desc/scope ---</code> 的 front-matter 最准；'
+    + '没有也能导入：id 取文件名、名字取第一个标题、适用节点按正文猜（导入前都能改）。'
+    + '同 id 会覆盖已有那条（包括内置）。</div>'
+    + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">'
+    + '<input type="file" id="skillImportFiles" accept=".md,.markdown,.txt,text/markdown,text/plain" multiple'
+    + ' onchange="settingsSkillImportFiles(this)" style="font-size:12px;max-width:100%">'
+    + '<span style="font-size:11px;opacity:.6">选完自动解析</span></div>'
+    + '<div style="margin-top:10px;font-size:12px;opacity:.75">或者直接粘贴一段 md：</div>'
+    + '<textarea id="skillImportText" style="width:100%;min-height:110px;margin-top:4px;background:transparent;'
+    + 'color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:8px;font-size:12px;'
+    + 'line-height:1.6" placeholder="---&#10;id: my-skill&#10;name: 我的技能&#10;desc: 什么题用它&#10;scope: physics&#10;---&#10;&#10;正文…"'
+    + ' oninput="settingsSkillImportTextInput(this.value)">' + _settingsEsc(st.text || '') + '</textarea>'
+    + '<div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">'
+    + '<button type="button" class="settings-hk-resetall" onclick="settingsSkillImportParse()">' + (st.loading ? '正在解析…' : '解析粘贴内容') + '</button>'
+    + '<button type="button" class="settings-hk-reset" onclick="settingsSkillImportClose()">收起</button>'
+    + (st.entries.length ? '<button type="button" class="settings-hk-reset" onclick="settingsSkillImportReset()">清空结果</button>' : '')
+    + '</div>';
+  if (st.error) body += '<div class="settings-note" style="font-size:12px;margin-top:8px;color:var(--accent)">' + _settingsEsc(st.error) + '</div>';
+  if (st.result) body += '<div class="settings-note" style="font-size:12px;margin-top:8px;color:var(--accent)">' + _settingsEsc(st.result) + '</div>';
+  if (st.entries.length) {
+    const picked = _settingsSkillImportPicked().length;
+    body += '<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:8px">'
+      + '<div style="font-size:12px;opacity:.75">解析出 ' + st.entries.length + ' 条，勾选要导入的（可在这里改名字/描述/id/节点）：</div>'
+      + st.entries.map(_settingsSkillImportEntryHtml).join('')
+      + '<div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">'
+      + '<button type="button" class="settings-hk-resetall" id="skillImportConfirmBtn" onclick="settingsSkillImportConfirm()">导入选中的 ' + picked + ' 条</button>'
+      + '<span style="font-size:11px;opacity:.6">导入后立即生效（下一次提问参与判定）</span></div></div>';
+  }
+  return '<div style="border:1px solid var(--border);border-radius:10px;padding:12px;margin:10px 0 16px">'
+    + '<div style="font-size:13px;margin-bottom:6px">导入技能</div>' + body + '</div>';
+}
+
+function _settingsSkillImportEntryHtml(entry, index) {
+  const st = _skillsPage.importer;
+  const picked = !!st.picked[index];
+  const head = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+    + '<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-primary)">'
+    + '<input type="checkbox"' + (picked ? ' checked' : '') + (entry.ok ? '' : ' disabled')
+    + ' onchange="settingsSkillImportPick(' + index + ', this.checked)">'
+    + _settingsEsc(entry.filename || entry.name || ('条目 ' + (index + 1))) + '</label>'
+    + '<span style="font-size:11px;opacity:.55">正文 ' + (entry.chars || 0) + ' 字</span>'
+    + (entry.conflict
+      ? '<span style="font-size:11px;color:var(--accent)">会覆盖现有「'
+        + _settingsEsc(entry.conflictName || entry.id) + '」（' + (entry.conflict === 'builtin' ? '内置' : '自建') + '）</span>'
+      : '');
+  if (!entry.ok) {
+    return '<div style="border-top:1px solid var(--border);padding:10px 0">' + head
+      + '<div style="font-size:11px;color:var(--accent);margin-top:4px">'
+      + _settingsEsc((entry.problems || ['解析失败']).join('；')) + '</div></div>';
+  }
+  const scopes = SKILL_SCOPE_OPTIONS.map(pair => {
+    const on = (entry.scope || []).indexOf(pair[0]) >= 0;
+    return '<label style="display:inline-flex;align-items:center;gap:4px;margin:0 10px 4px 0;font-size:12px">'
+      + '<input type="checkbox"' + (on ? ' checked' : '')
+      + ' onchange="settingsSkillImportScope(' + index + ', \'' + pair[0] + '\', this.checked)">'
+      + _settingsEsc(pair[1]) + '</label>';
+  }).join('');
+  const field = (key, value, placeholder, width) =>
+    '<input value="' + _settingsEsc(value || '') + '" placeholder="' + _settingsEsc(placeholder) + '"'
+    + ' class="settings-hk-search" style="' + width + '"'
+    + ' oninput="settingsSkillImportField(' + index + ', \'' + key + '\', this.value)">';
+  return '<div style="border-top:1px solid var(--border);padding:10px 0">' + head
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
+    + field('name', entry.name, '技能名', 'flex:1;min-width:150px')
+    + field('id', entry.id, 'id（小写字母/数字/连字符）', 'flex:1;min-width:170px')
+    + '</div>'
+    + field('desc', entry.desc, '一句话：什么题用它', 'width:100%;margin-top:6px')
+    + '<div style="margin-top:8px;font-size:12px;opacity:.7">给哪些节点用：</div>'
+    + '<div style="margin-top:2px">' + scopes + '</div>'
+    + ((entry.warnings || []).length
+      ? '<div style="font-size:11px;opacity:.6;margin-top:2px">' + _settingsEsc(entry.warnings.join('；')) + '</div>' : '')
+    + '</div>';
+}
+
+function settingsSkillImportOpen() {
+  if (_settingsGuard && _settingsGuard()) return;
+  _skillsPage.importer.open = true;
+  _skillsPage.importer.error = '';
+  _skillsPage.message = '';
+  renderSettingsPage();
+}
+
+function settingsSkillImportClose() {
+  const st = _skillsPage.importer;
+  st.open = false;
+  st.error = '';
+  st.entries = [];
+  st.picked = {};
+  st.text = '';
+  st.result = '';
+  renderSettingsPage();
+}
+
+function settingsSkillImportTextInput(value) {
+  _skillsPage.importer.text = String(value || '');
+}
+
+function settingsSkillImportReset() {
+  const st = _skillsPage.importer;
+  st.entries = [];
+  st.picked = {};
+  st.error = '';
+  st.result = '';
+  st.text = '';
+  renderSettingsPage();
+}
+
+function settingsSkillImportFiles(input) {
+  if (_settingsGuard && _settingsGuard()) return;
+  const st = _skillsPage.importer;
+  const files = Array.prototype.slice.call((input && input.files) || []);
+  if (!files.length) return;
+  if (files.length > 20) {
+    st.error = '一次最多导入 20 条，这次选了 ' + files.length + ' 个文件';
+    renderSettingsPage();
+    return;
+  }
+  st.loading = true;
+  st.error = '';
+  st.result = '';
+  st.entries = [];
+  st.picked = {};
+  renderSettingsPage();
+  if (typeof FileReader !== 'function') {
+    st.loading = false;
+    st.error = '当前环境不能读本地文件，请把内容粘贴到下面的文本框';
+    renderSettingsPage();
+    return;
+  }
+  const reads = files.map(file => new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({ name: file.name, text: String(reader.result || '') });
+    reader.onerror = () => resolve({ name: file.name, text: '', readError: true });
+    reader.readAsText(file, 'utf-8');
+  }));
+  Promise.all(reads)
+    .then(rows => {
+      const bad = rows.filter(row => row.readError).map(row => row.name);
+      if (bad.length) st.error = '读不出来：' + bad.join('、');
+      return _settingsSkillImportPreview(rows);
+    })
+    .catch(err => {
+      st.loading = false;
+      st.error = '读文件失败：' + ((err && err.message) || '网络错误');
+      renderSettingsPage();
+    });
+}
+
+function _settingsSkillImportPreview(texts) {
+  const st = _skillsPage.importer;
+  st.loading = true;
+  renderSettingsPage();
+  return fetch('/api/skills/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dryRun: true, texts: texts })
+  })
+    .then(resp => resp.json().then(data => ({ ok: resp.ok, data: data })))
+    .then(result => {
+      if (!result.ok) throw new Error((result.data && result.data.detail) || '解析失败');
+      st.entries = Array.isArray(result.data.entries) ? result.data.entries : [];
+      st.picked = {};
+      st.entries.forEach((entry, index) => { if (entry.ok) st.picked[index] = true; });
+    })
+    .catch(err => {
+      st.error = '解析失败：' + ((err && err.message) || '网络错误');
+      st.entries = [];
+    })
+    .then(() => {
+      st.loading = false;
+      renderSettingsPage();
+    });
+}
+
+function settingsSkillImportParse() {
+  if (_settingsGuard && _settingsGuard()) return;
+  const st = _skillsPage.importer;
+  const box = document.getElementById('skillImportText');
+  const text = String((box && box.value) || st.text || '');
+  if (!text.trim()) {
+    st.error = '先选一个 .md 文件，或把内容粘进上面的框';
+    renderSettingsPage();
+    return;
+  }
+  st.text = text;
+  st.error = '';
+  st.result = '';
+  _settingsSkillImportPreview([{ name: '', text: text }]);
+}
+
+function settingsSkillImportField(index, key, value) {
+  const entry = _skillsPage.importer.entries[index];
+  if (!entry) return;
+  entry[key] = String(value == null ? '' : value);
+  if (key === 'id') entry.id = entry.id.trim().toLowerCase();
+}
+
+function settingsSkillImportScope(index, key, on) {
+  const entry = _skillsPage.importer.entries[index];
+  if (!entry) return;
+  const scope = (entry.scope || []).filter(item => item !== key);
+  if (on) scope.push(key);
+  entry.scope = scope;
+}
+
+function settingsSkillImportPick(index, picked) {
+  _skillsPage.importer.picked[index] = !!picked;
+  const btn = document.getElementById('skillImportConfirmBtn');
+  if (btn) btn.textContent = '导入选中的 ' + _settingsSkillImportPicked().length + ' 条';
+}
+
+function _settingsSkillImportPicked() {
+  const st = _skillsPage.importer;
+  return (st.entries || []).filter((entry, index) => entry.ok && st.picked[index]);
+}
+
+function settingsSkillImportConfirm() {
+  if (_settingsGuard && _settingsGuard()) return;
+  const st = _skillsPage.importer;
+  const rows = _settingsSkillImportPicked().map(entry => ({
+    id: entry.id, name: entry.name, desc: entry.desc, scope: entry.scope || [], body: entry.body
+  }));
+  if (!rows.length) {
+    st.error = '先勾选至少一条能导入的（红字那几条要先把问题补上）';
+    renderSettingsPage();
+    return;
+  }
+  st.loading = true;
+  st.error = '';
+  st.result = '';
+  renderSettingsPage();
+  fetch('/api/skills/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ skills: rows })
+  })
+    .then(resp => resp.json().then(data => ({ ok: resp.ok, data: data })))
+    .then(result => {
+      if (!result.ok) throw new Error((result.data && result.data.detail) || '导入失败');
+      const imported = result.data.imported || [];
+      const failed = result.data.failed || [];
+      const names = imported.map(row => row.name || row.id).join('、');
+      _skillsPage.message = imported.length
+        ? '已导入 ' + imported.length + ' 条：' + names + '（下一次提问就会参与判定）'
+        : '';
+      if (failed.length) {
+        st.result = '有 ' + failed.length + ' 条没导进去：'
+          + failed.map(row => (row.id || '（无 id）') + ' → ' + row.reason).join('；');
+      }
+      st.entries = [];
+      st.picked = {};
+      st.text = '';
+      st.loading = false;
+      _skillsPage.loaded = false;
+      settingsSkillsLoad(true);
+    })
+    .catch(err => {
+      st.loading = false;
+      st.error = '导入失败：' + ((err && err.message) || '网络错误');
+      renderSettingsPage();
+    });
 }
 
 function settingsSkillNew() {
@@ -1123,8 +1524,14 @@ function settingsSkillEdit(id) {
   if (_settingsGuard && _settingsGuard()) return;
   const item = (_skillsPage.items || []).find(row => row.id === id);
   if (!item) return;
-  _skillsPage.draft = { id: item.id, name: item.name, desc: item.desc, scope: (item.scope || []).slice(), body: item.body || '' };
+  _skillsPage.draft = {
+    id: item.id, name: item.name, desc: item.desc, scope: (item.scope || []).slice(), body: item.body || '',
+    // 只用于编辑器里的说明条：改内置会写一份副本，别让用户以为原版被改坏了
+    source: item.source || (item.builtin ? 'builtin' : 'user'),
+    overridden: !!item.overridden
+  };
   _skillsPage.message = '';
+  _skillsPage.importer.open = false;
   renderSettingsPage();
 }
 
@@ -1156,8 +1563,10 @@ function settingsSkillSave() {
     .then(resp => resp.json().then(data => ({ ok: resp.ok, data: data })))
     .then(result => {
       if (!result.ok) throw new Error((result.data && result.data.detail) || '保存失败');
+      const saved = result.data.skill || {};
       _skillsPage.draft = null;
-      _skillsPage.message = '已保存：' + ((result.data.skill && result.data.skill.name) || payload.name) + '（下一次提问就会参与判定）';
+      _skillsPage.message = '已保存：' + (saved.name || payload.name) + '（下一次提问就会参与判定）'
+        + (saved.overridden ? '——这条现在是你的副本，覆盖着同名内置技能，随时可「恢复默认」。' : '');
       _skillsPage.loaded = false;
       settingsSkillsLoad(true);
     })
@@ -1167,10 +1576,13 @@ function settingsSkillSave() {
     });
 }
 
-function settingsSkillDelete(id) {
+function settingsSkillDelete(id, isOverride) {
   if (_settingsGuard && _settingsGuard()) return;
-  if (typeof confirm === 'function' && !confirm('删除技能「' + id + '」？删掉后不会再被挂上，已生成的内容不受影响。')) return;
-  _skillsPage.message = '正在删除…';
+  const ask = isOverride
+    ? '恢复「' + id + '」的出厂版本？你自己的改动会被删掉，内置那份重新生效（别的技能不受影响）。'
+    : '删除技能「' + id + '」？删掉后不会再被挂上，已生成的内容不受影响。';
+  if (typeof confirm === 'function' && !confirm(ask)) return;
+  _skillsPage.message = isOverride ? '正在恢复默认…' : '正在删除…';
   renderSettingsPage();
   fetch('/api/skills/delete', {
     method: 'POST',
@@ -1180,7 +1592,7 @@ function settingsSkillDelete(id) {
     .then(resp => resp.json().then(data => ({ ok: resp.ok, data: data })))
     .then(result => {
       if (!result.ok) throw new Error((result.data && result.data.detail) || '删除失败');
-      _skillsPage.message = '已删除：' + id;
+      _skillsPage.message = isOverride ? ('已恢复默认：' + id) : ('已删除：' + id);
       _skillsPage.loaded = false;
       settingsSkillsLoad(true);
     })

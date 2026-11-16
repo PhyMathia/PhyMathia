@@ -114,11 +114,134 @@ def test_user_skill_rejects_bad_input_and_builtin():
         skill_registry.save_skill("acct1", {
             "id": "too-long", "name": "x", "desc": "y", "scope": ["viz"], "body": "字" * (skill_registry.LIMITS["body"] + 1),
         })
-    # 内置的不能覆盖、不能删
-    with pytest.raises(ValueError):
-        skill_registry.save_skill("acct1", {"id": "iso-cutaway", "name": "x", "desc": "y", "scope": ["viz"], "body": "z"})
+    # 纯内置（没写过副本）不能删；但**可以**用同 id 写一份自己的副本（第 5 版：改内置）
     with pytest.raises(ValueError):
         skill_registry.delete_skill("acct1", "iso-cutaway")
+    saved = skill_registry.save_skill("acct1", {
+        "id": "iso-cutaway", "name": "我自己改的剖视图", "desc": "只在讲装配图时用",
+        "scope": ["viz", "learn"], "body": "用户改写过的正文。",
+    })
+    assert saved["id"] == "iso-cutaway"
+    assert saved["source"] == "user"
+    assert saved["overridden"] is True
+    assert saved["name"] == "我自己改的剖视图"
+    assert skill_registry.requested_block({"skill": "iso-cutaway", "module": "learn"}, "acct1")[1] == "iso-cutaway"
+    # 删掉副本＝恢复默认：内置那条回来，且标题回到出厂值
+    assert skill_registry.delete_skill("acct1", "iso-cutaway") is True
+    restored = skill_registry.get("iso-cutaway", "acct1")
+    assert restored["builtin"] is True
+    assert restored["name"] == "等距剖视画法"
+
+
+def test_single_skill_switch_persists_and_filters_route(monkeypatch):
+    """第 5 版：单条开关只写 state 文件，不动内容；关掉后候选/投递/预览都看不见它。"""
+    assert skill_registry.set_skill_enabled("acct1", "iso-cutaway", False) is False
+    state_path = config.DATA_DIR / "users" / "acct1" / "skills_state.json"
+    assert state_path.exists()
+    assert skill_registry.read_state("acct1")["disabled"] == ["iso-cutaway"]
+
+    assert "iso-cutaway" not in [i["id"] for i in skill_registry.by_scope(["viz"], "acct1")]
+    assert skill_registry.requested_block({"skill": "iso-cutaway", "module": "viz"}, "acct1") == ("", "")
+    assert "iso-cutaway" not in skill_registry.menu_block([{"module": "viz"}], "acct1")
+    assert "iso-cutaway" not in [i["id"] for i in skill_registry.preview("四冲程发动机怎么工作", None, "acct1")["candidates"]]
+    # 设置页仍然列它，只是标成关着（否则用户没地方再打开）
+    row = [i for i in skill_registry.list_for_ui("acct1")["skills"] if i["id"] == "iso-cutaway"][0]
+    assert row["enabled"] is False
+    assert "iso-cutaway" not in skill_registry.list_for_ui("acct1")["byModule"]["viz"]
+
+    # 另一个账号不受影响（开关是账号级的）
+    assert skill_registry.requested_block({"skill": "iso-cutaway", "module": "viz"}, "acct2")[1] == "iso-cutaway"
+
+    assert skill_registry.set_skill_enabled("acct1", "iso-cutaway", True) is True
+    assert skill_registry.requested_block({"skill": "iso-cutaway", "module": "viz"}, "acct1")[1] == "iso-cutaway"
+    assert skill_registry.read_state("acct1")["disabled"] == []
+
+    with pytest.raises(ValueError):
+        skill_registry.set_skill_enabled("acct1", "no-such-skill", False)
+
+
+def test_router_switch_by_account_and_env_priority(monkeypatch):
+    """账号级总开关（state.router）与 env 硬关是「与」；关闭后编辑技能仍可用。"""
+    assert skill_registry.set_router("acct1", False) is False
+    assert skill_registry.enabled("acct1") is False
+    assert skill_registry.menu_block(None, "acct1") == ""
+    assert skill_registry.preview("四冲程发动机怎么工作", None, "acct1")["enabled"] is False
+    # 别关掉别人的
+    assert skill_registry.enabled("acct2") is True
+    # 总开关关着也能改技能（否则用户想改完再开就锁死了）
+    skill_registry.save_skill("acct1", {"id": "still-editable", "name": "x", "desc": "y", "scope": ["viz"], "body": "z"})
+    skill_registry.set_router("acct1", True)
+    assert skill_registry.enabled("acct1") is True
+    # env 硬关压过账号开关
+    monkeypatch.setenv("PHYMATHIA_SKILL_ROUTER", "0")
+    assert skill_registry.enabled("acct1") is False
+    assert skill_registry.env_enabled() is False
+
+
+# ====== 导入（第 5 版）======
+
+def test_parse_import_front_matter_roundtrip():
+    text = (
+        "---\nid: dim-analysis\ndesc: 量纲检查\nname: 量纲分析\nscope: physics, math\n---\n\n"
+        "先列出所有物理量，再写量纲方程。\n"
+    )
+    parsed = skill_registry.parse_import(text, "dim.md")
+    assert parsed["ok"] is True
+    assert parsed["id"] == "dim-analysis"
+    assert parsed["name"] == "量纲分析"
+    assert parsed["scope"] == ["physics", "math"]
+    assert parsed["chars"] > 0
+    assert parsed["problems"] == []
+
+
+def test_parse_import_without_front_matter_guesses():
+    """裸正文：id 取文件名，名字取首个标题，节点按内容猜，并在 warnings 里说清是猜的。"""
+    parsed = skill_registry.parse_import(
+        "# 受力分析三步\n\n斜面题先选研究对象，再画受力图，最后列方程。\n", "force-three-step.md"
+    )
+    assert parsed["ok"] is True
+    assert parsed["id"] == "force-three-step"
+    assert parsed["name"] == "受力分析三步"
+    assert "physics" in parsed["scope"]
+    assert parsed["guessedScope"] is True
+    assert any("猜成" in line for line in parsed["warnings"])
+
+
+def test_parse_import_chinese_filename_gets_stable_fallback_id():
+    body = "# 解题模板\n\n先看已知，再列方程，最后求导。"
+    first = skill_registry.parse_import(body, "受力分析.md")
+    second = skill_registry.parse_import(body, "受力分析.md")
+    assert first["ok"] is True
+    assert first["id"].startswith("import-")
+    assert first["id"] == second["id"]  # 同一份内容重复导入 → 同一个 id（覆盖自己，不堆重复）
+
+
+def test_parse_import_flags_conflict_and_problems():
+    out = skill_registry.parse_imports([
+        {"name": "iso-cutaway.md", "text": "---\nid: iso-cutaway\nname: 改过的\nscope: viz\n---\n\n正文"},
+        {"name": "empty.md", "text": "   "},
+        {"name": "no-scope.md", "text": "---\nid: no-scope-new\nname: 无节点\n---\n\n先看已知，再列方程，求导。"},
+    ])
+    rows = out["entries"]
+    assert rows[0]["conflict"] == "builtin"
+    assert rows[0]["ok"] is True
+    assert rows[1]["ok"] is False and rows[1]["problems"]
+    assert rows[2]["ok"] is True and rows[2]["scope"]  # 从正文猜出了 math
+    with pytest.raises(ValueError):
+        skill_registry.parse_imports([""] * (skill_registry.IMPORT_MAX + 1))
+
+
+def test_import_skills_partial_success():
+    ok = skill_registry.import_skills("acct1", [
+        {"id": "imported-a", "name": "A", "desc": "d", "scope": ["viz"], "body": "b"},
+        {"id": "imported-b", "name": "", "desc": "d", "scope": ["viz"], "body": "b"},
+    ])
+    assert [row["id"] for row in ok["imported"]] == ["imported-a"]
+    assert ok["failed"] and ok["failed"][0]["id"] == "imported-b"
+    assert "imported-a" in [item["id"] for item in skill_registry.all_skills("acct1")]
+    with pytest.raises(ValueError):
+        skill_registry.import_skills("acct1", [])
+
 
 
 def test_name_and_desc_over_limit_are_rejected_not_truncated():

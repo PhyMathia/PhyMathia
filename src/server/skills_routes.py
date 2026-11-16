@@ -53,6 +53,10 @@ async def api_skills_save(request: Request):
         "scope": saved.get("scope", []),
         "chars": len(saved.get("body", "")),
         "builtin": bool(saved.get("builtin")),
+        "source": saved.get("source") or ("builtin" if saved.get("builtin") else "user"),
+        # 覆盖内置时前端要说清「这是你的副本」（保存提示 + 列表徽标都靠它）
+        "overridden": bool(saved.get("overridden")),
+        "enabled": bool(saved.get("enabled", True)),
     }}
 
 
@@ -94,7 +98,8 @@ async def api_skills_candidates(request: Request):
 async def api_skills_preview(request: Request):
     """「试一条」：给一个问题，回答候选/字数/实际注入的正文。**不跑模型，零 token。**
 
-    body: {"question": "...", "modules": ["viz", ...]}（modules 可选，给了就不按问题推断）
+    body: {"question": "...", "modules": ["viz", ...]}
+    （modules 可选，给了就不按问题推断）
     读操作，查阅模式下也放行——它不落盘、不给账号写任何东西。
     """
     payload = await _parse_json_object(request)
@@ -106,3 +111,80 @@ async def api_skills_preview(request: Request):
     if not isinstance(raw_modules, list):
         raw_modules = []
     return skill_registry.preview(question, raw_modules, account)
+
+
+# ====== 管理面（2026-11-16 第 5 版）：开关 / 导入 ======
+
+@router.post("/api/skills/toggle")
+async def api_skills_toggle(request: Request):
+    """单条技能开关。body: {"id": "...", "enabled": true|false}。
+
+    内置与自建都能关：只写 `skills_state.json` 的 disabled 列表，内容文件一个字节不动。
+    关掉后它不进候选卡、不投递、不进预览（旧快照里留着的计划也不会再注入）。
+    """
+    payload = await _parse_json_object(request)
+    account = _account_id(request, payload)
+    if _readonly_request(request):
+        raise HTTPException(status_code=403, detail="查阅模式下不能修改技能")
+    skill_id = str(payload.get("id") or "").strip()
+    on = bool(payload.get("enabled"))
+    try:
+        state = skill_registry.set_skill_enabled(account, skill_id, on)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.warning(f"Skill toggle failed: {exc}")
+        raise HTTPException(status_code=500, detail="保存技能开关失败，请稍后重试") from exc
+    return {"ok": True, "id": skill_id, "enabled": state}
+
+
+@router.post("/api/skills/router")
+async def api_skills_router(request: Request):
+    """整条技能路由的总开关。body: {"enabled": true|false}。
+
+    与环境变量 `PHYMATHIA_SKILL_ROUTER=0` 是「与」：环境变量关掉时这里点了开也不生效
+    （运维硬关优先），返回里带 `hardOff` 让界面能说清原因。
+    """
+    payload = await _parse_json_object(request)
+    account = _account_id(request, payload)
+    if _readonly_request(request):
+        raise HTTPException(status_code=403, detail="查阅模式下不能修改技能")
+    on = bool(payload.get("enabled"))
+    try:
+        current = skill_registry.set_router(account, on)
+    except Exception as exc:
+        logger.warning(f"Skill router toggle failed: {exc}")
+        raise HTTPException(status_code=500, detail="保存总开关失败，请稍后重试") from exc
+    return {
+        "ok": True,
+        "enabled": bool(on),
+        "hardOff": not skill_registry.env_enabled(),
+        "notes": "" if skill_registry.env_enabled() else "环境变量 PHYMATHIA_SKILL_ROUTER 已强制关闭，这里打开的开关不会生效。",
+    }
+
+
+@router.post("/api/skills/import")
+async def api_skills_import(request: Request):
+    """导入 md 技能。两种用法：
+
+    - `{"dryRun": true, "texts": ["--- id: ... ---\\n正文", {"name": "x.md", "text": "..."}]}`
+      → 只解析，返回逐条结论（名称/id/节点/字数/冲突/问题），不落盘；
+    - `{"skills": [{"id","name","desc","scope","body"}]}`
+      → 落盘（逐条走与新建相同的校验，失败不中断其余）。
+    """
+    payload = await _parse_json_object(request)
+    account = _account_id(request, payload)
+    if _readonly_request(request):
+        raise HTTPException(status_code=403, detail="查阅模式下不能修改技能")
+    try:
+        if payload.get("dryRun"):
+            texts = payload.get("texts")
+            if texts is None and payload.get("text") is not None:
+                texts = [payload.get("text")]
+            return skill_registry.parse_imports(texts, account)
+        return skill_registry.import_skills(account, payload.get("skills"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.warning(f"Skill import failed: {exc}")
+        raise HTTPException(status_code=500, detail="导入失败，请稍后重试") from exc
