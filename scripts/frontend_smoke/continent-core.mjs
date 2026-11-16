@@ -241,13 +241,15 @@ check('graph-continent: T136 双指捏合（纯函数锚点数学 / 夹取 / 退
   return true;
 });
 
-check('graph-continent: T135/T142 开图加载态与顶栏折行（三路并行拉取 / spinner / 窄屏 wrap）', () => {
+check('graph-continent: T135/T142 开图加载态与顶栏折行（四路并行拉取 / spinner / 窄屏 wrap）', () => {
   const src = readContinentSrc();
   const openAt = src.indexOf('async function openContinentView');
   const openSrc = src.slice(openAt, openAt + 2600);
-  if (!/Promise\.all\(\[\s*_continentLoadRegionOverrides\(\),\s*_continentLoadCorrectionCount\(\),\s*_continentFetchData\(\),?\s*\]\)/.test(openSrc)) {
-    throw new Error('开图三路请求未并行（串行＝三倍往返白等）');
+  // v9.x 起第四路=_continentFetchQuizStats（掌握度热力图统计，失败内部回落本地不阻塞开图）
+  if (!/Promise\.all\(\[\s*_continentLoadRegionOverrides\(\),\s*_continentLoadCorrectionCount\(\),\s*_continentFetchData\(\),\s*_continentFetchQuizStats\(\),?\s*\]\)/.test(openSrc)) {
+    throw new Error('开图四路请求未并行（串行＝多倍往返白等）');
   }
+  if (!/_continentQuizStats = loaded\[3\]/.test(openSrc)) throw new Error('掌握度统计未从并行结果取回（热力图会空染）');
   if (!/_continentCorrectionCount = loaded\[1\]/.test(openSrc)) throw new Error('纠正计数未从并行结果取回（图例脚注会照报 0）');
   if (!openSrc.includes('continent-loading-spin')) throw new Error('开图加载态缺失（冷启动白屏感）');
   if (openSrc.includes('_continentLoadCollapsed();') &&

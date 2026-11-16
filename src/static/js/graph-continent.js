@@ -320,6 +320,10 @@ let _continentWarpSeq = 0;
 let _continentWarpHoldTok = null;   // 在途的持有令牌（同一时刻至多一个）
 let _continentOpenHold = null;     // 开图操作持有的令牌（关图时要接手释放）
 let _continentData = null;         // 最近一次投影数据（边操作后就地刷新）
+// v9.x 掌握度热力图：开图第四路拉的答题统计（topicKey→记录，服务端 KV 优先、本地回落）。
+// 只在前端聚合染灯，绝不进投影——quiz stats 落 KV 会打漂 T293 投影缓存签名，
+// 塞进 build_continent 等于让每次答题都触发 2.85s 全量重算
+let _continentQuizStats = {};
 let _continentLinkMode = false;    // v2 连接模式
 let _continentLinkSource = null;   // {itemId, sessionId}
 let _continentEdgeUndo = [];       // 撤销栈：只记边操作，视口变化不入栈
@@ -341,6 +345,9 @@ let _continentRegionInfo = null;   // 最近一次 _continentRegions 的产物�
 // v7.3 折叠态（岛/海域，localStorage 非会话键）：收起的岛只留岛牌，收起的海域整片
 // 收成一枚印章——多枚印章叠着看全局；展开回来布局不变（布局对折叠集是确定性的）
 const CONTINENT_COLLAPSED_KEY = 'phymathia_continent_collapsed';
+// v9.x 掌握度热力图开关（默认开，存 '0' 才关）：只影响显示，不动布局与数据
+const CONTINENT_HEATMAP_KEY = 'phymathia_continent_heatmap';
+let _continentHeatmapMem = null;   // 查阅态的内存影子（切换不落盘也能在重渲间存活）
 let _continentCollapsed = { islands: [], regions: [] };
 let _continentExpanded = {};       // T140：展开的岛（sessionId → true，仅显示层，内存态）
 
@@ -458,6 +465,99 @@ function _continentItemIndex() {
     });
   });
   return { items, clusterTitles, itemSession, itemCreated, itemSummary };
+}
+
+// ===== v9.x 掌握度热力图：联运港按画布检测成绩三档亮灯 =====
+// 数据链路：每道题强制带考点 id（sourceRef=k_/f_ 条目 id），联运港自带命中条目全集
+// （entry.owners），quiz 统计按 topicKey（sessionId|清洗后标题，_quizTopicKey 同款归一）
+// 落盘——两边以「owners → 条目 → topicKey」精确连接，宁漏勿错，不做模糊标题匹配。
+// 只染类不改几何（布局冻结契约）；文案用「联运港」（词汇表守卫）。
+
+function _continentFetchQuizStats() {
+  // 服务端 KV 是跨设备合并后的权威副本；拿不到回落本地（_saveQuizStats 双写的另一半）。
+  // 所有失败路径内部消化返回 {}——开图第四路绝不阻塞主投影
+  try {
+    return fetch('/api/kv/phymathia_quiz_stats', { cache: 'no-cache' })
+      .then(resp => resp.ok ? resp.json() : null)
+      .then(data => (data && data.value && typeof data.value === 'object' && !Array.isArray(data.value))
+        ? data.value
+        : _continentQuizStatsLocal())
+      .catch(() => _continentQuizStatsLocal());
+  } catch (e) {
+    return Promise.resolve(_continentQuizStatsLocal());
+  }
+}
+
+function _continentQuizStatsLocal() {
+  try {
+    const key = (typeof QUIZ_STATS_KEY !== 'undefined') ? QUIZ_STATS_KEY : 'phymathia_quiz_stats';
+    const raw = JSON.parse(localStorage.getItem(key) || '{}');
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw;
+  } catch (e) { /* 容忍 */ }
+  return {};
+}
+
+function _continentHeatmapEnabled() {
+  // 查阅态切换走内存影子不落盘（图例折叠同款）；非查阅恒读 localStorage
+  if (_continentHeatmapMem !== null) return _continentHeatmapMem;
+  try { return localStorage.getItem(CONTINENT_HEATMAP_KEY) !== '0'; } catch (e) { return true; }
+}
+
+function _continentToggleHeatmap() {
+  const next = !_continentHeatmapEnabled();
+  if (typeof phyIsReadonly === 'function' && phyIsReadonly()) {
+    _continentHeatmapMem = next;
+    _continentReadonlyNudge();
+  } else {
+    _continentHeatmapMem = null;
+    try { localStorage.setItem(CONTINENT_HEATMAP_KEY, next ? '1' : '0'); } catch (e) { /* 容忍 */ }
+  }
+  if (_continentOpen && _continentData) _continentRender(_continentData);
+}
+
+// 三档口径与检测面板对齐：薄弱 = mastery<70（quiz-stats 弱项清单同款）；扎实 ≥85
+function _continentMasteryTier(v) {
+  const m = Number(v) || 0;
+  if (m >= 85) return 'good';
+  if (m >= 70) return 'medium';
+  return 'weak';
+}
+
+// 联运港→掌握度聚合（纯函数无 DOM，smoke 断言用）：按条目作答量加权平均各条目
+// mastery。大陆侧标题 ≤40 截断/清洗差异会造成个别 topicKey 对不上——按口径宁漏勿错，
+// 对不上的条目只算「未测」，绝不拿别的知识点的成绩来充数。
+function _continentCityMastery(entry, idx, stats) {
+  if (!entry || !idx || !stats || typeof stats !== 'object') return null;
+  const owners = Array.isArray(entry.owners) ? entry.owners : [];
+  if (!owners.length) return null;
+  let sum = 0, weight = 0, weak = 0, tested = 0;
+  const perItem = [];
+  owners.forEach(iid => {
+    const sid = idx.itemSession[iid];
+    const rawTitle = idx.items[iid];
+    if (!sid || !rawTitle) return;
+    // 与出题素材同款清洗（去 markdown 头/表情/编号）再归一，键才能对上统计侧
+    const title = (typeof _quizCleanTitle === 'function') ? _quizCleanTitle(rawTitle) : rawTitle;
+    const key = (typeof _quizTopicKey === 'function') ? _quizTopicKey({ sessionId: sid, title }) : '';
+    if (!key) return;
+    const rec = stats[key];
+    if (!rec || typeof rec !== 'object') return;
+    const attempts = (Number(rec.correct) || 0) + (Number(rec.wrong) || 0);
+    const m = Number(rec.mastery);
+    if (!attempts || !Number.isFinite(m)) return;
+    tested++; weight += attempts; sum += m * attempts;
+    if (m < 70) weak++;
+    perItem.push({ itemId: iid, title: rawTitle, mastery: Math.round(m), attempts });
+  });
+  if (!tested) return null;
+  return {
+    mastery: Math.round(sum / weight),
+    attempts: weight,
+    weak,
+    tested,
+    untested: owners.length - tested,
+    perItem
+  };
 }
 
 function _continentNodeEl(itemId) {
@@ -883,15 +983,22 @@ function _continentRender(data) {
   // 边界城市（v5.1）：共享概念的「地点」——摆在它所连的岛之间的走廊里，每座岛一根
   // 联运线连到代表聚落。点开是**重逢清单**（每座岛学过的那些卡 + 「去看」）：绝不替你猜
   // 跳哪座岛，机器猜「最近学的」总有一半时候不是你想去的。
+  // v9.x 掌握度热力图：联运港三档亮灯。只染类不改几何——坐标/间距是布局冻结契约，
+  // 掌握度一个字节都不许碰它们；开关关掉＝全体不挂类（未测港永远不挂）
+  const heatOn = _continentHeatmapEnabled();
+  const heatIdx = heatOn ? _continentItemIndex() : null;
   plan.cities.forEach(city => {
     const s = city.entry || {};
+    const heat = heatOn ? _continentCityMastery(s, heatIdx, _continentQuizStats) : null;
     const el = document.createElement('div');
-    el.className = 'continent-city' + _continentKindClass(s.kind);
+    el.className = 'continent-city' + _continentKindClass(s.kind) +
+      (heat ? ' is-mastery-' + _continentMasteryTier(heat.mastery) : '');
     el.dataset.cityLabel = s.label || '';
     el.dataset.citySids = city.reps.map(r => r.sessionId).join(',');  // v7.1a 图例聚焦判定用
     el.style.left = city.box.x + 'px';
     el.style.top = city.box.y + 'px';
-    el.title = '联运港：' + city.reps.length + ' 座岛都学过——点开看重逢清单';
+    el.title = '联运港：' + city.reps.length + ' 座岛都学过——点开看重逢清单' +
+      (heat ? ' · 掌握度 ' + heat.mastery + '%' : '');
     el.innerHTML = '<span class="continent-city-name">' +
       _continentKindPrefix(s.kind) + esc(s.label || '') + '</span>';
     el.addEventListener('pointerdown', e => {

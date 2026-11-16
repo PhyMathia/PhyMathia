@@ -361,4 +361,48 @@ seqCheck('quiz 素材刷新（T317）：intro 空闲刷新两份池，生成中�
   }
   return true;
 });
+
+// ===== v9.x 联运港针对练习：大陆弹层「测这一港」→ 按条目 id 收缩组卷（复用重测内核） =====
+seqCheck('quiz-relearn：quizPracticeForCity 全链路（联运港按条目收缩组卷，全量池不动、港外题不进卷）', async () => {
+  const prevPref = vm.runInContext('quizSourcePreference', sandbox);
+  vm.runInContext('quizSourcePreference = "local"', sandbox); // 只走本地出题，不触发 AI 链路
+  sandbox.invalidateKnowledgeCache();
+  sandbox.localStorage.setItem('phymathia_knowledge', JSON.stringify({
+    kp_city_a: { id: 'kp_city_a', title: '简谐运动', summary: 'x=Acos(ωt+φ)', sessionId: M2_SESSION },
+    kp_city_b: { id: 'kp_city_b', title: '单摆运动', summary: 'T=2π√(L/g)', sessionId: M2_SESSION },
+    kp_out: { id: 'kp_out', title: '电磁感应', summary: '法拉第定律', sessionId: M2_SESSION },
+  }));
+  try {
+    await sandbox.openQuiz('global'); // 全库池先就位（openQuiz 内部建池，相位 intro）
+    // 塞一道港内错题打头（组卷保证 ≥1 题，不依赖本地出题器的产量）
+    const stats = JSON.parse(sandbox.localStorage.getItem('phymathia_quiz_stats') || '{}');
+    stats._meta = Object.assign({}, stats._meta, { wrongQuestions: [Object.assign(m2WrongQuestion(), {
+      id: 'w_city', sourceRef: 'kp_city_a', sourceType: 'knowledge', topicKey: 'topic-city',
+    })] });
+    sandbox.localStorage.setItem('phymathia_quiz_stats', JSON.stringify(stats));
+    const poolLen = vm.runInContext('quizState && quizState.pool ? quizState.pool.knowledge.length : -1', sandbox);
+    if (poolLen !== 3) throw new Error('全库池应 3 条，实际 ' + poolLen);
+    const ok = await sandbox.quizPracticeForCity({
+      kind: 'title', label: '振动', owners: ['kp_city_a', 'kp_city_b', 'kp_missing'],
+    });
+    if (ok !== true) throw new Error('联运港练习应返回 true');
+    if (vm.runInContext('quizState && quizState.phase', sandbox) !== 'question') throw new Error('应进入答题相位');
+    const refs = vm.runInContext('(quizState.questions || []).map(q => q.sourceRef || q.refId)', sandbox);
+    if (!refs.length) throw new Error('应至少出一道题');
+    const allow = new Set(['kp_city_a', 'kp_city_b']);
+    refs.forEach(r => { if (!allow.has(String(r))) throw new Error('卷面混入港外条目：' + r); });
+    if (vm.runInContext('quizState.pool.knowledge.length', sandbox) !== 3) throw new Error('不得改动全量素材池');
+    // 无素材港：优雅 false。流程每次都重开检测面板（先收大陆再开面板是设计行为），
+    // 所以重开后相位是 intro（面板新鲜打开＋toast 说明），不是保留上一卷
+    const miss = await sandbox.quizPracticeForCity({ owners: ['kp_none'], label: '空港' });
+    if (miss !== false) throw new Error('无素材港应返回 false');
+    if (vm.runInContext('quizState && quizState.phase', sandbox) !== 'intro') throw new Error('查空路径应停在新开的 intro 相位');
+  } finally {
+    vm.runInContext(`quizSourcePreference = ${JSON.stringify(prevPref)}`, sandbox);
+    sandbox.localStorage.removeItem('phymathia_knowledge');
+    sandbox.localStorage.removeItem('phymathia_quiz_stats');
+    sandbox.invalidateKnowledgeCache();
+  }
+  return true;
+});
 }

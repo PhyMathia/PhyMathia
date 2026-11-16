@@ -194,6 +194,13 @@ async function quizRetestTopic(encodedKey) {
     return false;
   }
   quizFilterTopic = topicKey;
+  return _quizRunTopicRetest(topicPool, wrong);
+}
+
+// 组卷内核（v9.x 自 quizRetestTopic 抽出共享）：错题打头 + 收缩池出题补齐，全链路
+// 不新增出题协议。quizFilterTopic 由调用方先行设置（重测＝主题键；联运港练习保持 openQuiz
+// 给的 'all'——收缩口径是条目 id，不是主题键）
+async function _quizRunTopicRetest(topicPool, wrong) {
   quizState.phase = 'loading';
   if (quizSourcePreference !== 'local') {
     quizState.aiPending = true;
@@ -203,6 +210,8 @@ async function quizRetestTopic(encodedKey) {
   renderQuiz();
   _resetQuizPromptFile();
   let generated = [];
+  const hasMaterial = ((topicPool && topicPool.knowledge) || []).length > 0
+    || ((topicPool && topicPool.formulas) || []).length > 0;
   if (hasMaterial && typeof _generateQuestions === 'function') {
     generated = await _generateQuestions(topicPool);
     // null = 等待期间被新请求取代，状态已由新流程接管
@@ -223,6 +232,42 @@ async function quizRetestTopic(encodedKey) {
   _resetQuizExplain();
   renderQuiz();
   return true;
+}
+
+// ===== v9.x 动作 4：联运港针对练习（大陆弹层「测这一港」，全链路不新增出题协议） =====
+// 与同主题重测同一套组卷内核，差别只在素材收缩口径：按条目 id（entry.owners）精确过滤
+// 出题素材池，不做模糊标题匹配（宁漏勿错）。大陆全屏层会盖住检测面板：先收大陆再开。
+async function quizPracticeForCity(entry) {
+  const owners = (entry && Array.isArray(entry.owners)) ? entry.owners.map(String) : [];
+  const label = String((entry && entry.label) || '这座联运港');
+  if (!owners.length) {
+    if (typeof showToast === 'function') showToast(label + '没有可练习的条目');
+    return false;
+  }
+  // 查阅态拦截提示由 openQuiz 内的 phyReadonlyBlock 统一给，这里只管不往下走
+  if (typeof phyIsReadonly === 'function' && phyIsReadonly()) return false;
+  if (typeof closeContinentView === 'function') closeContinentView();
+  if (typeof openQuiz !== 'function') return false;
+  await openQuiz('global');
+  if (!quizState || !quizState.pool) {
+    if (typeof showToast === 'function') showToast('检测面板没能打开');
+    return false;
+  }
+  quizLoopPanelOpen = false;  // 全局模式的选画布面板对单港练习是噪音
+  const ids = new Set(owners);
+  const pool = quizState.pool;
+  const cityPool = {
+    knowledge: (pool.knowledge || []).filter(it => it && ids.has(String(it.id))),
+    formulas: (pool.formulas || []).filter(it => it && ids.has(String(it.id)))
+  };
+  const wrong = (typeof _readWrongQuestions === 'function' ? _readWrongQuestions() : [])
+    .filter(w => w && ids.has(String(w.sourceRef || w.refId || '')));
+  const hasMaterial = cityPool.knowledge.length > 0 || cityPool.formulas.length > 0;
+  if (!hasMaterial && !wrong.length) {
+    if (typeof showToast === 'function') showToast(label + '的素材暂时出不了题');
+    return false;
+  }
+  return _quizRunTopicRetest(cityPool, wrong);
 }
 
 // ===== 动作 3：重学引导（定位成功后挂在返回 pill 上的两个建议动作，点击才创建） =====
@@ -359,6 +404,7 @@ function quizRelearnConnect() {
 if (typeof window !== 'undefined') {
   window.quizLocateTopic = quizLocateTopic;
   window.quizRetestTopic = quizRetestTopic;
+  window.quizPracticeForCity = quizPracticeForCity;
   window.quizRelearnCreateNote = quizRelearnCreateNote;
   window.quizRelearnConnect = quizRelearnConnect;
   window.showQuizRelearnGuide = showQuizRelearnGuide;

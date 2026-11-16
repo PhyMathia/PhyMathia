@@ -970,4 +970,62 @@ check('graph-continent: v8.11 未投影卡计数上顶栏（T141 stats 接 orpha
   if (src.indexOf('缺标题或会话归属，投影不进大陆') < 0) throw new Error('orphan tooltip 解释缺失');
   return true;
 });
+
+// ===== v9.x 掌握度热力图：聚合纯函数 / 三档口径 / 弹层行 / 开关（同步用例，不碰共享会话键） =====
+check('graph-continent: v9.x 掌握度热力图（聚合加权三档 / 未测不染 null / 弹层行薄弱在前 / 开关默认开 / 渲染走开关闸）', () => {
+  const masteryOf = sandbox._continentCityMastery;
+  const rowsOf = sandbox._continentCityMasteryRows;
+  const tierOf = sandbox._continentMasteryTier;
+  const heatOn = sandbox._continentHeatmapEnabled;
+  if (typeof masteryOf !== 'function' || typeof rowsOf !== 'function'
+      || typeof tierOf !== 'function' || typeof heatOn !== 'function') {
+    throw new Error('热力图纯函数未暴露（_continentCityMastery/_continentCityMasteryRows/_continentMasteryTier/_continentHeatmapEnabled）');
+  }
+  const idx = {
+    items: { k1: '简谐运动', k2: '单摆运动', k3: '受迫振动' },
+    itemSession: { k1: 'sess_a', k2: 'sess_a', k3: 'sess_b' },
+  };
+  // 键与统计侧同尺：走沙箱里 quiz.js 的 _quizTopicKey 归一（宁漏勿错，不做模糊匹配）
+  const keyOf = (sid, title) => sandbox._quizTopicKey({ sessionId: sid, title });
+  const statsOk = {};
+  statsOk[keyOf('sess_a', '简谐运动')] = { correct: 10, wrong: 0, mastery: 92 };
+  statsOk[keyOf('sess_a', '单摆运动')] = { correct: 6, wrong: 4, mastery: 55 };
+  statsOk[keyOf('sess_b', '受迫振动')] = { correct: 1, wrong: 0, mastery: 96 };
+  // 加权：10×92 + 10×55 + 1×96 = 1576 / 21 ≈ 75 → 巩固（medium）
+  const entry = { kind: 'title', label: '振动', owners: ['k1', 'k2', 'k3', 'k_missing'] };
+  const m = masteryOf(entry, idx, statsOk);
+  if (!m || m.mastery !== 75) throw new Error('加权平均错：' + (m && m.mastery));
+  if (m.attempts !== 21 || m.weak !== 1 || m.tested !== 3 || m.untested !== 1) {
+    throw new Error('聚合计数错：' + JSON.stringify({ attempts: m.attempts, weak: m.weak, tested: m.tested, untested: m.untested }));
+  }
+  if (tierOf(85) !== 'good' || tierOf(84) !== 'medium' || tierOf(70) !== 'medium' || tierOf(69) !== 'weak') {
+    throw new Error('三档口径错（应 85→good / 84→medium / 70→medium / 69→weak）');
+  }
+  // 未测/缺索引/空输入 → null（「未测不染」的机制底座；对不上的键绝不拿别的知识点充数）
+  if (masteryOf({ owners: ['k9'] }, idx, statsOk) !== null) throw new Error('全未测港应返回 null');
+  if (masteryOf({ owners: [] }, idx, statsOk) !== null) throw new Error('空 owners 应返回 null');
+  if (masteryOf(null, idx, statsOk) !== null) throw new Error('空 entry 应返回 null');
+  if (masteryOf(entry, idx, {}) !== null) throw new Error('空统计应返回 null');
+  // 弹层行：有记录给掌握度小结且薄弱条目排最前；未测给「测这一港」引导
+  const rowsHtml = rowsOf(m);
+  if (!rowsHtml.includes('掌握度') || rowsHtml.includes('还没测过')) throw new Error('有记录港应给掌握度小结');
+  if (rowsHtml.indexOf('单摆运动') > rowsHtml.indexOf('简谐运动')) throw new Error('分条目行应薄弱在前');
+  if (!rowsOf(null).includes('还没测过')) throw new Error('未测港应给引导文案');
+  // 开关：默认开；存 '0' 关（同步读写本地键，退出前还原）
+  const KEY = 'phymathia_continent_heatmap';
+  const prev = localStorage.getItem(KEY);
+  try {
+    localStorage.removeItem(KEY);
+    if (heatOn() !== true) throw new Error('开关默认应为开');
+    localStorage.setItem(KEY, '0');
+    if (heatOn() !== false) throw new Error("存 '0' 应关灯");
+  } finally {
+    if (prev === null) localStorage.removeItem(KEY); else localStorage.setItem(KEY, prev);
+  }
+  // 渲染挂类必须走开关闸与三档助手（静态契约：染灯不许绕过开关，也不许影响几何）
+  const src = readContinentSrc();
+  if (!/const heatOn = _continentHeatmapEnabled\(\);/.test(src)) throw new Error('渲染没走开关闸');
+  if (!/is-mastery-'\s*\+\s*_continentMasteryTier/.test(src)) throw new Error('挂类没走三档助手');
+  return true;
+});
 }

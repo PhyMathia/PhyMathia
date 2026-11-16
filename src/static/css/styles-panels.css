@@ -4146,30 +4146,35 @@
 }
 /* v5.1 边界城市：共享概念在地图上的「地点」——摆在它所连的岛之间的走廊里，
  * 辐条连到各岛代表卡。比概念卡更小更亮（是路标不是卡片），点击弹重逢清单 */
+/* v9.x 掌握度热力图：三档灯只经 --mastery-c 一个变量喂色（v8.12 口径——档位规则
+ * 只准喂变量），未挂档位类的联运港保持 accent 原色；档位类见下方三行 */
 .continent-city {
   position: absolute;
   width: 112px;
   height: 32px;
   border-radius: var(--r-pill);
-  border: 1px solid var(--accent);
+  border: 1px solid var(--mastery-c, var(--accent));
   background: var(--bg-dark);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0 8px;
   cursor: pointer;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mastery-c, var(--accent)) 10%, transparent);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 [data-theme="light"] .continent-city {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mastery-c, var(--accent)) 10%, transparent);
 }
 .continent-city:hover {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent), 0 0 14px color-mix(in srgb, var(--accent) 30%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mastery-c, var(--accent)) 22%, transparent), 0 0 14px color-mix(in srgb, var(--mastery-c, var(--accent)) 30%, transparent);
 }
 [data-theme="light"] .continent-city:hover {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent), 0 0 14px color-mix(in srgb, var(--accent) 25%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mastery-c, var(--accent)) 20%, transparent), 0 0 14px color-mix(in srgb, var(--mastery-c, var(--accent)) 25%, transparent);
 }
+.continent-city.is-mastery-good { --mastery-c: var(--success); }
+.continent-city.is-mastery-medium { --mastery-c: var(--warn); }
+.continent-city.is-mastery-weak { --mastery-c: var(--danger); }
 /* T143 键盘可达：大陆所有可聚焦控件统一焦点环（_kact 补 tabindex 的件 + 原生按钮） */
 .continent-open [tabindex="0"]:focus-visible,
 .continent-open button:focus-visible {
@@ -4179,11 +4184,28 @@
 .continent-city-name {
   font-size: var(--fs-xs);
   font-weight: 600;
-  color: var(--accent);
+  color: var(--mastery-c, var(--accent));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* v9.x 掌握度热力图：弹层里的档位小字（分条目 % 与图例色样共用语义色令牌） */
+.continent-pop-when.is-mastery-good { color: var(--success); }
+.continent-pop-when.is-mastery-medium { color: var(--warn); }
+.continent-pop-when.is-mastery-weak { color: var(--danger); }
+.is-mastery-good-text { color: var(--success); }
+.is-mastery-medium-text { color: var(--warn); }
+.is-mastery-weak-text { color: var(--danger); }
+.continent-legend-heat {
+  border: 1px solid var(--accent);
+  border-radius: var(--r-pill);
+  padding: 1px 8px;
+  font-size: var(--fs-2xs);
+  color: var(--accent);
+  cursor: pointer;
+  background: transparent;
+}
+.continent-legend-heat:hover { background: color-mix(in srgb, var(--accent) 15%, transparent); }
 /* 辐条：城市 → 岛代表卡。两端被节点盖住，露出来的正是走廊那一段 */
 .continent-spoke {
   stroke: var(--accent);

@@ -37,6 +37,22 @@ function fail(name, err) { results.push(false); console.log('❌ ' + name + ' ->
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
+// 未配模型的临时实例首屏必弹「模型配置向导」（models.js modelWizardMaybeShow：没配
+// 主模型就接管首启），overlay 挡住一切点击——旅程断言前先「稍后再说」。向导 show 挂在
+// window load → await fetchModels → await initApp 全部完成之后，比 app 顶层求值晚得多：
+// 所以条件必须是「show 出现→关掉」，show 没出现就一直等（返回 false 继续轮询）——
+// 「!show 即通过」会输给晚弹（2026-11-16 实踩：探针显示 show=false，随后 click 仍被挡）。
+// 临时实例没模型必弹，等不到＝初始化本身坏了，20s 超时放行让旅程断言去报。
+async function skipModelWizard(page) {
+  await page.waitForFunction(() => {
+    const w = document.getElementById('modelWizardOverlay');
+    if (!w) return false;
+    if (!w.classList.contains('show')) return false;
+    if (typeof window.modelWizardSkip === 'function') window.modelWizardSkip();
+    return !w.classList.contains('show');
+  }, null, { timeout: 20000 }).catch(() => { /* 20s 没弹：放行，旅程断言自己会报 */ });
+}
+
 async function waitHealth(timeoutMs = 30000) {
   return waitHealthAt(BASE, timeoutMs);
 }
@@ -300,6 +316,7 @@ async function run() {
     });
     await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => typeof window.openContinentView === 'function', null, { timeout: 15000 });
+    await skipModelWizard(page);
 
     // ===== 1. 开图适配 =====
     try {
@@ -759,6 +776,7 @@ async function runScaleSuite() {
     });
     await page.goto(BASE_S + '/', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => typeof window.openContinentView === 'function', null, { timeout: 15000 });
+    await skipModelWizard(page);
 
     // --- 1. 开图适配缩放必须落在「阈值敏感带」里（本套件存在的全部理由）---
     try {

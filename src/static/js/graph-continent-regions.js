@@ -50,6 +50,7 @@ function _continentRenderLegend(regionInfo, data) {
   if (_continentLegendMem !== null) collapsed = _continentLegendMem;
   else try { collapsed = localStorage.getItem('phymathia_continent_legend') === '1'; } catch (e) { /* 容忍 */ }
   const esc = _continentEsc;
+  const heatOn = (typeof _continentHeatmapEnabled === 'function') ? _continentHeatmapEnabled() : true; // v9.x 掌握度灯（图例照报当前态）
   const items = regions.map(r => {
     const hueAttr = (r.hue !== null && r.hue !== undefined) ? ' style="--region-h:' + r.hue + '"' : '';
     const over = r.sessions.length > CONTINENT_REGION_CAPACITY
@@ -129,6 +130,12 @@ function _continentRenderLegend(regionInfo, data) {
         '<span>联运港前缀：◈ 标题共享 · ∑ 公式共享 · ❖ 概念族</span>' +
         '<span>细线＝联运线（联运港↔岛，机器取证）；粗线＝你画的航线；虚线断桥＝一端已失效（工具条可清理）</span>' +
         '<span>相邻的岛＝学过共同概念——排布即亲缘</span>' +
+        '<span>掌握度灯：<span class="is-mastery-good-text">绿＝扎实</span> · ' +
+          '<span class="is-mastery-medium-text">黄＝巩固</span> · ' +
+          '<span class="is-mastery-weak-text">红＝薄弱</span> · 未测不染——来自画布检测的答题记录</span>' +
+        '<button class="continent-legend-heat" data-heat title="' +
+          (heatOn ? '关掉联运港的掌握度亮灯（只影响显示，不动数据）' : '打开联运港的掌握度亮灯') +
+          '">掌握度灯：' + (heatOn ? '开' : '关') + '</button>' +
       '</div>' +
       (footBits.length ? '<div class="continent-legend-foot">' + esc(footBits.join('；')) + '</div>' : ''));
   const toggle = legend.querySelector ? legend.querySelector('.continent-legend-head') : null;
@@ -194,6 +201,15 @@ function _continentRenderLegend(regionInfo, data) {
       }
     });
     _kact(locateBtn);  // T143 键盘可达
+  }
+  // v9.x 掌握度灯开关：_continentToggleHeatmap 内部已重渲（灯与图例一起刷）
+  const heatBtn = legend.querySelector ? legend.querySelector('[data-heat]') : null;
+  if (heatBtn) {
+    heatBtn.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      _continentToggleHeatmap();
+    });
+    _kact(heatBtn);  // T143 键盘可达
   }
 }
 

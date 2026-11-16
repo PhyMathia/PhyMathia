@@ -558,15 +558,18 @@ async function openContinentView(opts) {
   try {
     // v7.1a：海域覆盖（改名/挪岛）先于首次渲染就位——第一次画就是用户纠正过的样子；
     // v7.3：折叠态（收起的岛/海域）同样先就位；v8：纠正记录条数（图例脚注要照报）
-    // T135：三路请求互不依赖，并行拉（原串行＝三倍往返白等）；折叠态是本地同步读
+    // v9.x：掌握度热力图的答题统计第四路（内部消化失败回落本地，不阻塞开图）
+    // T135：四路请求互不依赖，并行拉（原串行＝多倍往返白等）；折叠态是本地同步读
     _continentLoadCollapsed();
     const loaded = await Promise.all([
       _continentLoadRegionOverrides(),
       _continentLoadCorrectionCount(),
       _continentFetchData(),
+      _continentFetchQuizStats(),
     ]);
     _continentCorrectionCount = loaded[1];
     data = loaded[2];
+    _continentQuizStats = loaded[3] || {};
   } catch (err) {
     // 加载失败：把已经起播的拉远动画反向收回去（大陆缩回没打开的样子），再报错。
     // 不能只 closeContinentView —— 那样会把用户留在「会话已缩没、大陆也没了」的空白里。

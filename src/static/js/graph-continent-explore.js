@@ -38,6 +38,23 @@ function _continentReunionRows(city, idx) {
   return rows.join('');
 }
 
+// 掌握度小结与分条目行是纯字符串拼装（无 DOM），单独抽出来给 smoke 断言
+//（_continentReunionRows 同款口径）。m=null（未测/关灯）给引导文案。
+function _continentCityMasteryRows(m) {
+  if (!m) return '<div class="continent-pop-desc">这一港还没测过——点「测这一港」出几道题试试。</div>';
+  const tierLabel = m.mastery >= 85 ? '扎实' : (m.mastery >= 70 ? '巩固' : '薄弱');
+  const items = (m.perItem || []).slice().sort((a, b) => a.mastery - b.mastery).slice(0, 6);
+  const rows = items.map(it =>
+    '<div class="continent-pop-row is-sub"><span class="continent-pop-row-text">' +
+    _continentEsc(it.title) +
+    '<span class="continent-pop-when is-mastery-' + _continentMasteryTier(it.mastery) + '">' +
+    it.mastery + '% · ' + it.attempts + ' 题</span></span></div>').join('');
+  return '<div class="continent-pop-desc is-mastery-summary">掌握度 <b>' + m.mastery + '%</b>（' + tierLabel +
+    '）· 答过 ' + m.attempts + ' 题' +
+    (m.weak ? ' · ' + m.weak + ' 项薄弱' : '') +
+    (m.untested ? ' · ' + m.untested + ' 项未测' : '') + '</div>' + rows;
+}
+
 function _continentCityPopover(city, ev) {
   const idx = _continentItemIndex();
   const s = (city && city.entry) || {};
@@ -68,7 +85,14 @@ function _continentCityPopover(city, ev) {
         ? '这几块画布同属概念族「' + _continentEsc(s.label || '') + '」（领域知识层认出的同族关系）'
         : '这几块画布的概念标题共享「' + _continentEsc(s.label || '') + '」')) +
     '——机器检出的共享点不会自动连线。</div>' +
-    (chips ? '<div class="continent-pop-actions is-wrap">' + chips + '</div>' : '');
+    // v9.x 掌握度热力图：弹层里的掌握度小结（关灯时 heat 为 null，给未测引导文案）
+    _continentCityMasteryRows(
+      (typeof _continentHeatmapEnabled === 'function' && _continentHeatmapEnabled())
+        ? _continentCityMastery(s, idx, _continentQuizStats) : null) +
+    (chips ? '<div class="continent-pop-actions is-wrap">' + chips + '</div>' : '') +
+    (typeof quizPracticeForCity === 'function'
+      ? '<div class="continent-pop-actions"><button class="continent-pop-btn" data-practice="1"' +
+        ' title="只出这一港条目的题，直接进检测面板">测这一港</button></div>' : '');
   const el = _continentOpenPopover(html, ev.clientX, ev.clientY);
   if (!el || !el.querySelectorAll) return;
   el.querySelectorAll('[data-go]').forEach(btn => btn.addEventListener('click', e => {
@@ -89,6 +113,14 @@ function _continentCityPopover(city, ev) {
       _continentToast('保存失败：' + (err && err.message || err));
     }
   }));
+  // v9.x 「测这一港」：按条目收缩出题（quizPracticeForCity 内部先收大陆再开检测面板）
+  const practiceBtn = el.querySelector('[data-practice]');
+  if (practiceBtn) practiceBtn.addEventListener('click', async e => {
+    e.stopPropagation();
+    _continentClosePopover();
+    try { await quizPracticeForCity(s); }
+    catch (err) { _continentToast('出题失败：' + (err && err.message || err)); }
+  });
 }
 
 // v4 折叠清单：没画到地图上的那些在这里照报，逐条可确认并亲手落笔。
