@@ -6901,7 +6901,9 @@ body:has(.settings-overlay.show) .memory-dialog-overlay { z-index: calc(var(--z-
 
 /* ====== 设置抽屉 · 快捷键页（2026-11-15 用户拍板）======
    一页一把锁：默认只读；解锁后键位框可聚焦，聚焦即录制，按键直接落表。
-   只用 --r-* / --fs-* / --border / --text-* / --accent 令牌，五套主题自动跟随。 */
+   只用 --r-* / --fs-* / --border / --text-* / --accent 令牌，五套主题自动跟随。
+   技能页（2026-11-16）复用本段 settings-hk-* 类：settings-hk-reset 与 mini/resetall
+   同款幽灵按钮（曾漏挂样式回落浏览器默认灰按钮，2026-11-16 补齐）；开关态靠文字与行变暗表达。 */
 .settings-hk-lockbar { display: flex; align-items: center; gap: 14px; padding: 10px 12px; margin-bottom: 16px; border: 1px solid var(--border); border-radius: var(--r-md); background: color-mix(in srgb, var(--text-primary) 5%, transparent); }
 .settings-hk-lockbar.is-unlocked { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .settings-hk-lockbar-text { flex: 1; min-width: 0; font-size: var(--fs-sm); color: var(--text-primary); line-height: 1.5; }
@@ -6926,8 +6928,8 @@ button.settings-hk-key:focus { outline: none; border-color: var(--accent); }
 .settings-hk-key.is-locked { opacity: .72; }
 .settings-hk-key.is-recording { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .settings-hk-ops { flex: none; min-width: 54px; text-align: right; }
-.settings-hk-mini, .settings-hk-resetall, .settings-hk-confirm button, .settings-hk-toast button { padding: 5px 10px; border: 1px solid var(--border); border-radius: var(--r-md); background: transparent; color: var(--text-primary); font-family: inherit; font-size: var(--fs-sm); cursor: pointer; }
-.settings-hk-mini:hover, .settings-hk-resetall:hover, .settings-hk-confirm button:hover, .settings-hk-toast button:hover { border-color: var(--accent); color: var(--accent); }
+.settings-hk-mini, .settings-hk-reset, .settings-hk-resetall, .settings-hk-confirm button, .settings-hk-toast button { padding: 5px 10px; border: 1px solid var(--border); border-radius: var(--r-md); background: transparent; color: var(--text-primary); font-family: inherit; font-size: var(--fs-sm); cursor: pointer; }
+.settings-hk-mini:hover, .settings-hk-reset:hover, .settings-hk-resetall:hover, .settings-hk-confirm button:hover, .settings-hk-toast button:hover { border-color: var(--accent); color: var(--accent); }
 .settings-hk-resetall:disabled { opacity: .4; cursor: default; }
 .settings-hk-foot { display: flex; align-items: center; gap: 12px; margin-top: 16px; font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.5; }
 .settings-hk-foot > span { flex: 1; }
