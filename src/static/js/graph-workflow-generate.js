@@ -62,7 +62,7 @@ async function _generateAnalysis(node, nodeSignal) {
   const prompt = '请分析用户问题，只输出简洁的问题概要。'
     + (reqText ? '\n用户对本次分析的额外要求（优先满足）：' + reqText + '\n' : '')
     + '要求：1) 核心物理概念；2) 核心数学结构；3) 物理与数学的关系；4) 相关知识点。'
-    + '不要输出完整答案，不要输出 XML 标签，不要生成任何模块内容，控制在300字以内。';
+    + '不要输出完整答案，不要输出 XML 标签（若本次附有 skill 候选，唯一例外是按候选要求输出那一行 <skill_plan>），不要生成任何模块内容，控制在300字以内。';
   const branchMeta = {
     parentId: String(node.timestamp || ''),
     sourceModule: '',

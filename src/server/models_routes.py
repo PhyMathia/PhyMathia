@@ -20,7 +20,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
-from . import accounts, concept, context, http_client, llm_common, profile, usage_stats
+from . import accounts, concept, context, http_client, llm_common, profile, skill_registry, usage_stats, viz_style
 from .config import AI_PROVIDERS, LEVEL_PROMPTS, STRICT_MODULE_MAX_TOKENS, validate_model_target
 from .context import (
     _branch_context_instruction,
@@ -386,6 +386,48 @@ async def api_models_chat(request: Request):
         level = payload.get("level", "university")
         level_suffix = LEVEL_PROMPTS.get(level, LEVEL_PROMPTS["university"])
         user_text = current_text + level_suffix
+        # skill 三段式的「投递」端（2026-11-16）。顺序固定：分析步给候选 → 模块生成按
+        # 计划注入 → 两者都没有才回落 embedding 判定。
+        # ① 分析步（mode=analysis）：追加候选卡，让模型在正文前吐 <skill_plan>；
+        # ② 模块生成：客户端带着自己那一条（workflow_context.skill），按 id 查正文；
+        # ③ 都没有（画布上直接生成交互可视化——那条路径没有分析步）→ viz_style 兜底。
+        # 一律拼在 user 尾部而非 system：与难度档位同处，system 常驻会拖累前缀缓存。
+        # 开关 PHYMATHIA_SKILL_ROUTER=0 关新链路，PHYMATHIA_VIZ_STYLE=0 关兜底判定。
+        _skill_src = ""
+        _base_len = len(user_text)
+        _wc = workflow_context if isinstance(workflow_context, dict) else {}
+        if skill_registry.enabled():
+            try:
+                _tgt = _wc.get("target") if isinstance(_wc.get("target"), dict) else {}
+                # 只有「问题分析」这一步给候选卡：配方双阶段的概要不做路由（它的下游
+                # 是那一颗配方节点，没有六个模块可选），省一次候选段与解析。
+                if str(_wc.get("mode") or "") == "analysis" and str(_tgt.get("kind") or "") == "answer":
+                    _menu = skill_registry.menu_block(_wc.get("downstream"))
+                    if _menu:
+                        user_text = user_text + _menu
+                        _skill_src = "menu"
+                else:
+                    _block, _sid = skill_registry.requested_block(_wc)
+                    if _block:
+                        user_text = user_text + _block
+                        _skill_src = f"plan:{_sid}"
+            except Exception as exc:  # 注册表读错一律按未命中处理，不阻塞生成
+                logger.warning(f"AI proxy (skill): 路由载荷拼接失败，按未命中处理 err={exc}")
+        if _skill_src:
+            logger.info(f"AI proxy (skill): 注入 src={_skill_src} chars+={len(user_text) - _base_len}")
+        elif viz_style.in_scope(source_module=source_module, workflow_context=workflow_context, branch_id=branch_id):
+            # 兜底：判定文本取「用户原问题」而不是 prompt——工作流请求的 prompt 是整段
+            # 生成指令（「请生成交互可视化模块…」＋上游材料），里面没有装置零件词，
+            # 拿它判必不命中。
+            _judge_text = str(_wc.get("question") or "")
+            if not _judge_text:
+                _judge_text = prompt
+            _viz_block = await viz_style.augment(_judge_text)
+            if _viz_block:
+                user_text = user_text + _viz_block
+                logger.info(f"AI proxy (viz style): 兜底命中 src={source_module or '-'} judge={_judge_text[:24]!r} chars={len(_viz_block)}")
+            else:
+                logger.info(f"AI proxy (viz style): 兜底未命中 src={source_module or '-'} judge={_judge_text[:24]!r}")
         image_parts = _sanitize_chat_images(payload.get("images"))
         if image_parts:
             # 附图消息：文字部件在前、图片部件随后（多模态模型直接看素材原图）

@@ -595,6 +595,63 @@ function _collectWorkflowContext(node, portMetaFor, typeLabels) {
 // _recent_context_messages 的历史兜底对纯画布会话也是空的，上游缺席时模型只能
 // 就着歧义记号猜领域）。配方双阶段概要步（P2，analysis_phase）同源复用，
 // target 由调用方给。
+// ===== skill 路由（2026-11-16）：分析步判定 → 模块生成时各取自己那一条 =====
+// 六个模块键（与 harness/registry.py、GRAPH_MODULE_META 同口径）；计划里的键只能是它。
+const SKILL_MODULE_KEYS = ['physics', 'math', 'graph', 'viz', 'socratic', 'learn'];
+
+// 分析步的第三个输入：这颗节点后面会生成哪些模块。
+// 首问路径上模块节点是分析**之后**才建的，所以这里多数时候是空数组——空不影响判定
+// （分析步自己会建议模块），非空时用来把候选范围收窄到真会生成的节点。
+function _workflowDownstreamModules(node) {
+  const out = [];
+  const seen = new Set();
+  const edges = (typeof _workflowEdgeTable === 'function') ? _workflowEdgeTable() : [];
+  for (const edge of edges) {
+    if (edge.draft || edge.link) continue;
+    if (String(edge.from) !== String(node && node.id)) continue;
+    const next = _findGraphNode(edge.to);
+    if (!next || next.kind !== 'module') continue;
+    const module = String(next.moduleKey || '');
+    if (!module || seen.has(module)) continue;
+    seen.add(module);
+    out.push({ module: module, label: (GRAPH_MODULE_META[module] || {}).label || module });
+  }
+  return out;
+}
+
+// 本节点该挂哪条 skill：向上找最近一颗带 skillPlan 的祖先（就是问题分析卡），
+// 按本节点的模块键取一条。没有计划/没有这一条 → null（后端回落 embedding 兜底）。
+// 说明：不能读 _workflowContextEntries 的条目——它是有损投影（不带 skillPlan），
+// 所以这里自己沿入边走，拐点走 junction/hub 也不会被吞掉。
+function _workflowSkillPickFor(node) {
+  if (!node || node.kind !== 'module') return null;
+  const key = String(node.moduleKey || '');
+  if (SKILL_MODULE_KEYS.indexOf(key) < 0) return null;
+  const edges = (typeof _workflowEdgeTable === 'function') ? _workflowEdgeTable() : [];
+  const seen = new Set();
+  const queue = [String(node.id)];
+  let guard = 0;
+  while (queue.length && guard < 60) {
+    guard += 1;
+    const currentId = queue.shift();
+    for (const edge of edges) {
+      if (edge.draft || edge.link) continue;
+      if (String(edge.to) !== currentId) continue;
+      const fromId = String(edge.from);
+      if (seen.has(fromId)) continue;
+      seen.add(fromId);
+      const source = _findGraphNode(fromId);
+      if (!source) continue;
+      const plan = source.skillPlan;
+      const picks = plan && typeof plan === 'object' ? plan.picks : null;
+      const id = picks && picks[key] ? String(picks[key]) : '';
+      if (id) return { id: id, module: key };
+      queue.push(fromId);
+    }
+  }
+  return null;
+}
+
 function _buildAnalysisWorkflowContext(node, question, target) {
   // T263 喂料分路：目标配方声明了具名输入口时，上游条目标注「来自哪个输入口」；
   // 未声明（旧配方/旧快照）不设键，载荷形状与旧口径一致
@@ -609,7 +666,7 @@ function _buildAnalysisWorkflowContext(node, question, target) {
     return { label: '其他输入', type: '' };
   };
   const collected = _collectWorkflowContext(node, portMetaFor, typeLabels);
-  return {
+  const analysisContext = {
     mode: 'analysis',
     target: target,
     // 调用方给了 question 就用调用方的（追问模板与配方概要步自带问题文本）；
@@ -618,6 +675,11 @@ function _buildAnalysisWorkflowContext(node, question, target) {
     requirements: (node && node.requirements) || '',
     upstream: collected.upstream,
   };
+  // skill 路由（2026-11-16）：把「后面会生成哪些模块」一并交给分析步。
+  // 首问路径上此刻还没建模块节点，返回空数组——后端据此列全部候选，不报错。
+  const downstream = _workflowDownstreamModules(node);
+  if (downstream.length) analysisContext.downstream = downstream;
+  return analysisContext;
 }
 
 function _buildWorkflowContextForNode(node) {
@@ -669,7 +731,7 @@ function _buildWorkflowContextForNode(node) {
   // T328：追问来源卡（A）全文条目 full＋6000、其余祖先 800——规则见
   // _workflowUpstreamEntry 注；分析节点（如有）随普通祖先摘要进 upstream
   const collected = _collectWorkflowContext(node, portMetaFor, typeLabels);
-  return {
+  const context = {
     target: { kind: node.kind, module: node.moduleKey || '', label: meta.label || node.moduleKey || '节点' },
     question: collected.question,
     // direct（2026-10-24）：后端据 mode='direct' 走「完整作答」指令块，不再套
@@ -678,6 +740,11 @@ function _buildWorkflowContextForNode(node) {
     requirements: node.requirements || '',
     upstream: collected.upstream,
   };
+  // skill 投递（2026-11-16）：分析步判过就带上自己那一条，后端按 id 查正文注入。
+  // 没计划（首问没跑分析/直接生成/跨设备丢了）不带键，后端回落 embedding 兜底。
+  const skillPick = _workflowSkillPickFor(node);
+  if (skillPick) context.skill = skillPick;
+  return context;
 }
 
 // T263：内联上游文本（summary/relation 与配方 prompt_inline 共用）。条目带 input_port

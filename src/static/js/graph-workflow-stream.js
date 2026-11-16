@@ -187,6 +187,48 @@ async function _streamCustomNodeResponse(resp, node) {
   _refreshWorkflowNodeStatusUi(live);
 }
 
+// ===== skill 计划块（2026-11-16）=====
+// 分析步要在正文前吐一行 <skill_plan>{"viz":"iso-cutaway"}</skill_plan>。这一行既不进
+// 概要、也不进上游摘要——流式期间就得剥掉，否则用户会看到一坨 JSON，六个模块还会把
+// 它当上游内容读走。注意 stripXmlTags 只认 physics/math/graph/viz/extend 五个标签，
+// 管不到这个，所以必须自己剥。
+function _stripSkillPlanBlock(text) {
+  return String(text || '')
+    .replace(/<skill_plan[\s\S]*?<\/skill_plan>/gi, '')
+    .replace(/<\/?skill_plan[^>]*>/gi, '');
+}
+
+// 解析计划：容忍 {"viz":"id"} 与 {"picks":{...},"why":"..."} 两种形状；
+// 解析失败/空/`none` 一律当「没有计划」（宁可漏判，不阻塞生成）。
+function _extractSkillPlan(text) {
+  const match = /<skill_plan>([\s\S]*?)<\/skill_plan>/i.exec(String(text || ''));
+  if (!match) return null;
+  const raw = match[1].trim();
+  if (!raw || raw.toLowerCase() === 'none') return null;
+  let parsed = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const source = (parsed.picks && typeof parsed.picks === 'object') ? parsed.picks : parsed;
+  const picks = {};
+  let why = '';
+  Object.keys(source).forEach(key => {
+    if (key === 'why') {
+      why = String(source[key] || '').slice(0, 120);
+      return;
+    }
+    if (SKILL_MODULE_KEYS.indexOf(key) < 0) return;
+    const value = source[key];
+    const id = typeof value === 'string' ? value.trim() : (value && value.id ? String(value.id).trim() : '');
+    if (id) picks[key] = id;
+  });
+  if (!Object.keys(picks).length) return null;
+  return { picks: picks, why: why, at: Date.now() };
+}
+
 async function _streamAnalysisResponse(resp, node, question) {
   let analysis = '';
   let renderPending = false;
@@ -198,7 +240,7 @@ async function _streamAnalysisResponse(resp, node, question) {
       renderPending = false;
       const live = _findGraphNode(node.id);
       if (!live) return;
-      live.analysis = analysis;
+      live.analysis = _stripSkillPlanBlock(analysis);
       const renderBox = graphInner?.querySelector('[data-node-id="' + node.id + '"] .graph-custom-node-render');
       if (renderBox) {
         renderBox.innerHTML = _renderCustomNodeContentHtml(live);
@@ -214,15 +256,20 @@ async function _streamAnalysisResponse(resp, node, question) {
     scheduleRender();
   }
 
-  let cleaned = analysis.trim();
+  let cleaned = _stripSkillPlanBlock(analysis).trim();
   if (typeof stripXmlTags === 'function') cleaned = stripXmlTags(cleaned).trim();
   if (!cleaned) throw new Error('问题分析返回空内容');
   if (cleaned.length > 1200) cleaned = cleaned.slice(0, 1200);
+  // 计划从**原文**解析（剥完就看不见了），落在分析节点上，供下游各模块取用
+  const skillPlan = _extractSkillPlan(analysis);
   // T419：分析段同样按生成收尾寻址结算（分析最长的几十秒里人常切走画布）
   const live = _findGraphNodeTail(node.id);
   if (live) {
     live.analysis = cleaned;
     live.analysisHash = _simpleHash(question + '|' + (node.requirements || ''));
+    // 计划随节点落盘：用户稍后单独重跑某个模块、或切走再回来，都还拿得到
+    if (skillPlan) live.skillPlan = skillPlan;
+    else if (live.skillPlan) delete live.skillPlan;
     live.status = 'done';
     live.busy = false;
   }
