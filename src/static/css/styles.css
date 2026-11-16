@@ -3567,6 +3567,13 @@
     html[data-wallpaper="night"]:not([data-panel-skin]) .aurora-glass--panel { --glass-tint: rgba(6, 9, 20, 0.86); }
     html[data-theme="light"][data-wallpaper="night"]:not([data-panel-skin]) .aurora-glass--dialog { --glass-tint: rgba(247, 250, 254, 0.95); }
     html[data-theme="light"][data-wallpaper="night"]:not([data-panel-skin]) .aurora-glass--panel { --glass-tint: rgba(245, 249, 253, 0.90); }
+    /* 大陆顶栏（样式在 styles-panels.css）没走 aurora-glass，底色一直是 --bg-dark＝浅色
+       暖米 rgba(245,240,232,.90)；和同屏的月白 header 并排就显黄（2026-11-16 用户目检
+       「知识大陆那块和别处不是一个白」）。这里让它按 panel 档玻璃上色，值照抄上一行——
+       改那边记得同步这边。只补底色，边框仍走 --border 与 header 内按钮同一档。 */
+    html[data-theme="light"][data-wallpaper="night"]:not([data-panel-skin]) .continent-topbar {
+      background: rgba(245, 249, 253, 0.90);
+    }
     /* 纯玻璃档（整屏铺开）：只留发丝边，渗光去掉——大面积上那圈光会变成四边脏晕 */
     html[data-wallpaper="night"]:not([data-panel-skin]) .aurora-glass--plain {
       --glass-tint: rgba(9, 13, 26, 0.94);
