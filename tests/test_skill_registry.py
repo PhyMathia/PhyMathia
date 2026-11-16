@@ -119,6 +119,47 @@ def test_user_skill_rejects_bad_input_and_builtin():
         skill_registry.delete_skill("acct1", "iso-cutaway")
 
 
+def test_name_and_desc_over_limit_are_rejected_not_truncated():
+    """backlog 476①：超限必须拒绝（手册承诺），不能悄悄剪短后存进去。"""
+    ok_name = "名" * skill_registry.LIMITS["name"]
+    ok_desc = "描" * skill_registry.LIMITS["desc"]
+    saved = skill_registry.save_skill("acct1", {
+        "id": "limit-ok", "name": ok_name, "desc": ok_desc, "scope": ["viz"], "body": "正文",
+    })
+    assert saved["name"] == ok_name
+    assert saved["desc"] == ok_desc
+    with pytest.raises(ValueError):
+        skill_registry.save_skill("acct1", {
+            "id": "name-too-long", "name": "名" * (skill_registry.LIMITS["name"] + 1),
+            "desc": "y", "scope": ["viz"], "body": "z",
+        })
+    with pytest.raises(ValueError):
+        skill_registry.save_skill("acct1", {
+            "id": "desc-too-long", "name": "x",
+            "desc": "描" * (skill_registry.LIMITS["desc"] + 1), "scope": ["viz"], "body": "z",
+        })
+
+
+def test_scope_with_mixed_types_is_clean_error():
+    """backlog 476③：scope 里混数字要回 ValueError（400 中文原因），不能 TypeError→500。"""
+    with pytest.raises(ValueError):
+        skill_registry.save_skill("acct1", {"id": "mixed", "name": "x", "desc": "y", "scope": [1, 2], "body": "z"})
+    saved = skill_registry.save_skill("acct1", {
+        "id": "mixed-ok", "name": "x", "desc": "y", "scope": [1, "viz"], "body": "z",
+    })
+    assert saved["scope"] == ["viz"]
+
+
+def test_requested_block_enforces_scope():
+    """backlog 476②：适用范围是硬护栏——「画法」挂到数学节点上必须不注入。"""
+    assert skill_registry.requested_block({"skill": {"id": "iso-cutaway", "module": "math"}}) == ("", "")
+    assert skill_registry.requested_block({"skill": {"id": "iso-cutaway", "module": "viz"}})[1] == "iso-cutaway"
+    # 计划只给 id 时看 target.module
+    assert skill_registry.requested_block({"skill": "iso-cutaway", "target": {"module": "math"}}) == ("", "")
+    # 两处都没有模块信息：旧快照兼容，放行
+    assert skill_registry.requested_block({"skill": "iso-cutaway"})[1] == "iso-cutaway"
+
+
 def test_switch_off_by_env(monkeypatch):
     monkeypatch.setenv("PHYMATHIA_SKILL_ROUTER", "0")
     assert skill_registry.menu_block(None) == ""

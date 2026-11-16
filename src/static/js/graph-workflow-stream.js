@@ -198,6 +198,18 @@ function _stripSkillPlanBlock(text) {
     .replace(/<\/?skill_plan[^>]*>/gi, '');
 }
 
+// 流式期间专用：计划块还没闭合时，从 `<skill_plan` 到末尾整段先不显示。
+// 慢模型下这块会在屏幕上停留一两秒（实测约 1.4 秒闪现半行 JSON，backlog 476④），
+// 而计划按约定必然在最前面——所以只在开头 200 字内命中才剥，避免正文里偶然出现的
+// 字面串把后半段吞掉。
+function _stripSkillPlanPartial(text) {
+  const raw = String(text || '');
+  if (/<\/skill_plan>/i.test(raw)) return _stripSkillPlanBlock(raw);
+  const at = raw.search(/<skill_plan/i);
+  if (at < 0 || at > 200) return raw;
+  return raw.slice(0, at);
+}
+
 // 解析计划：容忍 {"viz":"id"} 与 {"picks":{...},"why":"..."} 两种形状；
 // 解析失败/空/`none` 一律当「没有计划」（宁可漏判，不阻塞生成）。
 function _extractSkillPlan(text) {
@@ -240,7 +252,7 @@ async function _streamAnalysisResponse(resp, node, question) {
       renderPending = false;
       const live = _findGraphNode(node.id);
       if (!live) return;
-      live.analysis = _stripSkillPlanBlock(analysis);
+      live.analysis = _stripSkillPlanPartial(analysis);
       const renderBox = graphInner?.querySelector('[data-node-id="' + node.id + '"] .graph-custom-node-render');
       if (renderBox) {
         renderBox.innerHTML = _renderCustomNodeContentHtml(live);

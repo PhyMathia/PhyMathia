@@ -221,9 +221,13 @@ def payload(skill_id: str, account: Any = None) -> str:
 
 # ====== 用户自建：写 / 删 / 列表 ======
 
-def _clean_line(value: Any, limit: int) -> str:
-    text = str(value or "").replace("\r", " ").replace("\n", " ").strip()
-    return text[:limit]
+def _clean_line(value: Any) -> str:
+    """只做空白归一（换行收成空格），**不截断**——截断会让人以为存全了。
+
+    长度校验在 `save_skill` 里显式做：超限抛 ValueError（400 中文原因），
+    与 `LIMITS` 的承诺一致（backlog 476①）。
+    """
+    return str(value or "").replace("\r", " ").replace("\n", " ").strip()
 
 
 def save_skill(account: Any, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -238,14 +242,22 @@ def save_skill(account: Any, data: Dict[str, Any]) -> Dict[str, Any]:
     skill_id = str(data.get("id") or "").strip().lower()
     if not _SKILL_ID_RE.match(skill_id):
         raise ValueError("id 只能用小写字母开头、字母数字与连字符（2–41 位），例如 force-analysis")
-    name = _clean_line(data.get("name"), LIMITS["name"])
-    desc = _clean_line(data.get("desc"), LIMITS["desc"])
+    name = _clean_line(data.get("name"))
+    desc = _clean_line(data.get("desc"))
     body = str(data.get("body") or "").replace("\r\n", "\n").strip()
-    scope = _parse_scope(",".join(data.get("scope") or []) if isinstance(data.get("scope"), list) else str(data.get("scope") or ""))
+    # 适用范围可能来自手写请求：列表里混数字/None 时逐个转串，别让 join 抛 500（backlog 476③）
+    raw_scope = data.get("scope")
+    if isinstance(raw_scope, list):
+        raw_scope = ",".join(str(item or "") for item in raw_scope)
+    scope = _parse_scope(raw_scope)
     if not name:
         raise ValueError("请填写技能名")
+    if len(name) > LIMITS["name"]:
+        raise ValueError(f"技能名太长（{len(name)} 字），上限 {LIMITS['name']} 字")
     if not desc:
         raise ValueError("请填写一句话适用描述（用来判断什么时候挂它）")
+    if len(desc) > LIMITS["desc"]:
+        raise ValueError(f"描述太长（{len(desc)} 字），上限 {LIMITS['desc']} 字——写清「什么题用它」就够")
     if not scope:
         raise ValueError("请至少选一个适用节点")
     if not body:
@@ -378,18 +390,30 @@ def requested_block(workflow_context: Any, account: Any = None) -> tuple:
 
     计划形状由前端给：``workflow_context.skill = {"id": "...", "module": "viz"}``，
     也兼容直接给 id 字符串。
+
+    **适用范围是硬护栏**（backlog 476②）：计划把「剖视画法」挂到数学节点上时，这里
+    直接不注入——「适用范围」不能只在候选卡里当提示，投递端必须自己也判一次。
+    判据取两处：计划里的 module、`target.module`；两处都缺就不判（旧快照兼容）。
     """
     if not _enabled() or not isinstance(workflow_context, dict):
         return ("", "")
     raw = workflow_context.get("skill")
     skill_id = ""
+    module = ""
     if isinstance(raw, dict):
         skill_id = str(raw.get("id") or raw.get("skill") or "").strip()
+        module = str(raw.get("module") or "").strip()
     elif isinstance(raw, str):
         skill_id = raw.strip()
     if not skill_id:
         return ("", "")
-    body = payload(skill_id, account)
-    if not body:
+    item = get(skill_id, account)
+    if not item:
         return ("", "")
-    return ("\n\n" + body, skill_id)
+    if not module:
+        target = workflow_context.get("target")
+        if isinstance(target, dict):
+            module = str(target.get("module") or "").strip()
+    if module in MODULE_LABELS and module not in item["scope"]:
+        return ("", "")
+    return ("\n\n" + item["body"], skill_id)

@@ -646,6 +646,9 @@ function _workflowSkillPickFor(node) {
       const picks = plan && typeof plan === 'object' ? plan.picks : null;
       const id = picks && picks[key] ? String(picks[key]) : '';
       if (id) return { id: id, module: key };
+      // 就近的分析卡是权威（backlog 476⑤）：它对这颗模块没点名就不再往上找，
+      // 否则连环提问的画布会把上一题的技能计划捡过来。闭环反馈卡不算分析卡。
+      if (source.kind === 'answer' && !source.manual && !source.socraticMeta) return null;
       queue.push(fromId);
     }
   }
