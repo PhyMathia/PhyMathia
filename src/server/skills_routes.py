@@ -88,3 +88,21 @@ async def api_skills_candidates(request: Request):
         "modules": modules or list(skill_registry.MODULE_LABELS),
         "skills": [{"id": i["id"], "name": i["name"], "scope": i["scope"]} for i in items],
     }
+
+
+@router.post("/api/skills/preview")
+async def api_skills_preview(request: Request):
+    """「试一条」：给一个问题，回答候选/字数/实际注入的正文。**不跑模型，零 token。**
+
+    body: {"question": "...", "modules": ["viz", ...]}（modules 可选，给了就不按问题推断）
+    读操作，查阅模式下也放行——它不落盘、不给账号写任何东西。
+    """
+    payload = await _parse_json_object(request)
+    account = _account_id(request, payload)
+    question = str(payload.get("question") or "")
+    raw_modules = payload.get("modules")
+    if isinstance(raw_modules, str):
+        raw_modules = raw_modules.replace("，", ",").split(",")
+    if not isinstance(raw_modules, list):
+        raw_modules = []
+    return skill_registry.preview(question, raw_modules, account)

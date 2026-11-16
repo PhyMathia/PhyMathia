@@ -858,7 +858,9 @@ function _settingsPageHotkeys() {
 // ③ 读写在服务端做账号隔离，前端只负责「列 / 建 / 改 / 删」，不参与判定。
 const _skillsPage = {
   loaded: false, loading: false, error: '', message: '',
-  items: [], limits: { name: 40, desc: 120, body: 20000, skills: 40 }, draft: null
+  items: [], limits: { name: 40, desc: 120, body: 20000, skills: 40 }, draft: null,
+  // 「试一条」的状态：question 存着是为了整页重画后输入框不丢字
+  preview: { open: false, question: '', loading: false, data: null, error: '' }
 };
 const SKILL_SCOPE_OPTIONS = [
   ['physics', '物理视角'], ['math', '数学视角'], ['graph', '知识图谱'],
@@ -941,7 +943,112 @@ function _settingsSkillEditorHtml() {
     + '<button type="button" class="settings-hk-resetall" onclick="settingsSkillSave()">保存</button>'
     + '<button type="button" class="settings-hk-reset" onclick="settingsSkillCancel()">取消</button>'
     + '<span style="font-size:11px;opacity:.6">正文最多 ' + _skillsPage.limits.body + ' 字</span>'
-    + '</div></div>';
+    + '</div>'
+    + _settingsSkillPreviewHtml()
+    + '</div>';
+}
+
+// ====== 试一条（2026-11-16 第 3 版）======
+// 只回答「会不会进候选卡 / 注入多少字 / 注入什么」，不跑模型、不花额度。
+// 判定口径以**已保存**的技能为准（服务端读的是磁盘），所以提示里要说清「先保存再试」。
+function _settingsSkillPreviewHtml() {
+  const st = _skillsPage.preview || {};
+  let body = '<div class="settings-note" style="font-size:12px">用一句话试：只算「会不会进候选卡」，不花模型额度。'
+    + '以已保存的技能为准——刚改的正文先点保存再试。</div>'
+    + '<div style="display:flex;gap:8px;margin-top:8px">'
+    + '<input id="skillPreviewQuestion" class="settings-hk-search" style="flex:1;min-width:160px" placeholder="例如：四冲程发动机怎么工作" value="' + _settingsEsc(st.question || '') + '" oninput="settingsSkillPreviewInput(this.value)">'
+    + '<button type="button" class="settings-hk-resetall" onclick="settingsSkillPreview()">试一条</button>'
+    + '</div>';
+  if (st.loading) body += '<div class="settings-note" style="font-size:12px;margin-top:8px">正在试…</div>';
+  else if (st.error) body += '<div class="settings-note" style="font-size:12px;margin-top:8px;color:var(--accent)">' + _settingsEsc(st.error) + '</div>';
+  else if (st.data) body += _settingsSkillPreviewResultHtml(st.data);
+  return '<details class="skill-preview" style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px"'
+    + (st.open ? ' open' : '') + ' ontoggle="settingsSkillPreviewToggle(this.open)">'
+    + '<summary style="cursor:pointer;font-size:12px;opacity:.8">试一条：这条技能什么时候会被挂上、会注入多少字</summary>'
+    + '<div style="padding-top:8px">' + body + '</div></details>';
+}
+
+function _settingsSkillPreviewResultHtml(data) {
+  const modules = (data.modules || []).map(key => {
+    const pair = SKILL_SCOPE_OPTIONS.filter(item => item[0] === key)[0];
+    return pair ? pair[1] : key;
+  });
+  const candidates = data.candidates || [];
+  let html = '<div style="margin-top:10px;font-size:12.5px">'
+    + '<b>候选 ' + candidates.length + ' 条</b>'
+    + (candidates.length ? ' · 若挂上共注入 <b>' + (data.totalChars || 0) + '</b> 字（每个节点只挂一条）' : '')
+    + '</div>'
+    + '<div style="font-size:11px;opacity:.6;margin-top:2px">认出节点：' + _settingsEsc(modules.join(' · ') || '无') + '</div>';
+  // 正在编辑的这条到底进没进候选——这是「试一条」最直接的答案
+  const editingId = (_skillsPage.draft && _skillsPage.draft.id) || '';
+  if (editingId) {
+    const hit = candidates.some(item => item.id === editingId);
+    html += '<div style="font-size:12px;margin-top:6px;color:' + (hit ? 'var(--accent)' : 'inherit') + '">'
+      + (hit ? '这条（' + _settingsEsc(editingId) + '）会在候选里。'
+             : '这条（' + _settingsEsc(editingId) + '）不在候选里——勾的节点和这个问题对不上，或被别的技能挤掉了。')
+      + '</div>';
+  }
+  html += candidates.map(item => {
+    return '<div style="border-top:1px solid var(--border);padding:8px 0">'
+      + '<div style="font-size:12px;color:var(--text-primary)">' + _settingsEsc(item.name)
+      + '<span style="margin-left:6px;font-size:11px;opacity:.55">id：' + _settingsEsc(item.id) + '</span></div>'
+      + '<div style="font-size:11px;opacity:.65;margin-top:2px">挂到：' + _settingsEsc((item.usableLabels || []).join(' · '))
+      + ' · 注入 ' + (item.chars || 0) + ' 字</div>'
+      + '<details style="margin-top:4px"><summary style="cursor:pointer;font-size:11px;opacity:.7">看实际注入的正文</summary>'
+      + '<pre style="white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.6;opacity:.85;'
+      + 'border:1px solid var(--border);border-radius:8px;padding:8px;margin-top:4px;max-height:260px;overflow:auto">'
+      + _settingsEsc(item.text || '') + '</pre></details></div>';
+  }).join('');
+  const notes = (data.notes || []).map(line => '<div style="font-size:11px;opacity:.6;margin-top:4px">' + _settingsEsc(line) + '</div>').join('');
+  return html + notes;
+}
+
+function settingsSkillPreviewInput(value) {
+  if (!_skillsPage.preview) _skillsPage.preview = { open: true, question: '', loading: false, data: null, error: '' };
+  _skillsPage.preview.question = String(value || '');
+}
+
+function settingsSkillPreviewToggle(open) {
+  if (!_skillsPage.preview) return;
+  _skillsPage.preview.open = !!open;
+}
+
+function settingsSkillPreview() {
+  if (!_skillsPage.preview) _skillsPage.preview = { open: true, question: '', loading: false, data: null, error: '' };
+  const st = _skillsPage.preview;
+  const box = document.getElementById('skillPreviewQuestion');
+  const question = String((box && box.value) || st.question || '').trim();
+  if (!question) {
+    st.error = '先写一个问题，例如「四冲程发动机怎么工作」';
+    st.data = null;
+    st.open = true;
+    renderSettingsPage();
+    return;
+  }
+  st.question = question;
+  st.loading = true;
+  st.error = '';
+  st.data = null;
+  st.open = true;
+  renderSettingsPage();
+  fetch('/api/skills/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question: question })
+  })
+    .then(resp => resp.json().then(data => ({ ok: resp.ok, data: data })))
+    .then(result => {
+      if (!result.ok) throw new Error((result.data && result.data.detail) || '预览失败');
+      st.data = result.data;
+    })
+    .catch(err => {
+      st.error = '试不了：' + ((err && err.message) || '网络错误');
+      st.data = null;
+    })
+    .then(() => {
+      st.loading = false;
+      if (_settingsTab === 'skills') renderSettingsPage();
+    });
 }
 
 function _settingsPageSkills() {

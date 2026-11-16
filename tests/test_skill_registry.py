@@ -166,3 +166,56 @@ def test_switch_off_by_env(monkeypatch):
     assert skill_registry.requested_block({"skill": "iso-cutaway"}) == ("", "")
     with pytest.raises(ValueError):
         skill_registry.save_skill("acct1", {"id": "x1", "name": "x", "desc": "y", "scope": ["viz"], "body": "z"})
+
+
+# ====== 试一条（preview，2026-11-16 第 3 版）======
+
+def test_preview_engine_question_hits_viz_candidate():
+    """正样本：发动机题 → 认出交互可视化 → 剖视那条是候选，注入字数为正文+2 换行。"""
+    out = skill_registry.preview("四冲程发动机怎么工作")
+    assert out["enabled"] is True
+    assert out["moduleSource"] == "keywords"
+    assert "viz" in out["modules"]
+    assert "发动机" in out["matched"]["viz"]
+    by_id = {item["id"]: item for item in out["candidates"]}
+    assert "iso-cutaway" in by_id
+    row = by_id["iso-cutaway"]
+    assert row["chars"] == len(skill_registry.payload("iso-cutaway")) + 2  # requested_block 的 "\n\n"
+    assert row["chars"] == out["totalChars"]
+    assert row["usable"] == ["viz"]
+    assert row["text"].startswith("\n\n")
+    # 预览与真正投递是同一份文本，不能出现「预览说的和发出去的不一样」
+    assert row["text"] == skill_registry.requested_block({"skill": {"id": "iso-cutaway", "module": "viz"}})[0]
+
+
+def test_preview_math_question_has_no_viz_candidate():
+    """负样本：纯数学题 → 不认交互可视化 → 剖视那条连候选都不是（模型根本看不到它）。"""
+    out = skill_registry.preview("求导公式怎么推导出来的")
+    assert "viz" not in out["modules"]
+    assert "iso-cutaway" not in [item["id"] for item in out["candidates"]]
+    assert out["totalChars"] == 0
+
+
+def test_preview_explicit_modules_override_and_unknown_module():
+    out = skill_registry.preview("随便一句话", ["viz", "不存在"])
+    assert out["moduleSource"] == "explicit"
+    assert out["modules"] == ["viz"]
+    assert [item["id"] for item in out["candidates"]] == ["iso-cutaway"]
+
+
+def test_preview_all_modules_when_no_keyword_hit():
+    """一个问题都没命中时列全部节点——报「空候选」会让人误以为技能永远用不上。"""
+    out = skill_registry.preview("这是什么")
+    assert out["moduleSource"] == "all"
+    assert set(out["modules"]) == set(skill_registry.MODULE_LABELS)
+    assert len(out["candidates"]) == len(skill_registry.all_skills())
+
+
+def test_preview_empty_question_is_all_modules_and_switch_off(monkeypatch):
+    assert skill_registry.preview("")["moduleSource"] == "all"
+    monkeypatch.setenv("PHYMATHIA_SKILL_ROUTER", "0")
+    off = skill_registry.preview("四冲程发动机怎么工作")
+    assert off["enabled"] is False
+    assert off["candidates"] == []
+    assert off["totalChars"] == 0
+    assert off["notes"]

@@ -47,6 +47,34 @@ MODULE_LABELS = {
     "learn": "进阶学习",
 }
 
+# 「试一条」（`preview`）用的模块关键词表：**只做粗筛，不是判定**。
+# 预览要零 token，所以不能问模型「这题该挂哪些节点」，只能用字面锚点猜一个模块集合，
+# 再拿它去 `by_scope` 过滤候选。锚点一律两字以上——单字（力、场、功）在中文里到处撞词
+# （能力、现场、功能），会把数学题也拖进物理候选，反而比不猜更误导。
+MODULE_KEYWORDS = {
+    "physics": [
+        "受力", "加速度", "位移", "摩擦力", "斜面", "重力", "弹力", "动量", "冲量",
+        "电势", "电流", "电压", "电阻", "电容", "磁场", "磁通", "电感", "电场",
+        "波长", "频率", "折射", "反射", "透镜", "压强", "浮力", "热力学", "熵变",
+        "简谐", "振动", "单摆", "圆周运动", "洛伦兹", "光电效应", "衰变", "理想气体",
+    ],
+    "math": [
+        "函数", "方程", "不等式", "求导", "导数", "微分", "积分", "极限", "级数",
+        "数列", "通项", "递推", "矩阵", "行列式", "特征值", "向量", "概率", "期望",
+        "方差", "排列组合", "二项式", "三角函数", "对数", "指数", "复数", "集合",
+        "映射", "同构", "证明", "定理", "归纳法", "圆锥曲线", "椭圆", "双曲线",
+        "抛物线", "立体几何", "解析几何",
+    ],
+    "graph": ["关系", "区别", "对比", "分类", "体系", "脉络", "知识结构", "概念图", "类比"],
+    "viz": [
+        "发动机", "四冲程", "齿轮", "活塞", "曲轴", "连杆", "气缸", "传动", "液压",
+        "阀门", "光路", "机芯", "剖视", "内部结构", "装配", "三视图", "动画",
+        "可视化", "交互", "演示", "示意", "模拟",
+    ],
+    "socratic": ["为什么", "怎么理解", "本质", "直觉", "追问", "引导我", "提示我"],
+    "learn": ["进阶", "拓展", "延伸", "深入", "相关领域", "前沿", "文献"],
+}
+
 # 用户可写内容的硬上限（超限拒绝写入，不做静默截断——静默截断会让人以为存进去了）
 LIMITS = {
     "name": 40,
@@ -417,3 +445,116 @@ def requested_block(workflow_context: Any, account: Any = None) -> tuple:
     if module in MODULE_LABELS and module not in item["scope"]:
         return ("", "")
     return ("\n\n" + item["body"], skill_id)
+
+
+# ====== 「试一条」预览（2026-11-16 第 3 版）======
+
+def guess_modules(question: Any) -> Dict[str, List[str]]:
+    """从问题里猜出涉及哪几个模块，返回 {模块键: 命中的关键词}。
+
+    **这是粗筛，不是判定**：预览要零 token，不能问模型；关键词只用来决定「拿哪些模块
+    去 `by_scope` 过滤」，让「问数学题不会看到交互可视化的候选」这类直觉成立。
+    真实路由仍由分析步的模型看候选卡决定，两者不要混为一谈。
+    """
+    text = str(question or "")
+    hits: Dict[str, List[str]] = {}
+    if not text.strip():
+        return hits
+    for module, words in MODULE_KEYWORDS.items():
+        matched = [word for word in words if word in text]
+        if matched:
+            hits[module] = matched
+    return hits
+
+
+def preview(question: Any, modules: Iterable[str] | None = None, account: Any = None) -> Dict[str, Any]:
+    """「这条技能会不会被选中 / 注入多少字 / 实际注入什么」——不跑模型。
+
+    回答的是**候选层**：这条问题会让哪些 skill 进入候选卡、若挂上会追加多少字、追加的
+    正文是什么。候选里具体挂不挂仍由分析步的模型决定（`menu_block` 那段），这里不猜。
+
+    `modules` 给了就按给的过滤（`module_source="explicit"`）；没给就按 `guess_modules`
+    猜；一个关键词都没命中时按全部节点列出（`module_source="all"`）——那种问题属于
+    「模型自己看着办」，报「空候选」会让人误以为技能永远用不上。
+    """
+    text = str(question or "").strip()
+    explicit: List[str] = []
+    for raw in (modules or []):
+        key = str(raw or "").strip()
+        if key in MODULE_LABELS and key not in explicit:
+            explicit.append(key)
+
+    if explicit:
+        targets = explicit
+        source = "explicit"
+        matched: Dict[str, List[str]] = {key: [] for key in explicit}
+    else:
+        matched = guess_modules(text)
+        if matched:
+            targets = [key for key in MODULE_LABELS if key in matched]
+            source = "keywords"
+        else:
+            targets = list(MODULE_LABELS)
+            source = "all"
+
+    out: Dict[str, Any] = {
+        "question": text,
+        "modules": targets,
+        "moduleSource": source,
+        "matched": matched,
+        "candidates": [],
+        "totalChars": 0,
+        "enabled": _enabled(),
+        "notes": [],
+    }
+
+    if not _enabled():
+        out["notes"].append("技能路由已关闭（PHYMATHIA_SKILL_ROUTER=0），现在不会有任何技能被注入。")
+        return out
+
+    if source == "keywords":
+        pairs = "、".join(
+            f"{MODULE_LABELS[key]}（{'/'.join(matched[key])}）" for key in targets
+        )
+        out["notes"].append(f"按问题里的字面词认出这些节点：{pairs}。")
+    elif source == "all":
+        out["notes"].append(
+            "问题里没有命中任何模块关键词，按全部 6 个节点列出候选——真实判定由分析步的模型做。"
+        )
+    else:
+        out["notes"].append("节点由请求指定（modules 参数），未按问题推断。")
+
+    total = 0
+    for item in by_scope(targets, account):
+        usable = [key for key in item["scope"] if key in targets]
+        if not usable:
+            continue
+        # 真到节点上注入时走的就是同一个函数（含 "\n\n" 前缀），预览不做第二套算法
+        block, _ = requested_block({"skill": {"id": item["id"], "module": usable[0]}}, account)
+        if not block:
+            continue
+        total += len(block)
+        out["candidates"].append({
+            "id": item["id"],
+            "name": item["name"],
+            "desc": item["desc"],
+            "scope": list(item["scope"]),
+            "builtin": bool(item.get("builtin")),
+            "usable": usable,
+            "usableLabels": [MODULE_LABELS[key] for key in usable],
+            "chars": len(block),
+            "text": block,
+        })
+    out["totalChars"] = total
+
+    if not out["candidates"]:
+        out["notes"].append(
+            "没有候选：这些节点上一条技能都没有，模型这次看不到任何技能正文。"
+            "换一个问题、或把技能的「适用节点」勾上这些节点再看。"
+        )
+    else:
+        out["notes"].append(
+            "预览只回答「会不会进候选卡」——候选里到底挂不挂，由分析步的模型看题目决定，"
+            "这里不跑模型（零 token）。"
+        )
+    return out
