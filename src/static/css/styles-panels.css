@@ -4166,6 +4166,14 @@
 [data-theme="light"] .continent-city {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--mastery-c, var(--accent)) 10%, transparent);
 }
+/* v9.x2 亮灯的三档才起晕：未测港保持 accent 原色、不发光——满图发光＝没有灯
+ * （放在 hover 规则之前，悬停的提亮仍按下面的规则覆盖它） */
+.continent-city.is-mastery-good,
+.continent-city.is-mastery-medium,
+.continent-city.is-mastery-weak {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mastery-c) 18%, transparent),
+              0 0 12px color-mix(in srgb, var(--mastery-c) 26%, transparent);
+}
 .continent-city:hover {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--mastery-c, var(--accent)) 22%, transparent), 0 0 14px color-mix(in srgb, var(--mastery-c, var(--accent)) 30%, transparent);
 }
@@ -4193,9 +4201,29 @@
 .continent-pop-when.is-mastery-good { color: var(--success); }
 .continent-pop-when.is-mastery-medium { color: var(--warn); }
 .continent-pop-when.is-mastery-weak { color: var(--danger); }
-.is-mastery-good-text { color: var(--success); }
-.is-mastery-medium-text { color: var(--warn); }
-.is-mastery-weak-text { color: var(--danger); }
+/* v9.x2 掌握度灯珠：图例里的灯键与联运港上的灯是同一颗（底色 + 2px 光圈 + 外晕一份配方），
+ * 图例才敢当承诺用。颜色只经 --lamp-c 喂；港上的灯不挂 is-*，直接吃父级 --mastery-c */
+.continent-lamp {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--lamp-c, var(--mastery-c, var(--accent)));
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--lamp-c, var(--mastery-c, var(--accent))) 16%, transparent),
+    0 0 7px color-mix(in srgb, var(--lamp-c, var(--mastery-c, var(--accent))) 55%, transparent);
+}
+.continent-lamp.is-good { --lamp-c: var(--success); }
+.continent-lamp.is-medium { --lamp-c: var(--warn); }
+.continent-lamp.is-weak { --lamp-c: var(--danger); }
+/* 未测＝灯座空着：只留一圈暗边，不发光（「未测不染」落到画面上就是这颗空灯座） */
+.continent-lamp.is-none {
+  box-sizing: border-box;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-secondary) 55%, transparent);
+}
+.continent-city .continent-lamp { margin-right: 5px; }
 .continent-legend-heat {
   border: 1px solid var(--accent);
   border-radius: var(--r-pill);
@@ -4818,6 +4846,28 @@
   border-top: 1px dashed var(--border);
   color: var(--text-secondary);
   font-size: var(--fs-2xs);
+}
+/* v9.x2 掌握度灯行：四颗灯（扎实/巩固/薄弱/未测）+ 开关 + 出处。虚线把它和上面三条
+   符号说明分两段——灯是「看图的眼睛」，不是又一条文字规矩 */
+.continent-legend-lamps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 10px;
+  margin-top: 7px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+.continent-lamp-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.continent-legend-lamps .continent-legend-heat { margin-left: auto; }
+.continent-legend-lampsrc {
+  flex: 1 0 100%;
+  opacity: 0.8;
 }
 
 /* v8.13 海域换色弹层：12 槽色盘（与自动配色同一份色盘）+ 任意色相滑块。

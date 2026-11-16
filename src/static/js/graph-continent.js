@@ -999,7 +999,10 @@ function _continentRender(data) {
     el.style.top = city.box.y + 'px';
     el.title = '联运港：' + city.reps.length + ' 座岛都学过——点开看重逢清单' +
       (heat ? ' · 掌握度 ' + heat.mastery + '%' : '');
-    el.innerHTML = '<span class="continent-city-name">' +
+    // v9.x2 灯珠：与图例同一颗（i.continent-lamp），亮不亮／什么颜色都由 --mastery-c 决定
+    // ——未挂档位类的港（未测／灯关）只留一圈空灯座
+    el.innerHTML = '<i class="continent-lamp' + (heat ? '' : ' is-none') + '" aria-hidden="true"></i>' +
+      '<span class="continent-city-name">' +
       _continentKindPrefix(s.kind) + esc(s.label || '') + '</span>';
     el.addEventListener('pointerdown', e => {
       e.stopPropagation();  // 标签/用户边同规：不让城市点击进画布拖拽态

@@ -130,12 +130,20 @@ function _continentRenderLegend(regionInfo, data) {
         '<span>联运港前缀：◈ 标题共享 · ∑ 公式共享 · ❖ 概念族</span>' +
         '<span>细线＝联运线（联运港↔岛，机器取证）；粗线＝你画的航线；虚线断桥＝一端已失效（工具条可清理）</span>' +
         '<span>相邻的岛＝学过共同概念——排布即亲缘</span>' +
-        '<span>掌握度灯：<span class="is-mastery-good-text">绿＝扎实</span> · ' +
-          '<span class="is-mastery-medium-text">黄＝巩固</span> · ' +
-          '<span class="is-mastery-weak-text">红＝薄弱</span> · 未测不染——来自画布检测的答题记录</span>' +
-        '<button class="continent-legend-heat" data-heat title="' +
-          (heatOn ? '关掉联运港的掌握度亮灯（只影响显示，不动数据）' : '打开联运港的掌握度亮灯') +
-          '">掌握度灯：' + (heatOn ? '开' : '关') + '</button>' +
+        // v9.x2 掌握度灯：图例不再用彩色文字讲颜色，直接摆四颗灯（与地图上同一颗）——
+        // 「看见灯」比「读到『绿＝扎实』」快，出处压到第二行小字
+        '<div class="continent-legend-lamps">' +
+          '<span class="continent-lamp-key" title="掌握度 ≥85%"><i class="continent-lamp is-good" aria-hidden="true"></i>扎实</span>' +
+          '<span class="continent-lamp-key" title="掌握度 70–84%"><i class="continent-lamp is-medium" aria-hidden="true"></i>巩固</span>' +
+          '<span class="continent-lamp-key" title="掌握度 &lt;70%"><i class="continent-lamp is-weak" aria-hidden="true"></i>薄弱</span>' +
+          '<span class="continent-lamp-key" title="还没测过：灯座空着"><i class="continent-lamp is-none" aria-hidden="true"></i>未测</span>' +
+          // 钮面写状态不写动作（「灯开」＝现在亮着，点一下关）：这行已经被四颗灯锚定，
+          // 再加「掌握度灯：」纯属重复字
+          '<button class="continent-legend-heat" data-heat title="' +
+            (heatOn ? '关掉联运港的掌握度亮灯（只影响显示，不动数据）' : '打开联运港的掌握度亮灯') +
+            '">灯' + (heatOn ? '开' : '关') + '</button>' +
+          '<span class="continent-legend-lampsrc">掌握度灯 · 数据来自画布检测的答题记录</span>' +
+        '</div>' +
       '</div>' +
       (footBits.length ? '<div class="continent-legend-foot">' + esc(footBits.join('；')) + '</div>' : ''));
   const toggle = legend.querySelector ? legend.querySelector('.continent-legend-head') : null;
