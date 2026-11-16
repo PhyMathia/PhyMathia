@@ -46,6 +46,7 @@
 //   graph-branch-workflow   分支拓展单链路化（T361/T362/T363：三入口落工作流＋删除范围真值，2026-10-17）
 //   graph-scope-confirm     Φ 阶段1 先对齐再动手（2026-10-19：复述确认卡＋选中即范围警告行＋大批拆段渲染）
 //   harness-health          Φ 主动体检芯片（2026-10-26：开面板零模型体检→顶部芯片→点击预填不发送→同画布同问题只提示一次；行为链独占 fetch/getElementById 桩，域尾收口）
+//   skills-ui               skill 界面（2026-11-16 第 4 步）：分析卡「技能：…」标签＋设置页按节点分组（纯同步）
 import { finish } from './frontend_smoke/_runner.mjs';
 import { run as _recipes } from './frontend_smoke/recipes.mjs';
 import { run as _phi } from './frontend_smoke/phi.mjs';
@@ -53,6 +54,7 @@ import { run as _contextmenu } from './frontend_smoke/contextmenu.mjs';
 import { run as _node_fs_toolbar } from './frontend_smoke/node-fs-toolbar.mjs';
 import { run as _canvas_text_scale } from './frontend_smoke/canvas-text-scale.mjs';
 import { run as _hotkey_registry } from './frontend_smoke/hotkey-registry.mjs';
+import { run as _skills_ui } from './frontend_smoke/skills-ui.mjs';
 import { run as _viewer_utopia } from './frontend_smoke/viewer-utopia.mjs';
 import { run as _knowledge_summary } from './frontend_smoke/knowledge-summary.mjs';
 import { run as _formula_repair } from './frontend_smoke/formula-repair.mjs';
@@ -104,6 +106,7 @@ _contextmenu();
 _node_fs_toolbar(); // 划词快捷工具（2026-10-25）：按语义插在 contextmenu 之后，纯同步静态契约
 _canvas_text_scale(); // 画布字号档（2026-11-15）：同属画布工具条，纯同步（行为断言换 documentElement 记录桩）
 _hotkey_registry(); // 快捷键注册表（2026-11-15，#468/#469）：纯同步，接画布工具条域之后
+_skills_ui(); // 技能界面（2026-11-16 第 4 步）：分析卡标签＋设置页按节点分组，纯同步
 _viewer_utopia();
 _knowledge_summary();
 _formula_repair();

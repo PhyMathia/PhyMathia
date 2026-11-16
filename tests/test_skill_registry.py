@@ -48,6 +48,8 @@ def test_menu_block_lists_candidates_and_plan_hint():
     assert "<skill_plan>" in block
     assert "iso-cutaway" in block
     assert "teardown-narrative" in block
+    # 分析卡要显示「这次挂了什么、为什么」：候选卡必须把 why 一并要来（选填但示例里有）
+    assert '"why"' in block
     # 下游只有物理视角：两条内置都不落在物理视角上 → 不给候选（省 token）
     assert skill_registry.menu_block([{"module": "physics"}]) == ""
     # 下游含交互可视化：只剩剖视那条

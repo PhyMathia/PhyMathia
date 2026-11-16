@@ -404,7 +404,9 @@ def menu_block(downstream: Any = None, account: Any = None) -> str:
     lines.append("- 逐条对照「适用节点」与描述：这道题确实落在某条的范围里，就把那条挂给对应节点；")
     lines.append("  明确不适用才跳过，不要因为「这步只写概要」就默认全部不挂——挂的是后面节点，不是这一步。")
     lines.append("- 挂法：在正文最前面单独输出一行（只此一行，不要解释、不要写进概要）：")
-    lines.append('- <skill_plan>{"viz":"iso-cutaway"}</skill_plan>')
+    lines.append('- <skill_plan>{"viz":"iso-cutaway","why":"这句话里要看到装置内部结构"}</skill_plan>')
+    lines.append("- why 选填但强烈建议写：一句话（≤40 字）说清为什么挂这条，用户会在分析卡上点开看；"
+                 "挂了多条时按节点用「；」分开写。")
     lines.append("- 一条都不合适就输出 <skill_plan>none</skill_plan>。")
     lines.append("- 键用模块英文键：" + "、".join(f"{k}={v}" for k, v in MODULE_LABELS.items()) + "。")
     lines.append("- 严禁自创候选之外的 id；同一节点最多一条。")

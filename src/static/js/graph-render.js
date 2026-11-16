@@ -953,6 +953,112 @@ function _customNodeStatusHtml(node, force) {
   return '<span class="graph-node-status status-' + stateKey + '"' + title + '>' + escapeHtml(statusText) + '</span>';
 }
 
+// ===== skill 计划标签（2026-11-16 第 4 步）=====
+// 分析卡正文只是一段概要，用户看不到「这次给后面哪些节点挂了哪条技能」——计划一直只
+// 活在 node.skillPlan（{picks, why, at}）里。这里把它显示成一行小标签：点开看模型给的
+// 理由；一条都没挂（模型回 <skill_plan>none</skill_plan>）时整块不渲染，数学题不会凭空
+// 多出一块界面元素。
+//
+// 名字从哪来：计划里只有 id（{"viz":"iso-cutaway"}），中文名得问 /api/skills。渲染是
+// 同步的，所以先拿 id 顶上，拉到名字后 _refreshSkillChips 就地换字（不整画布重画——
+// 那张卡可能正被人读着）。缓存挂 window 上：一次页面一份，失败也不再重试。
+const GRAPH_SKILL_MODULE_ORDER = ['physics', 'math', 'graph', 'viz', 'socratic', 'learn'];
+
+function _skillNameMap() {
+  const map = typeof window !== 'undefined' ? window.__phymathiaSkillNames : null;
+  return (map && typeof map === 'object') ? map : null;
+}
+
+function graphSkillNamesEnsure() {
+  if (_skillNameMap()) return;
+  if (typeof window === 'undefined' || window.__phymathiaSkillNamesState) return;
+  if (typeof fetch !== 'function') return;
+  window.__phymathiaSkillNamesState = 'loading';
+  Promise.resolve()
+    .then(() => fetch('/api/skills'))
+    .then(resp => (resp && resp.ok ? resp.json() : null))
+    .then(data => {
+      const map = {};
+      ((data && data.skills) || []).forEach(item => {
+        if (item && item.id) map[String(item.id)] = String(item.name || item.id);
+      });
+      window.__phymathiaSkillNames = map;
+      window.__phymathiaSkillNamesState = 'done';
+      _refreshSkillChips();
+    })
+    .catch(() => { window.__phymathiaSkillNamesState = 'failed'; });
+}
+
+function _skillDisplayName(id) {
+  const map = _skillNameMap();
+  const key = String(id || '');
+  return (map && map[key]) || key;
+}
+
+function _skillModuleLabel(key) {
+  const meta = (typeof GRAPH_MODULE_META === 'object' && GRAPH_MODULE_META) ? GRAPH_MODULE_META[key] : null;
+  return (meta && meta.label) || String(key || '');
+}
+
+function _graphSkillPlanChipHtml(node) {
+  // 只有问题分析卡有计划：手工回答、苏格拉底反馈卡上即便残留旧字段也不显示
+  if (!node || node.kind !== 'answer' || node.manual || node.socraticMeta) return '';
+  if (node.messageIndex >= 0) return '';
+  const plan = node.skillPlan;
+  const picks = plan && typeof plan === 'object' ? plan.picks : null;
+  if (!picks || typeof picks !== 'object') return '';
+  const rows = [];
+  GRAPH_SKILL_MODULE_ORDER.forEach(key => {
+    const id = picks[key];
+    if (!id) return;
+    rows.push({
+      module: key,
+      id: String(id),
+      label: _skillModuleLabel(key) + ' · ' + _skillDisplayName(id)
+    });
+  });
+  if (!rows.length) return '';
+  if (!_skillNameMap()) graphSkillNamesEnsure();
+  const why = String((plan && plan.why) || '').trim();
+  const labels = rows.map(row =>
+    '<span class="graph-skill-chip-label" data-skill-id="' + escapeHtml(row.id) + '"'
+    + ' data-skill-module="' + escapeHtml(row.module) + '">' + escapeHtml(row.label) + '</span>'
+  ).join('<span class="graph-skill-chip-sep">、</span>');
+  const targets = rows.map(row =>
+    '「' + escapeHtml(_skillModuleLabel(row.module)) + '」（id：' + escapeHtml(row.id) + '）'
+  ).join('、');
+  const whyHtml = why
+    ? '<div class="graph-skill-chip-why">' + escapeHtml(why) + '</div>'
+    : '<div class="graph-skill-chip-why is-empty">模型这次没写理由，只报了挂哪一条。</div>';
+  return '<details class="graph-skill-chip">'
+    + '<summary class="graph-skill-chip-summary" title="这次生成给哪些节点挂了哪条技能，点开看模型给的理由"'
+    + ' onclick="event.stopPropagation()">'
+    + '<span class="graph-skill-chip-prefix">技能：</span>' + labels
+    + '<span class="graph-skill-chip-caret">▾</span></summary>'
+    + '<div class="graph-skill-chip-body">' + whyHtml
+    + '<div class="graph-skill-chip-note">挂给' + targets + ' · 计划随分析卡保存，刷新后仍在</div>'
+    + '</div></details>';
+}
+
+// 名字晚到：只换标签文字，不重建 DOM（重建会打断正展开的 details 与选区）
+function _refreshSkillChips() {
+  const map = _skillNameMap();
+  if (!map) return;
+  if (typeof document === 'undefined' || !document || typeof document.querySelectorAll !== 'function') return;
+  let list = [];
+  try {
+    list = Array.prototype.slice.call(document.querySelectorAll('.graph-skill-chip-label'));
+  } catch (e) {
+    return;
+  }
+  list.forEach(el => {
+    const id = el.getAttribute ? String(el.getAttribute('data-skill-id') || '') : '';
+    if (!id || !map[id]) return;
+    const key = el.getAttribute ? String(el.getAttribute('data-skill-module') || '') : '';
+    el.textContent = _skillModuleLabel(key) + ' · ' + map[id];
+  });
+}
+
 function _canMinimizeGraphNode(node) {
   if (!node) return false;
   if (node.kind === 'draft' || node.kind === 'ai_eval' || node.kind === 'relation' || node.kind === 'junction') return false;
@@ -1443,6 +1549,8 @@ function _renderNodeHtml(node, messages, state) {
   }
   const sub = _nodeSub(node);
   const subHtml = sub ? '<span class="graph-node-sub">' + escapeHtml(sub) + '</span>' : '';
+  // 技能计划标签（2026-11-16）：分析卡专用，没计划返回空串——不占位、不留白
+  const skillChipHtml = skipBody ? '' : _graphSkillPlanChipHtml(node);
   const statusHtml = _customNodeStatusHtml(node);
   const minimizeToggle = _graphMinimizeToggleHtml(node);
   const fsBtnsHtml = typeof _nodeFsTogglesHtml === 'function' ? _nodeFsTogglesHtml(node, message) : '';
@@ -1472,6 +1580,7 @@ function _renderNodeHtml(node, messages, state) {
     + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span>' + badgeHtml + unreadHtml + subHtml + statusHtml + minimizeToggle + editBtn + fsBtnsHtml + quickConnectBtn + deleteBtn + '</div>'
     + labelHtml
     + (skipBody ? _minimizedBodyHtml() : (body ? '<div class="graph-node-full-content">' + body + '</div>' : ''))
+    + skillChipHtml
     + (expandable && !skipBody ? '<div class="graph-node-actions"><button class="graph-answer-expand-btn" onclick="toggleGraphNodeExpand(\'' + node.id + '\')" title="' + (expanded ? '收起，回到预览' : '查看完整内容') + '">' + (expanded ? '收起 ▴' : '展开全文 ▾') + '</button></div>' : '')
     + _nodeActions(node)
     + '<span class="graph-resize-handle" title="调整尺寸"></span>'

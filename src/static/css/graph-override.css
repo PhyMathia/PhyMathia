@@ -361,6 +361,76 @@
   overflow-wrap: anywhere !important;
 }
 
+/* 技能计划标签（2026-11-16 第 4 步）：分析卡底部一行小标签，点开看模型给的理由。
+   只用主题令牌（--border / --text-secondary / --accent），五套主题自动跟色；没有计划时
+   前端整块不渲染，所以这里不必处理「空标签」形态。details/summary 原生开合，零 JS 状态。 */
+.graph-skill-chip {
+  width: 100% !important;
+  margin-top: 10px !important;
+  font-size: calc(var(--fs-2xs) * var(--graph-text-scale, 1)) !important;
+  line-height: 1.5 !important;
+}
+
+.graph-skill-chip > summary.graph-skill-chip-summary {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  flex-wrap: wrap !important;
+  padding: 2px 8px !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--r-pill) !important;
+  color: var(--text-secondary) !important;
+  background: color-mix(in srgb, var(--accent) 9%, transparent) !important;
+  cursor: pointer !important;
+  list-style: none !important;
+}
+
+.graph-skill-chip > summary.graph-skill-chip-summary::-webkit-details-marker {
+  display: none !important;
+}
+
+.graph-skill-chip[open] > summary.graph-skill-chip-summary {
+  color: var(--text-primary) !important;
+  border-color: var(--accent) !important;
+}
+
+.graph-skill-chip-prefix,
+.graph-skill-chip-sep {
+  opacity: 0.6 !important;
+}
+
+.graph-skill-chip-caret {
+  opacity: 0.55 !important;
+  transition: transform 0.18s ease !important;
+}
+
+.graph-skill-chip[open] .graph-skill-chip-caret {
+  transform: rotate(180deg) !important;
+}
+
+.graph-skill-chip-body {
+  margin-top: 6px !important;
+  padding: 6px 10px !important;
+  border-left: 2px solid var(--accent) !important;
+  border-radius: 0 var(--r-sm) var(--r-sm) 0 !important;
+  background: color-mix(in srgb, var(--accent) 5%, transparent) !important;
+  color: var(--text-primary) !important;
+}
+
+.graph-skill-chip-why.is-empty {
+  opacity: 0.65 !important;
+}
+
+.graph-skill-chip-note {
+  margin-top: 4px !important;
+  color: var(--text-secondary) !important;
+  opacity: 0.8 !important;
+}
+
+.graph-node.minimized .graph-skill-chip {
+  display: none !important;
+}
+
 .graph-node-full-content {
   display: flex !important;
   flex-direction: column !important;

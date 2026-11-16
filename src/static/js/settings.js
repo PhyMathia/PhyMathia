@@ -858,7 +858,7 @@ function _settingsPageHotkeys() {
 // ③ 读写在服务端做账号隔离，前端只负责「列 / 建 / 改 / 删」，不参与判定。
 const _skillsPage = {
   loaded: false, loading: false, error: '', message: '',
-  items: [], limits: { name: 40, desc: 120, body: 20000, skills: 40 }, draft: null,
+  items: [], byModule: {}, limits: { name: 40, desc: 120, body: 20000, skills: 40 }, draft: null,
   // 「试一条」的状态：question 存着是为了整页重画后输入框不丢字
   preview: { open: false, question: '', loading: false, data: null, error: '' }
 };
@@ -880,6 +880,7 @@ function settingsSkillsLoad(force) {
     .then(resp => (resp.ok ? resp.json() : Promise.reject(new Error('HTTP ' + resp.status))))
     .then(data => {
       _skillsPage.items = Array.isArray(data.skills) ? data.skills : [];
+      _skillsPage.byModule = (data.byModule && typeof data.byModule === 'object') ? data.byModule : {};
       if (data.limits) _skillsPage.limits = data.limits;
       _skillsPage.loaded = true;
       _skillsPage.error = '';
@@ -900,23 +901,66 @@ function _settingsSkillScopeLabels(scope) {
   return (scope || []).map(key => map[key] || key).join(' · ');
 }
 
+function _settingsSkillRowHtml(item) {
+  const badge = item.builtin ? '<span style="margin-left:6px;font-size:11px;opacity:.7;border:1px solid var(--border);border-radius:999px;padding:0 6px">内置</span>' : '';
+  const ops = item.builtin
+    ? '<span style="font-size:12px;opacity:.55">只读</span>'
+    : '<button type="button" class="settings-hk-reset" onclick="settingsSkillEdit(\'' + _settingsEsc(item.id) + '\')">编辑</button>'
+      + '<button type="button" class="settings-hk-reset" onclick="settingsSkillDelete(\'' + _settingsEsc(item.id) + '\')">删除</button>';
+  return '<div style="display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border)">'
+    + '<div style="flex:1;min-width:0">'
+    + '<div style="font-size:13px;color:var(--text-primary)">' + _settingsEsc(item.name) + badge + '</div>'
+    + '<div style="font-size:12px;opacity:.75;margin-top:2px">' + _settingsEsc(item.desc || '（没有描述）') + '</div>'
+    + '<div style="font-size:11px;opacity:.55;margin-top:2px">id：' + _settingsEsc(item.id)
+    + ' · 适用：' + _settingsEsc(_settingsSkillScopeLabels(item.scope)) + ' · 正文 ' + (item.chars || 0) + ' 字</div>'
+    + '</div><div style="display:flex;gap:6px;flex-shrink:0">' + ops + '</div></div>';
+}
+
+// 按节点分组（2026-11-16 第 4 步）：接口一直在回 byModule，前端原先平铺没用上。
+// 一条技能勾了几个节点，就在几个组里各出现一次——这正是它真实的生效范围（每个节点
+// 生成时各挂一次），合并成一行反而看不出「这个节点上有哪些候选」。
+// 纯函数：传 items/byModule 就能算，不依赖页面状态（冒烟直接用样本喂它）。
+function _settingsSkillGroups(items, byModule) {
+  const list = Array.isArray(items) ? items : [];
+  const byId = {};
+  list.forEach(item => { byId[item.id] = item; });
+  // 旧接口/异常时按 scope 现算一份，别让整页退化成「没有分组」
+  let map = byModule;
+  if (!map || typeof map !== 'object' || !Object.keys(map).length) {
+    map = {};
+    list.forEach(item => {
+      (item.scope || []).forEach(key => { (map[key] = map[key] || []).push(item.id); });
+    });
+  }
+  const groups = SKILL_SCOPE_OPTIONS.map(pair => ({
+    key: pair[0],
+    label: pair[1],
+    items: (map[pair[0]] || []).map(id => byId[id]).filter(Boolean)
+  })).filter(group => group.items.length);
+  const emptyLabels = SKILL_SCOPE_OPTIONS
+    .filter(pair => !(map[pair[0]] || []).length)
+    .map(pair => pair[1]);
+  return { groups: groups, emptyLabels: emptyLabels, known: Object.keys(byId).length };
+}
+
 function _settingsSkillRowsHtml() {
   if (_skillsPage.error) return '<div class="settings-note">' + _settingsEsc(_skillsPage.error) + '</div>';
   if (!_skillsPage.items.length) return '<div class="settings-note">还没有技能。点上面的「新建技能」写一条。</div>';
-  return _skillsPage.items.map(item => {
-    const badge = item.builtin ? '<span style="margin-left:6px;font-size:11px;opacity:.7;border:1px solid var(--border);border-radius:999px;padding:0 6px">内置</span>' : '';
-    const ops = item.builtin
-      ? '<span style="font-size:12px;opacity:.55">只读</span>'
-      : '<button type="button" class="settings-hk-reset" onclick="settingsSkillEdit(\'' + _settingsEsc(item.id) + '\')">编辑</button>'
-        + '<button type="button" class="settings-hk-reset" onclick="settingsSkillDelete(\'' + _settingsEsc(item.id) + '\')">删除</button>';
-    return '<div style="display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border)">'
-      + '<div style="flex:1;min-width:0">'
-      + '<div style="font-size:13px;color:var(--text-primary)">' + _settingsEsc(item.name) + badge + '</div>'
-      + '<div style="font-size:12px;opacity:.75;margin-top:2px">' + _settingsEsc(item.desc || '（没有描述）') + '</div>'
-      + '<div style="font-size:11px;opacity:.55;margin-top:2px">id：' + _settingsEsc(item.id)
-      + ' · 适用：' + _settingsEsc(_settingsSkillScopeLabels(item.scope)) + ' · 正文 ' + (item.chars || 0) + ' 字</div>'
-      + '</div><div style="display:flex;gap:6px;flex-shrink:0">' + ops + '</div></div>';
-  }).join('');
+  const split = _settingsSkillGroups(_skillsPage.items, _skillsPage.byModule);
+  if (!split.groups.length) {
+    return '<div class="settings-note">这些技能都没勾「适用节点」，哪个节点都不会挂它们——点「编辑」补上。</div>';
+  }
+  return '<div class="settings-note" style="font-size:11px">按节点分组：一条技能勾了几个节点，就会在几个组里各出现一次（每个节点生成时最多挂一条）。</div>'
+    + split.groups.map(group => '<div style="margin-top:14px">'
+      + '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px">'
+      + '<span style="font-size:13px;font-weight:700;color:var(--text-primary)">' + _settingsEsc(group.label) + '</span>'
+      + '<span style="font-size:11px;opacity:.55">' + group.items.length + ' 条</span></div>'
+      + group.items.map(_settingsSkillRowHtml).join('')
+      + '</div>').join('')
+    + (split.emptyLabels.length
+      ? '<div class="settings-note" style="font-size:11px;margin-top:12px">还没有技能可挂的节点：'
+        + _settingsEsc(split.emptyLabels.join(' · ')) + '</div>'
+      : '');
 }
 
 function _settingsSkillEditorHtml() {
