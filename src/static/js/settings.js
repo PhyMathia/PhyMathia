@@ -982,10 +982,10 @@ function _settingsSkillGroups(items, byModule) {
 function _settingsSkillRowsHtml() {
   if (_skillsPage.error) return '<div class="settings-note">' + _settingsEsc(_skillsPage.error) + '</div>';
   if (!_skillsPage.items.length) {
-    return '<div class="settings-note">还没有技能。点「新建技能」写一条，或用「导入技能」把现成的 .md 拉进来。</div>';
+    return '<div class="settings-note">还没有技能：新建一条，或导入现成的 .md。</div>';
   }
   const split = _settingsSkillGroups(_skillsPage.items, _skillsPage.byModule);
-  let html = '<div class="settings-note" style="font-size:11px">按节点分组：一条技能勾了几个节点，就会在几个组里各出现一次（每个节点生成时最多挂一条）。</div>';
+  let html = '<div class="settings-note" style="font-size:11px">一条技能挂了几个节点，就在几个组里各出现一次。</div>';
   if (split.groups.length) {
     html += split.groups.map(group => '<div style="margin-top:14px">'
       + '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px">'
@@ -994,7 +994,7 @@ function _settingsSkillRowsHtml() {
       + group.items.map(_settingsSkillRowHtml).join('')
       + '</div>').join('');
   } else {
-    html += '<div class="settings-note">当前没有开着的技能——下面「已关闭」里的条目可以重新打开。</div>';
+    html += '<div class="settings-note">技能都关着：在下面「已关闭」里重新打开。</div>';
   }
   html += split.emptyLabels.length
     ? '<div class="settings-note" style="font-size:11px;margin-top:12px">还没有技能可挂的节点：'
@@ -1005,7 +1005,7 @@ function _settingsSkillRowsHtml() {
       + '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px">'
       + '<span style="font-size:13px;font-weight:700;color:var(--text-primary)">已关闭</span>'
       + '<span style="font-size:11px;opacity:.55">' + split.disabled.length
-      + ' 条 · 不参与任何节点的候选与注入</span></div>'
+      + ' 条 · 不参与判定</span></div>'
       + split.disabled.map(_settingsSkillRowHtml).join('')
       + '</div>';
   }
@@ -1026,18 +1026,17 @@ function _settingsSkillEditorHtml() {
     + (editing
       ? '<div class="settings-note" style="font-size:11px;margin-bottom:8px">'
         + (draft.source === 'builtin'
-          ? '这是内置技能。保存会写一份你自己的副本（名字、适用节点、正文都能改），内置原版不动，'
-            + '随时能在列表里点「恢复默认」退回去。'
+          ? '内置技能：保存会生成你的副本，原版不动，可随时「恢复默认」。'
           : (draft.overridden
-            ? '这条是你覆盖内置技能的副本；点「恢复默认」可退回内置原版。'
-            : '改完点保存，下一次提问就按新配置判定。'))
+            ? '这是覆盖内置的副本，可「恢复默认」退回原版。'
+            : '保存后下一次提问生效。'))
         + '</div>'
       : '')
     + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
     + '<input id="skillDraftName" class="settings-hk-search" style="flex:1;min-width:160px" placeholder="技能名，例如 受力分析七步" value="' + _settingsEsc(draft.name || '') + '">'
     + '<input id="skillDraftId" class="settings-hk-search" style="flex:1;min-width:160px" placeholder="id：小写字母/数字/连字符，建好不可改" value="' + _settingsEsc(draft.id || '') + '"' + (editing ? ' readonly' : '') + '>'
     + '</div>'
-    + '<input id="skillDraftDesc" class="settings-hk-search" style="width:100%;margin-top:8px" placeholder="一句话：什么时候用它（模型靠这句判断挂不挂）" value="' + _settingsEsc(draft.desc || '') + '">'
+    + '<input id="skillDraftDesc" class="settings-hk-search" style="width:100%;margin-top:8px" placeholder="一句话：什么题用它" value="' + _settingsEsc(draft.desc || '') + '">'
     + '<div style="margin-top:10px;font-size:12px;opacity:.75">给哪些节点用（至少选一个）：</div>'
     + '<div style="margin-top:4px">' + checks + '</div>'
     + '<div style="margin-top:6px;font-size:12px;opacity:.75">正文（会原样交给模型）：</div>'
@@ -1056,8 +1055,7 @@ function _settingsSkillEditorHtml() {
 // 判定口径以**已保存**的技能为准（服务端读的是磁盘），所以提示里要说清「先保存再试」。
 function _settingsSkillPreviewHtml() {
   const st = _skillsPage.preview || {};
-  let body = '<div class="settings-note" style="font-size:12px">用一句话试：只算「会不会进候选卡」，不花模型额度。'
-    + '以已保存的技能为准——刚改的正文先点保存再试。</div>'
+  let body = '<div class="settings-note" style="font-size:12px">只算会不会进候选，不花额度；以已保存的版本为准，先保存再试。</div>'
     + '<div style="display:flex;gap:8px;margin-top:8px">'
     + '<input id="skillPreviewQuestion" class="settings-hk-search" style="flex:1;min-width:160px" placeholder="例如：四冲程发动机怎么工作" value="' + _settingsEsc(st.question || '') + '" oninput="settingsSkillPreviewInput(this.value)">'
     + '<button type="button" class="settings-hk-resetall" onclick="settingsSkillPreview()">试一条</button>'
@@ -1067,7 +1065,7 @@ function _settingsSkillPreviewHtml() {
   else if (st.data) body += _settingsSkillPreviewResultHtml(st.data);
   return '<details class="skill-preview" style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px"'
     + (st.open ? ' open' : '') + ' ontoggle="settingsSkillPreviewToggle(this.open)">'
-    + '<summary style="cursor:pointer;font-size:12px;opacity:.8">试一条：这条技能什么时候会被挂上、会注入多少字</summary>'
+    + '<summary style="cursor:pointer;font-size:12px;opacity:.8">试一条：会不会被挂上、注入多少字</summary>'
     + '<div style="padding-top:8px">' + body + '</div></details>';
 }
 
@@ -1079,7 +1077,7 @@ function _settingsSkillPreviewResultHtml(data) {
   const candidates = data.candidates || [];
   let html = '<div style="margin-top:10px;font-size:12.5px">'
     + '<b>候选 ' + candidates.length + ' 条</b>'
-    + (candidates.length ? ' · 若挂上共注入 <b>' + (data.totalChars || 0) + '</b> 字（每个节点只挂一条）' : '')
+    + (candidates.length ? ' · 挂上共注入 <b>' + (data.totalChars || 0) + '</b> 字' : '')
     + '</div>'
     + '<div style="font-size:11px;opacity:.6;margin-top:2px">认出节点：' + _settingsEsc(modules.join(' · ') || '无') + '</div>';
   // 正在编辑的这条到底进没进候选——这是「试一条」最直接的答案
@@ -1088,7 +1086,7 @@ function _settingsSkillPreviewResultHtml(data) {
     const hit = candidates.some(item => item.id === editingId);
     html += '<div style="font-size:12px;margin-top:6px;color:' + (hit ? 'var(--accent)' : 'inherit') + '">'
       + (hit ? '这条（' + _settingsEsc(editingId) + '）会在候选里。'
-             : '这条（' + _settingsEsc(editingId) + '）不在候选里——勾的节点和这个问题对不上，或被别的技能挤掉了。')
+             : '这条（' + _settingsEsc(editingId) + '）不在候选里：节点对不上，或被别的技能挤掉。')
       + '</div>';
   }
   html += candidates.map(item => {
@@ -1166,17 +1164,14 @@ function _settingsPageSkills() {
   const offCount = typeof counts.disabled === 'number' ? counts.disabled : _skillsPage.items.filter(i => i.enabled === false).length;
   const routerOn = _skillsPage.routerEnabled !== false;
   return '<div class="settings-page-title">技能</div>'
-    + '<div class="settings-note">技能的用法：提一个问题时，「问题分析」那一步会先看问题、后面的节点、以及这里有哪些技能，'
-    + '决定给哪个节点挂哪一条；真到那个节点生成时才把正文交出去。所以这里写的是「做法」，不是「知识」。</div>'
+    + '<div class="settings-note">技能是「做法」：提问时自动挂到合适的节点，生成时才把正文交给它。</div>'
     + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0;padding:10px 12px;'
     + 'border:1px solid var(--border);border-radius:10px">'
     + '<button type="button" class="' + (routerOn ? 'settings-hk-resetall' : 'settings-hk-reset') + '"'
     + ' onclick="settingsSkillToggleRouter()" style="min-width:112px">'
     + (routerOn ? '总开关：已开启' : '总开关：已关闭') + '</button>'
     + '<span style="font-size:12px;opacity:.7;flex:1;min-width:180px">'
-    + (routerOn
-      ? '关掉后所有技能都不参与判定；只想停用某一条，用下面行内的「已启用」开关。'
-      : '现在没有任何技能会被挂上（连候选卡都不发）。打开它才恢复。')
+    + (routerOn ? '关掉后所有技能都不参与判定。' : '现在没有任何技能会被挂上。')
     + '</span></div>'
     + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0">'
     + '<button type="button" class="settings-hk-resetall" onclick="settingsSkillNew()">新建技能</button>'
@@ -1205,9 +1200,7 @@ function settingsSkillToggleRouter() {
     .then(result => {
       if (!result.ok) throw new Error((result.data && result.data.detail) || '保存失败');
       _skillsPage.routerEnabled = result.data.enabled !== false;
-      _skillsPage.message = _skillsPage.routerEnabled
-        ? '技能路由已打开（下一条提问就会参与判定）'
-        : '技能路由已关闭（技能还在，只是不再挂到任何节点）';
+      _skillsPage.message = _skillsPage.routerEnabled ? '技能路由已打开' : '技能路由已关闭';
       if (result.data && result.data.notes) _skillsPage.message += ' ' + result.data.notes;
       _skillsPage.loaded = false;
       settingsSkillsLoad(true);
@@ -1232,8 +1225,7 @@ function settingsSkillToggle(id, on) {
     .then(resp => resp.json().then(data => ({ ok: resp.ok, data: data })))
     .then(result => {
       if (!result.ok) throw new Error((result.data && result.data.detail) || '保存失败');
-      _skillsPage.message = (on ? '已启用：' : '已关闭：') + ((item && item.name) || id)
-        + (on ? '（下一次提问就会参与判定）' : '（不再挂到任何节点，随时可打开）');
+      _skillsPage.message = (on ? '已启用：' : '已关闭：') + ((item && item.name) || id);
       _skillsPage.loaded = false;
       settingsSkillsLoad(true);
     })
@@ -1250,9 +1242,7 @@ function settingsSkillToggle(id, on) {
 function _settingsSkillImportHtml() {
   const st = _skillsPage.importer;
   let body = '<div class="settings-note" style="font-size:12px">'
-    + '支持 .md / .txt，一次最多 ' + 20 + ' 条。带 <code>--- id/name/desc/scope ---</code> 的 front-matter 最准；'
-    + '没有也能导入：id 取文件名、名字取第一个标题、适用节点按正文猜（导入前都能改）。'
-    + '同 id 会覆盖已有那条（包括内置）。</div>'
+    + '支持 .md / .txt，一次最多 ' + 20 + ' 条；无 front-matter 会自动猜（导入前可改）；同 id 覆盖已有条目（含内置）。</div>'
     + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">'
     + '<input type="file" id="skillImportFiles" accept=".md,.markdown,.txt,text/markdown,text/plain" multiple'
     + ' onchange="settingsSkillImportFiles(this)" style="font-size:12px;max-width:100%">'
@@ -1272,11 +1262,11 @@ function _settingsSkillImportHtml() {
   if (st.entries.length) {
     const picked = _settingsSkillImportPicked().length;
     body += '<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:8px">'
-      + '<div style="font-size:12px;opacity:.75">解析出 ' + st.entries.length + ' 条，勾选要导入的（可在这里改名字/描述/id/节点）：</div>'
+      + '<div style="font-size:12px;opacity:.75">解析出 ' + st.entries.length + ' 条，勾选要导入的：</div>'
       + st.entries.map(_settingsSkillImportEntryHtml).join('')
       + '<div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">'
       + '<button type="button" class="settings-hk-resetall" id="skillImportConfirmBtn" onclick="settingsSkillImportConfirm()">导入选中的 ' + picked + ' 条</button>'
-      + '<span style="font-size:11px;opacity:.6">导入后立即生效（下一次提问参与判定）</span></div></div>';
+      + '<span style="font-size:11px;opacity:.6">导入后立即生效</span></div></div>';
   }
   return '<div style="border:1px solid var(--border);border-radius:10px;padding:12px;margin:10px 0 16px">'
     + '<div style="font-size:13px;margin-bottom:6px">导入技能</div>' + body + '</div>';
