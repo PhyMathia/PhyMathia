@@ -581,3 +581,33 @@ def test_saved_skill_is_written_in_mainstream_shape():
     # 回读一致
     item = skill_registry.get("written-now")
     assert item["name"] == "写出来的" and item["scope"] == ["viz"]
+
+
+def test_capabilities_reflect_schema_instead_of_a_second_copy(monkeypatch):
+    """能力清单一律反射属主常量——改 LIMITS 不改这里，清单必须跟着变。"""
+    caps = skill_registry.capabilities("default")
+    assert caps["limits"] == skill_registry.LIMITS
+    assert caps["scope"] == skill_registry.MODULE_LABELS
+    assert caps["id"]["pattern"] == skill_registry._SKILL_ID_RE.pattern
+    assert caps["cards"]["desc"] == skill_registry.CARD_DESC_MAX
+    assert caps["planBlock"]["tag"] == skill_registry.PLAN_TAG
+    monkeypatch.setitem(skill_registry.LIMITS, "desc", 999)
+    assert skill_registry.capabilities("default")["limits"]["desc"] == 999
+
+
+def test_capabilities_lists_existing_skills_and_write_boundary():
+    """清单要能让作者面查重、并且一眼看出哪条写不进去（目录型只能去文件管理器）。"""
+    skill_registry.save_skill("default", {
+        "id": "forge-demo", "name": "工坊样例", "desc": "一句话描述", "scope": ["viz"], "body": "正文",
+    })
+    caps = skill_registry.capabilities("default")
+    row = [item for item in caps["existing"] if item["id"] == "forge-demo"][0]
+    assert row["layout"] == "file" and row["enabled"] is True and row["builtin"] is False
+    assert caps["counts"]["limit"] == skill_registry.LIMITS["skills"]
+    assert caps["counts"]["user"] >= 1
+    # 内置 anatomy 是目录型：写入口拒它，能力清单要把这条边界说清
+    dir_row = [item for item in caps["existing"] if item["id"] == "anatomy"][0]
+    assert dir_row["layout"] == "dir" and dir_row["builtin"] is True
+    assert caps["layouts"]["writable"] == ["file"]
+    # 摘要不带正文（正文可能两万字，工具要用再按 id 取）
+    assert "body" not in row

@@ -899,6 +899,85 @@ def list_for_ui(account: Any = None) -> Dict[str, Any]:
     }
 
 
+# ====== 能力清单（第 9 版，2026-11-17：创造模式造 skill 的「查」端）======
+# 与 `harness/recipes.py::recipe_capabilities` 同一范式：枚举、上限、路径一律从属主
+# 常量反射，绝不手抄第二份。将来的技能工坊（Φ 的造技能相位）提示词与工具都从这里取
+# 说明书——格式一改这里自动跟上，不会出现「指南说 120 字、校验器说 256 字」各说各话。
+# 对应设计口径见 docs/dev/skills.md 第 9 版。
+BODY_SECTIONS = ("适用", "不适用", "若采用按什么做", "红线")
+PLAN_TAG = "skill_plan"
+PLAN_WHY_MAX = 40
+
+
+def capabilities(account: Any = None) -> Dict[str, Any]:
+    """技能系统的能力清单：模型「查着写」的唯一事实源（零 IO、零模型调用）。
+
+    回答三件事：**格式长什么样**（front-matter 键、正文结构、计划块）、**约束是多少**
+    （id 规则、`LIMITS`、候选卡截断）、**现在库里有什么**（id 清单用来查重、目录型提示
+    别去写）。`existing` 只给摘要，不带正文——正文可能是两万字，工具要用再按 id 取。
+    """
+    key = _account(account)
+    items = all_skills(key)
+    rows = [{
+        "id": item["id"],
+        "name": item["name"],
+        "desc": item["desc"],
+        "scope": list(item["scope"]),
+        "layout": item.get("layout") or "file",
+        "enabled": bool(item.get("enabled", True)),
+        "builtin": bool(item.get("builtin")),
+        "overridden": bool(item.get("overridden")),
+        "needsScope": bool(item.get("needs_scope")),
+    } for item in items]
+    return {
+        "format": {
+            # 第 8 版起写的就是主流形状：一份 md 两边宿主都能读
+            "frontMatter": {
+                "name": "技能 id（小写 slug，必须与文件名/目录名一致）",
+                "description": "一句话「做什么＋什么时候用」，进候选卡",
+                "metadata.title": "中文显示名",
+                "metadata.scope": "适用节点键，逗号分隔，只能取 scope 里的键",
+            },
+            "legacyKeys": ["id", "desc", "scope"],  # 旧写法继续能读
+            "bodySections": list(BODY_SECTIONS),
+        },
+        "planBlock": {
+            "tag": PLAN_TAG,
+            "shape": '{"<节点键>":"<技能 id>","why":"为什么挂它"}',
+            "whyMax": PLAN_WHY_MAX,
+            "none": f"<{PLAN_TAG}>none</{PLAN_TAG}>",
+        },
+        "id": {
+            "pattern": _SKILL_ID_RE.pattern,
+            "hint": "小写字母开头，字母数字与连字符，2–41 位（主流规范上限 64，我们更严）",
+        },
+        "limits": dict(LIMITS),
+        "cards": {"desc": CARD_DESC_MAX},
+        "scope": dict(MODULE_LABELS),
+        "layouts": {
+            "file": "skills/<id>.md——一份 md 一条；接口只能写这种",
+            "dir": f"skills/<id>/{DIR_ADAPT_FILE}——目录型技能包（可带 references/）",
+            "adapter": DIR_ADAPT_FILE,
+            "entries": list(DIR_ENTRY_FILES),
+            "writable": ["file"],
+            "states": {
+                "adapted": "有适配层：正常参与候选与投递",
+                "original": "只有上游 SKILL.md：正文直接用，注入前自动加宿主能力声明",
+                "needsScope": "缺适用节点：可见可开关，但不参与候选与投递，等人指定",
+                "oversize": "正文超上限：不注入也不截断",
+            },
+        },
+        "hostGuard": HOST_GUARD,
+        "router": {"account": enabled(key), "env": _env_on()},
+        "existing": rows,
+        "counts": {
+            "total": len(rows),
+            "user": len([row for row in rows if not row["builtin"]]),
+            "limit": LIMITS["skills"],
+        },
+    }
+
+
 # ====== 路由载荷 ======
 
 def _downstream_modules(downstream: Any) -> List[str]:

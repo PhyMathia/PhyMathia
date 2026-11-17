@@ -28,6 +28,17 @@ async def api_skills_list(request: Request):
     return skill_registry.list_for_ui(account)
 
 
+@router.get("/api/skills/capabilities")
+async def api_skills_capabilities(request: Request):
+    """格式说明书 + 现役清单摘要（第 9 版创造模式「查」端，零模型调用）。
+
+    与 `/api/harness/recipe/capabilities` 同角色：将来的技能工坊提示词、工具层、
+    设置页都读这一个口，别各抄一份枚举。
+    """
+    account = _account_id(request, {})
+    return skill_registry.capabilities(account)
+
+
 @router.post("/api/skills/save")
 async def api_skills_save(request: Request):
     """新建或更新一条自建 skill。
