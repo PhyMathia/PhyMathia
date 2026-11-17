@@ -53,12 +53,71 @@ export function run() {
     return true;
   });
 
-  check('node-fs-toolbar: 桥上白名单＝追问/查找两枚；收藏公式/复制为引用/解释/摘录不许回潮', () => {
+  check('node-fs-toolbar: 桥上白名单＝追问/查找/加粗三枚；收藏公式/复制为引用/解释/摘录不许回潮', () => {
     const src = readSrc('src/static/js/node-fs-toolbar.js');
-    if (!/NODE_FS_BRIDGE_ACTIONS\s*=\s*\['followup',\s*'search'\]/.test(src)) return false;
+    if (!/NODE_FS_BRIDGE_ACTIONS\s*=\s*\['followup',\s*'search',\s*'bold'\]/.test(src)) return false;
     // 只拦动作字符串字面量（'delquote' 之类的普通命名不算回潮）
     if (/'(collectFormula|quote|explain|excerpt)'/.test(src)) return false;
     if (src.includes("'收藏公式'") || src.includes("'复制为引用'")) return false;
+    return true;
+  });
+
+  check('node-fs-toolbar: 选段加粗定位——渲染文字映射回原文下标（强调符/空白/formula 折 $ 后可比）', () => {
+    const scan = sandbox._nodeFsBoldScan;
+    const locate = sandbox._nodeFsBoldLocate;
+    if (typeof scan !== 'function' || typeof locate !== 'function') throw new Error('加粗定位 API 未挂出');
+    // 纯文字：下标直接落在原串上
+    if (!scan('我们来看重点内容。').text.includes('重点内容')) return false;
+    const plain = locate('我们来看重点内容。', '重点内容', {});
+    if (!plain || plain.start !== 4 || plain.end !== 8) throw new Error('纯文字定位错：' + JSON.stringify(plain));
+    // 原文带行内格式：`**重点**` 里的「重点」要落到没有星号的下标上
+    const inBold = locate('这是 **重点** 内容。', '重点', {});
+    if (!inBold || '这是 **重点** 内容。'.slice(inBold.start, inBold.end) !== '重点') {
+      throw new Error('已有加粗里的定位错：' + JSON.stringify(inBold));
+    }
+    // 软换行：原文是两行、渲染后是一个空格——同管压空白后仍要命中
+    const folded = locate('我们来看\n重点内容', '重点内容', {});
+    if (!folded || '我们来看\n重点内容'.slice(folded.start, folded.end) !== '重点内容') return false;
+    // 公式折成 $ 再比：<formula> 与 \( \) 两条口径
+    if (scan('前<formula>a+b</formula>后').text !== '前$a+b$后') return false;
+    if (scan('前\\(a+b\\)后').text !== '前$a+b$后') return false;
+    // 同一段出现两次：按上下文挑中第二处
+    const twice = locate('甲句重点。乙句重点。', '重点', { before: '乙句', after: '' });
+    if (!twice || '甲句重点。乙句重点。'.slice(twice.start, twice.end) !== '重点') return false;
+    if (twice.start !== 7) throw new Error('多命中没按上下文挑：' + twice.start);
+    return true;
+  });
+
+  check('node-fs-toolbar: 加粗拒绝口径——挨着已有格式/跨空行/代码里都不插 **（宁可拒绝不制造半对）', () => {
+    const locate = sandbox._nodeFsBoldLocate;
+    const blocked = sandbox._nodeFsBoldBlockedReason;
+    if (typeof blocked !== 'function') throw new Error('加粗拒绝口径未挂出');
+    const src = '这是**重点**内容。';
+    const span = locate(src, '内容', {});
+    if (!blocked(src, span)) return false;          // 紧挨 ** ：要拒绝
+    // 跨空行：选区真带上了空行（正常已被单段闸拦住，这是兜底）也不插
+    if (!blocked('甲\n\n乙', locate('甲\n\n乙', '甲 乙', {}))) return false;
+    if (!blocked('```js\nconst a = 1;\n```', locate('```js\nconst a = 1;\n```', 'const a = 1;', {}))) return false; // 代码块
+    if (!blocked('行内 `code` 之后', locate('行内 `code` 之后', 'code', {}))) return false;                    // 行内代码
+    // 干净的散文段：不拦
+    if (blocked('我们来看重点内容。', locate('我们来看重点内容。', '重点内容', {}))) return false;
+    return true;
+  });
+
+  check('node-fs-toolbar: 加粗双端接线（本页浮条按钮＋预览页过桥＋主应用改写分支）', () => {
+    const src = readSrc('src/static/js/node-fs-toolbar.js');
+    if (!src.includes("_nodeFsButtonHtml('bold', '加粗', 'B', false, '选段加粗')")) return false;
+    if (!src.includes("if (act === 'bold') { _nodeFsBoldInPage({ range: st.range }); return; }")) return false;
+    if (!src.includes('_nodeFsBoldWrite(node, message, next)')) return false;
+    // 写回自检：全屏取文口径读回不一致就回滚（别留「看着变粗、重开就没了」）
+    if (!src.includes('if (after !== next)')) return false;
+    if (!src.includes("else if (d.action === 'bold')")) return false;
+    const script = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
+    if (!script.includes('function boldSel()') || !script.includes('function boldLocate(')) return false;
+    if (!script.includes('postAction("bold",text,"",{before:ctx.before,after:ctx.after}')) return false;
+    if (!script.includes('wrapBold(range)')) return false;
+    // file:// 单文件（无桥）不给这颗钮：写不回原文的粗体是假的
+    if (!script.includes('if(BRIDGE&&!READONLY)html+=btnHtml("bold"')) return false;
     return true;
   });
 
@@ -90,7 +149,7 @@ export function run() {
 
   check('node-fs-toolbar: 查找查询接线——选段单独一份（searchText）双端喂它，公式喂 tex 本体不带 $', () => {
     const src = readSrc('src/static/js/node-fs-toolbar.js');
-    if (!/return \{ text, searchText, rect \};/.test(src)) return false;
+    if (!/return \{ text, searchText, rect, range \};/.test(src)) return false;
     if (!src.includes('searchText: picked.searchText || picked.text')) return false;
     if (!src.includes('_nodeFsSearchCanvas(st.searchText || st.fullText)')) return false;
     // 查找与复制共用扩公式口径，但写文本节点时不包 $——索引侧把 $ 剥掉了，带 $ 恒失配

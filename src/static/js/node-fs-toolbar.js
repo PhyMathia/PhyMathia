@@ -9,7 +9,8 @@
 // 收窄，收藏公式与复制为引用已删；浏览器不允许后台页抢焦点——新窗口的追问输入行
 // 落回预览页本地展开，拼好整句再过桥直发，不再假装「跳转回主应用」）。
 
-const NODE_FS_BRIDGE_ACTIONS = ['followup', 'search']; // 复制在页内完成，不过桥（2026-10-25 拍板收窄为三件）
+// bold 过桥（2026-11-17）：预览窗是快照页，改原文只能回主应用写；复制/加粗的显示仍在页内完成
+const NODE_FS_BRIDGE_ACTIONS = ['followup', 'search', 'bold'];
 const NODE_FS_FOLLOWUP_DEFAULT = '请把这段再展开讲讲';
 const NODE_FS_EXCERPT_MAX = 2000;   // 追问引文截断（超出标注「已取前 2000 字」）
 const NODE_FS_EXCERPT_LINES = 3;    // 引文最多带 3 行
@@ -170,7 +171,8 @@ function _nodeFsPickSelection(container) {
     const rects = r.getClientRects ? r.getClientRects() : [];
     rect = (rects && rects.length) ? rects[rects.length - 1] : r.getBoundingClientRect();
   } catch (e) { rect = null; }
-  return { text, searchText, rect };
+  // range＝未扩公式的原选区（加粗要贴着用户真实选中那一段，不能带上整条公式）
+  return { text, searchText, rect, range };
 }
 
 // 系统复制（Ctrl+C / 右键复制）：此前全站没有 copy 拦截，浏览器把 KaTeX 压扁成渲染
@@ -209,6 +211,268 @@ function _nodeFsBuildExcerpt(text) {
   return { excerpt, truncated };
 }
 
+// ---------- 选段加粗（2026-11-17 用户拍板：不是只改显示，是改内容） ----------
+// 用户要的动作＝「选中一段 → 用 ** 包住 → 存回节点原文」，重开全屏、画布卡片都该是粗体。
+// 难点全在**把渲染后的可见文字映射回 Markdown 原文下标**：两层全屏吃的是已渲染 HTML，
+// 原文里散布着 `**`、<formula>、链接语法，选中文字与原文并不同形。
+// 做法：两侧同管归一（去 * ` ~、标签与 <formula>/\( \) 折成 $、空白压单空格）只用于
+// 比对，插入下标永远取自原串的 map。定位不到就如实拒绝，绝不「看着变粗、重开就没了」。
+
+const NODE_FS_BOLD_CTX = 12;       // 消歧上下文：去空白后正/后各取 12 字
+const NODE_FS_BOLD_HITS_MAX = 40;  // 同一段文字出现太多次就不必再挑了（取最佳分）
+
+// Markdown 原文 → 可比对串 + 下标映射。map[i] 是可比对串第 i 个字符在原文的下标。
+function _nodeFsBoldScan(src) {
+  const s = String(src || '');
+  const out = [];
+  const map = [];
+  const push = (ch, idx) => { out.push(ch); map.push(idx); };
+  for (let i = 0; i < s.length; i++) {
+    const ch = s.charAt(i);
+    if (ch === '<') {
+      const rest = s.slice(i);
+      let m = /^<formula\b[^>]*>/i.exec(rest);
+      if (m) { push('$', i); i += m[0].length - 1; continue; }     // 行内公式：起点折成 $
+      m = /^<\/formula\s*>/i.exec(rest);
+      if (m) {                                                     // 收尾封口（不重复 $$）
+        if (out.length && out[out.length - 1] !== '$') push('$', i);
+        i += m[0].length - 1; continue;
+      }
+      m = /^<\/?[A-Za-z][A-Za-z0-9_-]*(\s[^>]*)?>/.exec(rest);      // 其余 XML 标签：渲染后看不见
+      if (m) { i += m[0].length - 1; continue; }
+    }
+    if (ch === '\\' && (s.charAt(i + 1) === '(' || s.charAt(i + 1) === ')')) {
+      push('$', i); i += 1; continue;                              // \( \) 同折成 $
+    }
+    if (ch === '*' || ch === '`' || ch === '~') continue;          // 强调/代码符：渲染后不显形
+    if (/\s/.test(ch)) {
+      if (!out.length || out[out.length - 1] === ' ') continue;     // 空白压成单个空格
+      push(' ', i); continue;
+    }
+    push(ch, i);
+  }
+  return { text: out.join(''), map };
+}
+
+function _nodeFsBoldCommonSuffix(a, b) {
+  const max = Math.min(a.length, b.length, NODE_FS_BOLD_CTX);
+  let n = 0;
+  while (n < max && a.charAt(a.length - 1 - n) === b.charAt(b.length - 1 - n)) n++;
+  return n;
+}
+
+function _nodeFsBoldCommonPrefix(a, b) {
+  const max = Math.min(a.length, b.length, NODE_FS_BOLD_CTX);
+  let n = 0;
+  while (n < max && a.charAt(n) === b.charAt(n)) n++;
+  return n;
+}
+
+// 同一段文字可能出现多次：用选区前后的可见文字挑最像的那一处（拿不到上下文就取第一处）
+function _nodeFsBoldLocate(src, selText, ctx) {
+  const index = _nodeFsBoldScan(src);
+  const q = _nodeFsBoldScan(selText).text.replace(/^ | $/g, '');
+  if (!q) return null;
+  const hits = [];
+  let from = 0;
+  while (hits.length < NODE_FS_BOLD_HITS_MAX) {
+    const at = index.text.indexOf(q, from);
+    if (at < 0) break;
+    hits.push(at);
+    from = at + 1;
+  }
+  if (!hits.length) return null;
+  const before = String((ctx && ctx.before) || '').replace(/\s+/g, '');
+  const after = String((ctx && ctx.after) || '').replace(/\s+/g, '');
+  let best = hits[0];
+  let bestScore = -1;
+  hits.forEach(at => {
+    const score = _nodeFsBoldCommonSuffix(before, index.text.slice(0, at).replace(/ /g, ''))
+      + _nodeFsBoldCommonPrefix(after, index.text.slice(at + q.length).replace(/ /g, ''));
+    if (score > bestScore) { bestScore = score; best = at; }
+  });
+  const start = index.map[best];
+  const end = index.map[best + q.length - 1] + 1;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  return { start, end };
+}
+
+// 能插不能插：挨着已有格式、跨空行、落在代码里都不碰——宁可拒绝，不制造半对 **
+function _nodeFsBoldBlockedReason(src, span) {
+  const s = String(src || '');
+  const start = span.start;
+  const end = span.end;
+  const near = s.slice(Math.max(0, start - 1), Math.min(s.length, end + 1));
+  if (/[*`~]/.test(near)) return '选段挨着已有格式（加粗/斜体/代码），换个范围再试';
+  if (/\n[ \t]*\n/.test(s.slice(start, end))) return '一次只加粗一段，请单独选一段';
+  if (((s.slice(0, start).match(/^\s*```/gm) || []).length) % 2 === 1) return '代码块里不加粗';
+  const lineStart = s.lastIndexOf('\n', start - 1) + 1;
+  if (((s.slice(lineStart, start).match(/`/g) || []).length) % 2 === 1) return '行内代码里不加粗';
+  return '';
+}
+
+// 内容住哪儿：自己写的（customNodes）改 content；AI 回答/模块改节点覆盖表（harnessNodeOverrides，
+// _nodeContent 与 _graphAnswerExpandRaw 都优先读它，不动 msg.content 原文）
+function _nodeFsBoldTarget(node) {
+  if (!node) return '';
+  const state = typeof _graphState === 'function' ? _graphState() : null;
+  if (!state) return '';
+  if ((state.customNodes || []).some(item => item && item.id === node.id)) return 'custom';
+  if (node.messageIndex >= 0) return 'override';
+  return '';
+}
+
+function _nodeFsBoldAvailable(node) {
+  if (!node) return false;
+  if (typeof phyIsReadonly === 'function' && phyIsReadonly()) return false; // 查阅模式不改内容
+  if (!_nodeFsBoldTarget(node)) return false;
+  // 围栏模块（HTML/图谱源码）里插 ** 只会把代码弄脏
+  if (node.kind === 'module' && typeof _moduleFenceLang === 'function' && _moduleFenceLang(node)) return false;
+  return true;
+}
+
+// 写回 + 自检：写完立刻按全屏同一条取文口径再读一次，读回不是新文本就回滚——
+// 这类节点（blank 之类正文由别处生成）宁可报「改不了」，也不能让页面上留着假的粗体
+function _nodeFsBoldWrite(node, message, next) {
+  const state = typeof _graphState === 'function' ? _graphState() : null;
+  const route = _nodeFsBoldTarget(node);
+  if (!state || !route) return { ok: false, message: '这个节点不支持加粗' };
+  if (typeof _pushGraphUndo === 'function') _pushGraphUndo(false, { source: 'user', summary: '选段加粗' });
+  let rollback = null;
+  if (route === 'custom') {
+    const entry = (state.customNodes || []).find(item => item && item.id === node.id);
+    const prevContent = entry ? entry.content : node.content;
+    if (entry) { entry.content = next; entry.summary = typeof _graphSummary === 'function' ? _graphSummary(next) : ''; }
+    node.content = next;
+    rollback = () => {
+      if (entry) { entry.content = prevContent; entry.summary = typeof _graphSummary === 'function' ? _graphSummary(prevContent) : ''; }
+      node.content = prevContent;
+    };
+  } else {
+    state.harnessNodeOverrides = state.harnessNodeOverrides || {};
+    const had = Object.prototype.hasOwnProperty.call(state.harnessNodeOverrides, node.id);
+    const prevOv = state.harnessNodeOverrides[node.id];
+    state.harnessNodeOverrides[node.id] = Object.assign({}, prevOv || {}, { content: next });
+    rollback = () => {
+      if (had) state.harnessNodeOverrides[node.id] = prevOv;
+      else delete state.harnessNodeOverrides[node.id];
+    };
+  }
+  let after = '';
+  try { after = _nodeFsSourceText(node, message); } catch (e) { after = ''; }
+  if (after !== next) {
+    rollback();
+    return { ok: false, message: '这个节点改不了：正文由别处生成' };
+  }
+  if (typeof renderGraphCanvas === 'function') renderGraphCanvas();
+  _saveGraphState(state);
+  return { ok: true, message: '已加粗' };
+}
+
+// 选区所在块（一次只许一段）——块内换行可以，跨块拒绝
+function _nodeFsBoldBlockOf(el) {
+  const BLOCK = /^(P|LI|H1|H2|H3|H4|H5|H6|TD|TH|DD|DT|BLOCKQUOTE|PRE|DIV)$/;
+  let cur = el && el.nodeType === 1 ? el : (el && el.parentElement);
+  while (cur && cur.nodeType === 1) {
+    if (BLOCK.test(String(cur.tagName || '').toUpperCase())) return cur;
+    cur = cur.parentElement;
+  }
+  return null;
+}
+
+// 选区能不能加粗：碰公式/代码、跨段一律拒绝（跨段的 ** 在 Markdown 里不成对）
+function _nodeFsBoldRangeGuard(range) {
+  let frag = null;
+  try { frag = range.cloneContents ? range.cloneContents() : null; } catch (e) { frag = null; }
+  if ((frag && frag.querySelector && frag.querySelector('.katex'))
+    || _nodeFsClosestKatex(range.startContainer) || _nodeFsClosestKatex(range.endContainer)) return '公式里不加粗';
+  const a = _nodeFsBoldBlockOf(range.startContainer);
+  const b = _nodeFsBoldBlockOf(range.endContainer);
+  if (!a || !b || a !== b) return '一次只加粗一段，请只选一段再试';
+  if (/^PRE$/.test(String(a.tagName || '').toUpperCase())) return '代码里不加粗';
+  if (a.closest && a.closest('pre, code')) return '代码里不加粗';
+  return '';
+}
+
+// 选区前后的可见文字（夹在容器内），给多命中挑位置用
+function _nodeFsBoldContext(container, range) {
+  const out = { before: '', after: '' };
+  try {
+    const pre = document.createRange();
+    pre.selectNodeContents(container);
+    pre.setEnd(range.startContainer, range.startOffset);
+    out.before = String(pre.toString() || '').replace(/\s+/g, '').slice(-NODE_FS_BOLD_CTX);
+    const post = document.createRange();
+    post.selectNodeContents(container);
+    post.setStart(range.endContainer, range.endOffset);
+    out.after = String(post.toString() || '').replace(/\s+/g, '').slice(0, NODE_FS_BOLD_CTX);
+  } catch (e) { /* 拿不到就按首个命中 */ }
+  return out;
+}
+
+// 就地套 <strong>：写完原文后立刻看得见，不用重渲染（选区与滚动位置都留住）
+function _nodeFsBoldWrapRange(range) {
+  try {
+    const strong = document.createElement('strong');
+    strong.appendChild(range.extractContents());
+    range.insertNode(strong);
+    const after = document.createRange();
+    after.selectNodeContents(strong);
+    const sel = window.getSelection ? window.getSelection() : null;
+    if (sel && sel.removeAllRanges) { sel.removeAllRanges(); sel.addRange(after); }
+    return true;
+  } catch (e) { return false; }
+}
+
+// 本页浮条专用：定位 → 写回 → 就地变粗
+function _nodeFsBoldInPage(picked) {
+  const st = _nfsState;
+  if (!st) return;
+  const node = typeof _findGraphNode === 'function' ? _findGraphNode(st.nodeId) : null;
+  if (!node) { if (typeof showToast === 'function') showToast('源节点已不在画布上'); _nodeFsHideBar(); return; }
+  if (!_nodeFsBoldAvailable(node)) { if (typeof showToast === 'function') showToast('这个节点不支持加粗'); return; }
+  // 点按钮可能把系统选区清掉：优先现取，退浮条出现时记住的那个 range
+  const sel = window.getSelection ? window.getSelection() : null;
+  let range = (sel && sel.rangeCount && !sel.isCollapsed) ? sel.getRangeAt(0) : null;
+  if (!range || !st.container || !st.container.contains(range.commonAncestorContainer)) range = picked && picked.range ? picked.range : null;
+  if (!range) { _nodeFsHideBar(); return; }
+  try {
+    if (!document.contains(range.commonAncestorContainer) || !st.container.contains(range.commonAncestorContainer)) {
+      if (typeof showToast === 'function') showToast('选区已失效，请重新划选');
+      return;
+    }
+  } catch (e) { return; }
+  const bad = _nodeFsBoldRangeGuard(range);
+  if (bad) { if (typeof showToast === 'function') showToast(bad); return; }
+  const messages = typeof _getChatHistory === 'function' ? _getChatHistory() : [];
+  const message = node.messageIndex >= 0 ? messages[node.messageIndex] : null;
+  const src = _nodeFsSourceText(node, message);
+  const span = _nodeFsBoldLocate(src, String(range.toString() || ''), _nodeFsBoldContext(st.container, range));
+  if (!span) { if (typeof showToast === 'function') showToast('没能在原文里找到这段，换个范围再试'); return; }
+  const blocked = _nodeFsBoldBlockedReason(src, span);
+  if (blocked) { if (typeof showToast === 'function') showToast(blocked); return; }
+  const next = src.slice(0, span.start) + '**' + src.slice(span.start, span.end) + '**' + src.slice(span.end);
+  const result = _nodeFsBoldWrite(node, message, next);
+  if (!result.ok) { if (typeof showToast === 'function') showToast(result.message); return; }
+  _nodeFsBoldWrapRange(range);
+  _nodeFsHideBar();
+  if (typeof showToast === 'function') showToast('已加粗，并写回节点');
+}
+
+// 预览窗过桥：那边只有选段文字与上下文，按同一套定位改写主应用里的节点原文
+function _nodeFsBoldFromBridge(node, text, before, after) {
+  if (!_nodeFsBoldAvailable(node)) return { ok: false, message: '这个节点不支持加粗' };
+  const messages = typeof _getChatHistory === 'function' ? _getChatHistory() : [];
+  const message = node.messageIndex >= 0 ? messages[node.messageIndex] : null;
+  const src = _nodeFsSourceText(node, message);
+  const span = _nodeFsBoldLocate(src, text, { before, after });
+  if (!span) return { ok: false, message: '没能在原文里找到这段，换个范围再试' };
+  const blocked = _nodeFsBoldBlockedReason(src, span);
+  if (blocked) return { ok: false, message: blocked };
+  const next = src.slice(0, span.start) + '**' + src.slice(span.start, span.end) + '**' + src.slice(span.end);
+  return _nodeFsBoldWrite(node, message, next);
+}
+
 // ---------- 浮条（本页全屏层用；预览页有自己的一份内嵌实现） ----------
 
 function _nodeFsHideBar() {
@@ -238,6 +502,7 @@ function _nodeFsShowBar(overlay, container, picked) {
     fullText: picked.text,
     searchText: picked.searchText || picked.text,
     rect: picked.rect,
+    range: picked.range || null, // 加粗用：点按钮时系统选区可能已被清掉
     expanded: false,
     quoteDropped: false,
   };
@@ -247,10 +512,13 @@ function _nodeFsShowBar(overlay, container, picked) {
   bar.setAttribute('role', 'toolbar');
   bar.setAttribute('aria-label', '划词快捷工具');
   // 三件平铺（2026-10-25 拍板收窄）：追问（主色，只读隐藏）/ 复制 / 查找（只读保留，
-  // 搜索面板是读操作）
+  // 搜索面板是读操作）。加粗（2026-11-17）＝会改内容的动作，只读与围栏模块都不给。
   let html = '';
   if (!readonly) html += _nodeFsButtonHtml('followup', '追问', '？', true);
   html += _nodeFsButtonHtml('copy', '复制', '⧉', false);
+  if (!readonly && _nodeFsBoldAvailable(typeof _findGraphNode === 'function' ? _findGraphNode(nodeId) : null)) {
+    html += _nodeFsButtonHtml('bold', '加粗', 'B', false, '选段加粗');
+  }
   html += _nodeFsButtonHtml('search', '查找', '⌕', false, '在画布中查找');
   bar.innerHTML = html;
   bar.style.visibility = 'hidden';
@@ -294,6 +562,7 @@ function _nodeFsRunAction(act) {
     return;
   }
   if (act === 'send') { _nodeFsSendFollowup(); return; }
+  if (act === 'bold') { _nodeFsBoldInPage({ range: st.range }); return; }
   if (act === 'copy') { _nodeFsCopyText(st.fullText); _nodeFsHideBar(); return; }
   if (act === 'search') {
     _nodeFsSearchCanvas(st.searchText || st.fullText); // 查找用未扩公式选段（见 _nodeFsPickSearchText）
@@ -539,6 +808,13 @@ window.addEventListener('message', ev => {
     try {
       if (d.action === 'followup') { _nodeFsBridgedFollowup(node, text, route); message = '追问已发到主画布'; }
       else if (d.action === 'search') { _nodeFsBridgedSearch(text); message = '已在主应用打开画布搜索'; }
+      else if (d.action === 'bold') {
+        // 加粗要消歧：预览窗把选段前后的可见文字一起带过来（before/after），够挑准那一处
+        const res = _nodeFsBoldFromBridge(node, text,
+          String(d.before || '').slice(0, 64), String(d.after || '').slice(0, 64));
+        ok = !!res.ok;
+        message = res.message || '';
+      }
     } catch (e) { ok = false; message = '主应用执行失败'; }
   }
   // token 轮换：本轮消费掉，随 ack 发新的一枚；上一枚留作 prevToken 兜底
@@ -789,7 +1065,82 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'var rect=null;try{var rects=r.getClientRects?r.getClientRects():[];'
     + 'rect=(rects&&rects.length)?rects[rects.length-1]:r.getBoundingClientRect();}catch(e){}'
     + 'var searchText=pickSearchText(range).replace(/\\s+/g," ").replace(/^\\s+|\\s+$/g,"")||text;'
-    + 'return {text:text,searchText:searchText,rect:rect};}'
+    + 'return {text:text,searchText:searchText,rect:rect,range:range};}'
+    // ---------- 选段加粗（2026-11-17）：本页只有快照，改原文得回主应用，显示在这边就地套 <strong> ----------
+    // 归一/定位/拒绝口径与主应用 _nodeFsBoldScan / _nodeFsBoldLocate / _nodeFsBoldBlockedReason 同源
+    + 'function boldScan(src){var s=String(src||""),out=[],map=[];'
+    + 'for(var i=0;i<s.length;i++){var ch=s.charAt(i),rest,m;'
+    + 'if(ch==="<"){rest=s.slice(i);'
+    + 'm=/^<formula\\b[^>]*>/i.exec(rest);if(m){out.push("$");map.push(i);i+=m[0].length-1;continue;}'
+    + 'm=/^<\\/formula\\s*>/i.exec(rest);if(m){if(out.length&&out[out.length-1]!=="$"){out.push("$");map.push(i);}'
+    + 'i+=m[0].length-1;continue;}'
+    + 'm=/^<\\/?[A-Za-z][A-Za-z0-9_-]*(\\s[^>]*)?>/.exec(rest);if(m){i+=m[0].length-1;continue;}}'
+    + 'if(ch==="\\\\"&&(s.charAt(i+1)==="("||s.charAt(i+1)===")")){out.push("$");map.push(i);i+=1;continue;}'
+    + 'if(ch==="*"||ch==="`"||ch==="~")continue;'
+    + 'if(/\\s/.test(ch)){if(!out.length||out[out.length-1]===" ")continue;out.push(" ");map.push(i);continue;}'
+    + 'out.push(ch);map.push(i);}return {text:out.join(""),map:map};}'
+    + 'function commonSuffix(a,b){var max=Math.min(a.length,b.length,12),n=0;'
+    + 'while(n<max&&a.charAt(a.length-1-n)===b.charAt(b.length-1-n))n++;return n;}'
+    + 'function commonPrefix(a,b){var max=Math.min(a.length,b.length,12),n=0;'
+    + 'while(n<max&&a.charAt(n)===b.charAt(n))n++;return n;}'
+    + 'function boldLocate(src,selText,ctx){var index=boldScan(src);'
+    + 'var q=boldScan(selText).text.replace(/^ | $/g,"");if(!q)return null;'
+    + 'var hits=[],from=0,at;while(hits.length<40){at=index.text.indexOf(q,from);if(at<0)break;hits.push(at);from=at+1;}'
+    + 'if(!hits.length)return null;'
+    + 'var before=String((ctx&&ctx.before)||"").replace(/\\s+/g,""),'
+    + 'after=String((ctx&&ctx.after)||"").replace(/\\s+/g,"");'
+    + 'var best=hits[0],bestScore=-1;'
+    + 'for(var i=0;i<hits.length;i++){var a=hits[i];'
+    + 'var hb=index.text.slice(0,a).replace(/ /g,""),ha=index.text.slice(a+q.length).replace(/ /g,"");'
+    + 'var score=commonSuffix(before,hb)+commonPrefix(after,ha);'
+    + 'if(score>bestScore){bestScore=score;best=a;}}'
+    + 'var start=index.map[best],end=index.map[best+q.length-1]+1;'
+    + 'if(!(end>start))return null;return {start:start,end:end};}'
+    + 'function boldBlocked(src,span){var s=String(src||""),start=span.start,end=span.end;'
+    + 'var near=s.slice(Math.max(0,start-1),Math.min(s.length,end+1));'
+    + 'if(/[*`~]/.test(near))return "选段挨着已有格式（加粗/斜体/代码），换个范围再试";'
+    + 'if(/\\n[ \\t]*\\n/.test(s.slice(start,end)))return "一次只加粗一段，请单独选一段";'
+    + 'if((s.slice(0,start).match(/^\\s*```/gm)||[]).length%2===1)return "代码块里不加粗";'
+    + 'var lineStart=s.lastIndexOf("\\n",start-1)+1;'
+    + 'if((s.slice(lineStart,start).match(/`/g)||[]).length%2===1)return "行内代码里不加粗";'
+    + 'return "";}'
+    + 'function boldBlockOf(el){var BLOCK=/^(P|LI|H[1-6]|TD|TH|DD|DT|BLOCKQUOTE|PRE|DIV)$/;'
+    + 'var cur=el&&el.nodeType===1?el:(el&&el.parentElement);'
+    + 'while(cur&&cur.nodeType===1){if(BLOCK.test(String(cur.tagName||"").toUpperCase()))return cur;'
+    + 'cur=cur.parentElement;}return null;}'
+    + 'function boldGuard(range){var frag=null;try{frag=range.cloneContents?range.cloneContents():null;}catch(e){}'
+    + 'if((frag&&frag.querySelector&&frag.querySelector(".katex"))||closestKatex(range.startContainer)'
+    + '||closestKatex(range.endContainer))return "公式里不加粗";'
+    + 'var a=boldBlockOf(range.startContainer),b=boldBlockOf(range.endContainer);'
+    + 'if(!a||!b||a!==b)return "一次只加粗一段，请只选一段再试";'
+    + 'if(/^PRE$/.test(String(a.tagName||"").toUpperCase()))return "代码里不加粗";'
+    + 'if(a.closest&&a.closest("pre, code"))return "代码里不加粗";return "";}'
+    + 'function boldContext(container,range){var out={before:"",after:""};'
+    + 'try{var pre=document.createRange();pre.selectNodeContents(container);'
+    + 'pre.setEnd(range.startContainer,range.startOffset);'
+    + 'out.before=String(pre.toString()||"").replace(/\\s+/g,"").slice(-12);'
+    + 'var post=document.createRange();post.selectNodeContents(container);'
+    + 'post.setStart(range.endContainer,range.endOffset);'
+    + 'out.after=String(post.toString()||"").replace(/\\s+/g,"").slice(0,12);}catch(e){}return out;}'
+    + 'function wrapBold(range){try{var strong=document.createElement("strong");'
+    + 'strong.appendChild(range.extractContents());range.insertNode(strong);'
+    + 'var after=document.createRange();after.selectNodeContents(strong);'
+    + 'var sel=window.getSelection?window.getSelection():null;'
+    + 'if(sel&&sel.removeAllRanges){sel.removeAllRanges();sel.addRange(after);}return true;}catch(e){return false;}}'
+    // 先请主应用写回原文，写成了才在本窗变粗——否则这一窗看着粗、重开就没了
+    + 'function boldSel(){if(READONLY){toast("查阅模式下不能改内容");return;}'
+    + 'var container=document.querySelector(".cp-body");if(!container)return;'
+    + 'var sel=window.getSelection?window.getSelection():null;'
+    + 'var range=(sel&&sel.rangeCount&&!sel.isCollapsed)?sel.getRangeAt(0):(picked?picked.range:null);'
+    + 'if(!range)return;'
+    + 'try{if(!container.contains(range.commonAncestorContainer))return;}catch(e){return;}'
+    + 'var bad=boldGuard(range);if(bad){toast(bad);return;}'
+    + 'var text=String(range.toString?range.toString():"");if(!text)return;'
+    + 'var ctx=boldContext(container,range);'
+    + 'postAction("bold",text,"",{before:ctx.before,after:ctx.after},function(ok,msg){'
+    + 'if(!ok){toast(msg||"主应用没能写回原文");return;}'
+    + 'if(wrapBold(range)){hideBar();toast("已加粗，并写回节点");}'
+    + 'else{hideBar();toast("已写回原文，重开本页即可看到");}});}'
     + 'function copySelectionText(){var sel=window.getSelection?window.getSelection():null;'
     + 'if(!sel||!sel.rangeCount||sel.isCollapsed)return"";var range=sel.getRangeAt(0);'
     + 'try{if(!range.commonAncestorContainer||!document.contains(range.commonAncestorContainer))return"";}catch(e){return"";}'
@@ -845,6 +1196,8 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'var html="";'
     + 'if(BRIDGE&&!READONLY)html+=btnHtml("followup","追问","？",true);'
     + 'html+=btnHtml("copy","复制","⧉",false);'
+    // 加粗要回主应用写原文：file:// 单文件（无桥）给不了，只读也不给
+    + 'if(BRIDGE&&!READONLY)html+=btnHtml("bold","加粗","B",false,"选段加粗");'
     + 'if(BRIDGE)html+=btnHtml("search","查找","⌕",false,"在画布中查找");'
     + 'bar.innerHTML=html;bar.style.visibility="hidden";document.body.appendChild(bar);'
     + 'placeBar(pk.rect);bar.style.visibility="";}'
@@ -877,10 +1230,12 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'if(navigator.clipboard&&navigator.clipboard.writeText){'
     + 'navigator.clipboard.writeText(String(text||"")).then(function(){done(true);},function(){done(fallback());});}'
     + 'else done(fallback());}'
-    + 'function postAction(action,text,route){'
+    + 'function postAction(action,text,route,extra,onDone){'
     + 'if(!BRIDGE){toast("此窗口未连接主应用，只能复制");return;}'
     + 'var msg={kind:"node-fs-action",__phymathia:1,token:TOKEN,action:action,'
-    + 'text:String(text||"").slice(0,MAX_TEXT),title:CFG.title||"",route:String(route||"")};'
+    + 'text:String(text||"").slice(0,MAX_TEXT),title:CFG.title||"",route:String(route||""),'
+    // 加粗消歧要选段前后文（同一句话常在本页出现多次）
+    + 'before:String((extra&&extra.before)||""),after:String((extra&&extra.after)||"")};'
     + 'var notified=false;'
     + 'var onAck=function(ev){var d=ev.data;'
     + 'if(!d||d.__phymathia!==1||d.kind!=="node-fs-ack")return;'
@@ -889,6 +1244,8 @@ function _buildNodeFsPreviewScript(cfg) {
     // 这扇窗此后每一发都会被主应用当成陌生 token 丢掉，只能一直超时
     + 'if(notified){window.removeEventListener("message",onAck);return;}'
     + 'notified=true;window.removeEventListener("message",onAck);'
+    // 带回调的动作（加粗）自己决定怎么说话：写回成败要说清，别让页面粗了但没存
+    + 'if(typeof onDone==="function"){onDone(!!d.ok,d.message||"");return;}'
     + 'toast(d.ok?(d.message||"已发送到主应用"):(d.message||"主应用未能执行该操作"));};'
     + 'window.addEventListener("message",onAck);'
     + 'try{window.parent.postMessage(msg,"*");}catch(e){notified=true;toast("发送失败");}'
@@ -900,6 +1257,7 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'if(act==="delquote"){state.quoteDropped=true;var row=bar.querySelector(".cp-nfs-quote-row");'
     + 'if(row&&row.parentNode)row.parentNode.removeChild(row);return;}'
     + 'if(act==="send"){sendFollowup();return;}'
+    + 'if(act==="bold"){boldSel();return;}'
     + 'if(!picked)return;'
     + 'if(act==="copy"){copyText(picked.text);hideBar();return;}'
     + 'if(act==="search"){postAction("search",picked.searchText||picked.text);hideBar();return;}}'
