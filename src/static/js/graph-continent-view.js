@@ -543,7 +543,15 @@ async function openContinentView(opts) {
       closeContinentView();
     }
     // v2：大陆打开时 Ctrl+Z 只作用于航线操作栈，不透传给会话图撤销
+    // 但输入框内让给原生撤销（2026-11-17，与 hotkeys.js / graph-events.js 同口径）：
+    // 顶栏搜索框、族表弹层的输入框里按 Ctrl+Z 是想撤掉刚敲的字，若被这里截获，
+    // 既撤不回文字、又悄悄撤掉一条航线（_continentUndoEdgeOp 会改数据并落盘）。
     if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+      const typing = (typeof phyIsTypingTarget === 'function')
+        ? phyIsTypingTarget(e)
+        : !!(e.target && typeof e.target.closest === 'function'
+          && e.target.closest('input, textarea, select, [contenteditable], iframe'));
+      if (typing) return;
       e.preventDefault();
       _continentUndoEdgeOp();
     }

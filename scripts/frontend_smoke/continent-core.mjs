@@ -48,6 +48,22 @@ check('graph-continent: v2/v3 静态契约（撤销栈只记边操作 / 联运�
   return true;
 });
 
+check('graph-continent: Ctrl+Z 在输入框内让给原生撤销（2026-11-17，搜索框/族表打字不该撤航线）', () => {
+  // 同族问题排查（用户报「划词追问浮条自己关掉」后全站扫「全局监听没认出内部控件」）：
+  // 大陆层打开时 Ctrl+Z 被截获去撤航线，但顶栏搜索框、族表弹层里打字时它该撤销敲的字。
+  const src = fs.readFileSync('src/static/js/graph-continent-view.js', 'utf8');
+  const at = src.indexOf('_continentKeyHandler = e => {');
+  if (at < 0) throw new Error('大陆键位处理器缺失');
+  const seg = src.slice(at, at + 1200);
+  const zAt = seg.indexOf("e.key === 'z'");
+  if (zAt < 0) throw new Error('Ctrl+Z 分支缺失');
+  const branch = seg.slice(zAt, zAt + 420);
+  const guardAt = branch.indexOf('phyIsTypingTarget');
+  if (guardAt < 0) throw new Error('输入框内未让行：打字时的 Ctrl+Z 会被截获成撤航线');
+  if (branch.indexOf('_continentUndoEdgeOp') < guardAt) throw new Error('让行判断必须在撤栈调用之前');
+  return true;
+});
+
 check('graph-continent: v9 跨层转场（拉远/推近同参数 + 交叉淡化 + 减少动态效果降级）', () => {
   const src = readContinentSrc();
   const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
@@ -244,7 +260,16 @@ check('graph-continent: T136 双指捏合（纯函数锚点数学 / 夹取 / 退
 check('graph-continent: T135/T142 开图加载态与顶栏折行（四路并行拉取 / spinner / 窄屏 wrap）', () => {
   const src = readContinentSrc();
   const openAt = src.indexOf('async function openContinentView');
-  const openSrc = src.slice(openAt, openAt + 2600);
+  // 切片按「下一个顶格函数」收口，不写死字符数：写死 2600 时，只要函数体里多几行
+  // （2026-11-17 给 _continentKeyHandler 加输入框让行判断）Promise.all 就会被切到窗外、
+  // 假红成「四路没并行」。函数体内的嵌套函数都带缩进，顶格正则不会误切。
+  const nextTopAt = (() => {
+    const re = /\n(?:async )?function [A-Za-z_$]/g;
+    re.lastIndex = openAt + 1;
+    const m = re.exec(src);
+    return m ? m.index : src.length;
+  })();
+  const openSrc = src.slice(openAt, nextTopAt);
   // v9.x 起第四路=_continentFetchQuizStats（掌握度热力图统计，失败内部回落本地不阻塞开图）
   if (!/Promise\.all\(\[\s*_continentLoadRegionOverrides\(\),\s*_continentLoadCorrectionCount\(\),\s*_continentFetchData\(\),\s*_continentFetchQuizStats\(\),?\s*\]\)/.test(openSrc)) {
     throw new Error('开图四路请求未并行（串行＝多倍往返白等）');
