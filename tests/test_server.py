@@ -886,6 +886,9 @@ class WorkflowAnalysisInstructionTest(unittest.TestCase):
         self.assertIn("建议模块：", inst)
         self.assertIn("物理视角/数学视角", inst)
         self.assertIn("不要编造历史、定律或公式", inst)
+        # 2026-11-17：用户点名方向必须列入（「做个可视化」必须建议交互可视化）
+        self.assertIn("点名某个候选方向", inst)
+        self.assertIn("必须列交互可视化", inst)
 
     def test_analysis_key_retired_from_instruction(self):
         # 原 test_module_mode_keeps_analysis_injection。T334 第二步：analysis
