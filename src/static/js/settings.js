@@ -947,26 +947,33 @@ function _settingsSkillRowHtml(item) {
 // 按节点分组（2026-11-16 第 4 步）：接口一直在回 byModule，前端原先平铺没用上。
 // 一条技能勾了几个节点，就在几个组里各出现一次——这正是它真实的生效范围（每个节点
 // 生成时各挂一次），合并成一行反而看不出「这个节点上有哪些候选」。
-// 第 5 版补一条：关掉的技能不进任何组（它确实不在候选里），单独归到 disabled，
-// 否则用户会以为「关了还挂在可视化下面」。
+// 2026-11-17 用户拍板：开关不挪位置——关掉的条目留在原节点组里（整行降透明度＋滑块
+// 变灰已经说明它不在候选里），不再单独归「已关闭」组挪到页底（第 5 版的做法，当天即废）。
+// 后端 byModule 只回开着的（skill_registry.list_for_ui 分组只算开着的），前端把
+// 关掉条目按 scope 补回原组；组内顺序一律跟 items 全表走（服务端顺序开/关不重排），
+// 不然关一条会把它挤到组尾，等于换了个位置。
 // 纯函数：传 items/byModule 就能算，不依赖页面状态（冒烟直接用样本喂它）。
 function _settingsSkillGroups(items, byModule) {
   const list = Array.isArray(items) ? items : [];
-  const byId = {};
-  list.forEach(item => { byId[item.id] = item; });
-  // 旧接口/异常时按 scope 现算一份，别让整页退化成「没有分组」
-  let map = byModule;
-  if (!map || typeof map !== 'object' || !Object.keys(map).length) {
-    map = {};
+  // 旧接口/异常时按 scope 现算一份，别让整页退化成「没有分组」；后端有就拷一份再补
+  const map = {};
+  if (byModule && typeof byModule === 'object' && Object.keys(byModule).length) {
+    for (const key in byModule) map[key] = byModule[key].slice();
+  } else {
     list.forEach(item => {
-      if (item.enabled === false) return;
       (item.scope || []).forEach(key => { (map[key] = map[key] || []).push(item.id); });
     });
   }
+  list.forEach(item => {
+    if (item.enabled !== false) return;
+    (item.scope || []).forEach(key => {
+      if ((map[key] || []).indexOf(item.id) < 0) (map[key] = map[key] || []).push(item.id);
+    });
+  });
   const groups = SKILL_SCOPE_OPTIONS.map(pair => ({
     key: pair[0],
     label: pair[1],
-    items: (map[pair[0]] || []).map(id => byId[id]).filter(item => item && item.enabled !== false)
+    items: list.filter(item => (map[pair[0]] || []).indexOf(item.id) >= 0)
   })).filter(group => group.items.length);
   const emptyLabels = SKILL_SCOPE_OPTIONS
     .filter(pair => !(map[pair[0]] || []).length)
@@ -975,7 +982,7 @@ function _settingsSkillGroups(items, byModule) {
   return {
     groups: groups,
     emptyLabels: emptyLabels,
-    known: Object.keys(byId).length,
+    known: list.length,
     disabled: disabled,
     active: list.length - disabled.length,
     total: list.length
@@ -997,21 +1004,13 @@ function _settingsSkillRowsHtml() {
       + group.items.map(_settingsSkillRowHtml).join('')
       + '</div>').join('');
   } else {
-    html += '<div class="settings-note">技能都关着：在下面「已关闭」里重新打开。</div>';
+    // 组空只可能是「条目的 scope 不含已知节点」（关掉的也留在组里，见 _settingsSkillGroups）
+    html += '<div class="settings-note">这些技能没有挂到任何已知节点。</div>';
   }
   html += split.emptyLabels.length
     ? '<div class="settings-note" style="font-size:11px;margin-top:12px">还没有技能可挂的节点：'
       + _settingsEsc(split.emptyLabels.join(' · ')) + '</div>'
     : '';
-  if (split.disabled.length) {
-    html += '<div style="margin-top:16px">'
-      + '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px">'
-      + '<span style="font-size:13px;font-weight:700;color:var(--text-primary)">已关闭</span>'
-      + '<span style="font-size:11px;opacity:.55">' + split.disabled.length
-      + ' 条 · 不参与判定</span></div>'
-      + split.disabled.map(_settingsSkillRowHtml).join('')
-      + '</div>';
-  }
   return html;
 }
 
