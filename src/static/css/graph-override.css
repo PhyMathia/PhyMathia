@@ -8346,6 +8346,38 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   --bp-accent: var(--text-primary);
   --bp-shadow: rgba(0, 0, 0, 0.34);
   --bp-shadow-deep: rgba(0, 0, 0, 0.50);
+  /* 素纸深色收色（2026-11-17 用户从四组真机对比里拍板「方案 1 · 收色」）：
+     材质早就对了（暖褐纸卡＋26px 淡网格＋1px 暖米描边＋2px 硬偏移影，见下方
+     .graph-node 块），不对的只有**类型色**——14 个 --node-* 直接沿用全局霓虹族
+     （10 个饱和度 >60%），模块卡整框 2px、普通卡左侧 2px 全用它们，压在暖褐纸上
+     就是「荧光笔描的边」；属性标签 11px 小字同色，青 #0891b2、紫 #a855f7 在暖底
+     上还糊成一团，蓝青族四支（问题 211°／数学 217°／图谱 197°／输入 190°）在
+     2px 细线上几乎不可分。
+     这里只换色值，一个字都不碰材质：色相家族全部保留（问题蓝／分析绿／物理橙／
+     可视化粉／追问靛／进阶紫／汇聚藤黄／总结青瓷／联系胭脂），把饱和度压到约 40%、
+     亮度抬到暖褐纸（#3b3024）上细线可辨、小字可读的档位。
+     ★ 浅色块必须逐条回填原值：浅色是米黄稿纸，需要更深的一档才压得住，两档色板
+     不能共用（深色块 (0,1,0) 与 :root 同级、源序在后，浅色下同样会赢）。
+     ★ 配方色板（--ink-amber/blue/rose/teal/violet）与人工家族 (--ink-human/note)
+     不在本次范围：配方节点自带用户选的墨，只把 --ink-note（我的理解/批注）跟着收
+     一档，免得它比 AI 侧还亮。 */
+  --node-question: #7f9ec6;
+  --node-followup: #8b8bc0;
+  --node-answer: #62a48b;
+  --node-direct: #8db883;
+  --node-physics: #c89a4f;
+  --node-math: #6b95bd;
+  --node-graph: #5b97a5;
+  --node-viz: #c28ca4;
+  --node-socratic: #b47373;
+  --node-learn: #9a85c0;
+  --node-hub: #c8a74f;
+  --node-summary: #55908a;
+  --node-source: #65a0ae;
+  --node-knowledge: #99a75f;
+  --node-any: #a1998b;
+  --node-junction: #8c8a82;
+  --ink-note: #7e9b71;
 }
 [data-theme="light"][data-node-skin="blueprint"] {
   --bp-paper: color-mix(in srgb, var(--node-glass-base) 88%, #c9a86a 12%);
@@ -8356,6 +8388,25 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   --bp-accent: #6b4a17;
   --bp-shadow: rgba(96, 84, 58, 0.18);
   --bp-shadow-deep: rgba(96, 84, 58, 0.26);
+  /* 浅色回填（逐条对应上方深色块）：米黄稿纸上要更深的墨，深色那套亮色会糊；
+     这些就是 :root / [data-theme="light"] 的原值，等于浅色一个像素不变。 */
+  --node-question: #4a9eff;
+  --node-followup: #6366f1;
+  --node-answer: #10b981;
+  --node-direct: #4ade80;
+  --node-physics: #f59e0b;
+  --node-math: #3b82f6;
+  --node-graph: #0891b2;
+  --node-viz: #f472b6;
+  --node-socratic: #f43f5e;
+  --node-learn: #a855f7;
+  --node-hub: #eab308;
+  --node-summary: #0d9488;
+  --node-source: #06b6d4;
+  --node-knowledge: #84cc16;
+  --node-any: #94a3b8;
+  --node-junction: #64748b;
+  --ink-note: #407751;
 }
 [data-node-skin="blueprint"] .graph-node {
   background:
