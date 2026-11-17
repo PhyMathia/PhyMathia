@@ -478,7 +478,13 @@ document.addEventListener('scroll', ev => {
   if (t && t.nodeType === 1 && _nfsBar.contains(t)) return;
   _nodeFsHideBar();
 }, true);
-window.addEventListener('resize', () => { if (_nfsBar) _nodeFsHideBar(); });
+// 同理，软键盘／窗口尺寸变化也收浮条；但**输入行展开时不收**（2026-11-17 同批排查）：
+// 手机上点开追问输入框，键盘一弹就是一次 resize，一收浮条字都打不进去——改成跟一次摆位。
+window.addEventListener('resize', () => {
+  if (!_nfsBar) return;
+  if (_nfsState && _nfsState.expanded) { _nodeFsPlaceBar(_nfsState.rect); return; }
+  _nodeFsHideBar();
+});
 document.addEventListener('visibilitychange', () => { if (document.hidden && _nfsBar) _nodeFsHideBar(); });
 
 // ---------- 预览页内嵌自包含脚本（字符串生成，不放 /js/ 外链） ----------
@@ -700,7 +706,9 @@ function _buildNodeFsPreviewScript(cfg) {
     // 浮条内部滚动（输入框字符超宽后光标跟随横滚）不收，口径同主应用侧
     + 'document.addEventListener("scroll",function(ev){if(!bar)return;var t=ev.target;'
     + 'if(t&&t.nodeType===1&&bar.contains(t))return;hideBar();},true);'
-    + 'window.addEventListener("resize",function(){if(bar)hideBar();});'
+    // 软键盘会带来 resize：展开态跟着摆位，不收起（口径同主应用侧）
+    + 'window.addEventListener("resize",function(){if(!bar)return;'
+    + 'if(state&&state.expanded){placeBar(picked?picked.rect:null);return;}hideBar();});'
     + 'document.addEventListener("selectionchange",function(){clearTimeout(selTimer);'
     + 'selTimer=setTimeout(function(){if(state&&state.expanded)return;var pk=pickSelection();'
     + 'if(pk)showBar(pk);else hideBar();},180);});'

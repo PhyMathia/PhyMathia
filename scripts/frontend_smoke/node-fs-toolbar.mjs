@@ -259,6 +259,17 @@ export function run() {
     return true;
   });
 
+  check('node-fs-toolbar: resize 不打断打字（手机软键盘弹出即 resize，展开态只重摆位不收浮条）', () => {
+    const src = readSrc('src/static/js/node-fs-toolbar.js');
+    const live = src.indexOf("window.addEventListener('resize'");
+    if (live < 0) return false;
+    const seg = src.slice(live, live + 320);
+    if (!seg.includes('_nfsState.expanded') || !seg.includes('_nodeFsPlaceBar')) return false;
+    const script = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
+    if (!script.includes('state&&state.expanded') || !script.includes('placeBar(picked?picked.rect:null)')) return false;
+    return true;
+  });
+
   check('node-fs-toolbar: 构建顺序在 graph-custom 之后、app.js 产物已含本模块', () => {
     const bf = readSrc('scripts/build_frontend.mjs');
     const a = bf.indexOf("'graph-custom.js'");
