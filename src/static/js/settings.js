@@ -859,8 +859,11 @@ function _settingsPageHotkeys() {
 // 第 5 版（2026-11-16 夜）：总开关 + 单条开关 + 导入 + 内置可改，状态见 _skillsPage。
 const _skillsPage = {
   loaded: false, loading: false, error: '', message: '',
-  items: [], byModule: {}, limits: { name: 40, desc: 120, body: 20000, skills: 40 }, draft: null,
+  items: [], byModule: {}, limits: { name: 40, desc: 256, body: 20000, skills: 40 }, draft: null,
   routerEnabled: true, counts: null,
+  // 第 8 版：装进来的主流技能包普遍没写适用节点，这里攒「这次点了哪些节点」再提交
+  // （键是 id，值是模块键数组；提交成功后清掉，跟着列表重载）
+  scopeDraft: {},
   // 「试一条」的状态：question 存着是为了整页重画后输入框不丢字
   preview: { open: false, question: '', loading: false, data: null, error: '' },
   // 导入区：entries 是服务端解析出来的待确认条目（改名字/节点/id 都在本地先攒着）
@@ -913,22 +916,28 @@ function _settingsSkillRowHtml(item) {
   // needsAdapt＝目录里只有上游原版 SKILL.md，缺 phymathia.md 适配层 → 看得见、用不上。
   const isDir = item.layout === 'dir';
   const needsAdapt = !!item.needsAdapt;
+  // 第 8 版：主流技能包里没有「适用节点」这个概念，装进来往往缺 scope。
+  // needsScope＝此刻完全没有生效（候选、投递都拿不到），但要人指定节点，不是去改文件。
+  const needsScope = !!item.needsScope;
+  const adapted = item.adapted !== false;
   const tags = [];
   if (item.overridden) tags.push('改过的内置');
   else if (item.builtin) tags.push('内置');
   else tags.push('自建');
   if (isDir) tags.push('目录型');
+  // 原版 SKILL.md 直接可用（没有本地适配层）：正文会带一句宿主能力声明
+  if (isDir && !adapted && !needsAdapt) tags.push('原版直用');
   // 开关状态不再做成「已启用/已关闭」徽标或按钮字样：滑块颜色＋整行降透明度已经说明（2026-11-17 用户拍板）
   const badges = tags.map((text, index) => {
     const dim = index === 0 && item.builtin && !item.overridden;
     return '<span style="margin-left:6px;font-size:11px;opacity:' + (dim ? '.7' : '.85') + ';'
       + 'border:1px solid var(--border);border-radius:var(--r-pill);padding:0 6px">' + _settingsEsc(text) + '</span>';
   }).join('');
-  // 「待适配 / 超限」必须显眼：它不是状态瑕疵，而是「这条技能此刻完全没有生效」
-  const warn = needsAdapt
+  // 「待适配 / 超限 / 待指定」必须显眼：它不是状态瑕疵，而是「这条技能此刻完全没有生效」
+  const warn = (needsAdapt || needsScope)
     ? '<span style="margin-left:6px;font-size:11px;color:var(--accent);'
       + 'border:1px solid var(--accent);border-radius:var(--r-pill);padding:0 6px">'
-      + (item.oversize ? '正文超限' : '待适配') + '</span>'
+      + (needsAdapt ? (item.oversize ? '正文超限' : '缺正文') : '待指定节点') + '</span>'
     : '';
   const id = _settingsEsc(item.id);
   // 开关＝模型列表同款滑块（settings-model-switch），2026-11-17 用户拍板：不要「已启用/已关闭」字样按钮
@@ -949,15 +958,34 @@ function _settingsSkillRowHtml(item) {
     : '';
   const scopeText = (item.scope && item.scope.length)
     ? _settingsSkillScopeLabels(item.scope)
-    : (needsAdapt ? '未适配' : '未挂节点');
+    : (needsScope ? '未指定' : '未挂节点');
   const where = isDir && item.dir ? ' · 目录 ' + _settingsEsc(item.dir) + '/' : '';
   let hint = '';
-  if (needsAdapt) {
+  if (needsScope && !item.oversize) {
+    // 第 8 版：不让人去改别人的文件——选完写进 skills_state.json，md 一个字节不动
+    const draft = _settingsSkillScopeDraft(item.id);
+    const chips = SKILL_SCOPE_OPTIONS.map(pair => {
+      const on = draft.indexOf(pair[0]) >= 0;
+      return '<button type="button" class="settings-hk-reset" style="font-size:11px;'
+        + (on ? 'border-color:var(--accent);color:var(--accent);' : '')
+        + '" onclick="settingsSkillScopePick(\'' + id + '\',\'' + pair[0] + '\')">'
+        + _settingsEsc(pair[1]) + '</button>';
+    }).join('');
+    hint = '<div style="font-size:11px;margin-top:3px;color:var(--accent);line-height:1.5">'
+      + '这条没有声明适用节点，所以现在不会被任何节点用上。选一个或多个节点后点「用这几个」'
+      + '——只记在本机，不改动它的文件。</div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;align-items:center">'
+      + chips
+      + (draft.length
+        ? '<button type="button" class="settings-hk-reset" style="font-size:11px;color:var(--accent);'
+          + 'border-color:var(--accent)" onclick="settingsSkillScopeSave(\'' + id + '\')">用这几个</button>'
+        : '')
+      + '</div>';
+  } else if (needsAdapt) {
     hint = '<div style="font-size:11px;margin-top:3px;color:var(--accent);line-height:1.5">'
       + (item.oversize
         ? '正文超过上限（' + (_skillsPage.limits.body || 20000) + ' 字），不会注入——请精简后重存。'
-        : '这个目录里只有原版 SKILL.md，缺 phymathia.md 适配层，所以不会注入。'
-          + '把一份本项目格式的 phymathia.md 放进 ' + _settingsEsc(item.dir || item.id) + '/ 即生效。')
+        : '这个入口文件里没有可用的正文，所以不会注入。')
       + '</div>';
   } else if (item.shadowed) {
     hint = '<div style="font-size:11px;margin-top:3px;opacity:.7;line-height:1.5">'
@@ -1254,6 +1282,54 @@ function settingsSkillToggleRouter() {
     .catch(err => {
       _skillsPage.routerEnabled = !next;
       _skillsPage.message = '总开关保存失败：' + ((err && err.message) || '网络错误');
+      renderSettingsPage();
+    });
+}
+
+// ====== 指定适用节点（第 8 版，2026-11-17）======
+// 主流技能包没有「适用节点」字段，装进来普遍缺 scope。旧规则会把它们整条丢掉（悄悄不生效），
+// 现在列表里给一条「待指定节点」，人点几个节点再提交，结果写 skills_state.json——
+// 不改动别人的 md（那份文件升级时还要用），卸载不会把人家的内容改脏。
+
+function _settingsSkillScopeDraft(id) {
+  if (!_skillsPage.scopeDraft || typeof _skillsPage.scopeDraft !== 'object') _skillsPage.scopeDraft = {};
+  if (!Array.isArray(_skillsPage.scopeDraft[id])) _skillsPage.scopeDraft[id] = [];
+  return _skillsPage.scopeDraft[id];
+}
+
+function settingsSkillScopePick(id, key) {
+  if (_settingsGuard && _settingsGuard()) return;
+  const draft = _settingsSkillScopeDraft(id);
+  const at = draft.indexOf(key);
+  if (at >= 0) draft.splice(at, 1);
+  else draft.push(key);
+  _skillsPage.scopeDraft[id] = draft;
+  renderSettingsPage();
+}
+
+function settingsSkillScopeSave(id) {
+  if (_settingsGuard && _settingsGuard()) return;
+  const draft = _settingsSkillScopeDraft(id).slice();
+  if (!draft.length) return;
+  const item = (_skillsPage.items || []).find(row => row.id === id);
+  _skillsPage.message = '正在保存适用节点…';
+  renderSettingsPage();
+  fetch('/api/skills/scope', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: id, scope: draft })
+  })
+    .then(resp => resp.json().then(data => ({ ok: resp.ok, data: data })))
+    .then(result => {
+      if (!result.ok) throw new Error((result.data && result.data.detail) || '保存失败');
+      const labels = _settingsSkillScopeLabels((result.data && result.data.scope) || draft);
+      _skillsPage.message = '已指定：' + ((item && item.name) || id) + ' → ' + labels;
+      if (_skillsPage.scopeDraft) delete _skillsPage.scopeDraft[id];
+      _skillsPage.loaded = false;
+      settingsSkillsLoad(true);
+    })
+    .catch(err => {
+      _skillsPage.message = '保存适用节点失败：' + ((err && err.message) || '网络错误');
       renderSettingsPage();
     });
 }

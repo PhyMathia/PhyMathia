@@ -386,8 +386,9 @@ def test_dir_skill_with_adapter_is_injected():
     assert row["dir"] == "demo-dir"
 
 
-def test_original_dir_without_adapter_visible_but_never_injected():
-    """用户把上游仓库整个移进来（只有 SKILL.md）→ 列表可见、可开可关，但绝不注入。"""
+def test_original_dir_is_usable_after_scope_is_assigned():
+    """装进来的主流包（只有 SKILL.md、没有适用节点）：列表可见但不注入；人指定节点后可用，
+    注入时前面带宿主能力声明（原版正文里可能有「跑脚本」这类本宿主做不到的步骤）。"""
     root = skill_registry._user_dir("default")
     _write_skill_file(
         root / "upstream-demo" / "SKILL.md",
@@ -398,14 +399,21 @@ def test_original_dir_without_adapter_visible_but_never_injected():
     row = {i["id"]: i for i in skill_registry.list_for_ui()["skills"]}["upstream-demo"]
     assert row["layout"] == "dir"
     assert row["adapted"] is False
-    assert row["needsAdapt"] is True
-    assert row["chars"] == 0
+    assert row["needsScope"] is True
     assert row["scope"] == []
-    # 三道闸：候选、投递、payload 都不给
+    # 没人指定节点 → 候选、投递都不给（正文在，但不知道该挂哪个节点）
     assert "upstream-demo" not in [i["id"] for i in skill_registry.by_scope(["viz"])]
     assert skill_registry.requested_block({"skill": {"id": "upstream-demo", "module": "viz"}}) == ("", "")
-    assert skill_registry.payload("upstream-demo") == ""
     assert "upstream-demo" not in skill_registry.menu_block([{"module": "viz"}])
+
+    # 指定之后可用，注入内容带宿主能力声明
+    assert skill_registry.set_skill_scope("default", "upstream-demo", ["viz"]) == ["viz"]
+    text, sid = skill_registry.requested_block({"skill": {"id": "upstream-demo", "module": "viz"}})
+    assert sid == "upstream-demo"
+    assert "build.mjs" in text and "不要声称已经执行过" in text
+    # 指定结果写在账号 state 里，人家的 md 一个字节都没改
+    assert skill_registry.read_state("default")["scope"]["upstream-demo"] == ["viz"]
+    assert "metadata" not in (root / "upstream-demo" / "SKILL.md").read_text(encoding="utf-8")
 
 
 def test_unadapted_dir_does_not_shadow_adapted_builtin():
@@ -479,3 +487,97 @@ def test_builtin_anatomy_is_dir_layout_and_adapted():
     assert item["adapted"] is True
     assert item["scope"] == ["viz"]
     assert len(item["body"]) <= skill_registry.LIMITS["body"]
+
+
+# ====== 第 8 版：与主流 Agent Skills 格式对齐（2026-11-17）======
+
+def test_mainstream_front_matter_is_parsed():
+    """主流写法（name 当标识 + description + metadata.title/scope）不需要本地字段就能用。"""
+    root = skill_registry._user_dir("default")
+    _write_skill_file(
+        root / "pdf-tables" / "SKILL.md",
+        "---\n"
+        "name: pdf-tables\n"
+        "description: 从 PDF 里抽表格。用户提到 PDF 表格或导出表格时使用。\n"
+        "metadata:\n"
+        "  title: PDF 抽表\n"
+        "  scope: math\n"
+        "---\n\n正文：先看表头再定列。\n",
+    )
+    skill_registry.reload_skills()
+
+    item = skill_registry.get("pdf-tables")
+    assert item["name"] == "PDF 抽表"          # 显示名取 metadata.title
+    assert item["scope"] == ["math"]           # 范围取 metadata.scope
+    assert item["needs_scope"] is False
+    assert item["scope_source"] == "metadata"
+    assert item["desc"].startswith("从 PDF 里抽表格")  # description = 本地 desc
+    text, sid = skill_registry.requested_block({"skill": {"id": "pdf-tables", "module": "math"}})
+    assert sid == "pdf-tables" and "表头" in text
+    assert "宿主能力说明" in text  # 原版正文（无 phymathia.md）→ 带宿主能力声明
+
+
+def test_scope_assignment_persists_and_can_be_cleared():
+    """手动指定节点：写 skills_state.json，传空＝撤销，账号之间互不干扰。"""
+    root = skill_registry._user_dir("default")
+    _write_skill_file(root / "bare" / "SKILL.md", "---\nname: bare\ndescription: 无节点\n---\n\n正文\n")
+    skill_registry.reload_skills()
+    assert skill_registry.get("bare")["needs_scope"] is True
+
+    assert skill_registry.set_skill_scope("default", "bare", ["viz", "learn"]) == ["viz", "learn"]
+    assert skill_registry.get("bare")["scope"] == ["viz", "learn"]
+    assert "bare" in [i["id"] for i in skill_registry.by_scope(["learn"])]
+
+    assert skill_registry.set_skill_scope("default", "bare", []) == []
+    assert skill_registry.get("bare")["needs_scope"] is True
+    assert "bare" not in skill_registry.read_state("default")["scope"]
+
+    with pytest.raises(ValueError):
+        skill_registry.set_skill_scope("other-acct", "bare", ["viz"])
+    with pytest.raises(ValueError):
+        skill_registry.set_skill_scope("default", "not-exist", ["viz"])
+
+
+def test_desc_limit_is_256_and_import_truncates_long_ones():
+    """手写超限即拒（不静默截断）；导入路径截断 + 明示（确认卡上能看见再改）。"""
+    assert skill_registry.LIMITS["desc"] == 256
+    with pytest.raises(ValueError):
+        skill_registry.save_skill("default", {
+            "id": "long-desc", "name": "长描述", "desc": "描" * 400, "scope": ["viz"], "body": "正文",
+        })
+
+    parsed = skill_registry.parse_import(
+        "---\nname: from-upstream\ndescription: " + "描" * 400 + "\n"
+        "metadata:\n  scope: viz\n---\n\n正文\n"
+    )
+    assert parsed["ok"] is True
+    assert len(parsed["desc"]) <= 256
+    assert any("截断" in w for w in parsed["warnings"])
+
+
+def test_menu_card_caps_desc_at_200_chars():
+    """存储可以到 256，但候选卡只给前 200 字——判断够用，也不吃分析步的上下文。"""
+    skill_registry.save_skill("default", {
+        "id": "chatty", "name": "话多", "desc": "描" * 256, "scope": ["viz"], "body": "正文",
+    })
+    block = skill_registry.menu_block([{"module": "viz"}])
+    line = [row for row in block.splitlines() if "id=chatty" in row][0]
+    assert line.endswith("…")
+    assert len(line) < 400
+
+
+def test_saved_skill_is_written_in_mainstream_shape():
+    """save_skill 写出来的 front-matter 直接是主流形状（name/description + metadata）。"""
+    skill_registry.save_skill("default", {
+        "id": "written-now", "name": "写出来的", "desc": "一句话描述", "scope": ["viz"], "body": "正文内容",
+    })
+    text = (skill_registry._user_dir("default") / "written-now.md").read_text(encoding="utf-8")
+    head = text.split("---")[1]
+    assert "name: written-now" in head
+    assert "description: 一句话描述" in head
+    assert "title: 写出来的" in head
+    assert "scope: viz" in head
+    assert "id:" not in head  # 主流没有 id 字段，靠 name 当标识
+    # 回读一致
+    item = skill_registry.get("written-now")
+    assert item["name"] == "写出来的" and item["scope"] == ["viz"]

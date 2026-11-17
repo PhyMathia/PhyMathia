@@ -103,14 +103,27 @@ MODULE_KEYWORDS = {
 }
 
 # 用户可写内容的硬上限（超限拒绝写入，不做静默截断——静默截断会让人以为存进去了）
+# desc 第 8 版从 120 放宽到 256（2026-11-17 用户拍板：不用对齐主流的 1024）——
+# 主流 description 常写到 300+ 字，那是给「全量标签常驻」的宿主用的；我们候选卡
+# 每次只现拼几条，描述长到几百字反而稀释判断信号。导入路径对超长单独做截断+提示，
+# 手写/编辑路径仍超限即拒。
 LIMITS = {
     "name": 40,
-    "desc": 120,
+    "desc": 256,
     "body": 20000,
     "skills": 40,
 }
 
 DESC_MAX = LIMITS["desc"]
+# 候选卡里每条技能最多展示这么多字（存储 256，卡面给 200 就够判断了）
+CARD_DESC_MAX = 200
+# 原版 SKILL.md 直用时自动加的护栏：它可能写着「跑 build.mjs」「开浏览器 4× 目检」这类
+# 本宿主做不到的步骤，不声明清楚模型会编造「我已经跑过了」。
+HOST_GUARD = (
+    "（宿主能力说明：本宿主只能生成文字与 HTML，不执行命令、不开浏览器、不联网下载、"
+    "不调用外部工具。下面这段里要求运行脚本／编译／截图校对的步骤一律跳过，"
+    "不要声称已经执行过。）\n\n"
+)
 _SKILL_ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,40}$")
 _FRONT_MATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.S)
 
@@ -149,23 +162,49 @@ def _state_path(account: Any = None):
     return resolve_paths(_account(account)).root / STATE_FILE
 
 
+def _clean_scope_map(raw: Any) -> Dict[str, List[str]]:
+    """把 state 里的 `scope` 表收成 `{id: [模块键]}`，脏值一律丢掉（不抛错）。"""
+    out: Dict[str, List[str]] = {}
+    if not isinstance(raw, dict):
+        return out
+    for key, value in raw.items():
+        skill_id = str(key or "").strip()
+        if not skill_id:
+            continue
+        if isinstance(value, str):
+            value = re.split(r"[,，\s]+", value)
+        if not isinstance(value, list):
+            continue
+        scope = [part for part in (str(item or "").strip() for item in value) if part in MODULE_LABELS]
+        uniq: List[str] = []
+        for part in scope:
+            if part not in uniq:
+                uniq.append(part)
+        if uniq:
+            out[skill_id] = uniq
+    return out
+
+
 def read_state(account: Any = None) -> Dict[str, Any]:
-    """账号的开关状态：``{"router": bool, "disabled": [id, ...]}``。
+    """账号的开关与「手动指定范围」状态。
+
+    形状：``{"router": bool, "disabled": [id, ...], "scope": {id: [模块键]}}``。
 
     与内容文件分开存（`skills_state.json`），因为内置技能住代码目录、只读，只有这样才能
-    把「内置那条被我关了」表达出来。文件缺失/损坏一律当默认（全开），绝不抛错。
+    把「内置那条被我关了」「这条装来的技能我指定给交互可视化」表达出来——**不动别人的
+    文件一个字节**。文件缺失/损坏一律当默认（全开、无指定），绝不抛错。
     """
     key = _account(account)
     path = _state_path(key)
     try:
         mtime = path.stat().st_mtime_ns
     except OSError:
-        return {"router": True, "disabled": []}
+        return {"router": True, "disabled": [], "scope": {}}
     with _state_lock:
         cached = _state_cache.get(key)
         if cached and cached["mtime"] == mtime:
             return dict(cached["data"])
-    data: Dict[str, Any] = {"router": True, "disabled": []}
+    data: Dict[str, Any] = {"router": True, "disabled": [], "scope": {}}
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
@@ -181,6 +220,7 @@ def read_state(account: Any = None) -> Dict[str, Any]:
             data["disabled"] = seen
         if "router" in raw:
             data["router"] = bool(raw.get("router"))
+        data["scope"] = _clean_scope_map(raw.get("scope"))
     with _state_lock:
         _state_cache[key] = {"mtime": mtime, "data": dict(data)}
     return data
@@ -193,6 +233,7 @@ def _write_state(account: Any, data: Dict[str, Any]) -> Dict[str, Any]:
     clean = {
         "router": bool(data.get("router", True)),
         "disabled": [str(item) for item in (data.get("disabled") or [])],
+        "scope": _clean_scope_map(data.get("scope")),
     }
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(clean, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -229,6 +270,35 @@ def set_skill_enabled(account: Any, skill_id: str, on: bool) -> bool:
     state["disabled"] = disabled
     _write_state(account, state)
     return bool(on)
+
+
+def set_skill_scope(account: Any, skill_id: str, modules: Any) -> List[str]:
+    """人手动指定一条技能的适用节点（第 8 版）。
+
+    为什么要这条：主流技能包里没有「适用节点」这个概念，装进来的包几乎都缺 scope。
+    按旧规则它们会被整条丢掉（悄悄不生效）；现在的做法是列表里留一条「请指定适用节点」，
+    由人点一下，结果写进 `skills_state.json`——**不动别人的 md 一个字节**，卸载时也不会
+    把人家的文件改脏。传空列表＝撤销指定，回到「待指定」。
+    """
+    target = str(skill_id or "").strip()
+    if not target:
+        raise ValueError("缺少 id")
+    if not get(target, account):
+        raise ValueError(f"没有这条技能：{target}")
+    if isinstance(modules, str):
+        raw = modules
+    else:
+        raw = ",".join(str(item or "") for item in (modules or []))
+    scope = _parse_scope(raw)
+    state = read_state(account)
+    table = dict(state.get("scope") or {})
+    if scope:
+        table[target] = scope
+    else:
+        table.pop(target, None)
+    state["scope"] = table
+    _write_state(account, state)
+    return scope
 
 
 def _disabled_set(account: Any = None) -> set:
@@ -275,38 +345,115 @@ def _parse_scope(raw: str) -> List[str]:
 
 
 def _front_meta(text: str) -> tuple:
-    """拆 front-matter：返回 (meta, 正文)。没有 front-matter 时 meta 为空、正文是全文。"""
+    """拆 front-matter：返回 (meta, 正文)。没有 front-matter 时 meta 为空、正文是全文。
+
+    第 8 版起支持**一层缩进嵌套**（主流 Agent Skills 的写法）：
+
+        name: pdf-processing
+        description: 抽出 PDF 文本与表格
+        metadata:
+          title: PDF 处理          ← 缩进两格的子键挂到 metadata 下面
+          scope: viz
+
+    只认一层——深一层没人用，反而容易把正文里的缩进列表误读成元数据。
+    顶层值仍然是字符串，空值键后面没跟子项时退化成空串，调用方不必判类型。
+    """
     match = _FRONT_MATTER.match(text)
     if not match:
         return {}, text.strip()
-    meta: Dict[str, str] = {}
-    for line in match.group(1).splitlines():
-        if ":" not in line:
+    meta: Dict[str, Any] = {}
+    parent = ""
+    for raw in match.group(1).splitlines():
+        if not raw.strip() or raw.strip().startswith("#") or ":" not in raw:
             continue
-        key, _, value = line.partition(":")
-        meta[key.strip().lower()] = value.strip()
+        indented = raw[:1] in (" ", "\t")
+        key, _, value = raw.partition(":")
+        key = key.strip().lower()
+        value = value.strip().strip('"').strip("'")
+        if indented and parent:
+            slot = meta.get(parent)
+            if isinstance(slot, dict) and key:
+                slot[key] = value
+            continue
+        if not value:
+            meta[key] = {}
+            parent = key
+        else:
+            meta[key] = value
+            parent = ""
+    for key, value in list(meta.items()):
+        if isinstance(value, dict) and not value:
+            meta[key] = ""
     return meta, text[match.end():].strip()
 
 
+def _meta_text(meta: Dict[str, Any], *keys: str) -> str:
+    """按顺序取第一个非空的顶层字符串值（值是 dict 时跳过）。"""
+    for key in keys:
+        value = meta.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _meta_sub(meta: Dict[str, Any], name: str, *keys: str) -> str:
+    """取 `name:` 缩进子项里的第一个非空值（扩展字段惯例挂在 metadata 下）。"""
+    slot = meta.get(name)
+    if not isinstance(slot, dict):
+        return ""
+    for key in keys:
+        value = str(slot.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _yaml_scalar(value: Any) -> str:
+    """写回 md 时给值加必要引号，保证生成的文件是合法 YAML（主流工具能读）。"""
+    text = _clean_line(value)
+    if not text:
+        return '""'
+    if re.search(r":\s|[#\[\]{}]", text) or re.match(r"^[-*?&!|>%@`]|\s", text):
+        return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return text
+
+
 def _parse_skill(text: str, builtin: bool = False) -> Dict[str, Any] | None:
-    """解析一份 md：front-matter 取 id/name/desc/scope，其余是正文。"""
+    """解析一份 md。字段兼容两种写法（第 8 版）：
+
+    | 含义 | 本地写法 | 主流写法 |
+    |---|---|---|
+    | 唯一标识 | `id: iso-cutaway` | `name: iso-cutaway`（与文件名/目录名一致） |
+    | 中文显示名 | `name: 等距剖视画法` | `metadata.title: 等距剖视画法` |
+    | 一句话描述 | `desc: …` | `description: …` |
+    | 适用节点 | `scope: viz` | `metadata.scope: viz`（主流没有这个字段，塞进 metadata） |
+
+    **没有适用节点不再整条丢弃**（第 8 版，用户拍板）：条目照常可见、可开关，
+    但在人指定节点之前不参与候选与注入（`needs_scope=True`）。这样装进来的主流包
+    不会「悄悄不生效」，也不会被乱挂到不相关节点。
+    """
     meta, body = _front_meta(text)
     if not meta:
         return None
-    skill_id = str(meta.get("id") or "").strip()
+    skill_id = (_meta_text(meta, "id") or _meta_text(meta, "name")).strip().lower()
     if not _SKILL_ID_RE.match(skill_id) or not body:
         return None
-    scope = _parse_scope(meta.get("scope", ""))
-    if not scope:
-        # 没声明范围的 skill 不参与路由——宁可不用，也不要四处乱挂
-        return None
+    raw_scope = _meta_text(meta, "scope")
+    scope = _parse_scope(raw_scope) if raw_scope else _parse_scope(_meta_sub(meta, "metadata", "scope"))
+    raw_name = _meta_text(meta, "name")
+    title = _meta_sub(meta, "metadata", "title", "displayname") or _meta_text(meta, "title")
+    # 旧写法里 name 就是中文显示名；主流写法里 name 是 slug，中文名在 metadata.title
+    display = title or (raw_name if raw_name and not _SKILL_ID_RE.match(raw_name.lower()) else "") or skill_id
     return {
         "id": skill_id,
-        "name": str(meta.get("name") or skill_id).strip()[:LIMITS["name"]],
-        "desc": str(meta.get("desc") or "").strip()[:DESC_MAX],
+        "name": display[:LIMITS["name"]],
+        "desc": (_meta_text(meta, "description", "desc")
+                 or _meta_sub(meta, "metadata", "description"))[:DESC_MAX],
         "scope": scope,
         "body": body,
         "builtin": builtin,
+        "needs_scope": not scope,
+        "scope_source": "file" if raw_scope else ("metadata" if scope else ""),
     }
 
 
@@ -370,24 +517,33 @@ def _entry_file(sub):
     return None, False
 
 
-def _dir_skill_id(sub, meta: Dict[str, str]) -> str:
-    """目录型条目的 id：front-matter 的 id 优先，否则用目录名 slug。"""
-    raw = str(meta.get("id") or "").strip()
+def _dir_skill_id(sub, meta: Dict[str, Any]) -> str:
+    """目录型条目的 id：front-matter 的 id 优先，其次目录名 slug，最后 name/title slug。
+
+    主流规范要求 `name` 与父目录同名，正常情况三者一致；不一致时以目录为准（磁盘上
+    真正的唯一性来源），中文目录转不出 slug 才退回 front-matter 里的名字。
+    """
+    raw = _meta_text(meta, "id").strip().lower()
     if raw and _SKILL_ID_RE.match(raw):
         return raw
-    slug = re.sub(r"[^a-z0-9]+", "-", str(sub.name).lower()).strip("-")[:41].strip("-")
-    return slug if _SKILL_ID_RE.match(slug) else ""
+    for candidate in (sub.name, _meta_text(meta, "name"), _meta_text(meta, "title")):
+        slug = re.sub(r"[^a-z0-9]+", "-", str(candidate or "").lower()).strip("-")[:41].strip("-")
+        if _SKILL_ID_RE.match(slug):
+            return slug
+    return ""
 
 
 def _read_one_dir(sub, builtin: bool) -> Dict[str, Any] | None:
-    """读一个 `skills/<id>/` 目录，产出条目（适配 / 待适配 / 超限三态）。
+    """读一个 `skills/<id>/` 目录，产出条目（适配层 / 原版直用 / 待指定 / 超限）。
 
-    - 有 `phymathia.md` 且格式合法 → 正常条目，参与路由与投递；
-    - 只有原版 `SKILL.md` → **待适配**：scope 为空、正文为空，可见可开关但永不注入。
-      这是刻意为之：原版 SKILL.md 里全是「跑 build.mjs」「开 Chrome 4× 目检」这类
-      本宿主无法执行的指令，直接注进去只会让模型编造已执行的步骤。
-    - `phymathia.md` 超过 LIMITS["body"] → 超限，同样不注入（静默截断会让模型
-      以为读全了，比不注入更糟）。
+    - 有 `phymathia.md` → 走本地适配层（`adapted=True`），正文就是它；
+    - 只有原版 `SKILL.md` → **原版直用**（第 8 版，与主流生态接轨）：正文照用，但注入时
+      前面加一句宿主能力声明（`HOST_GUARD`），压住「跑 build.mjs」「开浏览器目检」这类
+      本宿主做不到的步骤，免得模型编造已经执行过；
+    - 入口文件连 front-matter 都没有 → 只留一个可见可开关的壳，正文为空、永不注入；
+    - 缺适用节点 → `needs_scope=True`：可见、可开关，等人指定节点后才参与路由（第 8 版：
+      不再因为「没写 scope」就把整条丢掉——那是装进来的主流包最常见的形态）；
+    - 正文超 `LIMITS["body"]` → 清空正文与范围，标 `oversize`（不做静默截断）。
     """
     entry, adapted = _entry_file(sub)
     if entry is None:
@@ -396,30 +552,38 @@ def _read_one_dir(sub, builtin: bool) -> Dict[str, Any] | None:
         text = entry.read_text(encoding="utf-8", errors="replace")
     except Exception:
         return None
-    meta, _ = _front_meta(text)
-    item = _parse_skill(text, builtin=builtin) if adapted else None
+    meta, raw_body = _front_meta(text)
+    item = _parse_skill(text, builtin=builtin)
     if item is None:
+        # front-matter 不合规（最常见：`name: Upstream Demo` 带空格，规范要求是 slug）。
+        # 只要入口文件里还有正文，就按「原版直用」收下——正文能注入，等人指定节点；
+        # 连正文都没有才当一个纯壳子（可见可开关，永不注入）。
         skill_id = _dir_skill_id(sub, meta)
         if not skill_id:
             return None
+        has_body = bool(str(raw_body or "").strip())
         return {
             "id": skill_id,
-            "name": str(meta.get("name") or sub.name).strip()[:LIMITS["name"]],
-            "desc": str(meta.get("description") or meta.get("desc") or "").strip()[:DESC_MAX],
+            "name": (_meta_sub(meta, "metadata", "title")
+                     or _meta_text(meta, "name") or sub.name)[:LIMITS["name"]],
+            "desc": (_meta_text(meta, "description", "desc")
+                     or _meta_sub(meta, "metadata", "description"))[:DESC_MAX],
             "scope": [],
-            "body": "",
+            "body": raw_body if has_body else "",
             "builtin": builtin,
             "layout": "dir",
             "dir": str(sub.name),
             "adapted": False,
-            "needs_adapt": True,
+            "needs_scope": True,
+            "needs_adapt": not has_body,
         }
     item["layout"] = "dir"
     item["dir"] = str(sub.name)
-    item["adapted"] = True
+    item["adapted"] = bool(adapted)
     if len(item["body"]) > LIMITS["body"]:
         item["body"] = ""
         item["scope"] = []
+        item["needs_scope"] = True
         item["adapted"] = False
         item["oversize"] = True
         item["needs_adapt"] = True
@@ -491,11 +655,21 @@ def all_skills(account: Any = None, only_enabled: bool = False) -> List[Dict[str
 
     `only_enabled=True` 时剔除被单条关掉的（路由/候选/预览都走这个口径）；
     设置页要列出全部（含关掉的），所以默认不过滤。
+
+    第 8 版在这里叠「人手动指定的适用节点」（`skills_state.json` 的 `scope`）：
+    内容文件里没写 scope 的主流包，由人指定后照样能参与候选与注入，而且不用改人家的文件。
     """
-    disabled = _disabled_set(account)
+    state = read_state(account)
+    disabled = set(state.get("disabled") or [])
+    overrides = state.get("scope") or {}
     out: List[Dict[str, Any]] = []
     for item in _base_skills(account):
         row = dict(item)
+        override = overrides.get(item["id"])
+        if override:
+            row["scope"] = list(override)
+            row["needs_scope"] = False
+            row["scope_source"] = "override"
         row["enabled"] = item["id"] not in disabled
         if only_enabled and not row["enabled"]:
             continue
@@ -623,12 +797,17 @@ def save_skill(account: Any, data: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError(f"自建技能最多 {LIMITS['skills']} 条，先删几条再加")
 
     user_dir.mkdir(parents=True, exist_ok=True)
+    # 写出来的 front-matter 直接是**主流形状**（name / description + metadata 扩展字段）：
+    # name 用 slug（与文件名一致，符合规范对 name 的约束），中文名放 metadata.title，
+    # 本地特有的「适用节点」塞进 metadata.scope——主流工具读到未知的 metadata 键不会报错。
+    # 这样把这份 md 改个名字放进 `<id>/SKILL.md` 就能被别的宿主直接吃。
     text = (
         "---\n"
-        f"id: {skill_id}\n"
-        f"name: {name}\n"
-        f"desc: {desc}\n"
-        f"scope: {', '.join(scope)}\n"
+        f"name: {skill_id}\n"
+        f"description: {_yaml_scalar(desc)}\n"
+        "metadata:\n"
+        f"  title: {_yaml_scalar(name)}\n"
+        f"  scope: {', '.join(scope)}\n"
         "---\n\n"
         f"{body}\n"
     )
@@ -694,6 +873,9 @@ def list_for_ui(account: Any = None) -> Dict[str, Any]:
         "needsAdapt": bool(item.get("needs_adapt")),
         "oversize": bool(item.get("oversize")),
         "shadowed": dict(item["shadowed"]) if isinstance(item.get("shadowed"), dict) else None,
+        # 第 8 版：缺适用节点（装进来的主流包常见）——列表里要提示人去指定，不能静默不生效
+        "needsScope": bool(item.get("needs_scope")),
+        "scopeSource": item.get("scope_source") or "",
     } for item in items]
     # 分组只算「开着」的：关掉的技能不会出现在任何节点的候选里，放进分组会误导
     active = [row for row in rows if row["enabled"]]
@@ -712,6 +894,7 @@ def list_for_ui(account: Any = None) -> Dict[str, Any]:
             "enabled": len(active),
             "user": len([row for row in rows if row["source"] == "user"]),
             "disabled": len([row for row in rows if not row["enabled"]]),
+            "needsScope": len([row for row in rows if row["needsScope"]]),
         },
     }
 
@@ -751,7 +934,11 @@ def menu_block(downstream: Any = None, account: Any = None) -> str:
     lines = ["\n\n# 可挂的 skill 候选（这一步只决定「后面生成节点时挂不挂」，不改变你现在写概要的任务）"]
     for skill in items:
         labels = "、".join(MODULE_LABELS[s] for s in skill["usable"])
-        lines.append(f"- id={skill['id']}｜{skill['name']}｜适用节点：{labels}｜{skill['desc']}")
+        desc = str(skill["desc"] or "")
+        if len(desc) > CARD_DESC_MAX:
+            # 存储放宽到 256 后，卡面只给前 200 字：判断够用，也不让候选卡吃掉分析步的上下文
+            desc = desc[:CARD_DESC_MAX].rstrip() + "…"
+        lines.append(f"- id={skill['id']}｜{skill['name']}｜适用节点：{labels}｜{desc}")
     # 示例行必须取自真实候选：写死某个 id 时，一旦它被关掉，示例里就出现了一个
     # 「严禁自创」却不在候选中的 id，反倒诱导模型抄它
     sample = items[0]
@@ -811,7 +998,12 @@ def requested_block(workflow_context: Any, account: Any = None) -> tuple:
             module = str(target.get("module") or "").strip()
     if module in MODULE_LABELS and module not in item["scope"]:
         return ("", "")
-    return ("\n\n" + item["body"], skill_id)
+    body = item["body"]
+    if item.get("layout") == "dir" and not item.get("adapted"):
+        # 原版 SKILL.md 直用（没有本地适配层）：先声明宿主能力，压住「跑 build.mjs」
+        # 「开浏览器 4× 目检」这类做不到的步骤——不加这句，模型会编造已经执行过。
+        body = HOST_GUARD + body
+    return ("\n\n" + body, skill_id)
 
 
 # ====== 「试一条」预览（2026-11-16 第 3 版）======
@@ -989,27 +1181,29 @@ def parse_import(text: Any, filename: str = "") -> Dict[str, Any]:
     if not raw:
         return {"ok": False, "filename": filename, "problems": ["内容是空的"], "warnings": []}
     warnings: List[str] = []
-    meta: Dict[str, str] = {}
-    body = raw
-    match = _FRONT_MATTER.match(raw)
-    if match:
-        for line in match.group(1).splitlines():
-            if ":" in line:
-                key, _, value = line.partition(":")
-                meta[key.strip().lower()] = value.strip()
-        body = raw[match.end():].strip()
-        if not body:
-            body = raw
-            warnings.append("front-matter 后面没有正文，已把整段当正文")
-    else:
+    meta, body = _front_meta(raw)
+    if not body:
+        body = raw
+        warnings.append("front-matter 后面没有正文，已把整段当正文")
+    elif not meta:
         warnings.append("没有 front-matter，已按文件名与正文推断（可在这里直接改）")
 
     guess_title, guess_desc = _guess_meta(body)
-    skill_id = str(meta.get("id") or "").strip().lower() or _auto_id(raw, filename)
-    name = _plain_line(meta.get("name")) or guess_title \
-        or os.path.splitext(os.path.basename(str(filename or "")))[0] or skill_id
-    desc = _clean_line(meta.get("desc")) or guess_desc or guess_title
-    scope = _parse_scope(meta.get("scope", ""))
+    # id：`id` 字段优先；主流写法里没有 id，用 `name`（规范要求它是与目录同名的 slug）
+    skill_id = (_meta_text(meta, "id") or _meta_text(meta, "name")).strip().lower() \
+        or _auto_id(raw, filename)
+    title = _meta_sub(meta, "metadata", "title") or _meta_text(meta, "title")
+    raw_name = _plain_line(_meta_text(meta, "name"))
+    name = title or (raw_name if raw_name and not _SKILL_ID_RE.match(raw_name.lower()) else "") \
+        or guess_title or os.path.splitext(os.path.basename(str(filename or "")))[0] or skill_id
+    desc = _clean_line(_meta_text(meta, "description", "desc")) or guess_desc or guess_title
+    scope = _parse_scope(_meta_text(meta, "scope") or _meta_sub(meta, "metadata", "scope"))
+
+    # 主流包的 description 常写到 300–1000 字。导入是「解析 → 人确认 → 落盘」，所以这里
+    # 截断并写明；手写/编辑路径仍然超限即拒（不静默截断的承诺只对人写的那条路径）。
+    if len(desc) > DESC_MAX:
+        desc = desc[:DESC_MAX - 1].rstrip() + "…"
+        warnings.append(f"描述超过 {DESC_MAX} 字，已截断到 {DESC_MAX} 字——落盘前可以在这里改写")
     guessed_scope = False
     if not scope:
         hits = guess_modules(name + " " + desc + " " + body[:400])

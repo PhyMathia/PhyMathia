@@ -1,8 +1,9 @@
 ---
-id: teardown-narrative
-name: 拆解叙事骨架
-desc: 讲装置类问题时按「整体→分层→零件→合回」推进，避免写成产品说明书
-scope: learn
+name: teardown-narrative
+description: 讲装置类问题时按「整体→分层→零件→合回」推进，避免写成产品说明书。用户要弄清一个装置由什么组成、各自干什么、怎么连起来工作时使用。
+metadata:
+  title: 拆解叙事骨架
+  scope: learn
 ---
 
 # 本次可用的讲法（可选，不适用就忽略本段）

@@ -163,6 +163,29 @@ async def api_skills_router(request: Request):
     }
 
 
+@router.post("/api/skills/scope")
+async def api_skills_scope(request: Request):
+    """手动指定一条技能的适用节点（第 8 版）。body: {"id": "...", "scope": ["viz", ...]}。
+
+    装进来的主流技能包里没有「适用节点」这个概念，按旧规则会被整条丢掉（悄悄不生效）。
+    现在列表里留一条「请指定适用节点」，人点一下走这个接口，结果写 `skills_state.json`
+    ——**不动别人的 md 一个字节**。传空数组＝撤销指定，回到「待指定」。
+    """
+    payload = await _parse_json_object(request)
+    account = _account_id(request, payload)
+    if _readonly_request(request):
+        raise HTTPException(status_code=403, detail="查阅模式下不能修改技能")
+    skill_id = str(payload.get("id") or "").strip()
+    try:
+        scope = skill_registry.set_skill_scope(account, skill_id, payload.get("scope"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.warning(f"Skill scope assign failed: {exc}")
+        raise HTTPException(status_code=500, detail="保存适用节点失败，请稍后重试") from exc
+    return {"ok": True, "id": skill_id, "scope": scope, "needsScope": not scope}
+
+
 @router.post("/api/skills/import")
 async def api_skills_import(request: Request):
     """导入 md 技能。两种用法：
