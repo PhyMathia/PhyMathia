@@ -747,7 +747,9 @@ function getAllModels() {
     const preset = MODEL_PRESETS[cfg.provider];
     const display = cfg.label || cfg.model;
     // enabled 带出给设置抽屉的开关与槽位下拉共用；undefined（旧配置）按启用处理
-    result.push({ id: cfg.id, name: (preset?.name || cfg.provider) + ' · ' + display, desc: preset?.name || cfg.provider, tags: [display], provider: cfg.provider, hasKey: !!(cfg.apiKey || getGroupKey(cfg.provider)), enabled: cfg.enabled !== false });
+    // display 单独带出：下拉里按供应商分组后，组内只显示模型名（不重复组标题）；
+    // 原 name 仍是「供应商 · 模型名」，供需要完整称呼的地方（如筛选、日志）使用
+    result.push({ id: cfg.id, name: (preset?.name || cfg.provider) + ' · ' + display, display, desc: preset?.name || cfg.provider, tags: [display], provider: cfg.provider, hasKey: !!(cfg.apiKey || getGroupKey(cfg.provider)), enabled: cfg.enabled !== false });
   }
   return result;
 }
@@ -829,6 +831,9 @@ async function fetchModels() {
   renderModelSelects();
 }
 
+// 六个槽位下拉＋简略模式的统一下拉（T456 自绘层按 id 批量增强）
+const MODEL_PICKER_SELECT_IDS = ['agentModelSelect', 'htmlModelSelect', 'descriptorModelSelect', 'quizModelSelect', 'graphModelSelect', 'branchModelSelect', 'unifiedModelSelect'];
+
 function renderModelSelects() {
   // 停用的模型不进聊天模型选择下拉（页头口径「配置后可在聊天时选择使用」）；
   // 设置抽屉的「模型设置」页仍展示全部条目，好让开关能重新启用。
@@ -858,8 +863,10 @@ function renderModelSelects() {
   const opts = groupOrder.map(provider => {
     const preset = MODEL_PRESETS[provider];
     const groupLabel = (preset && preset.name) || provider;
+    // data-label＝组内展示的短文案（纯模型名），optgroup 已经写明供应商，
+    // 再拼一遍就成「DeepSeek（深度求索）· DeepSeek（深度求索） · deepseek-flash」
     const items = byProvider[provider].map(m =>
-      `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`
+      `<option value="${escapeHtml(m.id)}" data-label="${escapeHtml(m.display || m.name)}">${escapeHtml(m.name)}</option>`
     ).join('');
     return `<optgroup label="${escapeHtml(groupLabel)}">${items}</optgroup>`;
   }).join('');
@@ -893,6 +900,15 @@ function renderModelSelects() {
     updateUnifiedModelMeta();
     _refreshUnifiedThinkingSlider();
   }
+  // 自绘下拉（T456）：<select> 留作数据源与事件源（隐藏但仍可读写 .value、照旧派发
+  // change），上层画成分组菜单——原生弹层由浏览器绘制，分组标题是系统灰条，
+  // 既不跟主题，也会把供应商名在组标题和选项里各写一遍
+  MODEL_PICKER_SELECT_IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (typeof pmPickerAttach === 'function') pmPickerAttach(el);
+    if (typeof pmPickerSync === 'function') pmPickerSync(el);
+  });
 }
 
 // 槽位/统一模型的描述行与徽标（isMain＝主槽口径：空值提示「未配置」而非「可选」）
@@ -922,6 +938,8 @@ function updateModelMeta(type) {
   const tagsEl = document.getElementById(tagsMap[type]);
   if (!select || !descEl || !tagsEl) return;
   _fillModelMeta(select.value, descEl, tagsEl, type === 'agent');
+  // 代码里直接改 .value 不会触发 change，自绘按钮文案得在这里跟一次
+  if (typeof pmPickerSync === 'function') pmPickerSync(select);
 }
 
 // 简略模式统一模型的 meta（恒按主槽口径展示）
@@ -931,6 +949,7 @@ function updateUnifiedModelMeta() {
   const tagsEl = document.getElementById('unifiedModelTags');
   if (!select || !descEl || !tagsEl) return;
   _fillModelMeta(select.value, descEl, tagsEl, true);
+  if (typeof pmPickerSync === 'function') pmPickerSync(select);
 }
 
 async function onModelChange(type) {

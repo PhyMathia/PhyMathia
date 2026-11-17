@@ -2396,6 +2396,103 @@
       background: color-mix(in srgb, var(--accent) 12%, transparent);
     }
 
+    /* ====== 主题内自绘选择器（T456，2026-11-17）======
+       与上面 pm-select 同一动机（原生弹层不吃页面 CSS），解决的是另一类控件：
+       带 optgroup 分组、条目会动态重建、调用点已在读 .value / 挂 onchange 的 <select>。
+       select 仍留在 DOM 里当数据源与事件源（只是藏起来），按钮+菜单由 utils.js 的
+       pmPicker* 生成。原生弹层里 optgroup 标题是浏览器画的整条系统灰底，也没法
+       在组内去掉重复的供应商前缀——这正是 2026-11-17 用户目检提出的问题。 */
+    .pm-picker { position: relative; display: block; width: 100%; }
+    /* 包装成功后才藏原生控件：脚本没跑成时仍有原生下拉兜底 */
+    .pm-picker.is-enhanced > select.model-select {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .pm-picker-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--r-md);
+      background-color: var(--field-bg);
+      color: var(--text-primary);
+      font-size: var(--fs-md);
+      font-family: inherit;
+      text-align: left;
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+    .pm-picker-btn:hover,
+    .pm-picker.open .pm-picker-btn { border-color: var(--accent); }
+    .pm-picker-btn:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--btn-active-border); }
+    .pm-picker-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pm-picker-label.is-empty { color: var(--text-secondary); }
+    .pm-picker-caret { flex-shrink: 0; opacity: 0.7; transition: transform var(--dur-base) var(--ease-out); }
+    .pm-picker.open .pm-picker-caret { transform: rotate(180deg); }
+
+    .pm-picker-menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      z-index: var(--z-popover);
+      width: 100%;
+      min-width: 100%;
+      max-height: min(320px, 60vh);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding: 6px;
+      display: block;
+      border-radius: var(--r-md);
+    }
+    /* 底色/磨砂/描边一律交给 .aurora-glass 家族（与 pm-select 同一口径：本段只管
+       结构、字色与选中态）。别在这里写 background 或 --glass-tint 覆盖——星夜主题
+       对 .aurora-glass 有整套「透镜」定制（tint .78 / 无斑 / 边缘渗光 / 去动画），
+       覆盖会把那套语言压成普通磨砂。 */
+    /* 显式 display 会盖过 hidden 属性的 UA 样式，收起必须写死 */
+    .pm-picker-menu[hidden] { display: none; }
+    /* 分组标题只做「轻量的分隔」，不再是一条抢戏的灰底横条 */
+    .pm-picker-group {
+      padding: 10px 10px 4px;
+      font-size: var(--fs-xs);
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .pm-picker-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      padding: 7px 10px;
+      border: none;
+      border-radius: var(--r-sm);
+      background: none;
+      color: var(--text-primary);
+      font-size: var(--fs-sm);
+      font-family: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    .pm-picker-item-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pm-picker-item:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+    .pm-picker-item.active {
+      color: var(--accent);
+      font-weight: 600;
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+    }
+    .pm-picker-check { flex-shrink: 0; opacity: 0; }
+    .pm-picker-item.active .pm-picker-check { opacity: 1; }
+
     /* 分段胶囊（两选一）：底槽托两颗药丸，选中态提亮——与检测页 chips 同一造型 */
     .pm-seg {
       display: inline-flex;

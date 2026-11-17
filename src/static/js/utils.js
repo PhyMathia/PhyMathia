@@ -396,3 +396,177 @@ window.pmSelectToggle = pmSelectToggle;
 window.pmSelectSetValue = pmSelectSetValue;
 window.pmSelectPick = pmSelectPick;
 window.pmSelectCloseAll = pmSelectCloseAll;
+
+// ====== 主题内自绘选择器（T456，2026-11-17）======
+// 与上面 pm-select 同一动机（原生弹层不吃页面 CSS），但解决的是另一类控件：
+// 带 optgroup 分组、条目会动态重建、调用点已经在读 .value / 挂 onchange 的 <select>。
+// 做法是不替换它，而是「包」起来——select 留在 DOM 里当数据源与事件源（.value 读写、
+// onchange 全照旧，隐藏但可编程），上层只画按钮 + 菜单；菜单每次开合/同步都从
+// select 的 optgroup/option 现读，所以任何「重建 options」的调用点收尾调一次
+// pmPickerSync 即可，不维护第二份数据。
+// 分组标题、组内去前缀、选中打勾、超长省略都由这层负责（原生 select 做不到）。
+
+let _pmPickerDismissBound = false;
+
+function _pmPickerWrap(selectEl) {
+  if (!selectEl) return null;
+  const p = selectEl.parentNode;
+  return (p && p.classList && p.classList.contains('pm-picker')) ? p : null;
+}
+
+function pmPickerAttach(selectEl) {
+  if (!selectEl || typeof document === 'undefined') return null;
+  const existing = _pmPickerWrap(selectEl);
+  if (existing) return existing;
+  const parent = selectEl.parentNode;
+  if (!parent) return null;
+  const wrap = document.createElement('div');
+  wrap.className = 'pm-picker';
+  parent.insertBefore(wrap, selectEl);
+  wrap.appendChild(selectEl);
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'pm-picker-btn';
+  btn.setAttribute('aria-haspopup', 'listbox');
+  btn.setAttribute('aria-expanded', 'false');
+  btn.innerHTML = '<span class="pm-picker-label"></span>'
+    + '<svg class="pm-picker-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>';
+
+  const menu = document.createElement('div');
+  menu.className = 'pm-picker-menu aurora-glass aurora-glass--compact';
+  menu.setAttribute('role', 'listbox');
+  menu.hidden = true;
+
+  wrap.appendChild(btn);
+  wrap.appendChild(menu);
+  btn.addEventListener('click', (e) => {
+    if (e && e.stopPropagation) e.stopPropagation();
+    pmPickerToggle(selectEl);
+  });
+  menu.addEventListener('click', (e) => {
+    const item = (e && e.target && e.target.closest) ? e.target.closest('.pm-picker-item') : null;
+    if (!item) return;
+    pmPickerPick(selectEl, item.dataset ? item.dataset.value : '');
+  });
+  // 只有在包装成功后 r 才隐藏原生控件：万一这层脚本挂了，原生下拉仍在
+  wrap.classList.add('is-enhanced');
+  _pmPickerBindDismiss();
+  return wrap;
+}
+
+function pmPickerCloseAll(exceptWrap) {
+  if (typeof document === 'undefined' || !document.querySelectorAll) return;
+  Array.prototype.slice.call(document.querySelectorAll('.pm-picker.open')).forEach(wrap => {
+    if (wrap === exceptWrap) return;
+    wrap.classList.remove('open');
+    const menu = wrap.querySelector ? wrap.querySelector('.pm-picker-menu') : null;
+    if (menu) menu.hidden = true;
+    const btn = wrap.querySelector ? wrap.querySelector('.pm-picker-btn') : null;
+    if (btn && btn.setAttribute) btn.setAttribute('aria-expanded', 'false');
+  });
+}
+
+// 点面板外 / Esc 收起；绑一次即可（判断「点在不在任意 .pm-picker 里」）
+function _pmPickerBindDismiss() {
+  if (_pmPickerDismissBound || typeof document === 'undefined' || !document.addEventListener) return;
+  _pmPickerDismissBound = true;
+  document.addEventListener('click', (e) => {
+    const t = e && e.target;
+    if (typeof Node !== 'undefined' && t instanceof Node && t.closest && t.closest('.pm-picker')) return;
+    pmPickerCloseAll(null);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e && e.key === 'Escape') pmPickerCloseAll(null);
+  });
+}
+
+function pmPickerToggle(selectEl) {
+  const wrap = _pmPickerWrap(selectEl);
+  if (!wrap) return;
+  const menu = wrap.querySelector ? wrap.querySelector('.pm-picker-menu') : null;
+  const btn = wrap.querySelector ? wrap.querySelector('.pm-picker-btn') : null;
+  if (!menu) return;
+  const willOpen = !!menu.hidden;
+  pmPickerCloseAll(willOpen ? wrap : null);
+  menu.hidden = !willOpen;
+  if (wrap.classList) wrap.classList[willOpen ? 'add' : 'remove']('open');
+  if (btn && btn.setAttribute) btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+  if (!willOpen) return;
+  pmPickerSync(selectEl);
+  // 打开时把当前选中项滚进可视区（长列表里别让人自己找）
+  const active = menu.querySelector ? menu.querySelector('.pm-picker-item.active') : null;
+  if (active && active.scrollIntoView) {
+    try { active.scrollIntoView({ block: 'nearest' }); } catch (e) {}
+  }
+}
+
+// 从 select 的 optgroup/option 现读重画菜单与按钮文案；
+// option 的 data-label 优先（去掉「供应商 · 」前缀的纯模型名），没有就退回 option 文本
+function pmPickerSync(selectEl) {
+  const wrap = _pmPickerWrap(selectEl);
+  if (!wrap || typeof escapeHtml !== 'function') return;
+  const menu = wrap.querySelector ? wrap.querySelector('.pm-picker-menu') : null;
+  const labelEl = wrap.querySelector ? wrap.querySelector('.pm-picker-label') : null;
+  if (!menu) return;
+  const current = String(selectEl.value == null ? '' : selectEl.value);
+  const html = [];
+  let currentText = '';
+  const nodes = Array.prototype.slice.call(selectEl.children || []);
+  const pushItem = (opt) => {
+    const value = String(opt.value == null ? '' : opt.value);
+    const text = (opt.dataset && opt.dataset.label) ? opt.dataset.label : (opt.textContent || '');
+    const full = opt.textContent || text;
+    const on = value === current;
+    if (on) currentText = text;
+    html.push('<button type="button" class="pm-picker-item' + (on ? ' active' : '')
+      + '" role="option" aria-selected="' + (on ? 'true' : 'false')
+      + '" data-value="' + escapeHtml(value) + '"'
+      + (full && full !== text ? ' title="' + escapeHtml(full) + '"' : '') + '>'
+      + '<span class="pm-picker-item-label">' + escapeHtml(text) + '</span>'
+      + '<svg class="pm-picker-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>'
+      + '</button>');
+  };
+  nodes.forEach(node => {
+    if (!node) return;
+    if (node.tagName === 'OPTGROUP') {
+      const groupLabel = node.getAttribute ? (node.getAttribute('label') || '') : '';
+      if (groupLabel) html.push('<div class="pm-picker-group">' + escapeHtml(groupLabel) + '</div>');
+      Array.prototype.slice.call(node.children || []).forEach(pushItem);
+      return;
+    }
+    if (node.tagName === 'OPTION') pushItem(node);
+  });
+  menu.innerHTML = html.join('');
+  if (labelEl) {
+    let text = currentText;
+    if (!text && selectEl.selectedIndex >= 0 && selectEl.options && selectEl.options[selectEl.selectedIndex]) {
+      const sel = selectEl.options[selectEl.selectedIndex];
+      text = (sel.dataset && sel.dataset.label) ? sel.dataset.label : (sel.textContent || '');
+    }
+    labelEl.textContent = text || '';
+    if (labelEl.classList) labelEl.classList.toggle('is-empty', !current);
+  }
+}
+
+// 用户点选：先落 select.value，再派发 change（原生 onchange / 监听器全照旧走一次）
+function pmPickerPick(selectEl, value) {
+  const wrap = _pmPickerWrap(selectEl);
+  if (!wrap) return;
+  const v = String(value == null ? '' : value);
+  pmPickerCloseAll(null);
+  if (selectEl.value === v) return;
+  selectEl.value = v;
+  pmPickerSync(selectEl);
+  try {
+    selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+  } catch (e) {
+    if (typeof selectEl.onchange === 'function') selectEl.onchange();
+  }
+}
+
+window.pmPickerAttach = pmPickerAttach;
+window.pmPickerSync = pmPickerSync;
+window.pmPickerToggle = pmPickerToggle;
+window.pmPickerPick = pmPickerPick;
+window.pmPickerCloseAll = pmPickerCloseAll;
