@@ -72,6 +72,7 @@ let _taskSeq = 0;
 let _taskLoaded = false;   // 服务端历史读过一次没有
 let _taskPanelOpen = false;
 let _taskRenderTimer = null;
+let _taskRenderSig = null;  // 上次整渲染的结构指纹（_taskTickStart 比对用，见 _taskStructureSig）
 let _taskPersistTimer = null;
 let _taskTickTimer = null;
 let _taskExpanded = {};    // taskId -> 是否展开节点明细（纯 UI 态，不落盘）
@@ -912,7 +913,8 @@ function _taskNodeRowHtml(task, entry) {
     : (entry.endedAt && entry.startedAt ? ' ' + _taskElapsed(entry.startedAt, entry.endedAt) : '');
   const cancelable = (task.state === 'running' || task.state === 'paused') && entry.state !== 'done';
   const note = entry.note ? '<span class="task-node-note">' + _taskEsc(entry.note) + '</span>' : '';
-  return '<div class="task-node-row state-' + _taskEsc(entry.state) + '">'
+  // data-node-id 给 _taskTickClockTexts 用：每秒就地改运行节点的耗时，不重建 DOM。
+  return '<div class="task-node-row state-' + _taskEsc(entry.state) + '" data-node-id="' + _taskEsc(entry.id) + '">'
     + '<span class="task-node-glyph">' + _taskNodeGlyphHtml(entry.state) + '</span>'
     + '<span class="task-node-label">' + _taskEsc(entry.label) + '</span>'
     + '<span class="task-node-state">' + _taskEsc(text + timing) + '</span>'
@@ -1036,7 +1038,12 @@ function _renderTaskPanel() {
   if (!panel) return;
   const focus = _taskFocusSnapshot(panel);
   const body = panel.querySelector('.task-panel-body') || document.getElementById('taskPanelBody');
-  if (body) body.innerHTML = _taskPanelHtml();
+  if (body) {
+    body.innerHTML = _taskPanelHtml();
+    // 记下这次整渲染的结构指纹：tick 每秒比对，结构没变就只就地改时钟文字，
+    // 不再 innerHTML 换血——那会把 .task-spin 的转圈动画从头再来（不连续的根因）。
+    _taskRenderSig = _taskStructureSig();
+  }
   // 两个入口（顶栏三角 / 胶囊上的列表按钮）同步徽标：数的是「未完成」，
   // 失败/中断的那些留在计数里，直到用户重试或删掉——账不能自己消失。
   const count = _taskUnfinished().length;
@@ -1078,7 +1085,13 @@ function _taskTickStart() {
   if (_taskTickTimer) return;
   _taskTickTimer = setInterval(() => {
     if (!_taskPanelOpen) return;
-    if (_taskActive.some(t => t.state === 'running')) _renderTaskPanel();
+    if (!_taskActive.some(t => t.state === 'running')) return;
+    // 每秒跳一次只是为了刷新耗时文字。结构没变就就地改文字——整面板 innerHTML
+    // 重写会把 .task-spin 的 CSS 动画从头再来（0.7s 转一圈撞上 1s tick＝每秒
+    // 跳回约 154°，用户 2026-11-17 反馈「转圈不连续」就是它）。结构真变了
+    // （状态迁移/展开收起/按钮增减/备注变化）才走整渲染。
+    if (_taskStructureSig() === _taskRenderSig) _taskTickClockTexts();
+    else _renderTaskPanel();
   }, 1000);
 }
 
@@ -1086,6 +1099,48 @@ function _taskTickStop() {
   if (_taskTickTimer) {
     clearInterval(_taskTickTimer);
     _taskTickTimer = null;
+  }
+}
+
+// 时间无关的结构指纹：除耗时时钟外，凡会影响面板标记的量都进这里（页签/状态/
+// 暂停/停止中/标题/备注/展开态/节点明细）。tick 拿它跟上次整渲染存的比对，
+// 相同＝这一秒只有时钟在走。
+function _taskStructureSig() {
+  const part = t => [t.id, t.state, t.kind || '', t.paused ? 1 : 0, t.cancelRequested ? 1 : 0,
+    t.title || '', t.sessionTitle || '', t.note || '', _taskExpanded[t.id] ? 1 : 0,
+    (t.nodes || []).map(n => n.id + ':' + n.state + ':' + (n.note || '')).join(',')].join('|');
+  return _taskTab + '#' + _taskActive.map(part).join('##')
+    + '@' + _taskHistory.map(part).join('##');
+}
+
+// 就地改时钟文字（.task-state-text / .task-node-state）：进行中任务的耗时、
+// 运行节点的耗时、历史条目的「X 前」。只碰文字节点，绝不动 .task-glyph /
+// .task-node-glyph——那里的圆环动画不能断。
+function _taskTickClockTexts() {
+  const panel = document.getElementById('taskPanel');
+  if (!panel) return;
+  for (const el of panel.querySelectorAll('.task-item[data-task-id]')) {
+    const id = el.getAttribute('data-task-id');
+    const task = _taskActive.find(t => t.id === id) || _taskHistory.find(t => t.id === id);
+    if (!task) continue;
+    const stateText = el.querySelector('.task-state-text');
+    if (stateText) {
+      let line = _taskStateLine(task);
+      if (el.classList.contains('task-item--history')) {
+        line += ' · ' + _taskAgo(task.endedAt || task.createdAt);
+      }
+      stateText.textContent = line;
+    }
+    for (const row of el.querySelectorAll('.task-node-row[data-node-id]')) {
+      const entry = (task.nodes || []).find(n => n.id === row.getAttribute('data-node-id'));
+      if (!entry) continue;
+      const text = TASK_NODE_TEXT[entry.state] || entry.state;
+      const timing = entry.state === 'running'
+        ? ' ' + _taskElapsed(entry.startedAt, 0)
+        : (entry.endedAt && entry.startedAt ? ' ' + _taskElapsed(entry.startedAt, entry.endedAt) : '');
+      const st = row.querySelector('.task-node-state');
+      if (st) st.textContent = text + timing;
+    }
   }
 }
 
