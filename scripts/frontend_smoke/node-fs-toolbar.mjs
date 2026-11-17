@@ -321,6 +321,53 @@ export function run() {
     return true;
   });
 
+  check('node-fs-toolbar: 回答方式可选（直接回答／问题分析／自动判断），选择沿用上次（2026-11-17 用户报）', () => {
+    const set = sandbox._nodeFsRouteSet;
+    const cur = sandbox._nodeFsRouteCurrent;
+    if (typeof set !== 'function' || typeof cur !== 'function') throw new Error('回答方式 API 未挂出');
+    const auto = () => sandbox.followupAutoRouteEnabled();
+    const saved = () => sandbox.localStorage.getItem('phymathia_node_fs_followup_route');
+    sandbox.localStorage.removeItem('phymathia_followup_auto_route');
+    sandbox.localStorage.removeItem('phymathia_node_fs_followup_route');
+    if (auto()) throw new Error('总开关默认应为关');
+    // 手动档：选中即记，且落盘（下次划词沿用）
+    set('direct');
+    if (cur() !== 'direct') throw new Error('选了直接回答却没生效');
+    if (saved() !== 'direct') throw new Error('选择没落盘，下次划词会丢');
+    // 总开关关时 auto 不收（不许悄悄发那次判断请求）
+    set('auto');
+    if (cur() !== 'direct') throw new Error('总开关关着还接受了自动判断');
+    // 总开关开：auto 可用；关掉后自动降级 analysis，不把人锁在已退役的档上
+    sandbox.localStorage.setItem('phymathia_followup_auto_route', '1');
+    set('auto');
+    if (cur() !== 'auto') throw new Error('总开关开着却选不了自动判断');
+    sandbox.localStorage.removeItem('phymathia_followup_auto_route');
+    if (cur() !== 'analysis') throw new Error('总开关关掉后 auto 应降级 analysis');
+    // 复位，别让本用例的残留影响后续用例
+    set('analysis');
+    sandbox.localStorage.removeItem('phymathia_node_fs_followup_route');
+    return true;
+  });
+
+  check('node-fs-toolbar: 回答方式接线（本页浮条→followupRoute；预览窗带 route 过桥并过白名单）', () => {
+    const src = readSrc('src/static/js/node-fs-toolbar.js');
+    // 本页全屏浮条：展开行渲染三档，发送时把当前档交给 startQuestionWorkflow
+    if (!src.includes("_nodeFsRouteButtonsHtml('node-fs-route')")) return false;
+    if (!src.includes('followupRoute: route || _nodeFsRouteCurrent()')) return false;
+    // 桥：预览页带来的 route 先过白名单（非法值当没选）
+    if (!src.includes("d.route === 'direct'")) return false;
+    if (!src.includes('_nodeFsBridgedFollowup(node, text, route)')) return false;
+    const script = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T', route: 'direct' });
+    if (!script.includes('var ROUTE=') || !script.includes('var ROUTE_AUTO=')) return false;
+    if (!script.includes('routeHtml()')) return false;              // 胶囊进输入行
+    if (!script.includes('postAction("followup",composed,ROUTE)')) return false; // 档位随消息走
+    if (!script.includes('route:String(route||"")')) return false;  // 消息体带 route 字段
+    if (!/"route":"direct"/.test(script)) return false;             // 初始值按主应用那档带过去
+    const css = readSrc('src/static/css/graph-override.css');
+    if (!css.includes('.node-fs-route-btn.is-current')) return false;
+    return true;
+  });
+
   check('node-fs-toolbar: 浮条样式进 graph-override.css（胶囊＋引文输入行＋窄屏图标化）', () => {
     const css = readSrc('src/static/css/graph-override.css');
     if (css.includes('.node-fs-more') || css.includes('node-fs-menu-item')) return false; // ⋯ 菜单已随工具条收窄退役

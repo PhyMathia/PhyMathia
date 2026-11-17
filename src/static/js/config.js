@@ -261,6 +261,10 @@ const STORAGE_KEY_FOLLOWUP_AUTO_ROUTE = 'phymathia_followup_auto_route';
 function followupAutoRouteEnabled() {
   try { return localStorage.getItem(STORAGE_KEY_FOLLOWUP_AUTO_ROUTE) === '1'; } catch (e) { return false; }
 }
+// 划词追问浮条（节点全屏／新窗口预览）的「回答方式」上次选择（2026-11-17）：全局键，
+// 跟账号走；值与画布追问卡的 routeMode 同词（auto / analysis / direct）。预览页读不到
+// 主应用的账号命名空间，所以那份选择在生成内嵌脚本时当初始值带过去（不各存一份）。
+const STORAGE_KEY_NODE_FS_ROUTE = 'phymathia_node_fs_followup_route';
 
 // ===== Φ助手独立会话（2026-09-30 与画布解耦）======
 // Φ 会话有独立 id 空间（phi_<uuid>），与画布会话（sess_<uuid>）互不隶属：

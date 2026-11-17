@@ -3944,6 +3944,53 @@ html[data-theme="light"] .graph-node-fs,
   white-space: nowrap;
 }
 
+/* 追问输入行的「回答方式」（2026-11-17）：与画布追问卡同一套三档（auto/问题分析/
+   直接回答），单占一行——胶囊不跟输入框抢宽度，窄屏自然换行。选中态用 accent，
+   与画布追问卡 is-current 同语义；预览页同款胶囊色值走 --cp-*，不用这份。 */
+.node-fs-route {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: var(--sp-1);
+}
+
+.node-fs-route-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-right: 2px;
+}
+
+.node-fs-route-btn {
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.node-fs-route-btn:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-secondary) 14%, transparent);
+}
+
+.node-fs-route-btn.is-current {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+  font-weight: 700;
+}
+
+.node-fs-route-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 1px;
+}
+
 /* 窄屏文字收成图标（title/aria-label 兜底语义） */
 @media (max-width: 520px) {
   .node-fs-bar .node-fs-btn-label {

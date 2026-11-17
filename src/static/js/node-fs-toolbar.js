@@ -26,6 +26,58 @@ const NODE_FS_PREVIEW_CTX_STORE = 'phymathia_node_fs_preview_ctx';
 const NODE_FS_PREVIEW_CTX_MAX = 4;
 let _nfsPreviewCtxs = [];
 
+// 追问「回答方式」（2026-11-17 用户报：浮条追问没有「直接回答／问题分析」可挑）：
+// 与画布追问卡同一套口径（graph-interact.submitDraftQuestion → startQuestionWorkflow 的
+// followupRoute），三档 auto/analysis/direct；auto 只在总开关开时露面。选择沿用上一次
+// （config.STORAGE_KEY_NODE_FS_ROUTE，跟账号走），省得每次划词都要重挑。
+const NODE_FS_ROUTE_FALLBACK = 'phymathia_node_fs_followup_route';
+let _nfsRoute = '';         // 本页懒加载一次，之后读这里（浮条出现即沿用，不反复读盘）
+
+function _nodeFsRouteAutoEnabled() {
+  return (typeof followupAutoRouteEnabled === 'function') ? followupAutoRouteEnabled() : false;
+}
+
+function _nodeFsRouteStoreKey() {
+  return (typeof STORAGE_KEY_NODE_FS_ROUTE === 'string' && STORAGE_KEY_NODE_FS_ROUTE)
+    ? STORAGE_KEY_NODE_FS_ROUTE : NODE_FS_ROUTE_FALLBACK;
+}
+
+// 当前该用哪一档：存过的手动档照用；auto 档在总开关关掉后自动降级 analysis
+// （与画布追问卡「关时不出现自动判断」同一口径，别让旧值把人锁在判断请求上）
+function _nodeFsRouteCurrent() {
+  const auto = _nodeFsRouteAutoEnabled();
+  if (_nfsRoute === 'direct' || _nfsRoute === 'analysis') return _nfsRoute;
+  if (_nfsRoute === 'auto') return auto ? 'auto' : 'analysis';
+  let saved = '';
+  try { saved = String(localStorage.getItem(_nodeFsRouteStoreKey()) || '').toLowerCase(); } catch (e) { saved = ''; }
+  if (saved === 'direct' || saved === 'analysis') _nfsRoute = saved;
+  else if (saved === 'auto' && auto) _nfsRoute = 'auto';
+  else _nfsRoute = auto ? 'auto' : 'analysis';
+  return _nfsRoute;
+}
+
+function _nodeFsRouteSet(route) {
+  const next = String(route || '').toLowerCase();
+  if (next !== 'direct' && next !== 'analysis' && !(next === 'auto' && _nodeFsRouteAutoEnabled())) return _nodeFsRouteCurrent();
+  _nfsRoute = next;
+  try { localStorage.setItem(_nodeFsRouteStoreKey(), next); } catch (e) { /* 配额满就只记在本页 */ }
+  return _nfsRoute;
+}
+
+// 三枚胶囊的 HTML（本页浮条与预览页内嵌脚本同款文案／同款 title；类名各自前缀）
+function _nodeFsRouteButtonsHtml(cls) {
+  const cur = _nodeFsRouteCurrent();
+  const btn = (route, label, hint) => '<button type="button" class="' + cls + '-btn' + (cur === route ? ' is-current' : '')
+    + '" data-route="' + route + '" aria-pressed="' + (cur === route ? 'true' : 'false')
+    + '" title="' + _nodeFsEscAttr(hint) + '">' + label + '</button>';
+  return '<div class="' + cls + '" role="group" aria-label="回答方式">'
+    + '<span class="' + cls + '-label">回答方式</span>'
+    + (_nodeFsRouteAutoEnabled() ? btn('auto', '自动判断', '由 AI 判断：一句话能答清就直接回答') : '')
+    + btn('analysis', '问题分析', '先拆成子问题铺开分析')
+    + btn('direct', '直接回答', '一次成文，不铺模块')
+    + '</div>';
+}
+
 // ---------- 选区提取（KaTeX 还原 LaTeX） ----------
 
 function _nodeFsClosestKatex(node) {
@@ -269,7 +321,26 @@ function _nodeFsExpandInput() {
     + '<input type="text" class="node-fs-input" aria-label="追问内容" placeholder="想追问什么？（留空用默认问句）">'
     + (q.truncated ? '<span class="node-fs-trunc">已取前 2000 字</span>' : '')
     + '<button type="button" class="node-fs-btn node-fs-btn--primary" data-act="send">发送</button>'
-    + '</div>';
+    + '</div>'
+    + _nodeFsRouteButtonsHtml('node-fs-route');
+  // 回答方式就地切换（不重建浮条：重画会把输入框里已打的字和焦点一起弄丢）
+  const routeGroup = bar.querySelector('.node-fs-route');
+  if (routeGroup) {
+    routeGroup.addEventListener('click', ev => {
+      const btn = ev.target && ev.target.closest ? ev.target.closest('[data-route]') : null;
+      if (!btn || !routeGroup.contains(btn)) return;
+      ev.preventDefault();
+      const next = _nodeFsRouteSet(btn.getAttribute('data-route'));
+      routeGroup.querySelectorAll('[data-route]').forEach(item => {
+        const on = item.getAttribute('data-route') === next;
+        item.classList.toggle('is-current', on);
+        item.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+      // 点胶囊不该把光标从输入框里赶走（按钮默认会拿到焦点）
+      const back = bar.querySelector('.node-fs-input');
+      if (back) back.focus();
+    });
+  }
   const input = bar.querySelector('.node-fs-input');
   if (input) {
     input.addEventListener('keydown', ev => {
@@ -303,8 +374,12 @@ function _nodeFsSendFollowup() {
   }
   // 端口优先取「追问」族输出口（_branchSourcePort 同分支拓展口径），没有退 out-0
   const port = (typeof _branchSourcePort === 'function') ? _branchSourcePort(node, 'followup') : 'out-0';
+  // 回答方式：与画布追问卡同一条 opts 通道（startQuestionWorkflow 侧还有一道
+  // 总开关闸，auto 关时降级 analysis）——浮条这条追问过去不带 routeMode，
+  // 一律按 analysis 走，用户没法在这里要「直接回答」（2026-11-17 补）
+  const route = _nodeFsRouteCurrent();
   if (typeof window.startQuestionWorkflow === 'function') {
-    window.startQuestionWorkflow(composed, { sourceNodeId: node.id, sourcePort: port, queueLabel: '追问' });
+    window.startQuestionWorkflow(composed, { sourceNodeId: node.id, sourcePort: port, queueLabel: '追问', followupRoute: route });
   } else if (typeof showToast === 'function') {
     showToast('发送链暂不可用');
   }
@@ -447,6 +522,10 @@ window.addEventListener('message', ev => {
   const ctx = _nodeFsPreviewCtxFor(d.token, ev.source);
   if (!ctx) return; // 认不出这扇窗：不执行、不应答（预览侧会提示重开窗口）
   const text = String(d.text || '').slice(0, NODE_FS_BRIDGE_TEXT_MAX);
+  // 预览页选的回答方式：白名单外的值一律当没选（老预览窗的脚本根本不带这字段，
+  // 那种情况回落到主应用这边记住的那一档）
+  const route = (d.route === 'direct' || d.route === 'analysis'
+    || (d.route === 'auto' && _nodeFsRouteAutoEnabled())) ? d.route : '';
   const node = (ctx.nodeId && typeof _findGraphNode === 'function') ? _findGraphNode(ctx.nodeId) : null;
   let ok = true;
   let message = '';
@@ -458,7 +537,7 @@ window.addEventListener('message', ev => {
     // 不抢焦点：后台标签页的 window.focus() 被浏览器一律忽略（2026-10-25 真机实测），
     // 动作就地执行、用户自己切回主应用看结果；ack 文案照实说，不写「已转到主应用」
     try {
-      if (d.action === 'followup') { _nodeFsBridgedFollowup(node, text); message = '追问已发到主画布'; }
+      if (d.action === 'followup') { _nodeFsBridgedFollowup(node, text, route); message = '追问已发到主画布'; }
       else if (d.action === 'search') { _nodeFsBridgedSearch(text); message = '已在主应用打开画布搜索'; }
     } catch (e) { ok = false; message = '主应用执行失败'; }
   }
@@ -479,10 +558,15 @@ window.addEventListener('message', ev => {
 // 桥上追问：预览页里已把「问题＋【聚焦选段】引文」拼成整句送来——浏览器不允许后台
 // 页抢焦点（「跳转回主应用」真机实测做不到，2026-10-25），追问输入行因此落回预览页
 // 本地展开；这里收到整句后直接从源节点长链，不开全屏层、不抢屏
-function _nodeFsBridgedFollowup(node, text) {
+function _nodeFsBridgedFollowup(node, text, route) {
   const port = (typeof _branchSourcePort === 'function') ? _branchSourcePort(node, 'followup') : 'out-0';
   if (typeof window.startQuestionWorkflow === 'function') {
-    window.startQuestionWorkflow(String(text || ''), { sourceNodeId: node.id, sourcePort: port, queueLabel: '追问' });
+    window.startQuestionWorkflow(String(text || ''), {
+      sourceNodeId: node.id,
+      sourcePort: port,
+      queueLabel: '追问',
+      followupRoute: route || _nodeFsRouteCurrent(),
+    });
   }
 }
 
@@ -596,6 +680,11 @@ function _buildNodeFsPreviewScript(cfg) {
     token: String((cfg && cfg.token) || ''),
     nodeId: String((cfg && cfg.nodeId) || ''),
     title: String((cfg && cfg.title) || ''),
+    // 回答方式（2026-11-17）：预览页读不到主应用的账号命名空间（非默认账号的键带
+    // u<id8>_ 前缀），所以初始值由主应用生成脚本时带过去；窗内再切只记在本窗内存，
+    // 不回写——回写会落到无前缀的裸键上，与主应用那份对不上，反而像「没记住」
+    route: (cfg && typeof cfg.route === 'string' && cfg.route) ? String(cfg.route) : _nodeFsRouteCurrent(),
+    auto: _nodeFsRouteAutoEnabled(),
   };
   const json = JSON.stringify(conf).replace(/<\//g, '<\\/'); // 防标题带 </script> 提前闭合
   return '(function(){'
@@ -605,6 +694,9 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'var READONLY=!!CFG.readonly;'
     + 'var MAX_TEXT=' + NODE_FS_BRIDGE_TEXT_MAX + ',EXCERPT_MAX=' + NODE_FS_EXCERPT_MAX + ',EXCERPT_LINES=' + NODE_FS_EXCERPT_LINES + ';'
     + 'var DEFAULT_Q=' + JSON.stringify(NODE_FS_FOLLOWUP_DEFAULT) + ';'
+    // 回答方式：主应用带过来的初始值（见上方 conf.route 注释）；窗内可再切
+    + 'var ROUTE=(CFG.route==="direct"||CFG.route==="analysis"||(CFG.route==="auto"&&CFG.auto))?CFG.route:(CFG.auto?"auto":"analysis");'
+    + 'var ROUTE_AUTO=!!CFG.auto;'
     + 'var bar=null,picked=null,state=null,selTimer=0;'
     + 'var style=document.createElement("style");'
     + 'style.textContent=".cp-nfs-bar{position:fixed;z-index:60;display:flex;align-items:center;gap:2px;padding:4px;'
@@ -626,6 +718,12 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'background:rgba(9,13,32,.6);color:#e6ebff;font-size:13px;padding:0 10px;outline:none;}'
     + '.cp-nfs-input:focus{border-color:rgba(45,212,191,.55);}'
     + '.cp-nfs-trunc{flex:none;font-size:11px;color:#8b93b8;white-space:nowrap;}'
+    + '.cp-nfs-route{display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-top:2px;}'
+    + '.cp-nfs-route-label{font-size:11px;color:#8b93b8;margin-right:2px;}'
+    + '.cp-nfs-route-btn{height:24px;padding:0 9px;border:1px solid transparent;border-radius:999px;background:transparent;'
+    + 'color:#a7b0d6;font-size:12px;cursor:pointer;white-space:nowrap;font-family:inherit;}'
+    + '.cp-nfs-route-btn:hover{color:#e6ebff;background:rgba(139,147,184,.14);}'
+    + '.cp-nfs-route-btn.is-current{color:#e6ebff;background:rgba(139,147,184,.26);border-color:rgba(139,147,184,.5);font-weight:600;}'
     + '.cp-nfs-toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(8px);'
     + 'background:rgba(15,21,48,.95);border:1px solid rgba(139,147,184,.3);color:#e6ebff;font-size:12.5px;'
     + 'padding:8px 16px;border-radius:999px;opacity:0;transition:opacity .25s,transform .25s;pointer-events:none;z-index:70;}'
@@ -647,6 +745,14 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'color:var(--cp-ink-strong,#e6ebff);}'
     + '.cp-nfs-input:focus{border-color:var(--cp-focus,rgba(45,212,191,.55));}'
     + '.cp-nfs-trunc{color:var(--cp-mute,#8b93b8);}'
+    + '.cp-nfs-route-label{color:var(--cp-mute,#8b93b8);}'
+    + '.cp-nfs-route-btn{color:var(--cp-ink-2,#a7b0d6);}'
+    + '.cp-nfs-route-btn:hover{color:var(--cp-ink-strong,#e6ebff);background:var(--cp-chip-bg,rgba(139,147,184,.14));}'
+    // 选中态吃主题主色（--cp-primary 深浅两套都有），只染底与描边、不抢「发送」那颗实心钮
+    + '.cp-nfs-route-btn.is-current{color:var(--cp-primary,#e6ebff);'
+    + 'background:color-mix(in srgb,var(--cp-primary,#8b93b8) 16%,transparent);'
+    + 'border-color:color-mix(in srgb,var(--cp-primary,#8b93b8) 45%,transparent);font-weight:600;}'
+    + '.cp-nfs-route-btn:focus-visible{outline:2px solid var(--cp-focus,rgba(139,147,184,.7));outline-offset:1px;}'
     + '.cp-nfs-toast{background:var(--cp-bar-bg,rgba(15,21,48,.95));border-color:var(--cp-line,rgba(139,147,184,.3));'
     + 'color:var(--cp-ink-strong,#e6ebff);}'
     + '";'
@@ -717,6 +823,23 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'return "<button type=\\"button\\" class=\\"cp-nfs-btn"+(primary?" cp-nfs-btn--primary":"")'
     + '+"\\" data-act=\\""+act+"\\" data-icon=\\""+icon+"\\" aria-label=\\""+t+"\\" title=\\""+t+"\\">"'
     + '+"<span class=\\"cp-nfs-label\\">"+label+"</span></button>";}'
+    // 回答方式三枚胶囊（2026-11-17）：主应用浮条的同款文案与 title，类名换成 cp- 前缀
+    + 'function routeHtml(){var html="<div class=\\"cp-nfs-route\\" role=\\"group\\" aria-label=\\"回答方式\\">'
+    + '<span class=\\"cp-nfs-route-label\\">回答方式</span>";'
+    + 'var b=function(r,label,hint){var on=ROUTE===r;'
+    + 'return "<button type=\\"button\\" class=\\"cp-nfs-route-btn"+(on?" is-current":"")+"\\" data-route=\\""+r+"\\"'
+    + ' aria-pressed=\\""+(on?"true":"false")+"\\" title=\\""+escAttr(hint)+"\\">"+label+"</button>";};'
+    + 'if(ROUTE_AUTO)html+=b("auto","自动判断","由 AI 判断：一句话能答清就直接回答");'
+    + 'html+=b("analysis","问题分析","先拆成子问题铺开分析");'
+    + 'html+=b("direct","直接回答","一次成文，不铺模块");'
+    + 'return html+"</div>";}'
+    // 窗内就地切换（不重建浮条：重画会丢输入框里的字与焦点）
+    + 'function setRoute(r){if(r!=="direct"&&r!=="analysis"&&!(r==="auto"&&ROUTE_AUTO))return;ROUTE=r;'
+    + 'var btns=bar?bar.querySelectorAll("[data-route]"):[];'
+    + 'for(var i=0;i<btns.length;i++){var on=btns[i].getAttribute("data-route")===ROUTE;'
+    + 'btns[i].className="cp-nfs-route-btn"+(on?" is-current":"");'
+    + 'btns[i].setAttribute("aria-pressed",on?"true":"false");}'
+    + 'var inp=bar?bar.querySelector(".cp-nfs-input"):null;if(inp)inp.focus();}'
     + 'function showBar(pk){hideBar();picked=pk;state={expanded:false,quoteDropped:false};'
     + 'bar=document.createElement("div");bar.className="cp-nfs-bar";bar.setAttribute("role","toolbar");'
     + 'var html="";'
@@ -733,6 +856,8 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'html+="<div class=\\"cp-nfs-input-row\\"><input type=\\"text\\" class=\\"cp-nfs-input\\" aria-label=\\"追问内容\\" placeholder=\\"想追问什么？（留空用默认问句）\\">"'
     + '+(q.truncated?"<span class=\\"cp-nfs-trunc\\">已取前 2000 字</span>":"")'
     + '+"<button type=\\"button\\" class=\\"cp-nfs-btn cp-nfs-btn--primary\\" data-act=\\"send\\">发送</button></div>";'
+    // 回答方式（2026-11-17）：与主应用浮条、画布追问卡同一套三档口径
+    + 'html+=routeHtml();'
     + 'bar.innerHTML=html;'
     + 'var input=bar.querySelector(".cp-nfs-input");'
     + 'if(input){input.addEventListener("keydown",function(ev){if(ev.key==="Enter"){ev.preventDefault();sendFollowup();}});input.focus();}'
@@ -742,7 +867,7 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'var question=((input&&input.value)||"").replace(/^\\s+|\\s+$/g,"")||DEFAULT_Q;'
     + 'var quote=state.quoteDropped?"":buildExcerpt(picked.text).excerpt;'
     + 'var composed=quote?question+"\\n\\n【聚焦选段】\\n"+quote.split("\\n").map(function(l){return "> "+l;}).join("\\n"):question;'
-    + 'hideBar();postAction("followup",composed);}'
+    + 'hideBar();postAction("followup",composed,ROUTE);}'
     + 'function copyText(text){var fallback=function(){try{var ta=document.createElement("textarea");'
     + 'ta.value=String(text||"");ta.style.cssText="position:fixed;left:-9999px;top:0;";'
     + 'document.body.appendChild(ta);ta.select();'
@@ -752,10 +877,10 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'if(navigator.clipboard&&navigator.clipboard.writeText){'
     + 'navigator.clipboard.writeText(String(text||"")).then(function(){done(true);},function(){done(fallback());});}'
     + 'else done(fallback());}'
-    + 'function postAction(action,text){'
+    + 'function postAction(action,text,route){'
     + 'if(!BRIDGE){toast("此窗口未连接主应用，只能复制");return;}'
     + 'var msg={kind:"node-fs-action",__phymathia:1,token:TOKEN,action:action,'
-    + 'text:String(text||"").slice(0,MAX_TEXT),title:CFG.title||""};'
+    + 'text:String(text||"").slice(0,MAX_TEXT),title:CFG.title||"",route:String(route||"")};'
     + 'var notified=false;'
     + 'var onAck=function(ev){var d=ev.data;'
     + 'if(!d||d.__phymathia!==1||d.kind!=="node-fs-ack")return;'
@@ -781,6 +906,9 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'document.addEventListener("pointerdown",function(ev){if(!bar)return;'
     + 'if(!bar.contains(ev.target))hideBar();},true);'
     + 'document.addEventListener("click",function(ev){if(!bar)return;var t=ev.target;'
+    // 回答方式胶囊不是「动作」，先认掉（data-act 那条只跑追问/复制/查找）
+    + 'var rb=t&&t.closest?t.closest("[data-route]"):null;'
+    + 'if(rb&&bar.contains(rb)){ev.preventDefault();setRoute(rb.getAttribute("data-route"));return;}'
     + 'var btn=t&&t.closest?t.closest("[data-act]"):null;'
     + 'if(btn&&bar.contains(btn)){ev.preventDefault();runAction(btn.getAttribute("data-act"));}});'
     + 'document.addEventListener("keydown",function(ev){'
