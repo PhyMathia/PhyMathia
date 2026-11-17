@@ -19,7 +19,12 @@ const NODE_FS_SEARCH_SNIPPET_MAX = 120; // 在画布中查找：取选段前 120
 let _nfsBar = null;         // 浮条单例（出现即重建，收起即移除，不做显隐切换）
 let _nfsState = null;       // { overlay, container, nodeId, nodeTitle, fullText, hasFormula, rect, expanded, quoteDropped }
 let _nfsSelTimer = 0;
-let _nfsPreviewCtx = null;  // { token, nodeId, sessionId, title, win }（新窗口桥的接收端上下文）
+// 新窗口桥的接收端上下文：{ token, prevToken, nodeId, sessionId, title, win }，最近的在最前。
+// 快照进 sessionStorage（不是 localStorage）：只在本标签页有效、刷新后仍在——
+// 主应用一刷新就把预览窗全忘掉的话，那扇窗里所有追问都只能超时（2026-11-17 用户报）。
+const NODE_FS_PREVIEW_CTX_STORE = 'phymathia_node_fs_preview_ctx';
+const NODE_FS_PREVIEW_CTX_MAX = 4;
+let _nfsPreviewCtxs = [];
 
 // ---------- 选区提取（KaTeX 还原 LaTeX） ----------
 
@@ -351,25 +356,96 @@ function _nodeFsMintPreviewToken() {
   return 'nfs_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
 }
 
-// openNodeNewWindow（graph-custom.js）在开窗前登记上下文，开窗成功后补 win 引用
-function _setNodeFsPreviewCtx(ctx) { _nfsPreviewCtx = ctx || null; }
-
-function _attachNodeFsPreviewWin(win) {
-  if (_nfsPreviewCtx) _nfsPreviewCtx.win = win || null;
+// 桥上下文表：按 token 认窗，不再只留一条。
+// 2026-11-17 用户报「预览窗里追问，回我『主应用未响应，当前只能复制』」——两处病根：
+// ①上下文只活在内存里，主应用一刷新（F5）就全丢，预览窗此后所有动作只能超时；
+// ②单槽：开第二个预览窗会把第一个顶掉，先开的那个窗静默失效。
+// 现在：最近 4 条并存、按 token 找回；快照写 sessionStorage（同标签页，刷新仍在），
+// 刷新后第一条消息把窗口认回来（win=null 时不比对 source，只认 token）。
+function _nodeFsPersistPreviewCtx() {
+  try {
+    if (typeof sessionStorage === 'undefined') return;
+    const slim = _nfsPreviewCtxs.map(c => ({ token: c.token, nodeId: c.nodeId, sessionId: c.sessionId, title: c.title }));
+    sessionStorage.setItem(NODE_FS_PREVIEW_CTX_STORE, JSON.stringify(slim));
+  } catch (e) { /* 存储被禁：退回纯内存，行为同旧版 */ }
 }
 
-// 预览窗关掉后上下文失效（轮询兜底；收消息时也会用 win.closed 复核）
+function _nodeFsRestorePreviewCtx() {
+  if (_nfsPreviewCtxs.length) return;
+  try {
+    if (typeof sessionStorage === 'undefined') return;
+    const raw = sessionStorage.getItem(NODE_FS_PREVIEW_CTX_STORE);
+    if (!raw) return;
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return;
+    _nfsPreviewCtxs = arr.filter(c => c && typeof c.token === 'string' && c.token)
+      .slice(0, NODE_FS_PREVIEW_CTX_MAX)
+      .map(c => ({
+        token: c.token, prevToken: '',
+        nodeId: String(c.nodeId || ''), sessionId: String(c.sessionId || ''),
+        title: String(c.title || ''), win: null,
+      }));
+  } catch (e) { /* 坏快照当没有 */ }
+}
+
+// openNodeNewWindow（graph-custom.js）在开窗前登记上下文，开窗成功后补 win 引用
+function _setNodeFsPreviewCtx(ctx) {
+  if (!ctx || typeof ctx.token !== 'string' || !ctx.token) {
+    // 只丢弃刚登记的那一条（graph-custom 在弹窗被拦时紧跟着调用）：多窗并存时
+    // 清空整表会把还开着的别的预览窗一起废掉
+    _nfsPreviewCtxs = _nfsPreviewCtxs.slice(1);
+    _nodeFsPersistPreviewCtx();
+    return;
+  }
+  const token = ctx.token;
+  const rest = _nfsPreviewCtxs.filter(c => c.token !== token);
+  _nfsPreviewCtxs = [{
+    token,
+    prevToken: '',
+    nodeId: String(ctx.nodeId || ''),
+    sessionId: String(ctx.sessionId || ''),
+    title: String(ctx.title || ''),
+    win: ctx.win || null,
+  }].concat(rest).slice(0, NODE_FS_PREVIEW_CTX_MAX);
+  _nodeFsPersistPreviewCtx();
+}
+
+function _attachNodeFsPreviewWin(win) {
+  const target = _nfsPreviewCtxs.find(c => !c.win) || _nfsPreviewCtxs[0];
+  if (target) target.win = win || null;
+}
+
+// 按 token 找上下文：已绑过窗口的只认那一个窗口；刷新后重建的（win=null）用第一条消息认窗。
+// prevToken 也认——预览页没收到 ack 里的 nextToken 时会继续用上一枚，不放行就等于永久失效。
+function _nodeFsPreviewCtxFor(msgToken, source) {
+  const t = typeof msgToken === 'string' ? msgToken : '';
+  if (!t) return null;
+  for (let i = 0; i < _nfsPreviewCtxs.length; i++) {
+    const c = _nfsPreviewCtxs[i];
+    if (c.token !== t && c.prevToken !== t) continue;
+    if (c.win && c.win !== source) continue;
+    if (!c.win) c.win = source || null;
+    return c;
+  }
+  return null;
+}
+
+// 预览窗关掉后上下文失效（轮询兜底）
 setInterval(() => {
-  if (_nfsPreviewCtx && _nfsPreviewCtx.win && _nfsPreviewCtx.win.closed) _nfsPreviewCtx = null;
+  const alive = _nfsPreviewCtxs.filter(c => !(c.win && c.win.closed));
+  if (alive.length !== _nfsPreviewCtxs.length) {
+    _nfsPreviewCtxs = alive;
+    _nodeFsPersistPreviewCtx();
+  }
 }, 3000);
 
 window.addEventListener('message', ev => {
-  const ctx = _nfsPreviewCtx;
-  if (!ctx || !ctx.win || ev.source !== ctx.win) return; // 只认当前预览窗口
   const d = ev.data;
   if (!d || d.__phymathia !== 1 || d.kind !== 'node-fs-action') return;
   if (NODE_FS_BRIDGE_ACTIONS.indexOf(d.action) < 0) return; // 动作白名单
-  if (typeof d.token !== 'string' || d.token !== ctx.token) return; // 一次性 token
+  _nodeFsRestorePreviewCtx(); // 刷新后的第一发：从 sessionStorage 把窗认回来
+  const ctx = _nodeFsPreviewCtxFor(d.token, ev.source);
+  if (!ctx) return; // 认不出这扇窗：不执行、不应答（预览侧会提示重开窗口）
   const text = String(d.text || '').slice(0, NODE_FS_BRIDGE_TEXT_MAX);
   const node = (ctx.nodeId && typeof _findGraphNode === 'function') ? _findGraphNode(ctx.nodeId) : null;
   let ok = true;
@@ -386,9 +462,12 @@ window.addEventListener('message', ev => {
       else if (d.action === 'search') { _nodeFsBridgedSearch(text); message = '已在主应用打开画布搜索'; }
     } catch (e) { ok = false; message = '主应用执行失败'; }
   }
-  // token 一次性：本轮消费掉，随 ack 轮换新 token 发回（重放的旧消息不再被认）
+  // token 轮换：本轮消费掉，随 ack 发新的一枚；上一枚留作 prevToken 兜底
+  // （预览页若没收到 ack，下一发仍用旧 token，不放行就等于自己把自己锁死）
   const nextToken = _nodeFsMintPreviewToken();
+  ctx.prevToken = ctx.token;
   ctx.token = nextToken;
+  _nodeFsPersistPreviewCtx();
   try {
     ev.source.postMessage(
       { kind: 'node-fs-ack', __phymathia: 1, token: d.token, ok, message, nextToken },
@@ -677,16 +756,19 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'if(!BRIDGE){toast("此窗口未连接主应用，只能复制");return;}'
     + 'var msg={kind:"node-fs-action",__phymathia:1,token:TOKEN,action:action,'
     + 'text:String(text||"").slice(0,MAX_TEXT),title:CFG.title||""};'
-    + 'var got=false;'
+    + 'var notified=false;'
     + 'var onAck=function(ev){var d=ev.data;'
     + 'if(!d||d.__phymathia!==1||d.kind!=="node-fs-ack")return;'
-    + 'got=true;window.removeEventListener("message",onAck);'
     + 'if(d.nextToken)TOKEN=d.nextToken;'
+    // 迟到的 ack（超时后才到）只用来把 token 追平，不再弹第二次话——token 追不上的话，
+    // 这扇窗此后每一发都会被主应用当成陌生 token 丢掉，只能一直超时
+    + 'if(notified){window.removeEventListener("message",onAck);return;}'
+    + 'notified=true;window.removeEventListener("message",onAck);'
     + 'toast(d.ok?(d.message||"已发送到主应用"):(d.message||"主应用未能执行该操作"));};'
     + 'window.addEventListener("message",onAck);'
-    + 'try{window.parent.postMessage(msg,"*");}catch(e){got=true;toast("发送失败");}'
-    + 'setTimeout(function(){if(got)return;window.removeEventListener("message",onAck);'
-    + 'toast("主应用未响应，当前只能复制");},800);}'
+    + 'try{window.parent.postMessage(msg,"*");}catch(e){notified=true;toast("发送失败");}'
+    + 'setTimeout(function(){if(notified)return;notified=true;'
+    + 'toast("主应用没回应，再点一次发送");},2500);}'
     + 'function runAction(act){'
     + 'if(!state)return;'
     + 'if(act==="followup"){expandInput();return;}'

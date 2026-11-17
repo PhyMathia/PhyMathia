@@ -79,7 +79,7 @@ window.addEventListener('message', function (ev) {
     ackIntoFrame({ kind: 'node-fs-ack', __phymathia: 1, token: d.token, ok: false, message: msg });
   };
   if (!window.opener || window.opener.closed) {
-    fail('主应用未响应，当前只能复制');
+    fail('主应用窗口已关闭，这个窗口只能复制');
     return;
   }
   var settled = false;
@@ -100,11 +100,13 @@ window.addEventListener('message', function (ev) {
     fail('转发失败');
     return;
   }
+  // 兜底比 iframe 自己那枚（2500ms）晚一拍：正常情况下由它先说话，这里只防
+  // 「沙箱页定时器被节流」的极端情形，别让同一件事弹两次
   setTimeout(function () {
     if (settled) return;
     window.removeEventListener('message', onAck);
-    fail('主应用未响应，当前只能复制');
-  }, 800);
+    fail('主应用没回应，再点一次发送');
+  }, 3200);
 });
 </script>
 </body>

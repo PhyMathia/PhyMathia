@@ -224,15 +224,16 @@ export function run() {
     }
   });
 
-  check('node-fs-toolbar: 桥四道校验都在场（壳认 source、主应用认 source+token+白名单、800ms 兜底）', () => {
+  check('node-fs-toolbar: 桥四道校验都在场（壳认 source、主应用认 token＋source＋白名单、超时兜底）', () => {
     const shell = readSrc('src/static/content-preview.html');
     if (!shell.includes('ev.source !== frame.contentWindow')) return false;
     if (!shell.includes("'node-fs-action'") || !shell.includes("'node-fs-ack'")) return false;
-    if (!shell.includes('800')) return false;
+    if (!shell.includes('3200')) return false; // 兜底比 iframe 自己那枚晚一拍
     const bar = readSrc('src/static/js/node-fs-toolbar.js');
-    if (!bar.includes('ev.source !== ctx.win')) return false;
-    if (!bar.includes('d.token !== ctx.token')) return false;
-    if (!bar.includes("NODE_FS_BRIDGE_ACTIONS.indexOf(d.action) < 0")) return false;
+    // 2026-11-17 起 source 校验挪进 _nodeFsPreviewCtxFor（按 token 找窗、已绑定的只认那一个）
+    if (!bar.includes('function _nodeFsPreviewCtxFor')) return false;
+    if (!bar.includes('if (c.win && c.win !== source) continue;')) return false;
+    if (!bar.includes('NODE_FS_BRIDGE_ACTIONS.indexOf(d.action) < 0')) return false;
     return true;
   });
 
@@ -267,6 +268,37 @@ export function run() {
     if (!seg.includes('_nfsState.expanded') || !seg.includes('_nodeFsPlaceBar')) return false;
     const script = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
     if (!script.includes('state&&state.expanded') || !script.includes('placeBar(picked?picked.rect:null)')) return false;
+    return true;
+  });
+
+  check('node-fs-toolbar: 桥上下文按 token 认窗（多窗并存 / 刷新后认回 / 旧 token 兜底）', () => {
+    const set = sandbox._setNodeFsPreviewCtx;
+    const find = sandbox._nodeFsPreviewCtxFor;
+    if (typeof set !== 'function' || typeof find !== 'function') throw new Error('上下文 API 未挂出');
+    set({ token: 'tkA', nodeId: 'nA', sessionId: 'sA', title: 'A' });
+    const winA = { closed: false, tag: 'A' };
+    const cA = find('tkA', winA);
+    if (!cA || cA.win !== winA) throw new Error('首条消息没能把窗口认回来');
+    if (find('tkA', { closed: false, tag: 'B' })) throw new Error('已绑定的窗被别的窗顶替');
+    if (find('tkUnknown', winA)) throw new Error('陌生 token 也被认了');
+    // 第二个窗并存：不顶掉第一个
+    set({ token: 'tkB', nodeId: 'nB', sessionId: 'sB', title: 'B' });
+    const winB = { closed: false, tag: 'B' };
+    if (!find('tkB', winB)) throw new Error('第二个窗登记失败');
+    if (!find('tkA', winA)) throw new Error('开第二个窗把第一个顶掉了（旧单槽病）');
+    // 刷新后重建：win=null 的上下文靠第一条消息认窗
+    set({ token: 'tkC', nodeId: 'nC', sessionId: 'sC', title: 'C' });
+    const rehydrated = find('tkC', winA);
+    if (!rehydrated || rehydrated.win !== winA) throw new Error('刷新后重建的上下文认不回来');
+    // 静态口径：快照进 sessionStorage、prevToken 兜底、两端超时值
+    const src = readSrc('src/static/js/node-fs-toolbar.js');
+    if (!src.includes('phymathia_node_fs_preview_ctx')) return false;
+    if (!src.includes('sessionStorage.setItem(NODE_FS_PREVIEW_CTX_STORE')) return false;
+    if (!src.includes('ctx.prevToken = ctx.token')) return false;
+    const shell = readSrc('src/static/content-preview.html');
+    if (!shell.includes('3200')) return false;
+    const script = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
+    if (!script.includes('2500') || !script.includes('if(d.nextToken)TOKEN=d.nextToken;')) return false;
     return true;
   });
 
