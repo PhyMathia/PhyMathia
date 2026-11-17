@@ -242,6 +242,11 @@ def _detect_phase(phase: str, instruction: str, snapshot: dict, focus_node_ids=N
     # 与 preset/chat 同款——意图词检测永不改写显式 coach
     if phase == "coach":
         return "coach"
+    # 技能工坊（2026-11-17，skill 第 9 版）：显式直通。**别漏这一条**——落进
+    # auto_phases 之外的默认分支会被归一成 normal，模型拿到的是编辑工具表，
+    # 工具定义里根本没有 skill_spec/install_skill（真机才暴露，桩测看不出来）。
+    if phase == "forge":
+        return "forge"
     auto_phases = ("", "auto", "normal")
     if phase == "apply" or (phase in auto_phases and has_apply and has_eval_nodes):
         return "apply"

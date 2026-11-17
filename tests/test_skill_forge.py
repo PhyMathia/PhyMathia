@@ -50,6 +50,13 @@ def _draft(**over):
     return data
 
 
+def test_forge_phase_survives_detection():
+    """_detect_phase 必须直通 forge：被归一成 normal 就会给模型编辑工具表。"""
+    from harness.review_phase import _detect_phase
+
+    assert _detect_phase("forge", "把受力分析做成技能", {"nodes": [], "edges": []}) == "forge"
+
+
 def test_forge_tools_only_in_forge_phase():
     names = [tool["function"]["name"] for tool in build_tools("forge")]
     assert names == list(skill_forge.SKILL_TOOL_NAMES)
@@ -186,6 +193,8 @@ def test_forge_loop_queries_previews_and_installs(monkeypatch):
     # 产物：真的写进技能库；不是图操作
     assert result["operations"] == []
     assert skill_registry.get("force-frame", "default")["name"] == "受力图先行"
+    # 工具表：模型第一轮拿到的就必须是 forge 的四件（被归一成 normal 的话这里会红）
+    assert [tool["function"]["name"] for tool in seen[0]["tools"]] == list(skill_forge.SKILL_TOOL_NAMES)
     # 回灌：模型第二轮看到了能力清单，第三轮看到了草稿指纹，第四轮看到入册结果
     def tool_payloads(step):
         return [m["content"] for m in seen[step]["messages"] if m.get("role") == "tool"]
