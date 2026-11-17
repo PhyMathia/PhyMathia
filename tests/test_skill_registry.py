@@ -35,12 +35,13 @@ def test_builtin_skills_load():
 
 
 def test_by_scope_filters():
-    # 第 6 版起 viz 有两条：md 型的 iso-cutaway + 目录型的 anatomy（src/skills/anatomy/）
-    assert [item["id"] for item in skill_registry.by_scope(["viz"])] == ["anatomy", "iso-cutaway"]
+    # viz 有三条：md 型的 iso-cutaway / three-3d（2026-11-17 加）+ 目录型的 anatomy（src/skills/anatomy/）
+    assert [item["id"] for item in skill_registry.by_scope(["viz"])] == ["anatomy", "iso-cutaway", "three-3d"]
     learn = [item["id"] for item in skill_registry.by_scope(["learn", "math"])]
     assert "teardown-narrative" in learn
     assert "iso-cutaway" not in learn
     assert "anatomy" not in learn
+    assert "three-3d" not in learn
     # 不传＝不过滤
     assert len(skill_registry.by_scope()) == len(skill_registry.all_skills())
 
@@ -328,7 +329,7 @@ def test_preview_explicit_modules_override_and_unknown_module():
     out = skill_registry.preview("随便一句话", ["viz", "不存在"])
     assert out["moduleSource"] == "explicit"
     assert out["modules"] == ["viz"]
-    assert [item["id"] for item in out["candidates"]] == ["anatomy", "iso-cutaway"]
+    assert [item["id"] for item in out["candidates"]] == ["anatomy", "iso-cutaway", "three-3d"]
 
 
 def test_preview_all_modules_when_no_keyword_hit():

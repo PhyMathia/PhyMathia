@@ -1,7 +1,7 @@
 # 第三方组件与许可
 
-PhyMathia 坚持**零 CDN 依赖**：`src/static/vendor/` 下的四个前端库全部是随仓库分发的
-本地副本，断网也能正常渲染公式、Markdown 与流程图。
+PhyMathia 坚持**零 CDN 依赖**：`src/static/vendor/` 下的五个前端库全部是随仓库分发的
+本地副本，断网也能正常渲染公式、Markdown、流程图与三维装置图。
 
 | 库 | 目录 | 版本 | 许可证 | 版权归属 |
 |---|---|---|---|---|
@@ -9,11 +9,22 @@ PhyMathia 坚持**零 CDN 依赖**：`src/static/vendor/` 下的四个前端库�
 | Marked | `marked/` | 15.0.12 | MIT | Christopher Jeffrey (及贡献者) |
 | Mermaid | `mermaid/` | 10.9.8 | MIT | Knut Sveidqvist (及贡献者) |
 | DOMPurify | `dompurify/` | 3.4.16 | MPL-2.0 **或** Apache-2.0（任选其一） | Dr.-Ing. Mario Heiderich, Cure53 |
+| three.js | `three/` | 0.160.0（`build/three.min.js`，UMD 经典脚本） | MIT | Three.js Authors |
 
 各库的许可证原文已随代码放在**同目录的 `LICENSE` 文件**中：
 
-- `katex/LICENSE`、`marked/LICENSE`、`mermaid/LICENSE` —— MIT 全文
+- `katex/LICENSE`、`marked/LICENSE`、`mermaid/LICENSE`、`three/LICENSE` —— MIT 全文
 - `dompurify/LICENSE` —— MPL-2.0 与 Apache-2.0 两份全文（上游双许可，摘录任一即可）
+
+### three.js 为什么锁 0.160.0 的 UMD 构建（2026-11-17）
+
+可视化页面住在 `sandbox="allow-scripts"` 的 srcdoc iframe 里，文档是 **opaque origin（null）**。
+ESM 版（`three.module.min.js`，r165 起上游只发这个）在这种文档里要过 CORS，而本项目静态
+资源不发任何 `Access-Control-Allow-*` 头——`import` 必被浏览器挡掉。经典脚本不受 CORS
+约束，能正常加载执行，所以取 **r160 这个最后还带 `build/three.min.js` 的版本**
+（0.160.0 有，0.165/0.170 已是 404）。升级前先确认上游是否恢复了非模块构建；恢复不了
+就别升，另有 `docs/dev/viz-three.md` 记了完整判定过程。加载时会有一条上游写的
+`console.warn`（提示 UMD 已弃用），属预期，不要当报错删。
 
 ## 维护须知
 
