@@ -10,6 +10,8 @@
 // 5) 本文件只进 app.js 主包（viewer 子集不载）；所有对外函数以 typeof 守卫被调用，
 //    viewer / 冒烟沙箱里行为自动退回原样，不改一处既有交互。
 
+// 2026-11-17：`0` 从「缩放复位到 100%」换成「自动整理」（用户拍板：100% 复位用不上，
+// 自动整理才是高频动作，且原本无快捷键）。缩放回 100% 仍有工具条读数钮与右键菜单两项。
 const PHY_HOTKEYS = [
   // 通用层：所有软件都一样，照抄，零学习成本
   { id: 'undo',           combo: 'Mod+Z',               label: '撤销上一步',                   scope: '全局' },
@@ -26,7 +28,8 @@ const PHY_HOTKEYS = [
   { id: 'group',          combo: 'Mod+G',               label: '把选中节点设为分组',           scope: '画布', action: 'group' },
   { id: 'ungroup',        combo: 'Mod+Shift+G',         label: '取消选中的分组（不删节点）',   scope: '画布', action: 'ungroup' },
   { id: 'fit',            combo: 'F',                   label: '适配画布到窗口',               scope: '全局', action: 'fit' },
-  { id: 'zoomReset',      combo: '0',                   label: '缩放复位到 100%',              scope: '画布', action: 'zoomReset' },
+  // 2026-11-17：原先这里是「缩放复位到 100%」，已换成自动整理（见文件头注释）。
+  { id: 'arrange',        combo: '0',                   label: '自动整理画布',                 scope: '画布', action: 'arrange' },
   { id: 'search',         combo: 'Mod+F',               label: '打开画布搜索',                 scope: '全局', action: 'search' },
   { id: 'export',         combo: 'Mod+S',               label: '打开导出菜单',                 scope: '全局', action: 'export' },
   { id: 'pan',            combo: 'Space + 拖拽',        label: '按住空格拖动画布（节点上也能平移）', scope: '画布' },
@@ -69,7 +72,7 @@ const PHY_HOTKEY_EDITABLE = [
 // hotkeys.js 自己派发的动作；undo/redo/copy/paste/delete 让给 graph-events.js，
 // escape/fullscreen/send 等由各自既有链路处理，绝不重复接管。
 const PHY_HOTKEY_OWNED = [
-  'help', 'fit', 'zoomReset', 'pan',
+  'help', 'fit', 'arrange', 'pan',
   'selectAll', 'duplicate', 'group', 'ungroup', 'search', 'export',
   'viewCanvas', 'viewContinent', 'viewKnowledge', 'palette'
 ];
@@ -326,7 +329,13 @@ const PHY_HOTKEY_ACTIONS = {
     }
   },
   fit: function () { if (typeof fitGraph === 'function') fitGraph(); },
-  zoomReset: function () { if (typeof graphZoomReset === 'function') graphZoomReset(); },
+  arrange: function () {
+    if (typeof autoArrangeGraph !== 'function') return;
+    // 空画布 autoArrangeGraph 直接 return，按下去毫无反馈；这里补一句，免得以为键坏了。
+    if (typeof graphView === 'undefined' || !graphView || !Array.isArray(graphView.nodes)
+      || !graphView.nodes.length) { _phyToast('画布还没有节点'); return; }
+    autoArrangeGraph();
+  },
   search: function () { if (typeof openGraphSearchPanel === 'function') openGraphSearchPanel(); },
   export: function () { if (typeof toggleGraphExportMenu === 'function') toggleGraphExportMenu(); },
   viewCanvas: function () {

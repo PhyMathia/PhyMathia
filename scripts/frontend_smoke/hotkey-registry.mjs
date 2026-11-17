@@ -26,9 +26,13 @@ export function run() {
     if (!/'\s*hotkeys\.js\s*'/.test(build)) throw new Error('build_frontend.mjs 的 entries 漏登记 hotkeys.js');
     const block = registryBlock();
     for (const id of ['undo', 'redo', 'copy', 'paste', 'delete', 'escape', 'fullscreen', 'send',
-      'selectAll', 'duplicate', 'group', 'ungroup', 'fit', 'zoomReset', 'search', 'export', 'pan',
+      'selectAll', 'duplicate', 'group', 'ungroup', 'fit', 'arrange', 'search', 'export', 'pan',
       'search_viewer', 'undo_continent', 'viewCanvas', 'viewContinent', 'viewKnowledge', 'help', 'palette']) {
       if (!new RegExp("id: '" + id + "'").test(block)) throw new Error('注册表缺真实按键：' + id);
+    }
+    // 2026-11-17 用户拍板：`0` 已从「缩放复位到 100%」换成「自动整理」，别再被改回去。
+    for (const gone of ["id: 'zoomReset'", "action: 'zoomReset'", "label: '缩放复位到 100%'"]) {
+      if (block.includes(gone)) throw new Error('注册表残留已退役的缩放复位条目：' + gone);
     }
     const count = (block.match(/\{ id: '/g) || []).length;
     if (count !== 24) throw new Error('注册表条数与事实源不一致：' + count + '（新增键必须同步改本断言）');
@@ -55,6 +59,10 @@ export function run() {
     }
     const problems = sandbox.phyHotkeySelfCheck();
     if (!Array.isArray(problems) || problems.length) throw new Error('启动自检未通过：' + JSON.stringify(problems));
+    // `0` 必须真的落到自动整理（且不是空实现），否则速查表就是在说谎。
+    if (!/arrange:[\s\S]{0,320}autoArrangeGraph\(\)/.test(actBlock)) {
+      throw new Error('自动整理快捷键没接到 autoArrangeGraph()');
+    }
     if (!src.includes('只列程序里真实')) throw new Error('速查/命令面板缺「只列真实键」声明');
     return true;
   });
@@ -98,7 +106,7 @@ export function run() {
       ['1', { ctrlKey: true, shiftKey: true }, 'viewCanvas'],
       ['2', { ctrlKey: true, shiftKey: true }, 'viewContinent'],
       ['3', { ctrlKey: true, shiftKey: true }, 'viewKnowledge'],
-      ['?', {}, 'help'], ['f', {}, 'fit'], ['0', {}, 'zoomReset'], [' ', {}, 'pan'],
+      ['?', {}, 'help'], ['f', {}, 'fit'], ['0', {}, 'arrange'], [' ', {}, 'pan'],
     ];
     for (const [key, opts, want] of cases) {
       const got = R(ev(key, opts));

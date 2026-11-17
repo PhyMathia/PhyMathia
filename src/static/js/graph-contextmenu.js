@@ -498,6 +498,7 @@ const GRAPH_CTX_KEY_IDS = {
   delete: 'delete',
   duplicate: 'copy',
   'paste-clip': 'paste',
+  arrange: 'arrange',
 };
 function graphCtxKeyHint(itemKey) {
   const id = GRAPH_CTX_KEY_IDS[itemKey];
