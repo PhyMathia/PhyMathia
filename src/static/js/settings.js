@@ -913,17 +913,20 @@ function _settingsSkillRowHtml(item) {
   if (item.overridden) tags.push('改过的内置');
   else if (item.builtin) tags.push('内置');
   else tags.push('自建');
-  if (!item.enabled) tags.push('已关闭');
+  // 开关状态不再做成「已启用/已关闭」徽标或按钮字样：滑块颜色＋整行降透明度已经说明（2026-11-17 用户拍板）
   const badges = tags.map((text, index) => {
     const dim = index === 0 && item.builtin && !item.overridden;
     return '<span style="margin-left:6px;font-size:11px;opacity:' + (dim ? '.7' : '.85') + ';'
       + 'border:1px solid var(--border);border-radius:var(--r-pill);padding:0 6px">' + _settingsEsc(text) + '</span>';
   }).join('');
   const id = _settingsEsc(item.id);
-  const toggle = '<button type="button" class="settings-hk-reset" style="min-width:64px"'
-    + ' onclick="settingsSkillToggle(\'' + id + '\', ' + (item.enabled ? 'false' : 'true') + ')"'
+  // 开关＝模型列表同款滑块（settings-model-switch），2026-11-17 用户拍板：不要「已启用/已关闭」字样按钮
+  const toggle = '<label class="settings-model-switch"'
     + ' title="' + (item.enabled ? '不再让任何节点用它' : '重新让它参与判定') + '">'
-    + (item.enabled ? '已启用' : '已关闭') + '</button>';
+    + '<input type="checkbox" role="switch" aria-label="启用该技能"' + (item.enabled ? ' checked' : '')
+    + ' onchange="settingsSkillToggle(\'' + id + '\', ' + (item.enabled ? 'false' : 'true') + ')">'
+    + '<span class="settings-switch-track"><span class="settings-switch-knob"></span></span>'
+    + '</label>';
   const edit = '<button type="button" class="settings-hk-reset" onclick="settingsSkillEdit(\'' + id + '\')">编辑</button>';
   // 自建/改过的内置能删；纯内置只能关（它随程序发布）
   const del = isUser
@@ -1167,9 +1170,12 @@ function _settingsPageSkills() {
     + '<div class="settings-note">技能是「做法」：提问时自动挂到合适的节点，生成时才把正文交给它。</div>'
     + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0;padding:10px 12px;'
     + 'border:1px solid var(--border);border-radius:10px">'
-    + '<button type="button" class="' + (routerOn ? 'settings-hk-resetall' : 'settings-hk-reset') + '"'
-    + ' onclick="settingsSkillToggleRouter()" style="min-width:112px">'
-    + (routerOn ? '总开关：已开启' : '总开关：已关闭') + '</button>'
+    + '<label class="settings-model-switch" title="技能总开关">'
+    + '<input type="checkbox" role="switch" aria-label="技能总开关"' + (routerOn ? ' checked' : '')
+    + ' onchange="settingsSkillToggleRouter()">'
+    + '<span class="settings-switch-track"><span class="settings-switch-knob"></span></span>'
+    + '</label>'
+    + '<span style="font-size:13px;color:var(--text-primary)">总开关</span>'
     + '<span style="font-size:12px;opacity:.7;flex:1;min-width:180px">'
     + (routerOn ? '关掉后所有技能都不参与判定。' : '现在没有任何技能会被挂上。')
     + '</span></div>'

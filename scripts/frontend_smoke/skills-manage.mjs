@@ -45,7 +45,8 @@ export function run() {
     const html = sandbox._settingsSkillRowHtml(row());
     if (!html.includes('内置')) throw new Error('缺「内置」徽标');
     if (!html.includes('settingsSkillEdit(')) throw new Error('内置也应能编辑（保存成自己的副本）');
-    if (!html.includes('已启用')) throw new Error('缺启用状态的开关按钮');
+    if (!html.includes('settings-model-switch')) throw new Error('开关应是模型列表同款滑块');
+    if (!html.includes(' checked')) throw new Error('启用态开关应勾上');
     if (html.includes('settingsSkillDelete(')) throw new Error('纯内置不该给删除按钮');
     if (!html.includes('settingsSkillToggle(\'iso-cutaway\', false)')) throw new Error('开关应带上取反后的目标状态');
     return true;
@@ -63,9 +64,9 @@ export function run() {
     return true;
   });
 
-  check('skills-manage: 关闭的行标「已关闭」，开关按钮变成「已关闭」且下一步是打开', () => {
+  check('skills-manage: 关闭的行开关不勾选、下一步是打开、整行降透明度（2026-11-17 起状态看滑块不看字样）', () => {
     const html = sandbox._settingsSkillRowHtml(row({ enabled: false, source: 'user', builtin: false }));
-    if (!html.includes('已关闭')) throw new Error('缺「已关闭」标记');
+    if (html.includes(' checked')) throw new Error('关闭态开关不应勾上');
     if (!html.includes('settingsSkillToggle(\'iso-cutaway\', true)')) throw new Error('关闭态的开关应指向打开');
     if (!html.includes('opacity:.62')) throw new Error('关闭的行应整体降透明度');
     return true;
@@ -110,7 +111,8 @@ export function run() {
       if (!src.includes('function ' + name + '(')) throw new Error('缺函数：' + name);
     });
     if (!src.includes("导入技能</button>")) throw new Error('页头缺「导入技能」按钮');
-    if (!src.includes('总开关：')) throw new Error('缺总开关文案');
+    if (!src.includes('>总开关</span>')) throw new Error('缺总开关标签');
+    if (!src.includes('onchange="settingsSkillToggleRouter()"')) throw new Error('总开关应挂滑块 onchange');
     // 输入框 oninput 只存状态、不重画：否则每敲一个字就丢焦点
     if (!src.includes('oninput="settingsSkillImportField(')) throw new Error('导入字段应走 oninput 存状态');
     if (/_settingsPageSkills[\s\S]{0,4000}oninput="[^"]*renderSettingsPage/.test(src)) {
