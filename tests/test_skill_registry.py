@@ -35,10 +35,12 @@ def test_builtin_skills_load():
 
 
 def test_by_scope_filters():
-    assert [item["id"] for item in skill_registry.by_scope(["viz"])] == ["iso-cutaway"]
+    # 第 6 版起 viz 有两条：md 型的 iso-cutaway + 目录型的 anatomy（src/skills/anatomy/）
+    assert [item["id"] for item in skill_registry.by_scope(["viz"])] == ["anatomy", "iso-cutaway"]
     learn = [item["id"] for item in skill_registry.by_scope(["learn", "math"])]
     assert "teardown-narrative" in learn
     assert "iso-cutaway" not in learn
+    assert "anatomy" not in learn
     # 不传＝不过滤
     assert len(skill_registry.by_scope()) == len(skill_registry.all_skills())
 
@@ -306,7 +308,8 @@ def test_preview_engine_question_hits_viz_candidate():
     assert "iso-cutaway" in by_id
     row = by_id["iso-cutaway"]
     assert row["chars"] == len(skill_registry.payload("iso-cutaway")) + 2  # requested_block 的 "\n\n"
-    assert row["chars"] == out["totalChars"]
+    # totalChars 是「所有候选都注入」的合计；viz 现在有两条，不能等于单条
+    assert out["totalChars"] == sum(item["chars"] for item in out["candidates"])
     assert row["usable"] == ["viz"]
     assert row["text"].startswith("\n\n")
     # 预览与真正投递是同一份文本，不能出现「预览说的和发出去的不一样」
@@ -325,7 +328,7 @@ def test_preview_explicit_modules_override_and_unknown_module():
     out = skill_registry.preview("随便一句话", ["viz", "不存在"])
     assert out["moduleSource"] == "explicit"
     assert out["modules"] == ["viz"]
-    assert [item["id"] for item in out["candidates"]] == ["iso-cutaway"]
+    assert [item["id"] for item in out["candidates"]] == ["anatomy", "iso-cutaway"]
 
 
 def test_preview_all_modules_when_no_keyword_hit():
@@ -344,3 +347,135 @@ def test_preview_empty_question_is_all_modules_and_switch_off(monkeypatch):
     assert off["candidates"] == []
     assert off["totalChars"] == 0
     assert off["notes"]
+
+
+# ====== 第 6 版：目录型 skill（2026-11-17）======
+# 形态：skills/<id>/ + phymathia.md（适配层）。只有原版 SKILL.md 的目录必须「看得见、
+# 用不上」——原版里全是本宿主执行不了的指令，注进去只会让模型编造已执行的步骤。
+
+
+def _write_skill_file(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _adapter(skill_id, scope="viz", body="目录型正文"):
+    return (
+        "---\n"
+        f"id: {skill_id}\n"
+        f"name: 演示{skill_id}\n"
+        f"desc: 目录型演示条目\n"
+        f"scope: {scope}\n"
+        "---\n\n"
+        f"{body}\n"
+    )
+
+
+def test_dir_skill_with_adapter_is_injected():
+    root = skill_registry._user_dir("default")
+    _write_skill_file(root / "demo-dir" / "SKILL.md", "---\nname: Demo\n---\n\n原版流程\n")
+    _write_skill_file(root / "demo-dir" / "phymathia.md", _adapter("demo-dir"))
+    skill_registry.reload_skills()
+
+    assert "demo-dir" in [item["id"] for item in skill_registry.by_scope(["viz"])]
+    text, sid = skill_registry.requested_block({"skill": {"id": "demo-dir", "module": "viz"}})
+    assert sid == "demo-dir"
+    assert "目录型正文" in text
+    row = {i["id"]: i for i in skill_registry.list_for_ui()["skills"]}["demo-dir"]
+    assert row["layout"] == "dir" and row["adapted"] is True
+    assert row["dir"] == "demo-dir"
+
+
+def test_original_dir_without_adapter_visible_but_never_injected():
+    """用户把上游仓库整个移进来（只有 SKILL.md）→ 列表可见、可开可关，但绝不注入。"""
+    root = skill_registry._user_dir("default")
+    _write_skill_file(
+        root / "upstream-demo" / "SKILL.md",
+        "---\nname: Upstream Demo\ndescription: 原版说明\n---\n\n# Demo\n\nrun build.mjs --audit\n",
+    )
+    skill_registry.reload_skills()
+
+    row = {i["id"]: i for i in skill_registry.list_for_ui()["skills"]}["upstream-demo"]
+    assert row["layout"] == "dir"
+    assert row["adapted"] is False
+    assert row["needsAdapt"] is True
+    assert row["chars"] == 0
+    assert row["scope"] == []
+    # 三道闸：候选、投递、payload 都不给
+    assert "upstream-demo" not in [i["id"] for i in skill_registry.by_scope(["viz"])]
+    assert skill_registry.requested_block({"skill": {"id": "upstream-demo", "module": "viz"}}) == ("", "")
+    assert skill_registry.payload("upstream-demo") == ""
+    assert "upstream-demo" not in skill_registry.menu_block([{"module": "viz"}])
+
+
+def test_unadapted_dir_does_not_shadow_adapted_builtin():
+    """移入原版 anatomy 不能把已经适配好的内置 anatomy 顶掉（否则越装越差）。"""
+    root = skill_registry._user_dir("default")
+    _write_skill_file(
+        root / "anatomy" / "SKILL.md",
+        "---\nname: Anatomy\ndescription: upstream\n---\n\n# 原版\n",
+    )
+    skill_registry.reload_skills()
+
+    item = skill_registry.get("anatomy")
+    assert item["builtin"] is True
+    assert item["adapted"] is True
+    assert item["body"].strip()  # 仍是内置适配版那份
+    row = {i["id"]: i for i in skill_registry.list_for_ui()["skills"]}["anatomy"]
+    assert row["shadowed"] and row["shadowed"]["needs_adapt"] is True
+
+
+def test_oversize_adapter_is_not_injected():
+    """适配层超 LIMITS["body"] → 不注入，也不静默截断（截断会让模型以为读全了）。"""
+    root = skill_registry._user_dir("default")
+    fat = "字" * (skill_registry.LIMITS["body"] + 1)
+    _write_skill_file(root / "fat" / "phymathia.md", _adapter("fat", body=fat))
+    skill_registry.reload_skills()
+
+    item = skill_registry.get("fat")
+    assert item["body"] == ""
+    assert item.get("oversize") is True
+    assert skill_registry.requested_block({"skill": {"id": "fat", "module": "viz"}}) == ("", "")
+    assert "fat" not in [i["id"] for i in skill_registry.by_scope(["viz"])]
+
+
+def test_dir_scan_is_one_level_and_skips_kit_like_dirs():
+    """只下探一层：上游仓库里 kit/、references/ 那一堆 md 不能被当成 skill 读进来。"""
+    root = skill_registry._user_dir("default")
+    _write_skill_file(root / "outer" / "inner" / "phymathia.md", _adapter("inner"))
+    _write_skill_file(root / "kit" / "phymathia.md", _adapter("kit"))
+    _write_skill_file(root / ".hidden" / "phymathia.md", _adapter("hidden"))
+    skill_registry.reload_skills()
+
+    ids = [item["id"] for item in skill_registry.all_skills()]
+    assert "inner" not in ids
+    assert "kit" not in ids
+    assert "hidden" not in ids
+
+
+def test_dir_skill_cannot_be_deleted_or_rewritten_via_api():
+    """目录型不走接口删/改：里面可能是几十 MB 用户数据，删错不可逆。"""
+    root = skill_registry._user_dir("default")
+    _write_skill_file(root / "keep-dir" / "phymathia.md", _adapter("keep-dir"))
+    skill_registry.reload_skills()
+
+    with pytest.raises(ValueError) as deleted:
+        skill_registry.delete_skill("default", "keep-dir")
+    assert "文件夹" in str(deleted.value)
+    with pytest.raises(ValueError) as saved:
+        skill_registry.save_skill("default", {
+            "id": "keep-dir", "name": "改名", "desc": "描述", "scope": ["viz"], "body": "正文",
+        })
+    assert "phymathia.md" in str(saved.value)
+    # 两条拒绝之后原条目还在、内容没被改写
+    assert skill_registry.get("keep-dir")["body"].strip() == "目录型正文"
+
+
+def test_builtin_anatomy_is_dir_layout_and_adapted():
+    """内置示例：src/skills/anatomy/ 是目录型（上游原版只做来源说明，不参与注入）。"""
+    item = skill_registry.get("anatomy")
+    assert item["layout"] == "dir"
+    assert item["builtin"] is True
+    assert item["adapted"] is True
+    assert item["scope"] == ["viz"]
+    assert len(item["body"]) <= skill_registry.LIMITS["body"]

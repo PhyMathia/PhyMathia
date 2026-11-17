@@ -35,6 +35,21 @@ skill = 一份带「适用范围」的附加规范（画法契约、叙事骨架
 
 开关：环境变量 `PHYMATHIA_SKILL_ROUTER=0/off/false` 仍是**最高优先级的硬关**（运维/测试用）；
 没设时看账号的 state 文件（缺省＝开）。两者是「与」的关系。
+
+第 6 版（2026-11-17，目录型）只改「怎么读」，三段式与开关一律不动：
+
+- **目录型 skill**：`skills/<id>/`，里面放 `phymathia.md`（本项目格式的适配层）即算
+  「已适配」；只有上游原版 `SKILL.md` 的目录会出现在列表里但标「待适配」，scope 与
+  正文都为空，因此不进候选、不被投递。
+- **为什么要有适配层**：Claude Code 式 skill 的正文全是「读 examples/、跑 build.mjs、
+  开 Chrome 目检」——本宿主没有这些工具，原样注入会让模型编造已执行的步骤。适配层
+  是把它翻译成「模型真能照做的契约」（见 `src/skills/anatomy/SOURCE.md` 的对照表）。
+- **只下探一层**：上游仓库里有 kit/、examples/、references/ 上百个 md，递归会把它们
+  全当 skill 读进来。
+- **合并优先级**：用户移入的原版目录若没有适配层，不覆盖已适配的同 id 条目（内置版
+  继续生效），只在 `list_for_ui` 里报 `shadowed` 说明原因。
+- **目录型不走接口删**：里面可能是几十 MB 用户数据，`DELETE` 只回一句中文提示让人
+  自己在文件管理器删（删完按指纹自动失效）。
 """
 
 from __future__ import annotations
@@ -98,6 +113,19 @@ LIMITS = {
 DESC_MAX = LIMITS["desc"]
 _SKILL_ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,40}$")
 _FRONT_MATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.S)
+
+# ====== 目录型 skill（第 6 版，2026-11-17）======
+# 形态：`skills/<id>/`，里面
+#   phymathia.md  ← 本地适配层（本项目格式，有 front-matter；有它才算「已适配」）
+#   SKILL.md      ← 原版入口（Claude Code 式 YAML front-matter，只用来取名字/描述）
+#   references/   ← 原版参考资料，**当前不读**（档 1「按需读文件」才用得上）
+# 用户把上游仓库整个移进来即可：能识别、能出现在列表里、能关，但没适配层不注入。
+DIR_ADAPT_FILE = "phymathia.md"
+DIR_ENTRY_FILES = ("SKILL.md", "skill.md")
+_DIR_SKIP = {
+    "node_modules", "kit", "references", "examples", "tests", "evals", "docs",
+    "agents", "film", "sims", "sfx", "assets", "dist", "out", "build", "src",
+}
 
 _lock = threading.Lock()
 _cache: Dict[str, Dict[str, Any]] = {}
@@ -246,19 +274,26 @@ def _parse_scope(raw: str) -> List[str]:
     return out
 
 
-def _parse_skill(text: str, builtin: bool = False) -> Dict[str, Any] | None:
-    """解析一份 md：front-matter 取 id/name/desc/scope，其余是正文。"""
+def _front_meta(text: str) -> tuple:
+    """拆 front-matter：返回 (meta, 正文)。没有 front-matter 时 meta 为空、正文是全文。"""
     match = _FRONT_MATTER.match(text)
     if not match:
-        return None
+        return {}, text.strip()
     meta: Dict[str, str] = {}
     for line in match.group(1).splitlines():
         if ":" not in line:
             continue
         key, _, value = line.partition(":")
         meta[key.strip().lower()] = value.strip()
+    return meta, text[match.end():].strip()
+
+
+def _parse_skill(text: str, builtin: bool = False) -> Dict[str, Any] | None:
+    """解析一份 md：front-matter 取 id/name/desc/scope，其余是正文。"""
+    meta, body = _front_meta(text)
+    if not meta:
+        return None
     skill_id = str(meta.get("id") or "").strip()
-    body = text[match.end():].strip()
     if not _SKILL_ID_RE.match(skill_id) or not body:
         return None
     scope = _parse_scope(meta.get("scope", ""))
@@ -275,8 +310,25 @@ def _parse_skill(text: str, builtin: bool = False) -> Dict[str, Any] | None:
     }
 
 
+def _dir_children(path):
+    """skills 根目录下的一层子目录（跳过隐藏目录与已知的非 skill 目录）。
+
+    只下探一层是**故意的**：`F:\\skill\\anatomy` 这种上游仓库里有 kit/、examples/、
+    references/ 十几个目录、上百个 md，无限递归会把它们全当成 skill 读进来。
+    """
+    try:
+        return [p for p in sorted(path.iterdir())
+                if p.is_dir() and not p.name.startswith(".") and p.name.lower() not in _DIR_SKIP]
+    except Exception:
+        return []
+
+
 def _dir_signature(path) -> tuple:
-    """目录指纹：(文件名, mtime_ns, size)。外部改文件/加文件都会让它变。"""
+    """目录指纹：(文件名, mtime_ns, size)。外部改文件/加文件都会让它变。
+
+    第 6 版起也覆盖一层子目录里的那个入口文件，否则用户换掉 `phymathia.md` 后
+    缓存不会失效（要重启才生效，是最容易让人以为「改了没用」的坑）。
+    """
     try:
         rows = []
         for item in sorted(path.glob("*.md")):
@@ -285,13 +337,101 @@ def _dir_signature(path) -> tuple:
             except OSError:
                 continue
             rows.append((item.name, stat.st_mtime_ns, stat.st_size))
+        for sub in _dir_children(path):
+            for name in (DIR_ADAPT_FILE,) + DIR_ENTRY_FILES:
+                entry = sub / name
+                try:
+                    if entry.is_file():
+                        stat = entry.stat()
+                        rows.append((f"{sub.name}/{name}", stat.st_mtime_ns, stat.st_size))
+                        break
+                except OSError:
+                    continue
         return tuple(rows)
     except Exception:
         return ()
 
 
+def _entry_file(sub):
+    """子目录里代表这条 skill 的文件：适配层优先，其次原版入口。返回 (path, 是否适配层)。"""
+    adapt = sub / DIR_ADAPT_FILE
+    try:
+        if adapt.is_file():
+            return adapt, True
+    except OSError:
+        pass
+    for name in DIR_ENTRY_FILES:
+        entry = sub / name
+        try:
+            if entry.is_file():
+                return entry, False
+        except OSError:
+            continue
+    return None, False
+
+
+def _dir_skill_id(sub, meta: Dict[str, str]) -> str:
+    """目录型条目的 id：front-matter 的 id 优先，否则用目录名 slug。"""
+    raw = str(meta.get("id") or "").strip()
+    if raw and _SKILL_ID_RE.match(raw):
+        return raw
+    slug = re.sub(r"[^a-z0-9]+", "-", str(sub.name).lower()).strip("-")[:41].strip("-")
+    return slug if _SKILL_ID_RE.match(slug) else ""
+
+
+def _read_one_dir(sub, builtin: bool) -> Dict[str, Any] | None:
+    """读一个 `skills/<id>/` 目录，产出条目（适配 / 待适配 / 超限三态）。
+
+    - 有 `phymathia.md` 且格式合法 → 正常条目，参与路由与投递；
+    - 只有原版 `SKILL.md` → **待适配**：scope 为空、正文为空，可见可开关但永不注入。
+      这是刻意为之：原版 SKILL.md 里全是「跑 build.mjs」「开 Chrome 4× 目检」这类
+      本宿主无法执行的指令，直接注进去只会让模型编造已执行的步骤。
+    - `phymathia.md` 超过 LIMITS["body"] → 超限，同样不注入（静默截断会让模型
+      以为读全了，比不注入更糟）。
+    """
+    entry, adapted = _entry_file(sub)
+    if entry is None:
+        return None
+    try:
+        text = entry.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+    meta, _ = _front_meta(text)
+    item = _parse_skill(text, builtin=builtin) if adapted else None
+    if item is None:
+        skill_id = _dir_skill_id(sub, meta)
+        if not skill_id:
+            return None
+        return {
+            "id": skill_id,
+            "name": str(meta.get("name") or sub.name).strip()[:LIMITS["name"]],
+            "desc": str(meta.get("description") or meta.get("desc") or "").strip()[:DESC_MAX],
+            "scope": [],
+            "body": "",
+            "builtin": builtin,
+            "layout": "dir",
+            "dir": str(sub.name),
+            "adapted": False,
+            "needs_adapt": True,
+        }
+    item["layout"] = "dir"
+    item["dir"] = str(sub.name)
+    item["adapted"] = True
+    if len(item["body"]) > LIMITS["body"]:
+        item["body"] = ""
+        item["scope"] = []
+        item["adapted"] = False
+        item["oversize"] = True
+        item["needs_adapt"] = True
+    return item
+
+
 def _read_dir(path, builtin: bool) -> List[Dict[str, Any]]:
-    found: List[Dict[str, Any]] = []
+    """读一个 skills 根目录：顶层 `*.md`（第 1–5 版写法）+ 一层子目录（第 6 版）。
+
+    同 id 时子目录覆盖顶层 md——目录能带 `references/`，是更完整的形态。
+    """
+    found: Dict[str, Dict[str, Any]] = {}
     try:
         files = sorted(path.glob("*.md"))
     except Exception:
@@ -302,8 +442,14 @@ def _read_dir(path, builtin: bool) -> List[Dict[str, Any]]:
         except Exception:
             parsed = None
         if parsed:
-            found.append(parsed)
-    return found
+            parsed["layout"] = "file"
+            parsed["adapted"] = True
+            found[parsed["id"]] = parsed
+    for sub in _dir_children(path):
+        item = _read_one_dir(sub, builtin)
+        if item:
+            found[item["id"]] = item
+    return list(found.values())
 
 
 def _base_skills(account: Any = None) -> List[Dict[str, Any]]:
@@ -324,6 +470,12 @@ def _base_skills(account: Any = None) -> List[Dict[str, Any]]:
         item["overridden"] = False
         merged[item["id"]] = item
     for item in _read_dir(user_dir, builtin=False):
+        prev = merged.get(item["id"])
+        if prev and prev.get("adapted") and not item.get("adapted"):
+            # 用户把上游原版整个移进来（没有 phymathia.md）时，别让它顶掉已经能用的那份。
+            # 只在 prev 上记一笔，设置页据此说明「这个目录缺适配层，按内置的版本在用」。
+            prev["shadowed"] = {"dir": item.get("dir") or "", "needs_adapt": True}
+            continue
         item["source"] = "user"
         # 同 id 有内置那份 → 这是用户覆盖出来的副本（可「恢复默认」）
         item["overridden"] = item["id"] in builtin_ids
@@ -434,8 +586,16 @@ def save_skill(account: Any, data: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError(f"正文太长（{len(body)} 字），上限 {LIMITS['body']} 字")
 
     user_dir = _user_dir(key)
-    existing = sorted(user_dir.glob("*.md")) if user_dir.exists() else []
-    if not (user_dir / f"{skill_id}.md").exists() and len(existing) >= LIMITS["skills"]:
+    if (user_dir / skill_id).is_dir():
+        # 目录型技能写的是 `skills/<id>/phymathia.md`，这里再写一个 `<id>.md` 会被目录覆盖，
+        # 变成「改了没生效」。宁可明确拒绝，也不让用户白改。
+        raise ValueError(
+            f"这个技能是目录型（skills/{skill_id}/），请直接编辑它目录里的 phymathia.md，"
+            "设置页只做改名/描述这类轻量修改不适用于它"
+        )
+    existing = list(user_dir.glob("*.md")) if user_dir.exists() else []
+    dir_count = len(_dir_children(user_dir)) if user_dir.exists() else 0
+    if not (user_dir / f"{skill_id}.md").exists() and len(existing) + dir_count >= LIMITS["skills"]:
         raise ValueError(f"自建技能最多 {LIMITS['skills']} 条，先删几条再加")
 
     user_dir.mkdir(parents=True, exist_ok=True)
@@ -472,6 +632,13 @@ def delete_skill(account: Any, skill_id: str) -> bool:
     item = get(target, key)
     if not item:
         return False
+    if item.get("layout") == "dir":
+        # 目录型（用户整个移入的上游仓库）一律不走接口删：里面可能有几十 MB 用户数据，
+        # 静默 rmtree 是不可逆的。让用户自己在文件管理器里删，删完注册表按指纹自动失效。
+        if item.get("builtin"):
+            raise ValueError("内置目录型技能随程序发布，删不掉——可以先把开关关掉")
+        where = f"data/users/{key}/skills/{item.get('dir') or target}"
+        raise ValueError(f"目录型技能请手动删除整个文件夹：{where}")
     path = _user_dir(key) / f"{target}.md"
     if path.exists():
         path.unlink()
@@ -496,6 +663,13 @@ def list_for_ui(account: Any = None) -> Dict[str, Any]:
         "overridden": bool(item.get("overridden")),
         "enabled": bool(item.get("enabled", True)),
         "body": item["body"],
+        # 第 6 版：目录型/md 型、是否已适配、超限、以及「用户移入的原版被内置版挡住」
+        "layout": item.get("layout") or "file",
+        "dir": item.get("dir") or "",
+        "adapted": bool(item.get("adapted", True)),
+        "needsAdapt": bool(item.get("needs_adapt")),
+        "oversize": bool(item.get("oversize")),
+        "shadowed": dict(item["shadowed"]) if isinstance(item.get("shadowed"), dict) else None,
     } for item in items]
     # 分组只算「开着」的：关掉的技能不会出现在任何节点的候选里，放进分组会误导
     active = [row for row in rows if row["enabled"]]
@@ -554,12 +728,16 @@ def menu_block(downstream: Any = None, account: Any = None) -> str:
     for skill in items:
         labels = "、".join(MODULE_LABELS[s] for s in skill["usable"])
         lines.append(f"- id={skill['id']}｜{skill['name']}｜适用节点：{labels}｜{skill['desc']}")
+    # 示例行必须取自真实候选：写死某个 id 时，一旦它被关掉，示例里就出现了一个
+    # 「严禁自创」却不在候选中的 id，反倒诱导模型抄它
+    sample = items[0]
+    sample_module = sample["usable"][0]
     lines.append("")
     lines.append("怎么决定：")
     lines.append("- 逐条对照「适用节点」与描述：这道题确实落在某条的范围里，就把那条挂给对应节点；")
     lines.append("  明确不适用才跳过，不要因为「这步只写概要」就默认全部不挂——挂的是后面节点，不是这一步。")
     lines.append("- 挂法：在正文最前面单独输出一行（只此一行，不要解释、不要写进概要）：")
-    lines.append('- <skill_plan>{"viz":"iso-cutaway","why":"这句话里要看到装置内部结构"}</skill_plan>')
+    lines.append(f'- <skill_plan>{{"{sample_module}":"{sample["id"]}","why":"一句话说清为什么挂它"}}</skill_plan>')
     lines.append("- why 选填但强烈建议写：一句话（≤40 字）说清为什么挂这条，用户会在分析卡上点开看；"
                  "挂了多条时按节点用「；」分开写。")
     lines.append("- 一条都不合适就输出 <skill_plan>none</skill_plan>。")
@@ -597,6 +775,9 @@ def requested_block(workflow_context: Any, account: Any = None) -> tuple:
         return ("", "")
     # 单条关掉的技能，即使旧快照的计划里还写着它也不注入
     if not item.get("enabled", True):
+        return ("", "")
+    if not item.get("body"):
+        # 目录型「待适配 / 超限」条目：正文为空，投递端再判一次（scope 已空，这里是第二道闸）
         return ("", "")
     if not module:
         target = workflow_context.get("target")

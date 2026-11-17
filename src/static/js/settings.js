@@ -909,16 +909,27 @@ function _settingsSkillScopeLabels(scope) {
 
 function _settingsSkillRowHtml(item) {
   const isUser = item.source === 'user' || (!item.builtin && item.source !== 'builtin');
+  // 第 6 版：目录型（skills/<id>/）。
+  // needsAdapt＝目录里只有上游原版 SKILL.md，缺 phymathia.md 适配层 → 看得见、用不上。
+  const isDir = item.layout === 'dir';
+  const needsAdapt = !!item.needsAdapt;
   const tags = [];
   if (item.overridden) tags.push('改过的内置');
   else if (item.builtin) tags.push('内置');
   else tags.push('自建');
+  if (isDir) tags.push('目录型');
   // 开关状态不再做成「已启用/已关闭」徽标或按钮字样：滑块颜色＋整行降透明度已经说明（2026-11-17 用户拍板）
   const badges = tags.map((text, index) => {
     const dim = index === 0 && item.builtin && !item.overridden;
     return '<span style="margin-left:6px;font-size:11px;opacity:' + (dim ? '.7' : '.85') + ';'
       + 'border:1px solid var(--border);border-radius:var(--r-pill);padding:0 6px">' + _settingsEsc(text) + '</span>';
   }).join('');
+  // 「待适配 / 超限」必须显眼：它不是状态瑕疵，而是「这条技能此刻完全没有生效」
+  const warn = needsAdapt
+    ? '<span style="margin-left:6px;font-size:11px;color:var(--accent);'
+      + 'border:1px solid var(--accent);border-radius:var(--r-pill);padding:0 6px">'
+      + (item.oversize ? '正文超限' : '待适配') + '</span>'
+    : '';
   const id = _settingsEsc(item.id);
   // 开关＝模型列表同款滑块（settings-model-switch），2026-11-17 用户拍板：不要「已启用/已关闭」字样按钮
   const toggle = '<label class="settings-model-switch"'
@@ -927,19 +938,43 @@ function _settingsSkillRowHtml(item) {
     + ' onchange="settingsSkillToggle(\'' + id + '\', ' + (item.enabled ? 'false' : 'true') + ')">'
     + '<span class="settings-switch-track"><span class="settings-switch-knob"></span></span>'
     + '</label>';
-  const edit = '<button type="button" class="settings-hk-reset" onclick="settingsSkillEdit(\'' + id + '\')">编辑</button>';
-  // 自建/改过的内置能删；纯内置只能关（它随程序发布）
-  const del = isUser
+  // 目录型不给「编辑」：改的是目录里的 phymathia.md，设置页存不进去（后端会拒，避免用户白改）
+  const edit = (needsAdapt || isDir)
+    ? ''
+    : '<button type="button" class="settings-hk-reset" onclick="settingsSkillEdit(\'' + id + '\')">编辑</button>';
+  // 自建/改过的内置能删；纯内置只能关（它随程序发布）；目录型只能去文件管理器删整个文件夹
+  const del = (!isDir && isUser)
     ? '<button type="button" class="settings-hk-reset" onclick="settingsSkillDelete(\'' + id + '\', '
       + (item.overridden ? 'true' : 'false') + ')">' + (item.overridden ? '恢复默认' : '删除') + '</button>'
     : '';
+  const scopeText = (item.scope && item.scope.length)
+    ? _settingsSkillScopeLabels(item.scope)
+    : (needsAdapt ? '未适配' : '未挂节点');
+  const where = isDir && item.dir ? ' · 目录 ' + _settingsEsc(item.dir) + '/' : '';
+  let hint = '';
+  if (needsAdapt) {
+    hint = '<div style="font-size:11px;margin-top:3px;color:var(--accent);line-height:1.5">'
+      + (item.oversize
+        ? '正文超过上限（' + (_skillsPage.limits.body || 20000) + ' 字），不会注入——请精简后重存。'
+        : '这个目录里只有原版 SKILL.md，缺 phymathia.md 适配层，所以不会注入。'
+          + '把一份本项目格式的 phymathia.md 放进 ' + _settingsEsc(item.dir || item.id) + '/ 即生效。')
+      + '</div>';
+  } else if (item.shadowed) {
+    hint = '<div style="font-size:11px;margin-top:3px;opacity:.7;line-height:1.5">'
+      + '账号目录里的 ' + _settingsEsc(item.shadowed.dir || '同名目录') + '/ 只有原版入口，'
+      + '缺 phymathia.md，已按上面这份适配版生效。</div>';
+  } else if (isDir && isUser) {
+    hint = '<div style="font-size:11px;margin-top:3px;opacity:.55">要删就在文件管理器里删掉整个目录，'
+      + '设置页不代删（里面可能有你放进去的参考资料）。</div>';
+  }
   return '<div style="display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border)'
     + (item.enabled ? '' : ';opacity:.62') + '">'
     + '<div style="flex:1;min-width:0">'
-    + '<div style="font-size:13px;color:var(--text-primary)">' + _settingsEsc(item.name) + badges + '</div>'
+    + '<div style="font-size:13px;color:var(--text-primary)">' + _settingsEsc(item.name) + badges + warn + '</div>'
     + '<div style="font-size:12px;opacity:.75;margin-top:2px">' + _settingsEsc(item.desc || '（没有描述）') + '</div>'
     + '<div style="font-size:11px;opacity:.55;margin-top:2px">id：' + id
-    + ' · 适用：' + _settingsEsc(_settingsSkillScopeLabels(item.scope)) + ' · 正文 ' + (item.chars || 0) + ' 字</div>'
+    + ' · 适用：' + _settingsEsc(scopeText) + ' · 正文 ' + (item.chars || 0) + ' 字' + where + '</div>'
+    + hint
     + '</div><div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">'
     + toggle + edit + del + '</div></div>';
 }
@@ -995,7 +1030,13 @@ function _settingsSkillRowsHtml() {
     return '<div class="settings-note">还没有技能：新建一条，或导入现成的 .md。</div>';
   }
   const split = _settingsSkillGroups(_skillsPage.items, _skillsPage.byModule);
-  let html = '<div class="settings-note" style="font-size:11px">一条技能挂了几个节点，就在几个组里各出现一次。</div>';
+  let html = '<div class="settings-note" style="font-size:11px">一条技能挂了几个节点，就在几个组里各出现一次。</div>'
+    // 用户是外行，这里把「怎么装一个现成技能包」直接写出来（第 6 版目录型）
+    + '<div class="settings-note" style="font-size:11px;margin-top:6px">'
+    + '装现成的技能包：把整个文件夹放进 <code>data/users/&lt;账号&gt;/skills/</code>，'
+    + '再往里放一份 <code>phymathia.md</code>（本项目格式，见内置 anatomy 那份的样子）；'
+    + '存盘即生效，不用重启。只有原版 <code>SKILL.md</code> 的会标「待适配」，不会注入。'
+    + '</div>';
   if (split.groups.length) {
     html += split.groups.map(group => '<div style="margin-top:14px">'
       + '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px">'
