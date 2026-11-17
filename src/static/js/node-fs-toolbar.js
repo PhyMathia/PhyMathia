@@ -468,8 +468,16 @@ document.addEventListener('keydown', ev => {
   _nodeFsHideBar();
 }, true);
 
-// scroll 不冒泡但 capture 能收到：正文滚动即收，浮条不遮刚读的那一行
-document.addEventListener('scroll', () => { if (_nfsBar) _nodeFsHideBar(); }, true);
+// scroll 不冒泡但 capture 能收到：正文滚动即收，浮条不遮刚读的那一行。
+// 但浮条自己也会滚：追问输入框的字符一旦超过框宽，光标跟随会把 input 自身横向滚一下，
+// 这枚 capture 监听照样收到（target 是 input），浮条当场自己关掉、打了一半的字全丢
+// （2026-11-17 用户报「输入超过框长就自动关」）——来自浮条内部的滚动一律不算正文滚动。
+document.addEventListener('scroll', ev => {
+  if (!_nfsBar) return;
+  const t = ev.target;
+  if (t && t.nodeType === 1 && _nfsBar.contains(t)) return;
+  _nodeFsHideBar();
+}, true);
 window.addEventListener('resize', () => { if (_nfsBar) _nodeFsHideBar(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden && _nfsBar) _nodeFsHideBar(); });
 
@@ -689,7 +697,9 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'if(btn&&bar.contains(btn)){ev.preventDefault();runAction(btn.getAttribute("data-act"));}});'
     + 'document.addEventListener("keydown",function(ev){'
     + 'if(ev.key!=="Escape"||!bar)return;ev.preventDefault();ev.stopPropagation();hideBar();},true);'
-    + 'document.addEventListener("scroll",function(){if(bar)hideBar();},true);'
+    // 浮条内部滚动（输入框字符超宽后光标跟随横滚）不收，口径同主应用侧
+    + 'document.addEventListener("scroll",function(ev){if(!bar)return;var t=ev.target;'
+    + 'if(t&&t.nodeType===1&&bar.contains(t))return;hideBar();},true);'
     + 'window.addEventListener("resize",function(){if(bar)hideBar();});'
     + 'document.addEventListener("selectionchange",function(){clearTimeout(selTimer);'
     + 'selTimer=setTimeout(function(){if(state&&state.expanded)return;var pk=pickSelection();'

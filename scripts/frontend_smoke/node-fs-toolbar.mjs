@@ -248,6 +248,17 @@ export function run() {
     return true;
   });
 
+  check('node-fs-toolbar: 正文滚动收浮条，但浮条自身滚动不收（输入框超宽横滚曾把浮条自己关掉，2026-11-17）', () => {
+    const src = readSrc('src/static/js/node-fs-toolbar.js');
+    const live = src.indexOf("document.addEventListener('scroll'");
+    if (live < 0) return false;
+    if (!src.slice(live, live + 400).includes('_nfsBar.contains(t)')) return false;
+    // 预览页内嵌浮条同口径（scroll 不冒泡但 capture 收得到 input 的自身滚动）
+    const script = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
+    if (!script.includes('bar.contains(t))return;hideBar();')) return false;
+    return true;
+  });
+
   check('node-fs-toolbar: 构建顺序在 graph-custom 之后、app.js 产物已含本模块', () => {
     const bf = readSrc('scripts/build_frontend.mjs');
     const a = bf.indexOf("'graph-custom.js'");
