@@ -737,7 +737,9 @@ def menu_block(downstream: Any = None, account: Any = None) -> str:
     lines.append("- 逐条对照「适用节点」与描述：这道题确实落在某条的范围里，就把那条挂给对应节点；")
     lines.append("  明确不适用才跳过，不要因为「这步只写概要」就默认全部不挂——挂的是后面节点，不是这一步。")
     lines.append("- 挂法：在正文最前面单独输出一行（只此一行，不要解释、不要写进概要）：")
-    lines.append(f'- <skill_plan>{{"{sample_module}":"{sample["id"]}","why":"一句话说清为什么挂它"}}</skill_plan>')
+    # 示例行不带列表前缀：模型会照抄这一行的字面样子，若写成「- <skill_plan>…」，
+    # 前端剥离计划块后会留下一个孤立的短横线（_stripSkillPlanBlock 只吃标签本身）
+    lines.append(f'<skill_plan>{{"{sample_module}":"{sample["id"]}","why":"一句话说清为什么挂它"}}</skill_plan>')
     lines.append("- why 选填但强烈建议写：一句话（≤40 字）说清为什么挂这条，用户会在分析卡上点开看；"
                  "挂了多条时按节点用「；」分开写。")
     lines.append("- 一条都不合适就输出 <skill_plan>none</skill_plan>。")
