@@ -20,7 +20,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
-from . import accounts, concept, context, http_client, llm_common, profile, skill_registry, usage_stats, viz_style
+from . import accounts, concept, context, http_client, llm_common, profile, skill_refs, skill_registry, usage_stats, viz_style
 from .config import AI_PROVIDERS, LEVEL_PROMPTS, STRICT_MODULE_MAX_TOKENS, validate_model_target
 from .context import (
     _branch_context_instruction,
@@ -151,6 +151,78 @@ def _attach_images_to_last_user(messages: list, image_parts: list) -> list:
     return messages
 
 
+def _append_to_last_user(messages: list, extra: str) -> list:
+    """把一段文字追加到最后一条 user 消息的末尾（2026-11-17 第 7 版：skill 参考）。
+
+    与 `_attach_images_to_last_user` 同款：浅拷贝，不改就地结构。content 是字符串就
+    直接拼；是多部件数组（附图消息）就往末尾补一个 text 部件。找不到 user 就原样返回。
+    """
+    if not extra:
+        return messages
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        patched = dict(message)
+        content = message.get("content")
+        if isinstance(content, str):
+            patched["content"] = content + extra
+        elif isinstance(content, list):
+            patched["content"] = list(content) + [{"type": "text", "text": extra}]
+        else:
+            patched["content"] = _message_text_for_log(message) + extra
+        out = list(messages)
+        out[index] = patched
+        return out
+    return messages
+
+
+async def _pick_skill_refs(skill_id: str, question: str, url: str, headers: dict,
+                           model_name: str, account) -> str:
+    """让模型从该 skill 的参考目录里挑最多两份，读出来拼成 `<skill_refs>` 块。
+
+    失败一律返回空串（降级＝退回第 6 版：只有适配层正文）。不注入思考参数——
+    `max_tokens=80` 若是被思考占满就永远拿不到答案。
+    """
+    rows = skill_refs.catalog(skill_id, account)
+    if not rows:
+        return ""
+    body = {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": skill_refs.PICK_SYSTEM},
+            {"role": "user", "content": skill_refs.pick_prompt(question, rows)},
+        ],
+        "stream": False,
+        "max_tokens": 80,
+        "temperature": 0,
+    }
+    client = http_client.get_http_client()
+    try:
+        resp = await client.post(url, json=body, headers=headers,
+                                 timeout=httpx.Timeout(25.0, connect=10.0))
+    except httpx.HTTPError as exc:
+        logger.warning(f"AI proxy (skill refs): 挑选请求失败 err={exc}")
+        return ""
+    if resp.status_code != 200:
+        logger.warning(f"AI proxy (skill refs): 挑选返回 {resp.status_code}，按不带参考处理")
+        return ""
+    try:
+        data = resp.json()
+        text = data["choices"][0]["message"]["content"]
+    except Exception as exc:
+        logger.warning(f"AI proxy (skill refs): 回包结构异常 err={exc}")
+        return ""
+    names = skill_refs.parse_picks(text, rows)
+    if not names:
+        logger.info(f"AI proxy (skill refs): 模型没挑（raw={str(text)[:60]!r}）")
+        return ""
+    block = skill_refs.compose(skill_id, names, account)
+    if block:
+        logger.info(f"AI proxy (skill refs): skill={skill_id} 挑中 {','.join(names)} chars={len(block)}")
+    return block
+
+
 def _message_text_for_log(message: dict) -> str:
     # 附图后 content 是多部件数组——日志与 token 估算只取文字部件，别把 base64 打进日志
     content = message.get("content")
@@ -240,6 +312,10 @@ async def api_models_chat(request: Request):
     # 画像注入快照（角标用）：在函数作用域先声明——messages 旧格式不进入
     # prompt 分支，若只在分支内赋值，两个响应出口引用它会报 free variable 未绑定
     profile_usage = None
+    # skill 注入标记同理：两个分支（prompt 构建 / messages 直传）之后都要读它，
+    # 只在新格式分支里赋值会让旧格式路径 UnboundLocalError（2026-11-17 实测 27 红）
+    _skill_src = ""
+    _skill_refs_for = ""
     if prompt:
         # 新格式：后端构建消息
         is_socratic_prompt = _is_socratic_prompt_text(prompt)
@@ -393,7 +469,6 @@ async def api_models_chat(request: Request):
         # ③ 都没有（画布上直接生成交互可视化——那条路径没有分析步）→ viz_style 兜底。
         # 一律拼在 user 尾部而非 system：与难度档位同处，system 常驻会拖累前缀缓存。
         # 开关 PHYMATHIA_SKILL_ROUTER=0 关新链路，PHYMATHIA_VIZ_STYLE=0 关兜底判定。
-        _skill_src = ""
         _base_len = len(user_text)
         _wc = workflow_context if isinstance(workflow_context, dict) else {}
         if skill_registry.enabled(account):
@@ -411,6 +486,7 @@ async def api_models_chat(request: Request):
                     if _block:
                         user_text = user_text + _block
                         _skill_src = f"plan:{_sid}"
+                        _skill_refs_for = _sid
             except Exception as exc:  # 注册表读错一律按未命中处理，不阻塞生成
                 logger.warning(f"AI proxy (skill): 路由载荷拼接失败，按未命中处理 err={exc}")
         if _skill_src:
@@ -467,6 +543,28 @@ async def api_models_chat(request: Request):
 
     url = f"{base_url.rstrip('/')}/chat/completions"
     headers = _chat_request_headers(provider, api_key, base_url, session_id or session_bucket)
+
+    # skill 参考按需取（2026-11-17 第 7 版）。放在这里而不是拼 user_text 时：挑参考要发一次
+    # 上游请求，url/headers 到这行才齐备；而 messages 已经拼好，所以读出来的参考追加到最后
+    # 一条 user 上——与 skill 正文同处，模型看到的是「契约在前、原始细节在后」。
+    if _skill_refs_for:
+        _refs_text = ""
+        try:
+            _refs_text = await _pick_skill_refs(
+                _skill_refs_for,
+                str(workflow_context.get("question") or "") or str(prompt or ""),
+                url=url,
+                headers=headers,
+                model_name=model_name,
+                account=account,
+            )
+        except Exception as exc:  # 任何异常都不阻塞生成：退回只有适配层正文
+            logger.warning(f"AI proxy (skill refs): 按需读参考失败，按不带参考处理 err={exc}")
+        if _refs_text:
+            messages = _append_to_last_user(messages, _refs_text)
+            _skill_src += "+refs"
+            logger.info(f"AI proxy (skill refs): 注入 chars={len(_refs_text)} src={_skill_src}")
+
     target = workflow_context.get("target") or {} if isinstance(workflow_context, dict) else {}
     module_key = target.get("module") or source_module
     is_strict_module = module_key in ("socratic", "learn") and (

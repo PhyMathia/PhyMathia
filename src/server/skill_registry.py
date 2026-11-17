@@ -537,6 +537,30 @@ def payload(skill_id: str, account: Any = None) -> str:
     return item["body"] if item else ""
 
 
+def skill_dir(skill_id: str, account: Any = None):
+    """该 skill 的目录（只有目录型有）；文件型或查不到返回 None。
+
+    第 7 版给 `skill_refs` 用：参考资料住在 `<skill 目录>/references/`，这里负责
+    回答「这个 id 的目录到底在哪个根下」（内置在 `src/skills`，自建在账号目录）。
+    越界一律 None——`dir` 字段来自真实目录名，但不赌它一定干净。
+    """
+    item = get(skill_id, account)
+    if not item or item.get("layout") != "dir":
+        return None
+    name = str(item.get("dir") or item["id"])
+    base = _user_dir(_account(account)) if item.get("source") == "user" else _builtin_dir()
+    sub = base / name
+    try:
+        if not sub.is_dir():
+            return None
+        root = os.path.realpath(str(base))
+        if os.path.commonpath([root, os.path.realpath(str(sub))]) != root:
+            return None
+    except Exception:
+        return None
+    return sub
+
+
 # ====== 用户自建：写 / 删 / 列表 ======
 
 def _clean_line(value: Any) -> str:
