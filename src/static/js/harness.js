@@ -1096,6 +1096,9 @@ let harnessLastAppliedReport = null;
     { id: 'edit', label: '编辑', placeholder: '对网络助手说话…可改图，可提问', hint: '可改图，可问答' },
     { id: 'chat', label: '答疑', placeholder: '答疑模式：随便问，我不会动你的图', hint: '只读：只回答，不改图' },
     { id: 'preset', label: '创造', placeholder: '创造模式：告诉我你想要什么节点（用途/出口/长相），我来配…', hint: '对话式创作/修改节点配方' },
+    // 2026-11-17 技能工坊（skill 第 9 版）：DSH 那种「agent 预设」式的创造——拍工具
+    // 在服务端执行（查格式/读现役/预览试跑/入册），产物是技能文件，不是画布节点。
+    { id: 'forge', label: '造技能', placeholder: '造技能：说清「什么题上用 + 要求模型按什么做」，我来写并试跑', hint: '造/改 skill，产物在设置页 → 技能' },
   ];
 
   function _harnessModeDef(id) {
@@ -1300,6 +1303,7 @@ let harnessLastAppliedReport = null;
       edit: '已切回编辑模式：可改图，可问答',
       chat: '已切到答疑模式：只回答，不改图',
       preset: '✦ 创造模式已开启：只创作节点配方',
+      forge: '🧰 技能工坊已开启：只造 skill，不改图',
     };
     _setHarnessStatus(notices[harnessMode] || '模式已切换', 'ok');
   }

@@ -16,7 +16,7 @@ from .core import (
     diff_snapshots,
 )
 from .json_utils import repair_json
-from .tools import DRY_RUN_TOOL_NAME, READONLY_TOOL_NAMES
+from .tools import DRY_RUN_TOOL_NAME, READONLY_TOOL_NAMES, SKILL_TOOL_NAMES
 
 def _merge_post_ops(current: Dict[str, Any], result: Dict[str, Any], extra_ops: list,
                     diff_base: Any = None) -> Dict[str, Any]:
@@ -428,13 +428,14 @@ def _readonly_batch(tool_calls: Any) -> list:
     """本批 tool_calls 里的只读查询调用；空列表＝无需进入查询循环。
 
     dry_run（2026-10-25 方向 1）随只读调用一起进环——它同样不落图，
-    只是结果由 review.py 的试改执行器产出。"""
+    只是结果由 review.py 的试改执行器产出。技能工坊四项（2026-11-17）同样进环：
+    它们由服务端执行、不经前端 ops 通道，进环才拿得到多轮结果回灌。"""
     if not isinstance(tool_calls, list):
         return []
     batch = []
     for call in tool_calls:
         name, _args = _tool_call_name_args(call)
-        if name in READONLY_TOOL_NAMES or name == DRY_RUN_TOOL_NAME:
+        if name in READONLY_TOOL_NAMES or name == DRY_RUN_TOOL_NAME or name in SKILL_TOOL_NAMES:
             batch.append(call)
     return batch
 

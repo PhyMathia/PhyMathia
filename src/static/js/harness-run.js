@@ -106,7 +106,9 @@
   // normal（即后端 auto 口径），由后端按指令与快照重判，避免两份关键词表互相漂。
   function _harnessPayloadPhase(harnessPhase) {
     const phase = String(harnessPhase || '');
-    return ['chat', 'preset', 'apply', 'expand'].includes(phase) ? phase : 'normal';
+    // 2026-11-17：forge（技能工坊）同样直通——它的相位语义是「只造技能」，
+    // 交后端重判会被归一成 normal（模型就会去改图）。
+    return ['chat', 'preset', 'forge', 'apply', 'expand'].includes(phase) ? phase : 'normal';
   }
 
   // 把上游/后端报错翻译成用户可读的提示

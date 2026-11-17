@@ -746,20 +746,20 @@ def _clean_line(value: Any) -> str:
     return str(value or "").replace("\r", " ").replace("\n", " ").strip()
 
 
-def save_skill(account: Any, data: Dict[str, Any]) -> Dict[str, Any]:
-    """新建或更新一条自建 skill。返回落盘后的条目；非法输入抛 ValueError。
+def _skill_errors(key: str, data: Dict[str, Any]) -> tuple:
+    """逐项校验，返回 (归一化草稿, 错误清单)。错误清单是**逐字段**的，不抛异常。
 
-    与内置同 id 时**允许**写入——合并规则本来就是「自建覆盖内置」，写出来的是用户自己的
-    副本（`overridden=True`），升级不会把它盖回去；UI 上给「恢复默认」（删掉副本）出口。
-    第 2 版曾直接拒绝，但那样连内置技能的名字/适用节点都改不了（用户实测提的需求）。
+    写入口与创造模式预览共用这一份规则：前者只取第一条错误抛 `ValueError`（文案与
+    旧版逐字一致），后者把整张表交给模型按字段修——弱模型一次只能改对一处，给一条
+    就够它来回跑三趟。
     """
-    key = _account(account)
-    # 只认环境变量硬关：账号级总开关是「现在别路由」，不该连编辑技能一起锁死
-    if not _env_on():
-        raise ValueError("技能系统已关闭（PHYMATHIA_SKILL_ROUTER=0）")
+    errors: List[Dict[str, str]] = []
     skill_id = str(data.get("id") or "").strip().lower()
     if not _SKILL_ID_RE.match(skill_id):
-        raise ValueError("id 只能用小写字母开头、字母数字与连字符（2–41 位），例如 force-analysis")
+        errors.append({
+            "field": "id",
+            "reason": "id 只能用小写字母开头、字母数字与连字符（2–41 位），例如 force-analysis",
+        })
     name = _clean_line(data.get("name"))
     desc = _clean_line(data.get("desc"))
     body = str(data.get("body") or "").replace("\r\n", "\n").strip()
@@ -769,32 +769,97 @@ def save_skill(account: Any, data: Dict[str, Any]) -> Dict[str, Any]:
         raw_scope = ",".join(str(item or "") for item in raw_scope)
     scope = _parse_scope(raw_scope)
     if not name:
-        raise ValueError("请填写技能名")
-    if len(name) > LIMITS["name"]:
-        raise ValueError(f"技能名太长（{len(name)} 字），上限 {LIMITS['name']} 字")
+        errors.append({"field": "name", "reason": "请填写技能名"})
+    elif len(name) > LIMITS["name"]:
+        errors.append({"field": "name", "reason": f"技能名太长（{len(name)} 字），上限 {LIMITS['name']} 字"})
     if not desc:
-        raise ValueError("请填写一句话适用描述（用来判断什么时候挂它）")
-    if len(desc) > LIMITS["desc"]:
-        raise ValueError(f"描述太长（{len(desc)} 字），上限 {LIMITS['desc']} 字——写清「什么题用它」就够")
+        errors.append({"field": "desc", "reason": "请填写一句话适用描述（用来判断什么时候挂它）"})
+    elif len(desc) > LIMITS["desc"]:
+        errors.append({
+            "field": "desc",
+            "reason": f"描述太长（{len(desc)} 字），上限 {LIMITS['desc']} 字——写清「什么题用它」就够",
+        })
     if not scope:
-        raise ValueError("请至少选一个适用节点")
+        errors.append({"field": "scope", "reason": "请至少选一个适用节点"})
     if not body:
-        raise ValueError("请填写正文")
-    if len(body) > LIMITS["body"]:
-        raise ValueError(f"正文太长（{len(body)} 字），上限 {LIMITS['body']} 字")
+        errors.append({"field": "body", "reason": "请填写正文"})
+    elif len(body) > LIMITS["body"]:
+        errors.append({"field": "body", "reason": f"正文太长（{len(body)} 字），上限 {LIMITS['body']} 字"})
 
     user_dir = _user_dir(key)
-    if (user_dir / skill_id).is_dir():
+    # 目录型（用户移入的整套包 / 内置示例）一律不走接口写：写一个同名 `<id>.md` 会
+    # 盖掉目录里那份（连带 references/ 一起失效），而目录本身改不动——等于「改了没生效」。
+    # 与设置页「目录型不给编辑按钮」同一口径（第 9 版：创造模式也不许写它）。
+    existing_item = get(skill_id, key) if _SKILL_ID_RE.match(skill_id) else None
+    if existing_item and (existing_item.get("layout") or "file") != "file":
+        errors.append({
+            "field": "id",
+            "reason": (
+                f"这条是目录型技能（skills/{skill_id}/），接口写不进它："
+                "想改就换个新 id 重造，或让用户直接编辑它目录里的 phymathia.md"
+            ),
+        })
+    elif _SKILL_ID_RE.match(skill_id) and (user_dir / skill_id).is_dir():
         # 目录型技能写的是 `skills/<id>/phymathia.md`，这里再写一个 `<id>.md` 会被目录覆盖，
         # 变成「改了没生效」。宁可明确拒绝，也不让用户白改。
-        raise ValueError(
-            f"这个技能是目录型（skills/{skill_id}/），请直接编辑它目录里的 phymathia.md，"
-            "设置页只做改名/描述这类轻量修改不适用于它"
-        )
+        errors.append({
+            "field": "id",
+            "reason": (
+                f"这个技能是目录型（skills/{skill_id}/），请直接编辑它目录里的 phymathia.md，"
+                "设置页只做改名/描述这类轻量修改不适用于它"
+            ),
+        })
     existing = list(user_dir.glob("*.md")) if user_dir.exists() else []
     dir_count = len(_dir_children(user_dir)) if user_dir.exists() else 0
-    if not (user_dir / f"{skill_id}.md").exists() and len(existing) + dir_count >= LIMITS["skills"]:
-        raise ValueError(f"自建技能最多 {LIMITS['skills']} 条，先删几条再加")
+    if (
+        _SKILL_ID_RE.match(skill_id)
+        and not (user_dir / f"{skill_id}.md").exists()
+        and len(existing) + dir_count >= LIMITS["skills"]
+    ):
+        errors.append({"field": "id", "reason": f"自建技能最多 {LIMITS['skills']} 条，先删几条再加"})
+    return {"id": skill_id, "name": name, "desc": desc, "scope": scope, "body": body}, errors
+
+
+def skill_errors(account: Any, data: Dict[str, Any]) -> List[Dict[str, str]]:
+    """逐字段错误清单（创造模式的预览用；空列表＝能写进去）。"""
+    _clean, errors = _skill_errors(_account(account), data)
+    return errors
+
+
+def validate_skill(account: Any, data: Dict[str, Any]) -> Dict[str, Any]:
+    """校验并归一化一条待写的技能，**不落盘**（写入口与创造模式的预览共用这一份）。
+
+    返回 `{"id","name","desc","scope","body"}`；非法抛 `ValueError`（中文原因，取第一条）。
+    只管数据形状与写入前置条件（目录型冲突、条数上限），不管环境开关——「现在别路由」
+    不该阻断预览与编辑，硬关由 `save_skill` 自己判。
+    """
+    clean, errors = _skill_errors(_account(account), data)
+    if errors:
+        raise ValueError(errors[0]["reason"])
+    return clean
+
+
+def save_skill(account: Any, data: Dict[str, Any]) -> Dict[str, Any]:
+    """新建或更新一条自建 skill。返回落盘后的条目；非法输入抛 ValueError。
+
+    与内置同 id 时**允许**写入——合并规则本来就是「自建覆盖内置」，写出来的是用户自己的
+    副本（`overridden=True`），升级不会把它盖回去；UI 上给「恢复默认」（删掉副本）出口。
+    第 2 版曾直接拒绝，但那样连内置技能的名字/适用节点都改不了（用户实测提的需求）。
+
+    校验一律走 `validate_skill`（创造模式预览用的是同一份），这里不再重复一遍规则。
+    """
+    key = _account(account)
+    # 只认环境变量硬关：账号级总开关是「现在别路由」，不该连编辑技能一起锁死
+    if not _env_on():
+        raise ValueError("技能系统已关闭（PHYMATHIA_SKILL_ROUTER=0）")
+    clean = validate_skill(key, data)
+    skill_id = clean["id"]
+    name = clean["name"]
+    desc = clean["desc"]
+    scope = clean["scope"]
+    body = clean["body"]
+
+    user_dir = _user_dir(key)
 
     user_dir.mkdir(parents=True, exist_ok=True)
     # 写出来的 front-matter 直接是**主流形状**（name / description + metadata 扩展字段）：

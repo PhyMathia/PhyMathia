@@ -75,6 +75,11 @@ READONLY_TOOL_NAMES = GRAPH_QUERY_TOOL_NAMES + KB_TOOL_NAMES + (GRAPH_STATS_TOOL
 # 不同），但进查询回灌环——review.py 的循环与 review_ops 的批次判定按名放行。
 DRY_RUN_TOOL_NAME = "dry_run"
 
+# 技能工坊工具名（2026-11-17，skill 第 9 版）：与 skill_forge.SKILL_TOOL_NAMES 同源，
+# 不在 READONLY_TOOL_NAMES 里——它们会**写盘**（install_skill），只是不走图 ops 通道。
+# 因此 review.py 的查询回灌环与 review_ops 的批次判定都要单独放行这一组。
+from .skill_forge import SKILL_TOOL_NAMES  # noqa: E402（常量段末尾，避免与工具定义交错）
+
 # 查询结果上限：邻接 40 条、搜索 10 条、摘录 80 字（回灌上下文预算）
 _READONLY_NEIGHBOR_LIMIT = 40
 _READONLY_SEARCH_LIMIT = 10
@@ -377,6 +382,57 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
         ["ops"],
     )
 
+    # ---- 技能工坊（2026-11-17，skill 第 9 版）：Φ 直接造/改 skill ----
+    # 四个工具都是服务端执行（查/验/装），不经前端 ops 通道；草稿全文随参数提交，
+    # 服务端零状态。边界：只写得动文件型（`skills/<id>.md`），目录型只能去文件管理器改。
+    skill_spec = _tool(
+        "skill_spec",
+        "技能工坊：查「写一条技能要哪些字段、有没有上限、现在库里已有哪些 id」。"
+        "动笔前先调一次（别凭记忆写枚举）；改一条现役技能再配合 read_skill 取它的正文。",
+        {},
+        [],
+    )
+    read_skill = _tool(
+        "read_skill",
+        "技能工坊：按 id 读一条现役技能的正文与适用节点（改造它时用来取现状）。目录型技能只读不可写。",
+        {"id": _str_prop("技能 id（见 skill_spec 的 existing 清单）")},
+        ["id"],
+    )
+    preview_skill = _tool(
+        "preview_skill",
+        "技能工坊：把整份草稿交服务端校验与试跑——返回逐字段错误、结构体检（四段结构/字数/"
+        "是否要求宿主做不到的动作）、路由试跑（这几条问题会不会因此进候选）、草稿指纹 draftToken。"
+        "**必须预览成功并给用户看过结论后再入册**；改过草稿就要重新预览。",
+        {
+            "skill": {
+                "type": "object",
+                "description": "完整草稿 {id, name, desc, scope[], body}（不是补丁，每轮都提交整份）",
+            },
+            "questions": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "路由试跑用的问题（1~3 条，取用户真实说法，别编教科书题）",
+            },
+            "avoid": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "「不该命中」的反例问题（1~3 条）：用来发现 scope 定得太宽",
+            },
+        },
+        ["skill"],
+    )
+    install_skill = _tool(
+        "install_skill",
+        "技能工坊：把预览过的草稿入册（写 data/users/<账号>/skills/<id>.md，可被其它宿主直接读）。"
+        "**只能由用户明确说了「装上／就这么办」之后调用**；token 必须是 preview_skill 发回的 draftToken，"
+        "草稿任何一处改过都要重新预览。同 id 幂等覆盖，不会产生副本。",
+        {
+            "skill": {"type": "object", "description": "与预览时逐字一致的完整草稿"},
+            "token": _str_prop("preview_skill 返回的 draftToken（原样带上，不许自己改）"),
+        },
+        ["skill", "token"],
+    )
+
     return {
         "create_node": create_node,
         "update_node": update_node,
@@ -390,6 +446,10 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
         "delete_recipe": delete_recipe,
         "ask_user": ask_user,
         "dry_run": dry_run,
+        "skill_spec": skill_spec,
+        "read_skill": read_skill,
+        "preview_skill": preview_skill,
+        "install_skill": install_skill,
         "read_node": read_node,
         "list_neighbors": list_neighbors,
         "search_nodes": search_nodes,
@@ -427,6 +487,9 @@ PHASE_TOOLS: Dict[str, List[str]] = {
     # 批次是普通编辑操作，统计已由服务端预计算注入（graph_stats 仍在表里供
     # 模型复查个别节点时用，提示词已注明不必重复拉整图统计）
     "coach": list(EDIT_TOOL_NAMES) + [DRY_RUN_TOOL_NAME] + list(READONLY_TOOL_NAMES),
+    # 技能工坊（2026-11-17，skill 第 9 版）：只给四项技能工具——不查图、不改图。
+    # 造的是 skill 文件（data/users/<账号>/skills/），不是画布节点；产物在技能页可见。
+    "forge": list(SKILL_TOOL_NAMES),
 }
 
 

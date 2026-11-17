@@ -315,7 +315,7 @@ async def graph_review(request: Request):
     try:
         context = payload.get("context") or getattr(request.app.state, "harness_context", "") or ""
         snap_nodes = len((payload.get("snapshot") or {}).get("nodes") or [])
-        if snap_nodes == 0 and not payload.get("pure_chat") and payload.get("phase") not in ("preset", "chat"):
+        if snap_nodes == 0 and not payload.get("pure_chat") and payload.get("phase") not in ("preset", "chat", "forge"):
             # 空快照防御：模型无法评价/修改不存在的图。纯问答聊天仍放行，
             # 创造模式（preset）也放行——从空画布从零创作正是它的本职；
             # 答疑模式（chat）放行——问问题不需要图上有内容。

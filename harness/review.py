@@ -49,6 +49,7 @@ from .review_phase import (
     DRY_RUN_HINT_PHASES,
     DRY_RUN_TOOLS_HINT,
     HARNESS_CHAT_TOOLS_HINT,
+    SKILL_TOOLS_HINT,
     _REFUSAL_MARKERS,
     _has_edit_intent,
     _refusal_explained,
@@ -177,14 +178,17 @@ from .prompts import (
     build_coach_stats_block,
     build_evaluate_messages,
     build_expand_messages,
+    build_forge_messages,
     build_preset_messages,
     build_resolve_messages,
     build_review_messages,
 )
+from .skill_forge import execute_skill_tool
 from .tools import (
     DRY_RUN_TOOL_NAME,
     KB_TOOL_NAMES,
     READONLY_TOOL_NAMES,
+    SKILL_TOOL_NAMES,
     _graph_stats,
     build_tools,
     execute_readonly_tool,
@@ -1339,6 +1343,10 @@ def _splice_attempt_messages(
             # 答疑模式：纯只读工具表，用专用提示（通用 AUTO 提示的
             # 「要求修改图请使用工具」与答疑红线矛盾，不能照抄）
             base_content += HARNESS_CHAT_TOOLS_HINT
+        elif phase == "forge":
+            # 技能工坊（2026-11-17）：工具在服务端执行、不产图操作，提示也另写一份——
+            # 只读查询提示（read_node/list_neighbors…）在 forge 的工具表里根本没有
+            base_content += SKILL_TOOLS_HINT
         else:
             base_content += (TOOLS_AUTO_HINT if tool_choice == "auto" else TOOLS_USER_HINT)
             if readonly_enabled:
@@ -1394,6 +1402,15 @@ def _execute_dry_run(
         ]
     payload["note"] = "试改不落图：修正 errors/warnings 后重新试改或直接给最终方案；同样错误在定稿后仍会被剔除/跳过。"
     return payload
+
+
+# 技能工具的状态行文案（Φ 面板逐条显示，人话优先）
+_SKILL_TOOL_LABELS = {
+    "skill_spec": "查格式与现有技能",
+    "read_skill": "读现役技能正文",
+    "preview_skill": "预览试跑",
+    "install_skill": "入册",
+}
 
 
 async def _run_readonly_query_loop(
@@ -1487,6 +1504,23 @@ async def _run_readonly_query_loop(
                 ok = not (isinstance(output, dict) and output.get("error"))
                 if len(text) > _TOOL_RESULT_CHARS:
                     text = text[:_TOOL_RESULT_CHARS] + "…（结果过长已截断）"
+            elif name in SKILL_TOOL_NAMES:
+                # 技能工坊（2026-11-17）：查/验/装都在服务端执行，草稿全文随参数来、
+                # 服务端零状态。install 会真写盘，所以提示词要求「用户明确同意后才调」，
+                # 且必须带 preview 发回的 draftToken——写进去的字节＝用户看过的那一版。
+                tool_steps += 1
+                emit({
+                    "type": "status",
+                    "stage": "tool",
+                    "message": "🧰 " + _SKILL_TOOL_LABELS.get(name, name) + "：" + name,
+                    "attempt": attempt,
+                    "step": tool_steps,
+                })
+                output = execute_skill_tool(name, args, account)
+                text = json.dumps(output, ensure_ascii=False)
+                ok = not (isinstance(output, dict) and (output.get("error") or output.get("ok") is False))
+                if len(text) > _TOOL_RESULT_CHARS:
+                    text = text[:_TOOL_RESULT_CHARS] + "…（结果过长已截断）"
             else:
                 # 同批混入的编辑类调用：统一下发「已暂存」结果，绝不执行；
                 # 模型须在看完查询结果后单独重发编辑方案
@@ -1518,6 +1552,7 @@ async def _run_readonly_query_loop(
             current_tools = [
                 schema for schema in (current_tools or [])
                 if schema.get("function", {}).get("name") not in READONLY_TOOL_NAMES
+                and schema.get("function", {}).get("name") not in SKILL_TOOL_NAMES
                 and schema.get("function", {}).get("name") != DRY_RUN_TOOL_NAME
             ] or None
             current_choice = tool_choice if current_tools else None
@@ -1732,6 +1767,13 @@ def _enforce_phase_gates(
         # 不带反馈重试（答疑本就不该产出操作）；summary 里注明，避免「嘴上说改了」
         if raw_ops:
             summary = (str(summary or "") + "\n\n（答疑模式不改图：已忽略其中的图操作，需要修改请切回「编辑」模式）").strip()
+            raw_ops = []
+    if phase == "forge":
+        # 技能工坊（2026-11-17）：产物是一条技能文件，不是图操作。模型若顺手产了
+        # 图操作一律清空并注明（与 chat 保险丝同一手法，不带重试——它不是跑偏，
+        # 而是「这条相位本来就没有图操作」）。
+        if raw_ops:
+            summary = (str(summary or "") + "\n\n（技能工坊只造技能，不改图：已忽略其中的图操作，需要改图请切回「编辑」模式）").strip()
             raw_ops = []
     if phase == "evaluate":
         raw_ops = [
@@ -2238,6 +2280,8 @@ async def review_graph(
             return build_expand_messages(current, instruction, retry_errors, full_context, level, focus_node_ids)
         if phase == "preset":
             return build_preset_messages(current, instruction, retry_errors, full_context, level, focus_node_ids)
+        if phase == "forge":
+            return build_forge_messages(current, instruction, retry_errors, full_context, level, focus_node_ids)
         if phase == "chat":
             # 答疑模式（三模式切换器）：normal 提示词 + 只读红线段；
             # 工具表同 normal，解析路径完全同构
@@ -2337,6 +2381,7 @@ async def review_graph(
                 # 走不到查询回灌；只读名混进最终批次仍由 parse_tool_calls 兜底）
                 readonly_enabled = bool(current_tools) and any(
                     schema.get("function", {}).get("name") in READONLY_TOOL_NAMES
+                    or schema.get("function", {}).get("name") in SKILL_TOOL_NAMES
                     for schema in current_tools
                 )
                 # ---- 计划阶段：T150 尾部拼接（T396 拆分，见 _splice_attempt_messages）----
@@ -2404,7 +2449,7 @@ async def review_graph(
                             tools = None
                             tool_choice = None
                             # T150：只增不改——降级剥工具提示同样走副本换槽
-                            messages[-1] = {**messages[-1], "content": messages[-1]["content"].replace(TOOLS_USER_HINT, "").replace(TOOLS_AUTO_HINT, "").replace(READONLY_TOOLS_HINT, "").replace(HARNESS_CHAT_TOOLS_HINT, "")}
+                            messages[-1] = {**messages[-1], "content": messages[-1]["content"].replace(TOOLS_USER_HINT, "").replace(TOOLS_AUTO_HINT, "").replace(READONLY_TOOLS_HINT, "").replace(HARNESS_CHAT_TOOLS_HINT, "").replace(SKILL_TOOLS_HINT, "")}
                             journal_fallback = "json_mode"
                             raw = await _counted_call(
                                 messages,

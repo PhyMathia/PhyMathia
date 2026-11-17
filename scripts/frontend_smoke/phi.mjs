@@ -500,4 +500,22 @@ check('T263 创造模式访谈协议：ask_user 短路＋问题文本进正文�
   if (!code.includes('_harnessClarifyOptionList')) throw new Error('选项按钮列表未走多问扁平化');
   return true;
 });
+
+check('技能工坊（2026-11-17）：造技能模式可选、相位直通、不弹节点工坊', () => {
+  const harnessSrc = ['harness.js', 'harness-sessions.js', 'harness-snapshot.js']
+    .map(f => fs.readFileSync('src/static/js/' + f, 'utf8')).join('\n');
+  if (!harnessSrc.includes("id: 'forge'")) throw new Error('模式清单缺「造技能」（forge）');
+  if (!harnessSrc.includes("forge: '🧰 技能工坊已开启")) throw new Error('切到造技能后没有模式提示');
+  const runSrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
+  // 相位必须直通：落到 normal 就会被后端当成「改图」重判
+  if (!/\['chat', 'preset', 'forge', 'apply', 'expand'\]/.test(runSrc)) {
+    throw new Error('forge 未加入相位直通白名单（会被归一成 normal）');
+  }
+  // 沙箱行为：切到 forge 后面板模式跟随、且不像 preset 那样被工坊接管
+  sandbox.window.chooseHarnessMode('forge');
+  if (sandbox.window._harnessMode() !== 'forge') throw new Error('切造技能后模式应为 forge');
+  sandbox.window.chooseHarnessMode('edit');
+  if (sandbox.window._harnessMode() !== 'edit') throw new Error('切回后应为 edit');
+  return true;
+});
 }
