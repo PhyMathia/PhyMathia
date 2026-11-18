@@ -25,7 +25,9 @@ from .events import (
 )
 from .review import (
     HarnessError,
+    MAX_TOKENS_HARD_CEILING,
     _sanitize_fallback_models,
+    clamp_max_tokens,
     harness_session_bucket,
     resolve_focus,
     review_graph,
@@ -207,7 +209,9 @@ def _review_kwargs(payload: dict, context: str, journal: Optional[list] = None) 
         "account": str(payload.get("account_id") or payload.get("accountId") or "default") or "default",
         "instruction": payload.get("instruction", ""),
         "model": payload.get("model"),
-        "max_tokens": _safe_int(payload.get("max_tokens") or 4000, 4000),
+        # 498：原来只 _safe_int 容错不钳制，1e9 会原样发上游。同 workshop 口径
+        # 补 clamp（0/空串走 4000 默认、负数落 256、超大值落全局硬顶）。
+        "max_tokens": clamp_max_tokens(payload.get("max_tokens"), 4000, MAX_TOKENS_HARD_CEILING),
         "phase": str(payload.get("phase") or "normal"),
         "context": context,
         "level": str(payload.get("level") or ""),
@@ -515,7 +519,7 @@ async def graph_resolve(request: Request):
                 snapshot=payload.get("snapshot"),
                 instruction=payload.get("instruction", ""),
                 model=payload.get("model"),
-                max_tokens=_safe_int(payload.get("max_tokens") or 900, 900),
+                max_tokens=clamp_max_tokens(payload.get("max_tokens"), 900, MAX_TOKENS_HARD_CEILING),
                 context=context,
                 level=level,
                 retries=retries,

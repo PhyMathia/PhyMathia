@@ -645,6 +645,23 @@ def _promote_reasoning(content: str, reasoning: Any) -> tuple:
     return content, False, True
 
 
+# ===== 498：max_tokens 统一清洗/钳制（唯一口径，照抄 workshop_agent/critic）=====
+# 坏输入落默认（T222，与 api._safe_int 同款）、`or default` 保住 0/空串走默认、
+# 负数落 256 下限、超大值落 ceiling。各通道用自己的上限常量调本函数；
+# _call_model 入口再用 MAX_TOKENS_HARD_CEILING 兜一道，任何路径都绕不过。
+MIN_MAX_TOKENS = 256
+MAX_TOKENS_HARD_CEILING = 32000
+
+
+def clamp_max_tokens(value, default: int, ceiling: int) -> int:
+    """把任意 payload 值清洗成 [MIN_MAX_TOKENS, ceiling] 内的 int。"""
+    try:
+        tokens = int(value or default)
+    except (TypeError, ValueError):
+        tokens = default
+    return max(MIN_MAX_TOKENS, min(tokens, ceiling))
+
+
 async def _call_model(
     messages: list,
     model: Dict[str, Any],
@@ -674,7 +691,9 @@ async def _call_model(
         "messages": messages,
         "stream": on_delta is not None,
         "temperature": 0.2,
-        "max_tokens": max_tokens,
+        # 498 兜底：上游各通道已按自己的 ceiling 钳过，这里再压一次全局硬顶，
+        # 杜绝任何新增/绕过路径把 1e9 之类的离谱值原样发给上游。
+        "max_tokens": clamp_max_tokens(max_tokens, 4000, MAX_TOKENS_HARD_CEILING),
     }
     if on_delta is not None:
         # 流式也要计量（2026-09-25）：include_usage 让上游在 [DONE] 前补一帧

@@ -12,7 +12,9 @@
   · 模型不返 JSON → status=error + retry，草稿不丢；
   · 只回一句话（无 recipe）→ 原样保留草稿、changed 为空；
   · 归一化不认的键 → warnings 里点出来，不静默吞；
-- question 清洗（最多一个、文本截断）与 say 只留第一行。
+- question 清洗（最多一个、文本截断）与 say 只留第一行；
+- 498：max_tokens 清洗/钳制——坏输入落默认、超大值落上限、负数落 256 下限、
+  0/空串走默认、合法值不变，且共享清洗器与 _call_model 兜底不留绕过的口子。
 """
 
 from __future__ import annotations
@@ -379,6 +381,108 @@ class TemplateLibraryTest(unittest.TestCase):
         for entry in entries:
             self.assertNotIn("recipe", entry, "目录不许带配方正文（端点载荷要轻）")
             self.assertTrue(entry["key"] and entry["label"] and entry["keywords"])
+
+
+class MaxTokensClampTest(unittest.TestCase):
+    """498：配方草稿通道的 max_tokens 清洗/钳制。
+
+    recipe_draft.py:243 原是裸 ``int(max_tokens or DRAFT_MAX_TOKENS)``——
+    "abc" 抛 ValueError 顺着 api.py 端点 except 兜成 500；1e9 原样发上游烧额度。
+    拍板口径 T222「坏输入落默认」：坏值走默认（不是改 400），与 workshop 同款
+    try + ``max(256, min(tokens, CEILING))``。用 seen 抓 _call_model 实收的预算。
+    """
+
+    def _tokens(self, raw):
+        seen = []
+        _run({"recipe": {"desc": "拆分"}, "say": "改好了"},
+             draft=dict(BASE), seen=seen, max_tokens=raw)
+        return seen[0]["max_tokens"]
+
+    def test_bad_input_falls_back_to_default(self):
+        # 坏输入本会抛 ValueError → 500；现在不抛、带默认预算正常发请求
+        self.assertEqual(self._tokens("abc"), draft_mod.DRAFT_MAX_TOKENS)
+        self.assertEqual(self._tokens({"bad": "shape"}), draft_mod.DRAFT_MAX_TOKENS)
+        self.assertEqual(self._tokens([]), draft_mod.DRAFT_MAX_TOKENS)
+
+    def test_huge_value_clamped_to_ceiling(self):
+        self.assertEqual(self._tokens(10 ** 9), draft_mod.DRAFT_TOKENS_CEILING)
+        self.assertEqual(self._tokens(1e9), draft_mod.DRAFT_TOKENS_CEILING)
+
+    def test_negative_falls_to_floor(self):
+        self.assertEqual(self._tokens(-1), 256)
+        self.assertEqual(self._tokens(-10 ** 9), 256)
+
+    def test_zero_and_empty_still_use_default(self):
+        # 既有 `or default` 语义不得破坏
+        for raw in (0, "", None):
+            with self.subTest(raw=raw):
+                self.assertEqual(self._tokens(raw), draft_mod.DRAFT_MAX_TOKENS)
+
+    def test_valid_value_unchanged(self):
+        self.assertEqual(self._tokens(1200), 1200)
+        self.assertEqual(self._tokens("1200"), 1200)   # 数字字符串照常转
+        self.assertEqual(self._tokens(draft_mod.DRAFT_MAX_TOKENS), draft_mod.DRAFT_MAX_TOKENS)
+
+
+class ClampMaxTokensSharedTest(unittest.TestCase):
+    """498：共享清洗器（review.clamp_max_tokens）+ api.py 两处 + _call_model 兜底，
+    保证没有任何一条通往上游的路径能把超大预算原样带出去。"""
+
+    def test_shared_helper_contract(self):
+        from harness import review as review_mod
+        f = review_mod.clamp_max_tokens
+        self.assertEqual(f("abc", 4000, 8000), 4000)       # 坏值落默认
+        self.assertEqual(f(0, 4000, 8000), 4000)           # 0 走默认
+        self.assertEqual(f("", 4000, 8000), 4000)          # 空串走默认
+        self.assertEqual(f(None, 4000, 8000), 4000)
+        self.assertEqual(f(10 ** 9, 4000, 8000), 8000)     # 超大落上限
+        self.assertEqual(f(1e9, 4000, 8000), 8000)         # 浮点超大
+        self.assertEqual(f(-1, 4000, 8000), 256)           # 负数落 256 下限
+        self.assertEqual(f(-10 ** 9, 4000, 8000), 256)
+        self.assertEqual(f(1200, 4000, 8000), 1200)        # 合法值原样
+        self.assertEqual(f("1200", 4000, 8000), 1200)
+        self.assertEqual(f(300, 4000, 8000), 300)          # 摘要固定预算 300 不被误抬/误压
+        self.assertEqual(f(100, 4000, 8000), 256)          # 小于 256 落 256 下限
+
+    def test_review_kwargs_and_resolve_are_clamped(self):
+        from harness import api as api_mod
+        from harness import review as review_mod
+        ceiling = review_mod.MAX_TOKENS_HARD_CEILING
+        self.assertEqual(api_mod._review_kwargs({"max_tokens": "abc"}, "")["max_tokens"], 4000)
+        self.assertEqual(api_mod._review_kwargs({"max_tokens": 10 ** 9}, "")["max_tokens"], ceiling)
+        self.assertEqual(api_mod._review_kwargs({"max_tokens": -1}, "")["max_tokens"], 256)
+        self.assertEqual(api_mod._review_kwargs({"max_tokens": 1200}, "")["max_tokens"], 1200)
+        # resolve 走同一清洗器：直接核它复用的常量与函数，避免起服务
+        self.assertIs(api_mod.clamp_max_tokens, review_mod.clamp_max_tokens)
+
+    def test_call_model_body_is_clamped_even_if_upstream_skips(self):
+        """真调 _call_model（MockTransport 接住请求体）：即便有人绕过上层清洗
+        直接灌 1e9，最终发给上游的 body 也被全局硬顶钳住。"""
+        import httpx
+        from harness import review as review_mod
+
+        bodies = []
+
+        def handler(request):
+            import json as _json
+            bodies.append(_json.loads(request.content.decode()))
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": "ok"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            })
+
+        async def run():
+            client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            try:
+                with mock.patch.object(review_mod, "get_http_client", lambda: client), \
+                        mock.patch.object(review_mod.usage_stats, "record_usage", lambda *a, **k: None):
+                    return await review_mod._call_model(
+                        [{"role": "user", "content": "hi"}], dict(MODEL), 10 ** 9)
+            finally:
+                await client.aclose()
+
+        asyncio.run(run())
+        self.assertEqual(bodies[0]["max_tokens"], review_mod.MAX_TOKENS_HARD_CEILING)
 
 
 if __name__ == "__main__":

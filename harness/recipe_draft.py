@@ -22,12 +22,17 @@ from .json_utils import extract_json
 from .prompts import build_recipe_draft_messages
 from .recipe_templates import pick_template
 from .recipes import RECIPE_NAME_MAX, normalize_recipe_input, validate_recipe
-from .review import HarnessError, _apply_thinking_default, _call_model, _resolve_model
+from .review import (
+    HarnessError, _apply_thinking_default, _call_model, _resolve_model, clamp_max_tokens,
+)
 
 logger = logging.getLogger(__name__)
 
 # 一份配方草稿的 JSON 体量很小（<8KB），1800 够写满所有提示词槽再留余量
 DRAFT_MAX_TOKENS = 1800
+# 498：草稿通道自己的上限（与 workshop 的 *_TOKENS_CEILING 同款）。客户端灌
+# 1e9 时压到这里，别让离谱预算原样发上游烧额度；下限走 clamp_max_tokens 的 256。
+DRAFT_TOKENS_CEILING = 2400
 QUESTION_TEXT_MAX = 120
 SAY_MAX = 160
 
@@ -236,11 +241,15 @@ async def draft_recipe(
         user_recipes=user_recipes,
         level=level,
     )
+    # 498：原来是裸 int(max_tokens or ...)，"abc" 抛 ValueError 被路由兜成 500。
+    # 照 T222「坏输入落默认」改成容错＋钳制：0/空串仍走默认、负数落 256 下限、
+    # 超大值落 DRAFT_TOKENS_CEILING、合法值原样。
+    tokens = clamp_max_tokens(max_tokens, DRAFT_MAX_TOKENS, DRAFT_TOKENS_CEILING)
     try:
         reply = await _call_model(
             messages,
             resolved,
-            int(max_tokens or DRAFT_MAX_TOKENS),
+            tokens,
             json_mode=True,
         )
     except HarnessError:
