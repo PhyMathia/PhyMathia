@@ -124,7 +124,7 @@ function editHumanNoteNode(nodeId) {
     + '<label>内容</label>'
     + '<textarea id="humanNoteContent" rows="6">' + escapeHtml(node.content || '') + '</textarea>'
     + '<label>公式</label>'
-    + '<input id="humanNoteFormula" value="' + escapeHtml(node.formula || '') + '">'
+    + '<textarea id="humanNoteFormula" rows="3">' + escapeHtml(node.formula || '') + '</textarea>'
     + '<div class="graph-network-modal-actions">'
     + '<button class="graph-network-modal-save" onclick="saveHumanNoteNode(\'' + node.id + '\')">保存</button>'
     + '<button onclick="closeHumanNoteNodeModal()">取消</button>'

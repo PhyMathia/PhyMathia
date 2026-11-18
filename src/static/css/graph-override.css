@@ -3020,6 +3020,7 @@ html[data-theme="light"][data-wallpaper="night"] {
   color: var(--text-primary);
   font-family: 'KaTeX_Math', Cambria Math, serif;
   font-size: var(--fs-md);
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 

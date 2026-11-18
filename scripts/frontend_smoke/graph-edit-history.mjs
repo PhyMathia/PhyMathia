@@ -317,6 +317,28 @@ export async function run() {
     // 收口必须放在 finally 之前：异步用例（撤销链）要在夹具还原前跑完，否则沙箱桩
     // 已复位、用例对着真链表空转
     await drain();
+
+    // 本例改节点公式并写入撤销链，必须排在撤销链的 drain 收口之后，否则会污染那条
+    // 逐步回退的断言（异步让出期间同步用例先跑，实测踩过）
+    check('我的理解 / 公式框是多行文本框，换行能存下且节点渲染保留', () => {
+      sandbox.editHumanNoteNode('hn1');
+      const html = String(runCtx('humanNoteModalOverlay.innerHTML'));
+      if (!/<textarea id="humanNoteFormula"/.test(html)) throw new Error('公式框仍是单行 input，不能换行');
+      const twoLines = 'F=-kx\nE=mc^2';
+      sandbox.__fx.field({ humanNoteTitle: '我的理解', humanNoteContent: '新理解', humanNoteFormula: twoLines });
+      sandbox.saveHumanNoteNode('hn1');
+      const node = runCtx('graphView.nodeById.hn1');
+      if (node.formula !== twoLines) throw new Error('多行公式没存下：' + JSON.stringify(node.formula));
+      const out = String(runCtx('_renderHumanNoteNodeHtml(graphView.nodeById.hn1, graphView)'));
+      if (!out.includes(twoLines)) throw new Error('节点渲染丢了公式换行');
+      const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+      const at = css.indexOf('.graph-human-note-formula {');
+      if (at < 0 || !/white-space:\s*pre-wrap/.test(css.slice(at, at + 400))) {
+        throw new Error('公式区 CSS 没保留换行，节点上仍会折成一行');
+      }
+      sandbox.closeHumanNoteNodeModal();
+      return true;
+    });
   } finally {
     restoreWindowStub('getGraphState', prevGet);
     restoreWindowStub('saveGraphState', prevSave);
