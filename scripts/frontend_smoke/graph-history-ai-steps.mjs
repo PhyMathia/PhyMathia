@@ -19,6 +19,7 @@ const OTHER_EXIT_KEY = 'phymathia_graph_history_exit_' + OTHER_SID;
 // v2 全量扫描：多张存量画布（有历史键但从没进过名单、也没有 per-sid 标记＝真实存量形状）
 const STOCK_SIDS = ['sess_stock_a', 'sess_stock_b', 'sess_stock_c', 'sess_stock_d', 'sess_stock_nomark'];
 const STOCK_HIST_KEYS = STOCK_SIDS.map(sid => 'phymathia_graph_history_' + sid);
+const STOCK_EXIT_KEYS = STOCK_SIDS.map(sid => 'phymathia_graph_history_exit_' + sid);
 
 function _note(id, extra) {
   return Object.assign({ id: id, kind: 'note', manual: true, messageIndex: -1, timestamp: 100, content: '正文 ' + id, title: '', status: 'done', x: 100, y: 100 }, extra || {});
@@ -49,12 +50,14 @@ export async function run() {
   const prevHist = storageData[HIST_KEY], prevExit = storageData[EXIT_KEY];
   const prevSweep = storageData[SWEEP_KEY], prevOtherH = storageData[OTHER_HIST_KEY], prevOtherE = storageData[OTHER_EXIT_KEY];
   const prevStock = STOCK_HIST_KEYS.map(k => storageData[k]);
+  const prevStockExit = STOCK_EXIT_KEYS.map(k => storageData[k]);
   delete storageData[HIST_KEY];
   delete storageData[EXIT_KEY];
   delete storageData[SWEEP_KEY];
   delete storageData[OTHER_HIST_KEY];
   delete storageData[OTHER_EXIT_KEY];
   STOCK_HIST_KEYS.forEach(k => { delete storageData[k]; });
+  STOCK_EXIT_KEYS.forEach(k => { delete storageData[k]; });
   let mem = _state([]);
   let chat = [];
   const els = {};
@@ -275,6 +278,48 @@ export async function run() {
       return true;
     }]);
 
+    serial.push(['2026-11-18 DELETE 失败：本地键与名单都保留（不白清、不丢重试机会）', async () => {
+      seed(2);
+      runCtx('_persistGraphHistory();'); // 当前画布 HIST_KEY 保留
+      const failKey = STOCK_HIST_KEYS[0], failSid = STOCK_SIDS[0];
+      storageData[failKey] = JSON.stringify({ v: 2, e: [{ id: 'o1', kind: 'note', manual: true, messageIndex: -1, timestamp: 1, content: 'x', title: '', status: 'done', x: 0, y: 0 }], c: 1, t: Date.now() });
+      storageData['phymathia_graph_history_exit_' + failSid] = JSON.stringify({ sid: failSid, at: Date.now() });
+      runCtx('_graphHistorySweepWrite(["' + SID + '"]);');
+      sandbox.performance.getEntriesByType = () => [{ type: 'navigate' }];
+      const prevFetch = sandbox.fetch;
+      let deletes = 0;
+      sandbox.fetch = async (url, opts) => {
+        if ((opts && opts.method) === 'DELETE') { deletes++; throw new Error('net down'); }
+        return prevFetch(url, opts);
+      };
+      try {
+        const cleared = await runCtx('settleGraphHistoryBatchOnOpen()');
+        if (cleared !== 0) throw new Error('DELETE 全失败不该有成功数，实际 ' + cleared);
+        if (deletes < 1) throw new Error('没有发出 DELETE 请求');
+        // 关键两条：本地键保留（否则服务端旧栈会复活且再也扫不到）；名单保留（下次重试）
+        if (!storageData[failKey]) throw new Error('DELETE 失败却删了本地键——下次会被服务端旧栈灌回');
+        if (!storageData['phymathia_graph_history_exit_' + failSid]) throw new Error('DELETE 失败却删了退出标记');
+        if (runCtx('_graphHistorySweepRead().length') === 0) throw new Error('DELETE 失败却消费了名单——丢失重试机会');
+      } finally { sandbox.fetch = prevFetch; }
+      return true;
+    }]);
+
+    serial.push(['2026-11-18 DELETE 失败后重试成功：残留键被清且名单消费', async () => {
+      seed(2);
+      runCtx('_persistGraphHistory();');
+      const retryKey = STOCK_HIST_KEYS[1], retrySid = STOCK_SIDS[1];
+      storageData[retryKey] = JSON.stringify({ v: 2, e: [{ id: 'o2', kind: 'note', manual: true, messageIndex: -1, timestamp: 2, content: 'y', title: '', status: 'done', x: 0, y: 0 }], c: 1, t: Date.now() });
+      storageData['phymathia_graph_history_exit_' + retrySid] = JSON.stringify({ sid: retrySid, at: Date.now() });
+      runCtx('_graphHistorySweepWrite(["' + SID + '"]);');
+      sandbox.performance.getEntriesByType = () => [{ type: 'navigate' }];
+      const cleared = await runCtx('settleGraphHistoryBatchOnOpen()');
+      if (cleared < 1) throw new Error('恢复后重试应至少清 1 张，实际 ' + cleared);
+      if (storageData[retryKey]) throw new Error('重试成功但残留键没删');
+      if (storageData['phymathia_graph_history_exit_' + retrySid]) throw new Error('重试成功但退出标记没删');
+      if (runCtx('_graphHistorySweepRead().length') !== 0) throw new Error('全部成功后名单没消费');
+      return true;
+    }]);
+
     serial.push(['2026-11-18 强杀/崩溃（名单空）不清：没写过正常退出名单，一张都不清', async () => {
       seed(2);
       runCtx('_persistGraphHistory();');
@@ -352,5 +397,6 @@ export async function run() {
     if (prevOtherH === undefined) delete storageData[OTHER_HIST_KEY]; else storageData[OTHER_HIST_KEY] = prevOtherH;
     if (prevOtherE === undefined) delete storageData[OTHER_EXIT_KEY]; else storageData[OTHER_EXIT_KEY] = prevOtherE;
     STOCK_HIST_KEYS.forEach((k, i) => { if (prevStock[i] === undefined) delete storageData[k]; else storageData[k] = prevStock[i]; });
+    STOCK_EXIT_KEYS.forEach((k, i) => { if (prevStockExit[i] === undefined) delete storageData[k]; else storageData[k] = prevStockExit[i]; });
   }
 }

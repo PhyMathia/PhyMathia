@@ -646,13 +646,15 @@ async function settleGraphHistoryOnOpen() {
 //   · 强杀/崩溃：不发 beforeunload → 名单不写 → 下次打开名单为空 → 不清；
 //   · 只读态：不清且不消费名单（免得查阅态把别人的清理标记吃掉）；
 //   · 当前画布：跳过，留给 settleGraphHistoryOnOpen 做指纹校验的精细结算。
-// 无论清没清，处理完都清空 sweep 名单（一次性消费；下次退出会重新写）。
+// 名单消费（2026-11-18 复审修正）：不再无条件先清空。内核 _batchDiscardGraphHistories
+// 只有 DELETE 成功才删本地键（失败则原样保留），这里据此决定是否消费名单——全部删成功
+// 才清空；有失败就保留名单，下次启动的全量扫描会把残留的键再纳入重试，避免"删失败+
+// 名单已消费"导致服务端旧栈复活且再也扫不到的死局。
 async function settleGraphHistoryBatchOnOpen() {
   if (typeof phyIsReadonly === "function" && phyIsReadonly()) return 0;
   const nav = _graphHistoryNavType();
   if (nav === "reload") { _graphHistorySweepClear(); return 0; }
   const sids = _graphHistorySweepRead();
-  _graphHistorySweepClear(); // 一次性消费，防并发重复清
   if (!sids.length) return 0; // 名单为空＝上次非正常退出，什么都不清
   const current = _currentSessionId();
   const HIST_PREFIX = "phymathia_graph_history_";
@@ -667,10 +669,14 @@ async function settleGraphHistoryBatchOnOpen() {
       if (!sid || sid === current) continue;
       targets.push(sid);
     }
-  } catch (e) { return 0; } // 枚举失败：宁可不清，绝不误伤
-  if (!targets.length) return 0;
-  if (typeof window._batchDiscardGraphHistories !== "function") return 0;
-  try { return await window._batchDiscardGraphHistories(targets); } catch (e) { return 0; }
+  } catch (e) { return 0; } // 枚举失败：宁可不清，保留名单待下次重试，绝不误伤
+  if (!targets.length) { _graphHistorySweepClear(); return 0; } // 无可清键＝任务完成，消费名单
+  if (typeof window._batchDiscardGraphHistories !== "function") return 0; // 内核缺席：保留名单
+  let cleared = 0;
+  try { cleared = await window._batchDiscardGraphHistories(targets); }
+  catch (e) { return 0; } // 执行异常：保留名单待下次重试
+  if (cleared >= targets.length) _graphHistorySweepClear(); // 全删成功才消费；有失败则保留重试
+  return cleared;
 }
 
 // 面板里的手动口（§6.1.4「定稿并清空历史」）：随时可清，和自动结算走同一条路。

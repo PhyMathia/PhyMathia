@@ -364,16 +364,27 @@ function _batchDiscardGraphHistories(sids) {
   _graphHistoryWipeEpoch++; // 一次性作废所有在途镜像 GET（批量清期间谁都不许采纳旧存档）
   list.forEach(function (sid) { _graphHistoryWipeInFlight[sid] = true; });
   const jobs = list.map(function (sid) {
-    try { localStorage.removeItem(_graphHistoryKey(sid)); } catch (e) { /* 配额异常不阻断 */ }
-    try { localStorage.removeItem(GRAPH_HISTORY_EXIT_KEY + sid); } catch (e) { /* 同上 */ }
+    // 本地键的删除时机（2026-11-18 复审修正）：必须在服务端镜像 DELETE 确认成功之后。
+    // 否则 delete 静默失败时本地键已删、服务端旧栈还在，下次打开该画布会被
+    // _upgradeGraphHistoryFromServer「存档更长才采纳」整段灌回＝白清且再也扫不到。
+    // 失败时保留本地键与原样标记：既不留复活缺口，下次启动全量扫描还能把它纳入重试。
     return fetch('/api/kv/' + encodeURIComponent('graph_history:' + sid), {
       method: 'DELETE',
       signal: (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function')
         ? AbortSignal.timeout(10000) : undefined,
-    }).catch(function () { /* 镜像删除失败静默：本地已清，主流程不被卡住 */ })
-      .then(function () { delete _graphHistoryWipeInFlight[sid]; },
-            function () { delete _graphHistoryWipeInFlight[sid]; });
+    }).then(function (r) {
+      // fetch resolve 即算删除成功（沿用既有口径：非 2xx 的 delete 也不该让清历史卡住）；
+      // 只有 reject（网络断/超时/沙箱注入失败）才当作失败、留给下次重试。
+      if (r && r.ok === false) return false;
+      try { localStorage.removeItem(_graphHistoryKey(sid)); } catch (e) { /* 配额异常不阻断 */ }
+      try { localStorage.removeItem(GRAPH_HISTORY_EXIT_KEY + sid); } catch (e) { /* 同上 */ }
+      return true;
+    }).catch(function () { return false; /* 删除失败：本地键保留，等下次全量扫描重试 */ })
+      .then(function (ok) { delete _graphHistoryWipeInFlight[sid]; return ok; },
+            function () { delete _graphHistoryWipeInFlight[sid]; return false; });
   });
-  return Promise.all(jobs).then(function () { return jobs.length; });
+  return Promise.all(jobs).then(function (results) {
+    return results.filter(Boolean).length; // 返回真正删成功的张数，调用侧据此决定是否消费名单
+  });
 }
 window._batchDiscardGraphHistories = _batchDiscardGraphHistories;
