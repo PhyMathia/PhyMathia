@@ -668,16 +668,35 @@ async function settleGraphHistoryOnOpen() {
 // 只有 DELETE 成功才删本地键（失败则原样保留），这里据此决定是否消费名单——全部删成功
 // 才清空；有失败就保留名单，下次启动的全量扫描会把残留的键再纳入重试，避免"删失败+
 // 名单已消费"导致服务端旧栈复活且再也扫不到的死局。
+// 诊断（2026-11-18，502 兜底排障）：控制台打一张「谁占了本地存储」的表。
+// 只读不改，用户按 F12 → 控制台即可看到占用大户与总量；静默失败不干扰主流程。
+function _logStorageTopKeys(reason) {
+  try {
+    const items = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      items.push([k, ((localStorage.getItem(k) || "")).length]);
+    }
+    items.sort((a, b) => b[1] - a[1]);
+    const total = items.reduce((s, it) => s + it[1], 0);
+    console.warn("[存储诊断] " + reason + "：共 " + items.length + " 键 / " + (total / 1048576).toFixed(1) + " MB，最大 12 键：");
+    items.slice(0, 12).forEach((it) => console.warn("  " + (it[1] / 1024).toFixed(0) + " KB\t" + it[0]));
+  } catch (e) { /* 诊断失败不打扰 */ }
+}
+
 async function settleGraphHistoryBatchOnOpen() {
   if (typeof phyIsReadonly === "function" && phyIsReadonly()) return 0;
   const nav = _graphHistoryNavType();
   const sids = _graphHistorySweepRead();
+  const probeOk = _graphHistoryQuotaProbe();
+  console.log("[history-sweep] 启动检查：nav=" + (nav || "未知") + "，名单=" + sids.length + " 键，写入探测=" + (probeOk ? "通过" : "失败(配额满)"));
   // 502 兜底（2026-11-18 拍板）：名单空通常＝上次非正常退出，不清；但配额满时退出侧的
   // 名单写入本身会失败（catch 吞掉），「越满越清不动」自锁——恰是存储最满、最该清的
   // 时候清不动。探测写得进＝名单空是真的（强杀/崩溃），维持不清；探测失败＝配额已满，
   // 绕过名单直接全量清。此路径连 F5 也清（牺牲 F5 守卫已拍板）：清一次即解锁，
   // 下次刷新恢复正常守卫。
-  const bypassList = !sids.length && !_graphHistoryQuotaProbe();
+  const bypassList = !sids.length && !probeOk;
+  if (bypassList) _logStorageTopKeys("配额已满，绕名单全量清（撤销历史），其余大户见下表");
   if (nav === "reload" && !bypassList) { _graphHistorySweepClear(); return 0; }
   if (!sids.length && !bypassList) return 0; // 名单为空＝上次非正常退出，什么都不清
   const current = _currentSessionId();
@@ -701,6 +720,9 @@ async function settleGraphHistoryBatchOnOpen() {
   try { cleared = await window._batchDiscardGraphHistories(targets); }
   catch (e) { return 0; } // 执行异常：保留名单待下次重试
   if (cleared >= targets.length) _graphHistorySweepClear(); // 全删成功才消费；有失败则保留重试
+  console.log("[history-sweep] 批量结算完成：目标 " + targets.length + " 张，已清 " + cleared + " 张"
+    + (cleared >= targets.length ? "" : "（有删失败，本地键保留待下次重试）"));
+  if (bypassList && cleared < targets.length) _logStorageTopKeys("兜底清后有残留");
   return cleared;
 }
 
