@@ -3529,6 +3529,15 @@ html[data-theme="light"] .graph-node-fs,
   display: block;
 }
 
+/* 编辑态保存/取消：带文字的文字钮，不继承图标钮的 20px 大字（对齐 16px 头部标题不压顶） */
+.graph-node-fs-head-actions .graph-node-fs-edit-btn {
+  font-size: var(--fs-md);
+  font-weight: 500;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  background: var(--btn-bg);
+}
+
 /* 正文列：可滚动。内表面走 --text-primary 混色亮纱规则的同款口径（不做实底面板） */
 .graph-node-fs-body {
   flex: 1 1 auto;
@@ -3740,6 +3749,15 @@ html[data-theme="light"] .graph-node-fs,
 .graph-node-fs-content svg {
   max-width: 100%;
   height: auto;
+}
+
+/* KaTeX 用 <svg> 画根号/分式线等（.katex svg 默认 height:inherit + width:100%）：
+   上面这条通用 svg 兜底把 height 改成 auto，会让 KaTeX 的根号勾高度塌陷，
+   只剩被开方数（\sqrt{3} 渲染成 3，2026-11-18 本页全屏实锤）。
+   恢复 KaTeX 自身口径，只作用于本层，不影响 mermaid 等图表。 */
+.graph-node-fs-content .katex svg {
+  max-width: none;
+  height: inherit;
 }
 
 /* 长公式自身横向滚动：别把整段版面撑歪（同新窗口阅读页） */

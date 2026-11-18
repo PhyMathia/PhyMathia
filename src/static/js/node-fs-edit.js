@@ -402,8 +402,8 @@ function openNodeFsEdit(nodeId) {
   // 头部换成保存/取消（其余动作收起，编辑期间不误触）
   if (actions) {
     session.headHtml = actions.innerHTML;
-    actions.innerHTML = '<button type="button" onclick="saveNodeFsEdit()" title="保存并写回节点">✓ 保存</button>'
-      + '<button type="button" onclick="cancelNodeFsEdit()" title="放弃这次改动">× 取消</button>';
+    actions.innerHTML = '<button type="button" class="graph-node-fs-edit-btn" onclick="saveNodeFsEdit()" title="保存并写回节点">✓ 保存</button>'
+      + '<button type="button" class="graph-node-fs-edit-btn" onclick="cancelNodeFsEdit()" title="放弃这次改动">× 取消</button>';
   }
   // 会话监听：dirty 标记 / 粘贴只收纯文本 / 编辑态点链接只放光标不跳转
   const onInput = () => { session.dirty = true; };
