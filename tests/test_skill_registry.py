@@ -9,6 +9,9 @@
 
 from __future__ import annotations
 
+import json
+import logging
+
 import pytest
 
 from server import config, skill_registry
@@ -625,3 +628,76 @@ def test_capabilities_lists_existing_skills_and_write_boundary():
     assert caps["layouts"]["writable"] == ["file"]
     # 摘要不带正文（正文可能两万字，工具要用再按 id 取）
     assert "body" not in row
+
+
+# ====== 修 497（2026-11-18）：state 编解码 + front-matter 引号往返 ======
+
+def test_state_file_bom_and_gbk_are_decoded_not_reset():
+    """BOM / GBK 写法的 state 必须读回原状态，不能吞成全开默认。"""
+    payload = {
+        "router": False,
+        "disabled": ["iso-cutaway"],
+        "scope": {"中文技能": ["viz"]},  # 中文键逼出 GBK 与 UTF-8 的字节差异
+    }
+    path = config.DATA_DIR / "users" / "encoding-acct" / "skills_state.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for encoding in ("utf-8-sig", "gbk"):
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding=encoding)
+        skill_registry.reload_skills()
+        assert skill_registry.read_state("encoding-acct") == payload
+    assert not list(path.parent.glob("*.bak"))  # 能读懂就不该触发隔离
+
+
+def test_corrupt_state_file_is_backed_up_and_setter_does_not_bury_it(caplog):
+    """解不出/解出非 JSON：warning 留痕＋原文改名备份，下次点开关不把原文覆盖掉。"""
+    for slot, raw in enumerate((b"\xff\xfe\x00not-json", b'{"router": ')):
+        acct = f"corrupt-{slot}"
+        path = config.DATA_DIR / "users" / acct / "skills_state.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw)
+        skill_registry.reload_skills()
+
+        with caplog.at_level(logging.WARNING, logger="server.skill_registry"):
+            assert skill_registry.read_state(acct) == {"router": True, "disabled": [], "scope": {}}
+        assert "隔离" in caplog.text and str(path) in caplog.text  # 读失败留痕
+        backups = list(path.parent.glob("skills_state.json.corrupt-*.bak"))
+        assert len(backups) == 1
+        assert backups[0].read_bytes() == raw  # 原文一字未动
+
+        # 下一次点开关：写的是干净新状态，被隔离的原文仍可取回
+        assert skill_registry.set_router(acct, False) is False
+        assert skill_registry.set_skill_enabled(acct, "iso-cutaway", False) is False
+        assert skill_registry.read_state(acct) == {
+            "router": False, "disabled": ["iso-cutaway"], "scope": {},
+        }
+        assert json.loads(path.read_text(encoding="utf-8"))["router"] is False
+        assert backups[0].read_bytes() == raw
+
+
+def test_front_matter_quote_roundtrip():
+    """只剥成对同种的一层引号：正常引号正确去掉，值里真引号留得住且 save→reload 不漂移。"""
+    text = (
+        "---\n"
+        'title: "PDF 处理"\n'
+        "a: \"'hello'\"\n"
+        "b: '\"hi\"'\n"
+        "c: \"mix'\n"      # 不成对 → 原样
+        "d: 'mix\"\n"      # 不成对 → 原样
+        "e: 'hello'\n"     # 真成对 → 剥一层
+        "---\n\n正文\n"
+    )
+    meta, body = skill_registry._front_meta(text)
+    assert body == "正文"
+    assert meta["title"] == "PDF 处理"
+    assert meta["a"] == "'hello'"
+    assert meta["b"] == '"hi"'
+    assert meta["c"] == '"mix\''   # 不成对 → 连开头的引号一起原样留住
+    assert meta["d"] == '\'mix"'   # 不成对 → 连开头的引号一起原样留住
+    assert meta["e"] == "hello"
+
+    for index, name in enumerate(("'hello'", '"hi"', '说 "hi"', "PDF 处理")):
+        sid = f"quoted-{index}"
+        skill_registry.save_skill("default", {
+            "id": sid, "name": name, "desc": "引号往返", "scope": ["viz"], "body": "正文",
+        })
+        assert skill_registry.get(sid)["name"] == name  # reload 后仍逐字一致

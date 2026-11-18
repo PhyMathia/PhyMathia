@@ -56,12 +56,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import threading
+import time
 from typing import Any, Dict, Iterable, List
 
 from .accounts import DEFAULT_ACCOUNT, resolve_paths
+
+logger = logging.getLogger(__name__)
 
 # 与 harness/registry.py、graph.js 的 GRAPH_MODULE_META 同口径的六个模块键；
 # skill 的 scope 只能取这里的值（写错当作无效条目，不注入）。
@@ -126,6 +130,9 @@ HOST_GUARD = (
 )
 _SKILL_ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,40}$")
 _FRONT_MATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.S)
+# front-matter 的值只剥「首尾成对且同一种」的一层引号（backlog 497）：
+# "PDF 处理"→PDF 处理、"'hello'"→'hello'；'hi" 这种不成对的原样留着。
+_QUOTED_VALUE = re.compile(r"^(['\"])(.*)\1$", re.S)
 
 # ====== 目录型 skill（第 6 版，2026-11-17）======
 # 形态：`skills/<id>/`，里面
@@ -185,6 +192,21 @@ def _clean_scope_map(raw: Any) -> Dict[str, List[str]]:
     return out
 
 
+def _quarantine_state_file(path) -> None:
+    """state 文件读坏：原文原子改名备份 + warning 留痕，不让后续 setter 把默认固化到它上面。
+
+    与 harness 反馈文件（backlog 496）同口径——坏文件先挪走保原文，之后 setter 写入的是
+    一份全新的默认状态，用户仍能从 `.corrupt-*.bak` 找回原来的开关与 scope。
+    """
+    logger.warning("技能状态文件读/解码失败，先隔离再按默认处理（原文备份）: %s", path)
+    try:
+        backup = path.with_name(f"{path.name}.corrupt-{int(time.time() * 1000)}.bak")
+        os.replace(path, backup)
+        logger.warning("坏技能状态文件已改名备份到 %s", backup)
+    except Exception:
+        logger.exception("备份坏技能状态文件失败（原文留在原位）: %s", path)
+
+
 def read_state(account: Any = None) -> Dict[str, Any]:
     """账号的开关与「手动指定范围」状态。
 
@@ -192,7 +214,8 @@ def read_state(account: Any = None) -> Dict[str, Any]:
 
     与内容文件分开存（`skills_state.json`），因为内置技能住代码目录、只读，只有这样才能
     把「内置那条被我关了」「这条装来的技能我指定给交互可视化」表达出来——**不动别人的
-    文件一个字节**。文件缺失/损坏一律当默认（全开、无指定），绝不抛错。
+    文件一个字节**。文件缺失当默认（全开、无指定）；读/解码/解析失败会 warning 留痕
+    并把坏文件原子改名备份（原文可找回）再按默认处理，绝不抛错、绝不静默覆盖原文。
     """
     key = _account(account)
     path = _state_path(key)
@@ -205,10 +228,28 @@ def read_state(account: Any = None) -> Dict[str, Any]:
         if cached and cached["mtime"] == mtime:
             return dict(cached["data"])
     data: Dict[str, Any] = {"router": True, "disabled": [], "scope": {}}
+    # 497：BOM 用 utf-8-sig 容忍，GBK 兜底再解一次；两种都失败（或解出来不是合法 JSON）
+    # 就不能当空 state——先隔离坏文件留原文，再走默认，避免下一次 setter 把复位写回去。
+    raw: Any = {}
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        raw = {}
+        payload = path.read_bytes()
+    except OSError:
+        payload = None
+    if payload is not None:
+        decoded = None
+        for encoding in ("utf-8-sig", "gbk"):
+            try:
+                decoded = payload.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        if decoded is None:
+            _quarantine_state_file(path)
+        else:
+            try:
+                raw = json.loads(decoded)
+            except Exception:
+                _quarantine_state_file(path)
     if isinstance(raw, dict):
         disabled = raw.get("disabled")
         if isinstance(disabled, list):
@@ -373,7 +414,11 @@ def _front_meta(text: str) -> tuple:
         indented = raw[:1] in (" ", "\t")
         key, _, value = raw.partition(":")
         key = key.strip().lower()
-        value = value.strip().strip('"').strip("'")
+        # 497：只剥首尾成对且同种的那一层引号；"'hello'" 里的真引号必须留着。
+        value = value.strip()
+        quoted = _QUOTED_VALUE.match(value)
+        if quoted:
+            value = quoted.group(2)
         if indented and parent:
             slot = meta.get(parent)
             if isinstance(slot, dict) and key:
@@ -417,6 +462,11 @@ def _yaml_scalar(value: Any) -> str:
     text = _clean_line(value)
     if not text:
         return '""'
+    # 497：值首尾若本身就是引号字符，用另一种引号包一层，回读只剥外层——
+    # 否则 _front_meta 会把真引号当 quoting 吃掉（save→reload 逐次漂移）。
+    if text[:1] in ("'", '"') or text[-1:] in ("'", '"'):
+        wrap = '"' if "'" in (text[:1], text[-1:]) else "'"
+        return wrap + text + wrap
     if re.search(r":\s|[#\[\]{}]", text) or re.match(r"^[-*?&!|>%@`]|\s", text):
         return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
     return text
