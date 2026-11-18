@@ -390,7 +390,23 @@ const UI_ICON_SVG = {
   repeat: makeLineIcon('<path d="M17 2l4 4-4 4"></path><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><path d="M7 22l-4-4 4-4"></path><path d="M21 13v2a4 4 0 0 1-4 4H3"></path>'),
   // 快捷键页锁条按钮（2026-11-15 用户拍板：按钮不用文字用图标）——unlock 开着锁舌＝点去解锁，lock 闭着锁舌＝点去重新锁定
   lock: makeLineIcon('<rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path>'),
-  unlock: makeLineIcon('<rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path>')
+  unlock: makeLineIcon('<rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path>'),
+  // ====== 设置侧栏图标语义化（2026-11-17 用户：图标不合适）======
+  // 起因：侧栏两个图标被复用了两次（✦ 既是「Φ 助手」又是「技能」，钥匙既是「快捷键」又是「账号与查阅」），
+  // 另有一批语义错位——对勾读作「已完成」、回转箭头读作「撤销」、学士帽是学历不是难度。
+  // 定下的规矩：一条语义只挂一个图标，图标只回答「这是什么」，不回答「现在是什么状态」；
+  // 新增图标一律走 makeLineIcon 线稿口径（视框 24／1.8 描边／吃 currentColor），侧栏渲染 16px 也认得清。
+  gauge: makeLineIcon('<path d="M3.34 19a10 10 0 1 1 17.32 0"></path><path d="m12 14 4-4"></path>'),
+  brain: makeLineIcon('<path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"></path><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"></path><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"></path>'),
+  bot: makeLineIcon('<path d="M12 8V4H8"></path><rect x="4" y="8" width="16" height="12" rx="2"></rect><path d="M2 14h2"></path><path d="M20 14h2"></path><path d="M15 13v2"></path><path d="M9 13v2"></path>'),
+  clipboardCheck: makeLineIcon('<rect x="8" y="3" width="8" height="4" rx="1.4"></rect><path d="M8 5H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"></path><path d="M9 13.5l2.2 2.2 4-4.4"></path>'),
+  layers: makeLineIcon('<path d="M12 3 3 7.5l9 4.5 9-4.5z"></path><path d="M3 12.2 12 16.7l9-4.5"></path>'),
+  keyboard: makeLineIcon('<rect x="2" y="4" width="20" height="16" rx="2"></rect><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01"></path><path d="M8 12h.01M12 12h.01M16 12h.01"></path><path d="M7 16h10"></path>'),
+  idCard: makeLineIcon('<rect x="3" y="5" width="18" height="14" rx="2.5"></rect><circle cx="9" cy="11" r="2.2"></circle><path d="M15 10h3"></path><path d="M15 13.5h2"></path>'),
+  // 「技能」＝可装卸的做法包（总开关／新建／导入），用拼图块；✦ 在 knowledge.js 已专指 ai_extract，
+  // 新手引导也拿它当「AI」记号——不再让侧栏第三个语义挤进同一个符号。
+  puzzle: makeLineIcon('<path d="M5 9V5h3.5a2 2 0 1 1 4 0H15v4.5a2 2 0 1 1 0 4V17H5Z"></path>'),
+  info: makeLineIcon('<circle cx="12" cy="12" r="9"></circle><path d="M12 11v6"></path><circle cx="12" cy="7.4" r=".9"></circle>')
 };
 const LEVEL_ICON_SVG = {
   'middle': UI_ICON_SVG.school,

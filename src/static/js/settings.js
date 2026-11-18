@@ -19,27 +19,31 @@
  * 上次停留页写 STORAGE_KEY_SETTINGS_TAB（经 config.js 账号垫片自然分账号）。
  */
 const SETTINGS_GROUPS = [
+  // 图标语义（2026-11-17 用户：图标不合适）：一语义一图标，全栏不重复。
+  // 「Φ 助手」改用机器人、钥匙整条下线（快捷键＝键盘、账号＝人像卡）、技能改用拼图块；
+  // 学士帽还给难度档位（LEVEL_ICON_SVG 仍在用），侧栏难度改用表盘。
+  // ✦ 不在侧栏出现：它在 knowledge.js 是 ai_extract 来源标记、新手引导拿它当「AI」记号。
   { label: '设置', items: [
     { id: 'appearance', label: '外观', icon: 'sun' },
-    { id: 'level', label: '难度等级', icon: 'cap' },
+    { id: 'level', label: '难度等级', icon: 'gauge' },
     { id: 'model', label: '模型', icon: 'sliders' }
   ]},
   { label: '功能', items: [
-    { id: 'memory', label: '记忆与画像', icon: 'user' },
-    { id: 'phi', label: 'Φ 助手', icon: 'sparkles' },
-    { id: 'quiz', label: '知识检测', icon: 'check' },
-    { id: 'canvas', label: '画布与追问', icon: 'curve' },
-    { id: 'skills', label: '技能', icon: 'sparkles' },
-    { id: 'hotkeys', label: '快捷键', icon: 'key' }
+    { id: 'memory', label: '记忆与画像', icon: 'brain' },
+    { id: 'phi', label: 'Φ 助手', icon: 'bot' },
+    { id: 'quiz', label: '知识检测', icon: 'clipboardCheck' },
+    { id: 'canvas', label: '画布与追问', icon: 'layers' },
+    { id: 'skills', label: '技能', icon: 'puzzle' },
+    { id: 'hotkeys', label: '快捷键', icon: 'keyboard' }
   ]},
   { label: '数据', items: [
     { id: 'data', label: '数据管理', icon: 'database' },
-    { id: 'account', label: '账号与查阅', icon: 'key' },
+    { id: 'account', label: '账号与查阅', icon: 'idCard' },
     { id: 'trash', label: '回收站', icon: 'trash' }
   ]},
   { label: '', items: [
-    { id: 'about', label: '关于', icon: 'question' },
-    { id: 'help', label: '帮助与引导', icon: 'book' }
+    { id: 'about', label: '关于', icon: 'info' },
+    { id: 'help', label: '帮助与引导', icon: 'question' }
   ]}
 ];
 const SETTINGS_TAB_IDS = SETTINGS_GROUPS.reduce((a, g) => a.concat(g.items.map(i => i.id)), []);

@@ -27,7 +27,7 @@ const NODE_FS_PREVIEW_CTX_STORE = 'phymathia_node_fs_preview_ctx';
 const NODE_FS_PREVIEW_CTX_MAX = 4;
 let _nfsPreviewCtxs = [];
 
-// 追问「回答方式」（2026-11-17 用户报：浮条追问没有「直接回答／问题分析」可挑）：
+// 追问「回答方式」（2026-11-17 用户报：浮条追问没有「直接回答／拆分分析」可挑）：
 // 与画布追问卡同一套口径（graph-interact.submitDraftQuestion → startQuestionWorkflow 的
 // followupRoute），三档 auto/analysis/direct；auto 只在总开关开时露面。选择沿用上一次
 // （config.STORAGE_KEY_NODE_FS_ROUTE，跟账号走），省得每次划词都要重挑。
@@ -74,7 +74,7 @@ function _nodeFsRouteButtonsHtml(cls) {
   return '<div class="' + cls + '" role="group" aria-label="回答方式">'
     + '<span class="' + cls + '-label">回答方式</span>'
     + (_nodeFsRouteAutoEnabled() ? btn('auto', '自动判断', '由 AI 判断：一句话能答清就直接回答') : '')
-    + btn('analysis', '问题分析', '先拆成子问题铺开分析')
+    + btn('analysis', '拆分分析', '先拆成子问题铺开分析')
     + btn('direct', '直接回答', '一次成文，不铺模块')
     + '</div>';
 }
@@ -1181,7 +1181,7 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'return "<button type=\\"button\\" class=\\"cp-nfs-route-btn"+(on?" is-current":"")+"\\" data-route=\\""+r+"\\"'
     + ' aria-pressed=\\""+(on?"true":"false")+"\\" title=\\""+escAttr(hint)+"\\">"+label+"</button>";};'
     + 'if(ROUTE_AUTO)html+=b("auto","自动判断","由 AI 判断：一句话能答清就直接回答");'
-    + 'html+=b("analysis","问题分析","先拆成子问题铺开分析");'
+    + 'html+=b("analysis","拆分分析","先拆成子问题铺开分析");'
     + 'html+=b("direct","直接回答","一次成文，不铺模块");'
     + 'return html+"</div>";}'
     // 窗内就地切换（不重建浮条：重画会丢输入框里的字与焦点）
