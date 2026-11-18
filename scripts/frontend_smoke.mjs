@@ -43,6 +43,7 @@
 //   graph-draft-recover     生成中断后的草稿回收（T359：水合结算＋module 周期落盘＋流式读帧看门狗，2026-10-17）
 //   graph-sync-merge        画布图状态跨设备节点级合并（T360：内容签名/删除墓碑/随包 base 版本，2026-10-17）
 //   graph-history-batch4    修改历史批次 4（T389：合并连续编辑/起名收藏/单节点恢复/容量提示/恢复排版/另开探索线）
+//   graph-history-caps      A 方案双上限硬顶（backlog 502 治根：体积保底 1 条＋采纳钳 30 步，2026-11-18）
 //   graph-branch-workflow   分支拓展单链路化（T361/T362/T363：三入口落工作流＋删除范围真值，2026-10-17）
 //   graph-scope-confirm     Φ 阶段1 先对齐再动手（2026-10-19：复述确认卡＋选中即范围警告行＋大批拆段渲染）
 //   harness-health          Φ 主动体检芯片（2026-10-26：开面板零模型体检→顶部芯片→点击预填不发送→同画布同问题只提示一次；行为链独占 fetch/getElementById 桩，域尾收口）
@@ -91,6 +92,7 @@ import { run as _graph_history_cursor } from './frontend_smoke/graph-history-cur
 import { run as _graph_history_diff } from './frontend_smoke/graph-history-diff.mjs';
 import { run as _graph_history_ai_steps } from './frontend_smoke/graph-history-ai-steps.mjs';
 import { run as _graph_history_batch4 } from './frontend_smoke/graph-history-batch4.mjs';
+import { run as _graph_history_caps } from './frontend_smoke/graph-history-caps.mjs';
 import { run as _graph_human_finalize } from './frontend_smoke/graph-human-finalize.mjs';
 import { run as _graph_draft_recover } from './frontend_smoke/graph-draft-recover.mjs';
 import { run as _graph_sync_merge } from './frontend_smoke/graph-sync-merge.mjs';
@@ -146,6 +148,7 @@ await _graph_history_cursor();
 await _graph_history_diff();
 await _graph_history_ai_steps();
 await _graph_history_batch4();
+await _graph_history_caps(); // A 方案双上限硬顶（2026-11-18，backlog 502 治根）：纯同步，接 batch4 之后
 await _graph_human_finalize();
 await _graph_draft_recover();
 await _graph_sync_merge();

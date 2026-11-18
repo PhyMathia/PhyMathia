@@ -15,8 +15,19 @@ function _adoptGraphHistoryPayload(parsed) {
   const isEnv = !!(parsed && !Array.isArray(parsed) && Array.isArray(parsed.e));
   if (!Array.isArray(parsed) && !isEnv) return false;
   const entries = _graphHistoryHydrate(isEnv ? parsed.e : parsed);
+  // A 方案（2026-11-18）：步数上限改硬顶。push 侧的 30 步上限只管新编辑，而服务端
+  // 镜像 keep 60（存档窗口宽于本地），「更长才采纳」会把内存栈棘轮抬到 60 步绕开
+  // 上限。所有采纳路径（本地读回/服务端补回/备份导入）统一在此钳回 30 步窗口：
+  // 砍最老、游标同步重定基、被钳掉的条数并入滚出计数。本地信封写侧已保证 ≤30，
+  // 这里的钳对它幂等空转；超幅残余只剩体积上限单条保底的极端图（见 _persistGraphHistory）。
+  let capCut = 0;
+  if (entries.length > GRAPH_UNDO_LIMIT) {
+    capCut = entries.length - GRAPH_UNDO_LIMIT;
+    entries.splice(0, capCut);
+  }
   graphUndoStack = entries;
-  const c = isEnv ? Number(parsed.c) : NaN;
+  const cRaw = isEnv ? Number(parsed.c) : NaN;
+  const c = Number.isFinite(cRaw) ? Math.max(0, cRaw - capCut) : NaN;
   graphHistoryCursor = (Number.isFinite(c) && c >= 0 && c <= entries.length) ? c : entries.length;
   if (graphHistoryCursor >= entries.length) {
     graphHistoryCursor = entries.length;
@@ -29,6 +40,7 @@ function _adoptGraphHistoryPayload(parsed) {
   // T389：容量提示的「更早的已滚出」计数随信封走（可选字段 d，旧数据按 0）。
   // 单槽可选字段 s 已随简化批次退役：读回静默忽略、不再写出（见文件头注释）。
   graphHistoryDropped = (isEnv && Number(parsed.d)) ? Math.max(0, Math.floor(Number(parsed.d))) : 0;
+  if (capCut > 0) graphHistoryDropped += capCut; // 步数钳掉的条数并入「更早的 N 步已移出」
   graphHistoryLastEffect = { op: "", touch: "", at: 0 };
   graphHistoryLiveDirty = true;
   return true;
@@ -191,17 +203,26 @@ function _persistGraphHistory() {
   }
   const envelope = {
     v: 2, e: slim, c: Math.min(graphHistoryCursor, slim.length), l: liveRow, t: Date.now(),
-    d: graphHistoryDropped || 0, // T389 容量提示：被 30 步上限挤掉的条数
+    d: graphHistoryDropped || 0, // T389 容量提示：被上限挤掉的条数（A 方案后含体积截断与步数钳制）
   };
   let s = JSON.stringify(envelope);
   if (s.length > GRAPH_HISTORY_STORAGE_MAX) {
+    // A 方案（2026-11-18）：体积上限改硬顶。旧口径 keep 保底 5 条，单条快照 ≥300KB
+    // 时 5 条就破 1.5MB 预算——实测单键 2.9MB ≈ 5×580KB，双上限里体积那半形同虚设。
+    // 现在保底 1 条：常规图在预算内能留多少留多少；单条本身超预算的极端图保留 1 条
+    // （快照体量来自 customNodes 等内容字段，无损缩小不可得、砍字段破坏撤销语义，
+    // 残余超幅＝单条体量，接受）。截断的条数并入滚出计数，面板口径一致。
     const per = Math.max(1, Math.floor(s.length / (slim.length || 1)));
-    const keep = Math.max(5, Math.floor(GRAPH_HISTORY_STORAGE_MAX / per));
+    const keep = Math.max(1, Math.floor(GRAPH_HISTORY_STORAGE_MAX / per));
     // 本地格子有限可截断（砍头部，游标同步重定基）；全量交给下面的服务端镜像
     const cut = Math.max(0, slim.length - keep);
-    envelope.e = slim.slice(cut);
-    envelope.c = Math.max(0, envelope.c - cut);
-    s = JSON.stringify(envelope);
+    if (cut > 0) {
+      envelope.e = slim.slice(cut);
+      envelope.c = Math.max(0, envelope.c - cut);
+      graphHistoryDropped += cut;
+      envelope.d = graphHistoryDropped;
+      s = JSON.stringify(envelope);
+    }
   }
   graphHistorySavedAt = envelope.t;
   safeLocalStorageSet(_graphHistoryKey(sid), s);
