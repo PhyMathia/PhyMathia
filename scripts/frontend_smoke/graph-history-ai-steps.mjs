@@ -332,6 +332,43 @@ export async function run() {
       return true;
     }]);
 
+    serial.push(['2026-11-18 502 兜底：名单空＋配额写失败 → 绕过名单全量清（自锁解锁）', async () => {
+      seed(2);
+      runCtx('_persistGraphHistory();'); // 当前画布 HIST_KEY 保留
+      storageData[STOCK_HIST_KEYS[0]] = JSON.stringify({ v: 2, e: [{ id: 'o1', kind: 'note', manual: true, messageIndex: -1, timestamp: 1, content: 'x', title: '', status: 'done', x: 0, y: 0 }], c: 1, t: Date.now() });
+      runCtx('_graphHistorySweepWrite([]);'); // 退出时名单写失败（配额满）→ 名单空的形状
+      sandbox.performance.getEntriesByType = () => [{ type: 'navigate' }];
+      const prevSet = sandbox.localStorage.setItem;
+      sandbox.localStorage.setItem = () => { throw new Error('QuotaExceededError'); };
+      try {
+        const cleared = await runCtx('settleGraphHistoryBatchOnOpen()');
+        if (cleared < 1) throw new Error('配额满却没绕过名单清存量（自锁没解开）');
+        if (storageData[STOCK_HIST_KEYS[0]]) throw new Error('502 兜底没清存量键');
+        if (!storageData[HIST_KEY]) throw new Error('当前画布历史被误清（应留给单画布结算）');
+      } finally { sandbox.localStorage.setItem = prevSet; }
+      return true;
+    }]);
+
+    serial.push(['2026-11-18 502 兜底：F5＋配额写失败也全量清（牺牲 F5 守卫已拍板），探测正常时 F5 仍守卫', async () => {
+      seed(2);
+      runCtx('_persistGraphHistory();');
+      storageData[STOCK_HIST_KEYS[0]] = JSON.stringify({ v: 2, e: [], c: 0, t: Date.now() });
+      runCtx('_graphHistorySweepWrite([]);');
+      sandbox.performance.getEntriesByType = () => [{ type: 'reload' }];
+      const prevSet = sandbox.localStorage.setItem;
+      sandbox.localStorage.setItem = () => { throw new Error('QuotaExceededError'); };
+      let cleared = 0;
+      try {
+        cleared = await runCtx('settleGraphHistoryBatchOnOpen()');
+      } finally { sandbox.localStorage.setItem = prevSet; }
+      if (cleared < 1) throw new Error('F5＋配额满没触发兜底清');
+      if (storageData[STOCK_HIST_KEYS[0]]) throw new Error('F5＋配额满兜底没清存量键');
+      // 对照：探测正常（setItem 已恢复）的 F5 仍守卫，一张不清
+      const guarded = await runCtx('settleGraphHistoryBatchOnOpen()');
+      if (guarded !== 0) throw new Error('探测正常时 F5 却清了 ' + guarded + ' 张');
+      return true;
+    }]);
+
     serial.push(['面板手动口：清空历史内核只清历史，不动当前图（直接调内核，绕过武装）', async () => {
       seed(3);
       els.graphHistoryList = _mkEl('div');

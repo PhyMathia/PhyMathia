@@ -521,6 +521,22 @@ function _graphHistorySweepClear() {
   try { localStorage.removeItem(GRAPH_HISTORY_SWEEP_KEY); } catch (e) { /* best effort */ }
 }
 
+// 502 兜底用（2026-11-18）：探测 localStorage 此刻还写不写得进。写得进＝退出侧的名单
+// 写入当时也写得进（关机期间存储不会自己变少）＝名单空是真的（强杀/崩溃），维持不清；
+// 写不进＝配额已满，名单多半是退出时写失败丢的（「越满越清不动」自锁）——调用侧据此
+// 绕过名单全量清。探测键特意避开 phymathia_graph_history_ 前缀，不会被历史扫描误伤。
+function _graphHistoryQuotaProbe() {
+  const PROBE_KEY = "phymathia_storage_probe";
+  try {
+    localStorage.setItem(PROBE_KEY, "1");
+    localStorage.removeItem(PROBE_KEY);
+    return true;
+  } catch (e) {
+    try { localStorage.removeItem(PROBE_KEY); } catch (e2) { /* 残留也无关紧要 */ }
+    return false;
+  }
+}
+
 function _graphHistoryExitFingerprint() {
   const last = graphUndoStack[graphUndoStack.length - 1];
   const ts = (last && last.meta && (last.meta.pushedAt || last.meta.ts)) || 0;
@@ -644,6 +660,8 @@ async function settleGraphHistoryOnOpen() {
 // 画布内容／对话／图状态都原样保留。守卫口径：
 //   · F5 刷新（nav=reload）：名单作废，一张不清（刷新不该丢撤销）；
 //   · 强杀/崩溃：不发 beforeunload → 名单不写 → 下次打开名单为空 → 不清；
+//   · 配额满自锁兜底（502，2026-11-18）：名单空且写入探测失败 → 绕过名单全量清
+//     （连 F5 也清，牺牲 F5 守卫已拍板——解锁比守卫重要，清一次下次即恢复）；
 //   · 只读态：不清且不消费名单（免得查阅态把别人的清理标记吃掉）；
 //   · 当前画布：跳过，留给 settleGraphHistoryOnOpen 做指纹校验的精细结算。
 // 名单消费（2026-11-18 复审修正）：不再无条件先清空。内核 _batchDiscardGraphHistories
@@ -653,10 +671,17 @@ async function settleGraphHistoryOnOpen() {
 async function settleGraphHistoryBatchOnOpen() {
   if (typeof phyIsReadonly === "function" && phyIsReadonly()) return 0;
   const nav = _graphHistoryNavType();
-  if (nav === "reload") { _graphHistorySweepClear(); return 0; }
   const sids = _graphHistorySweepRead();
-  if (!sids.length) return 0; // 名单为空＝上次非正常退出，什么都不清
+  // 502 兜底（2026-11-18 拍板）：名单空通常＝上次非正常退出，不清；但配额满时退出侧的
+  // 名单写入本身会失败（catch 吞掉），「越满越清不动」自锁——恰是存储最满、最该清的
+  // 时候清不动。探测写得进＝名单空是真的（强杀/崩溃），维持不清；探测失败＝配额已满，
+  // 绕过名单直接全量清。此路径连 F5 也清（牺牲 F5 守卫已拍板）：清一次即解锁，
+  // 下次刷新恢复正常守卫。
+  const bypassList = !sids.length && !_graphHistoryQuotaProbe();
+  if (nav === "reload" && !bypassList) { _graphHistorySweepClear(); return 0; }
+  if (!sids.length && !bypassList) return 0; // 名单为空＝上次非正常退出，什么都不清
   const current = _currentSessionId();
+  if (!current) return 0; // 503：排除集失效，宁可不清（纯理论边界）
   const HIST_PREFIX = "phymathia_graph_history_";
   const targets = [];
   try {
