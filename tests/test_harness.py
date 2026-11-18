@@ -1894,6 +1894,55 @@ class HarnessArrayPayloadTest(unittest.TestCase):
 ```""")
         self.assertIsInstance(payload, list)
 
+    def test_extract_json_array_with_trailing_prose(self):
+        from harness.json_utils import extract_json
+
+        payload = extract_json(
+            '[{"op":"update_node","id":"n1"},{"op":"update_node","id":"n2"}] 以上是全部操作。'
+        )
+        self.assertIsInstance(payload, list)
+        self.assertEqual([op["id"] for op in payload], ["n1", "n2"])
+        self.assertTrue(all(op["op"] == "update_node" for op in payload))
+
+    def test_extract_json_array_with_close_bracket_inside_string(self):
+        from harness.json_utils import extract_json
+
+        payload = extract_json('[{"op":"x","s":"] 不是结尾"}] 以上是全部操作。')
+        self.assertIsInstance(payload, list)
+        self.assertEqual(payload[0]["s"], "] 不是结尾")
+
+    def test_review_graph_keeps_all_ops_from_array_with_trailing_prose(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {
+                "content": (
+                    '[{"action": "create_node", "temp_id": "n1", "kind": "human_note", "label": "极限", "content": "趋近过程", "reason": "补全基础"},'
+                    '{"action": "create_node", "temp_id": "n2", "kind": "human_note", "label": "连续", "content": "趋近方式", "reason": "补全基础"}]'
+                    '\n\n以上是本次操作。'
+                ),
+                "tool_calls": [],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
+                "新增两个知识点",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="json",
+                self_check="off",
+                retries=0,
+            ))
+        self.assertEqual(result["status"], "ok")
+        # 两条 create 都要在（review 还会自动补两条 add_edge，故不数总数）
+        created = [
+            op["temp_id"] for op in result["operations"]
+            if op.get("op") == "create_node"
+        ]
+        self.assertEqual(created, ["n1", "n2"])
+
     def test_review_graph_accepts_top_level_array_with_action_alias(self):
         import asyncio
         import unittest.mock
@@ -2111,6 +2160,17 @@ class HarnessRepairJsonTest(unittest.TestCase):
         payload = repair_json('{"temp_id": "n1", "kind": "human_note", "label": "极限", "reason": "新增"')
         self.assertIsNotNone(payload)
         self.assertEqual(payload["label"], "极限")
+
+    def test_repair_json_deeply_nested_truncation_closes_lifo(self):
+        from harness.json_utils import repair_json
+
+        payload = repair_json('{"ops":[{"op":"x","args":{"k":"v"')
+        self.assertEqual(payload, {"ops": [{"op": "x", "args": {"k": "v"}}]})
+
+    def test_repair_json_shallow_truncation_keeps_suffix_fastpath(self):
+        from harness.json_utils import repair_json
+
+        self.assertEqual(repair_json('{"a":[{"b":1'), {"a": [{"b": 1}]})
 
     def test_parse_tool_calls_salvages_truncated_args(self):
         from harness.tools import parse_tool_calls
