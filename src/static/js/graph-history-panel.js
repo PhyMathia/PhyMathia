@@ -635,36 +635,39 @@ async function settleGraphHistoryOnOpen() {
   return false;
 }
 
-// 2026-11-18 退出后批量结算：正常退出时会给每张被关闭的画布写 per-sid 标记，并汇总进
-// 全局 sweep 名单。settleGraphHistoryOnOpen 只结算"当前画布"这一张；这里把名单里其余
-// 画布的历史一起清掉——本地键与服务端镜像一起删（_batchDiscardGraphHistories 带防复活），
-// 从而回收那批从没被结算到的存量。守卫口径与单画布结算一致：
-//   · F5 刷新（nav=reload）：名单作废，一张都不清（刷新不该丢撤销）；
-//   · 只读态：不清且不删名单（免得查阅态把别人的清理标记吃掉）；
-//   · 每个 sid 仍校验自己的 per-sid 标记在且 sid 匹配（防多标签/旧标记串台误清）。
-//     别的画布不在内存里、算不出指纹，故只认标记存在＋sid 匹配这两项。
+// 2026-11-18 退出后批量结算（v2，全量扫描回收存量）：
+// 原 v1 只清 sweep 名单里登记的 sid，但名单由 markGraphHistoryCleanExit 在 beforeunload
+// 写入、只登记"关闭瞬间正打开的那一张"（本机实测 22 键 / 6.37 MB 存量，其余 21 张从没
+// 进过名单，也没有 per-sid 标记）→ v1 对存量一张都清不到。v2 改为：名单"非空"即代表
+// "上次是正常退出"（只有 beforeunload 会写它），此时全量枚举所有历史键、清掉除当前画布
+// 外的全部，不再逐个依赖名单内容／per-sid 标记。撤销历史是过程快照，正常退出即可回收，
+// 画布内容／对话／图状态都原样保留。守卫口径：
+//   · F5 刷新（nav=reload）：名单作废，一张不清（刷新不该丢撤销）；
+//   · 强杀/崩溃：不发 beforeunload → 名单不写 → 下次打开名单为空 → 不清；
+//   · 只读态：不清且不消费名单（免得查阅态把别人的清理标记吃掉）；
+//   · 当前画布：跳过，留给 settleGraphHistoryOnOpen 做指纹校验的精细结算。
 // 无论清没清，处理完都清空 sweep 名单（一次性消费；下次退出会重新写）。
 async function settleGraphHistoryBatchOnOpen() {
   if (typeof phyIsReadonly === "function" && phyIsReadonly()) return 0;
   const nav = _graphHistoryNavType();
   if (nav === "reload") { _graphHistorySweepClear(); return 0; }
   const sids = _graphHistorySweepRead();
-  _graphHistorySweepClear(); // 先消费，防并发重复清
-  if (!sids.length) return 0;
+  _graphHistorySweepClear(); // 一次性消费，防并发重复清
+  if (!sids.length) return 0; // 名单为空＝上次非正常退出，什么都不清
   const current = _currentSessionId();
+  const HIST_PREFIX = "phymathia_graph_history_";
   const targets = [];
-  for (const sid of sids) {
-    if (!sid || sid === current) continue; // 当前画布由 settleGraphHistoryOnOpen 精细结算
-    let marker = null;
-    try { marker = JSON.parse(localStorage.getItem(_graphHistoryExitKeyFor(sid)) || "null"); } catch (e) { marker = null; }
-    if (!marker || (marker.sid && marker.sid !== sid)) continue; // 无标记/标记串台：不清
-    // 只清带历史键的（没有历史的画布无需 DELETE 镜像，省网络）。per-sid 标记本就是退出时
-    // 写的权威信号，无需再叠时间兜底（早先误把 marker.at 当陈旧上限判断，方向写反已去掉）。
-    let hasKey = false;
-    try { hasKey = !!localStorage.getItem(_graphHistoryKey(sid)); } catch (e) { hasKey = false; }
-    if (!hasKey) continue;
-    targets.push(sid);
-  }
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || key.indexOf(HIST_PREFIX) !== 0) continue;
+      // exit_ 标记键与 sweep 名单键同前缀，排除；只认真正的历史载荷键
+      if (key.indexOf(GRAPH_HISTORY_EXIT_KEY) === 0 || key === GRAPH_HISTORY_SWEEP_KEY) continue;
+      const sid = key.slice(HIST_PREFIX.length);
+      if (!sid || sid === current) continue;
+      targets.push(sid);
+    }
+  } catch (e) { return 0; } // 枚举失败：宁可不清，绝不误伤
   if (!targets.length) return 0;
   if (typeof window._batchDiscardGraphHistories !== "function") return 0;
   try { return await window._batchDiscardGraphHistories(targets); } catch (e) { return 0; }

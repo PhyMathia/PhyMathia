@@ -16,6 +16,9 @@ const SWEEP_KEY = 'phymathia_graph_history_sweep';
 const OTHER_SID = 'sess_history_other';
 const OTHER_HIST_KEY = 'phymathia_graph_history_' + OTHER_SID;
 const OTHER_EXIT_KEY = 'phymathia_graph_history_exit_' + OTHER_SID;
+// v2 全量扫描：多张存量画布（有历史键但从没进过名单、也没有 per-sid 标记＝真实存量形状）
+const STOCK_SIDS = ['sess_stock_a', 'sess_stock_b', 'sess_stock_c', 'sess_stock_d', 'sess_stock_nomark'];
+const STOCK_HIST_KEYS = STOCK_SIDS.map(sid => 'phymathia_graph_history_' + sid);
 
 function _note(id, extra) {
   return Object.assign({ id: id, kind: 'note', manual: true, messageIndex: -1, timestamp: 100, content: '正文 ' + id, title: '', status: 'done', x: 100, y: 100 }, extra || {});
@@ -45,11 +48,13 @@ export async function run() {
   const prevReadonly = sandbox.window.PHYMATHIA_READONLY;
   const prevHist = storageData[HIST_KEY], prevExit = storageData[EXIT_KEY];
   const prevSweep = storageData[SWEEP_KEY], prevOtherH = storageData[OTHER_HIST_KEY], prevOtherE = storageData[OTHER_EXIT_KEY];
+  const prevStock = STOCK_HIST_KEYS.map(k => storageData[k]);
   delete storageData[HIST_KEY];
   delete storageData[EXIT_KEY];
   delete storageData[SWEEP_KEY];
   delete storageData[OTHER_HIST_KEY];
   delete storageData[OTHER_EXIT_KEY];
+  STOCK_HIST_KEYS.forEach(k => { delete storageData[k]; });
   let mem = _state([]);
   let chat = [];
   const els = {};
@@ -234,19 +239,24 @@ export async function run() {
       return true;
     }]);
 
-    serial.push(['2026-11-18 批量结算：正常退出登记的其余画布历史一次清空（本地键＋服务端镜像）', async () => {
+    serial.push(['2026-11-18 v2 全量回收：名单只登记当前画布，5 张从没登记过的存量历史（含无标记的）照样全清，exit/sweep 标记键不误伤', async () => {
       seed(2);
-      runCtx('_persistGraphHistory();');
-      // 模拟另一张画布：有自己的历史键 + 退出标记，并登记进全局 sweep 名单
-      storageData[OTHER_HIST_KEY] = JSON.stringify({ v: 2, e: [{ id: 'o1', kind: 'note', manual: true, messageIndex: -1, timestamp: 1, content: 'x', title: '', status: 'done', x: 0, y: 0 }], c: 1, t: Date.now() });
-      storageData[OTHER_EXIT_KEY] = JSON.stringify({ sid: 'sess_history_other', at: Date.now(), fp: '0|0|1', atLatest: true });
-      runCtx('_graphHistorySweepWrite(["sess_history_other", "' + SID + '"]);');
+      runCtx('_persistGraphHistory();'); // 当前画布历史键＝HIST_KEY，必须保留
+      // 真实存量形状：有历史载荷键，但从没进过名单、也大多没有 per-sid 退出标记
+      STOCK_HIST_KEYS.forEach(k => {
+        storageData[k] = JSON.stringify({ v: 2, e: [{ id: 'o1', kind: 'note', manual: true, messageIndex: -1, timestamp: 1, content: 'x', title: '', status: 'done', x: 0, y: 0 }], c: 1, t: Date.now() });
+      });
+      // list 里只有当前画布自己——这正是 v1 清 0 张、v2 清全部的分水岭
+      runCtx('_graphHistorySweepWrite(["' + SID + '"]);');
+      // 同前缀的标记键：扫历史键时必须排除，不能被当成画布历史 DELETE
+      storageData[OTHER_EXIT_KEY] = JSON.stringify({ sid: OTHER_SID, at: Date.now() });
       sandbox.performance.getEntriesByType = () => [{ type: 'navigate' }];
       const cleared = await runCtx('settleGraphHistoryBatchOnOpen()');
-      if (cleared !== 1) throw new Error('批量结算应清 1 张其余画布，实际 ' + cleared);
-      if (storageData[OTHER_HIST_KEY]) throw new Error('其余画布本地历史键没删');
-      if (storageData[OTHER_EXIT_KEY]) throw new Error('其余画布退出标记没删');
+      // 共享沙箱里别的域也留着历史键，会被一并扫到——只断言本例造的 5 张确实被清
+      if (cleared < STOCK_SIDS.length) throw new Error('全量回收至少应清 ' + STOCK_SIDS.length + ' 张存量，实际 ' + cleared);
+      STOCK_HIST_KEYS.forEach((k, i) => { if (storageData[k]) throw new Error('存量 ' + STOCK_SIDS[i] + ' 本地键没删'); });
       if (!storageData[HIST_KEY]) throw new Error('当前画布历史被批量错误清掉（应留给单画布结算）');
+      if (!storageData[OTHER_EXIT_KEY]) throw new Error('exit 标记键被误当成历史键清掉');
       if (runCtx('_graphHistorySweepRead().length') !== 0) throw new Error('sweep 名单没消费清空');
       return true;
     }]);
@@ -262,6 +272,18 @@ export async function run() {
       if (cleared !== 0) throw new Error('F5 不该批量清');
       if (!storageData[OTHER_HIST_KEY]) throw new Error('F5 把其余画布历史清了');
       if (runCtx('_graphHistorySweepRead().length') !== 0) throw new Error('F5 后 sweep 名单没作废');
+      return true;
+    }]);
+
+    serial.push(['2026-11-18 强杀/崩溃（名单空）不清：没写过正常退出名单，一张都不清', async () => {
+      seed(2);
+      runCtx('_persistGraphHistory();');
+      storageData[STOCK_HIST_KEYS[0]] = JSON.stringify({ v: 2, e: [], c: 0, t: Date.now() });
+      runCtx('_graphHistorySweepWrite([]);'); // 没发过 beforeunload → 名单空
+      sandbox.performance.getEntriesByType = () => [{ type: 'navigate' }];
+      const cleared = await runCtx('settleGraphHistoryBatchOnOpen()');
+      if (cleared !== 0) throw new Error('名单空却批量清了 ' + cleared + ' 张');
+      if (!storageData[STOCK_HIST_KEYS[0]]) throw new Error('名单空却把存量清了');
       return true;
     }]);
 
@@ -329,5 +351,6 @@ export async function run() {
     if (prevSweep === undefined) delete storageData[SWEEP_KEY]; else storageData[SWEEP_KEY] = prevSweep;
     if (prevOtherH === undefined) delete storageData[OTHER_HIST_KEY]; else storageData[OTHER_HIST_KEY] = prevOtherH;
     if (prevOtherE === undefined) delete storageData[OTHER_EXIT_KEY]; else storageData[OTHER_EXIT_KEY] = prevOtherE;
+    STOCK_HIST_KEYS.forEach((k, i) => { if (prevStock[i] === undefined) delete storageData[k]; else storageData[k] = prevStock[i]; });
   }
 }
