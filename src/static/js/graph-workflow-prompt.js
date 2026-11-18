@@ -685,6 +685,51 @@ function _buildAnalysisWorkflowContext(node, question, target) {
   return analysisContext;
 }
 
+// ===== viz 同网已有页清单（2026-11-18，防同质化）=====
+// 用户实测：同一会话里连建几颗交互可视化节点，画来画去都是同一件事（问交流电，
+// 每颗都给相位图）。根因：viz 目标的 workflow_context 里没有兄弟 viz 页的任何
+// 痕迹，模型只知道「原始问题」，自然每次都画问题最标志性的那张图。这里收集本
+// 画布其他 viz 页的选题一句话（取图说「这张图在讲什么」首句——页面自述，比
+// label/summary 都更 discriminative），进 existing_viz 交给后端渲染进 target 段，
+// 并在 viz 指令里明示「与已有页面讲同一件事＝不合格」。只对 viz 目标收集；
+// 默认（画布上没有别的 viz 页）不带键，载荷形状与旧口径逐字节一致。
+const WORKFLOW_EXISTING_VIZ_MAX = 6;
+
+function _vizPageTopicLine(node) {
+  const raw = String((node && node.content) || '');
+  if (!raw.trim()) return '';
+  const text = raw
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;|&amp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return '';
+  const m = text.match(/这张图在讲什么\s*[:：]?\s*([\s\S]{0,140})/);
+  const seg = (m ? m[1] : text.slice(0, 140)).trim();
+  if (!seg) return '';
+  const cut = seg.search(/[。！？；;]/);
+  return (cut > 0 ? seg.slice(0, cut + 1) : seg.slice(0, 100)).trim();
+}
+
+function _existingVizTopicsFor(selfId) {
+  if (typeof graphView === 'undefined' || !graphView || !graphView.nodeById) return [];
+  const pages = [];
+  for (const id in graphView.nodeById) {
+    if (String(id) === String(selfId)) continue;
+    const n = graphView.nodeById[id];
+    if (!n || n.busy) continue;
+    const isViz = (n.kind === 'module' && n.moduleKey === 'viz')
+      || !!(n.recipeId && n.recipe && n.recipe.content_kind === 'html_iframe');
+    if (!isViz) continue;
+    const line = _vizPageTopicLine(n);
+    if (line) pages.push({ label: n.label || '交互可视化', summary: line });
+    if (pages.length >= WORKFLOW_EXISTING_VIZ_MAX) return pages;
+  }
+  return pages;
+}
+
 function _buildWorkflowContextForNode(node) {
   const meta = node.recipeId && node.recipe && node.recipe.name
     ? { label: node.recipe.name }
@@ -747,6 +792,13 @@ function _buildWorkflowContextForNode(node) {
   // 没计划（首问没跑分析/直接生成/跨设备丢了）不带键，后端回落 embedding 兜底。
   const skillPick = _workflowSkillPickFor(node);
   if (skillPick) context.skill = skillPick;
+  // viz 同网已有页清单（2026-11-18）：仅 viz 目标收集，非 viz 载荷一字节不变
+  const isVizTarget = (node.kind === 'module' && node.moduleKey === 'viz')
+    || !!(node.recipeId && node.recipe && node.recipe.content_kind === 'html_iframe');
+  if (isVizTarget) {
+    const existingViz = _existingVizTopicsFor(node.id);
+    if (existingViz.length) context.existing_viz = existingViz;
+  }
   return context;
 }
 
@@ -939,6 +991,10 @@ function _strictModuleOutputInstruction(moduleKey) {
       + '**自测**：1 个不实际操作就答不出的问题（只提问不给答案）。\n'
       + '每个滑块/按钮旁标注对应物理量/数学量及在公式中的位置，关键结论数值旁给出对应公式。\n'
       + '优先使用简单、可暂停、可调速的交互；只有确实有助于理解时才使用动画或 3D。页面必须自包含，不引入 CDN 或外部资源。\n'
+      + '选题规则（防止同一会话的可视化页都讲同一件事）：\n'
+      + '1. 选题由上游内容决定：从上游摘要里挑这条链上最具体、最适合画的那一件事（某个特定关系、过程或机制），不要默认画原始问题最标志性的那张图。\n'
+      + '2. 如果上下文列出了本网已有的可视化页面，本页必须展示与它们不同的侧面/关系/过程；与已有页面讲同一件事即视为不合格，即使画法不同也不行。\n'
+      + '3. 上下文没有列出已有页面时，也不要假设这是本网第一张图：与「最标志性图示」重复的选题尽量换角度。\n'
       + '不要输出 XML 标签，不要输出其他模块内容。';
   }
   return '';

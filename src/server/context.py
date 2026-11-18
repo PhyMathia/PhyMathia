@@ -846,6 +846,12 @@ def _module_output_instruction(module_key: str) -> str:
             "**自测**：1 个不实际操作就答不出的问题（只提问不给答案）。\n"
             "每个滑块/按钮旁标注对应物理量/数学量及在公式中的位置，关键结论数值旁给出对应公式。\n"
             "优先使用简单、可暂停、可调速的交互；只有确实有助于理解时才使用动画或 3D。页面必须自包含，不引入 CDN 或外部资源。\n"
+            "选题规则（防止同一会话的可视化页都讲同一件事）：\n"
+            "1. 选题由上游内容决定：从上游摘要里挑这条链上最具体、最适合画的那一件事（某个特定关系、过程或机制），"
+            "不要默认画原始问题最标志性的那张图。\n"
+            "2. 如果上下文列出了本网已有的可视化页面，本页必须展示与它们不同的侧面/关系/过程；"
+            "与已有页面讲同一件事即视为不合格，即使画法不同也不行。\n"
+            "3. 上下文没有列出已有页面时，也不要假设这是本网第一张图：与「最标志性图示」重复的选题尽量换角度。\n"
             "不要输出 XML 标签，不要输出其他模块内容。"
         )
     return ""
@@ -1037,6 +1043,18 @@ def _workflow_context_parts(workflow_context) -> tuple:
             target_lines.append("- 只输出总结正文，可使用 Markdown/LaTeX；不要输出完整学习卡片 XML，不要输出 physics/math/graph/viz/extend/summary 标签，不要输出 socratic_meta。")
             target_lines.append("- 只保留上游内容中有依据的关键结论、关系和下一步建议；不要为了完整而编造缺失信息，不要逐段复述上游。")
             target_lines.append("- 总结中如出现公式，仍按全局 <formula> 规范标注，不标注单个符号或单位。")
+        # viz 同网已有页清单（2026-11-18，防同质化）：前端只对 viz 目标收集同画布
+        # 其他 viz 节点的选题一句话，服务端在此渲染进 target 段——只让 viz 消费，
+        # 不进兄弟共享前缀段（T4 前缀缓存口径不破）
+        if target.get("module") == "viz":
+            existing_viz = workflow_context.get("existing_viz")
+            if isinstance(existing_viz, list) and existing_viz:
+                target_lines.append("- 本探索网中已有的可视化页面（列出是为了让本页换选题，不要与它们讲同一件事）：")
+                for page in existing_viz:
+                    if isinstance(page, dict) and (page.get("summary") or page.get("label")):
+                        title = str(page.get("label") or "交互可视化").strip()
+                        desc = str(page.get("summary") or "").strip()
+                        target_lines.append(f"  - {title}：{desc[:100]}" if desc else f"  - {title}")
         elif target.get("kind") == "hub":
             target_lines.append("- 汇聚节点只负责收集上游内容，不生成正文。")
         elif target.get("kind") == "note":
@@ -1122,6 +1140,26 @@ def normalize_workflow_context(workflow_context) -> dict:
                     entry.pop(field, None)
             items.append(entry)
     out["upstream"] = items
+    # viz 同网已有页清单（2026-11-18）：list of {label, summary}，非 dict 项丢弃、
+    # 文本字段消毒、summary 截 100（渲染侧同长）、条目数截 8；缺键/非 list 丢键
+    raw_existing = out.get("existing_viz")
+    if isinstance(raw_existing, list):
+        pages = []
+        for page in raw_existing[:8]:
+            if not isinstance(page, dict):
+                continue
+            entry = {
+                "label": _norm_ctx_text(page.get("label"))[:80],
+                "summary": _norm_ctx_text(page.get("summary"))[:100],
+            }
+            if entry["label"] or entry["summary"]:
+                pages.append(entry)
+        if pages:
+            out["existing_viz"] = pages
+        else:
+            out.pop("existing_viz", None)
+    else:
+        out.pop("existing_viz", None)
     return out
 
 
