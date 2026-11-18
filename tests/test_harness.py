@@ -4116,6 +4116,67 @@ class HarnessChatPhaseTest(unittest.TestCase):
                 self.assertEqual(result["status"], "undo")
                 self.assertEqual(result["next_snapshot"]["nodes"][0]["content"], "原")
 
+    def test_forge_phase_skips_deterministic_undo(self):
+        # forge 里「撤销/重来」指的是技能草稿，不是画布——不得短路回滚上一批图操作
+        # （2026-11-18；preset/chat 的确定性撤销保留，见上一条用例）
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        called = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            called["n"] += 1
+            return {"content": "", "tool_calls": []}
+
+        snapshot = {
+            "nodes": [{"id": "A", "kind": "human_note", "label": "导数", "content": "新"}],
+            "edges": [],
+        }
+        previous = {"nodes": [{"id": "A", "kind": "human_note", "label": "导数", "content": "原"}], "edges": []}
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                snapshot,
+                "撤销刚才的修改，恢复原样",
+                model={"provider": "opencode", "model": "m", "base_url": "https://x", "api_key": ""},
+                phase="forge",
+                mode="tools",
+                self_check="off",
+                previous_snapshot=previous,
+                previous_ops=[{"op": "update_node", "id": "A", "patch": {"content": "新"}, "reason": "修改"}],
+            ))
+        self.assertGreaterEqual(called["n"], 1, "forge 的撤销语义应交给模型处理，不得短路回滚画布")
+        self.assertNotEqual(result.get("status"), "undo")
+        self.assertEqual(result["next_snapshot"]["nodes"][0]["content"], "新")
+
+    def test_forge_tool_choice_stays_auto(self):
+        # forge 提示词要求信息不足先开口问——「创建技能」命中编辑意图词
+        # 也不得触发 required 逼模型硬调工具（2026-11-18，与 chat 同口径）
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        seen = {}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            seen["tool_choice"] = tool_choice
+            seen["tools"] = tools
+            return {"content": "先问清楚：这条技能要解决什么问题？", "tool_calls": []}
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
+                "帮我创建一条技能",
+                # openai 支持 required——修前这里会被判成 required，用例才钉得住。
+                # 显式密钥：空密钥会走 env 兜底，被 SSRF 守卫拦在非官方端点外
+                model={"provider": "openai", "model": "m", "base_url": "https://x", "api_key": "sk-test"},
+                phase="forge",
+                mode="tools",
+                self_check="off",
+            ))
+        self.assertEqual(seen["tool_choice"], "auto")
+        self.assertTrue(seen["tools"], "工具表照给，只是不强制调用")
+
 
 class OperationsLimitTest(unittest.TestCase):
     """T107（2026-10-03 销账）：单批操作数超上限不再静默截断。"""

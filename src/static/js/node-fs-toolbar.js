@@ -311,6 +311,18 @@ function _nodeFsBoldBlockedReason(src, span) {
   return '';
 }
 
+// 忙态闸（2026-11-18）：节点正在生成时正文还在长——此刻写覆盖/自定义内容会把
+// 流式尾巴永久遮蔽（读回自检读的是刚写的覆盖、恒过），还会落盘。渲染态编辑
+// 共用这条写回链，同闸。口径同画布置灰（graph-render.js regenBusy）：自身 busy＋重生成名单
+function _nodeFsNodeBusy(node) {
+  if (!node) return false;
+  const state = typeof _graphState === 'function' ? _graphState() : null;
+  const live = state ? (state.nodes || []).find(n => n && n.id === node.id) : null;
+  if ((live || node).busy) return true;
+  if (typeof _regeneratingNodes !== 'undefined' && _regeneratingNodes && _regeneratingNodes.has(node.id)) return true;
+  return false;
+}
+
 // 内容住哪儿：自己写的（customNodes）改 content；AI 回答/模块改节点覆盖表（harnessNodeOverrides，
 // _nodeContent 与 _graphAnswerExpandRaw 都优先读它，不动 msg.content 原文）
 function _nodeFsBoldTarget(node) {
@@ -325,6 +337,7 @@ function _nodeFsBoldTarget(node) {
 function _nodeFsBoldAvailable(node) {
   if (!node) return false;
   if (typeof phyIsReadonly === 'function' && phyIsReadonly()) return false; // 查阅模式不改内容
+  if (_nodeFsNodeBusy(node)) return false; // 生成中正文还在长，见 _nodeFsNodeBusy
   if (!_nodeFsBoldTarget(node)) return false;
   // 围栏模块（HTML/图谱源码）里插 ** 只会把代码弄脏
   if (node.kind === 'module' && typeof _moduleFenceLang === 'function' && _moduleFenceLang(node)) return false;
@@ -340,6 +353,8 @@ function _nodeFsBoldWrite(node, message, next, opts) {
   const state = typeof _graphState === 'function' ? _graphState() : null;
   const route = _nodeFsBoldTarget(node);
   if (!state || !route) return { ok: false, message: '这个节点不支持' + verb };
+  // 写时再查一次忙态：可用性判定之后生成才启动的话，这里拦住（渲染态编辑保存同走此路）
+  if (_nodeFsNodeBusy(node)) return { ok: false, message: '正在生成，等它写完再改' };
   if (typeof _pushGraphUndo === 'function') {
     _pushGraphUndo(false, { source: 'user', summary: (opts && opts.summary) || '选段加粗' });
   }
@@ -714,7 +729,9 @@ function _nodeFsMintPreviewToken() {
 function _nodeFsPersistPreviewCtx() {
   try {
     if (typeof sessionStorage === 'undefined') return;
-    const slim = _nfsPreviewCtxs.map(c => ({ token: c.token, nodeId: c.nodeId, sessionId: c.sessionId, title: c.title }));
+    // prevToken 必须一起落盘：超时后预览窗继续用旧 token，刷新恢复若不认旧 token，
+    // e9534f8 加的兜底恰好在它要救的刷新场景里失效（2026-11-18）
+    const slim = _nfsPreviewCtxs.map(c => ({ token: c.token, prevToken: c.prevToken || '', nodeId: c.nodeId, sessionId: c.sessionId, title: c.title }));
     sessionStorage.setItem(NODE_FS_PREVIEW_CTX_STORE, JSON.stringify(slim));
   } catch (e) { /* 存储被禁：退回纯内存，行为同旧版 */ }
 }
@@ -730,7 +747,7 @@ function _nodeFsRestorePreviewCtx() {
     _nfsPreviewCtxs = arr.filter(c => c && typeof c.token === 'string' && c.token)
       .slice(0, NODE_FS_PREVIEW_CTX_MAX)
       .map(c => ({
-        token: c.token, prevToken: '',
+        token: c.token, prevToken: String(c.prevToken || ''),
         nodeId: String(c.nodeId || ''), sessionId: String(c.sessionId || ''),
         title: String(c.title || ''), win: null,
       }));
@@ -739,6 +756,9 @@ function _nodeFsRestorePreviewCtx() {
 
 // openNodeNewWindow（graph-custom.js）在开窗前登记上下文，开窗成功后补 win 引用
 function _setNodeFsPreviewCtx(ctx) {
+  // 刷新后先开新窗的场景：登记前先把旧窗快照合并进来，否则表非空，
+  // 消息处理器里的 restore 被「非空即回」挡住，旧窗永久失联（2026-11-18）
+  _nodeFsRestorePreviewCtx();
   if (!ctx || typeof ctx.token !== 'string' || !ctx.token) {
     // 只丢弃刚登记的那一条（graph-custom 在弹窗被拦时紧跟着调用）：多窗并存时
     // 清空整表会把还开着的别的预览窗一起废掉
@@ -830,7 +850,8 @@ window.addEventListener('message', ev => {
   _nodeFsPersistPreviewCtx();
   try {
     ev.source.postMessage(
-      { kind: 'node-fs-ack', __phymathia: 1, token: d.token, ok, message, nextToken },
+      // seq 原样回显：预览侧按序号认领自己的 ack，并发动作不再串台（2026-11-18）
+      { kind: 'node-fs-ack', __phymathia: 1, token: d.token, seq: d.seq, ok, message, nextToken },
       location.origin,
     );
   } catch (e2) { /* 预览窗已关，无从应答 */ }
@@ -974,6 +995,7 @@ function _buildNodeFsPreviewScript(cfg) {
   return '(function(){'
     + 'var CFG=' + json + ';'
     + 'var TOKEN=CFG.token||"";'
+    + 'var SEQ=0;'
     + 'var BRIDGE=!!CFG.bridge;'
     + 'var READONLY=!!CFG.readonly;'
     + 'var MAX_TEXT=' + NODE_FS_BRIDGE_TEXT_MAX + ',EXCERPT_MAX=' + NODE_FS_EXCERPT_MAX + ',EXCERPT_LINES=' + NODE_FS_EXCERPT_LINES + ';'
@@ -1240,7 +1262,7 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'else done(fallback());}'
     + 'function postAction(action,text,route,extra,onDone){'
     + 'if(!BRIDGE){toast("此窗口未连接主应用，只能复制");return;}'
-    + 'var msg={kind:"node-fs-action",__phymathia:1,token:TOKEN,action:action,'
+    + 'var msg={kind:"node-fs-action",__phymathia:1,token:TOKEN,seq:++SEQ,action:action,'
     + 'text:String(text||"").slice(0,MAX_TEXT),title:CFG.title||"",route:String(route||""),'
     // 加粗消歧要选段前后文（同一句话常在本页出现多次）
     + 'before:String((extra&&extra.before)||""),after:String((extra&&extra.after)||"")};'
@@ -1248,6 +1270,9 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'var onAck=function(ev){var d=ev.data;'
     + 'if(!d||d.__phymathia!==1||d.kind!=="node-fs-ack")return;'
     + 'if(d.nextToken)TOKEN=d.nextToken;'
+    // 别人的 ack（并发动作各有一枚）：只追平 token、不认领——否则第一枚 ack 会把
+    // 所有挂起动作一起了结，加粗可能「假粗」（2026-11-18）。老主应用不回显 seq，照旧放行
+    + 'if(typeof d.seq==="number"&&d.seq!==msg.seq)return;'
     // 迟到的 ack（超时后才到）只用来把 token 追平，不再弹第二次话——token 追不上的话，
     // 这扇窗此后每一发都会被主应用当成陌生 token 丢掉，只能一直超时
     + 'if(notified){window.removeEventListener("message",onAck);return;}'

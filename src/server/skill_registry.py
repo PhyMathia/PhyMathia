@@ -287,8 +287,12 @@ def set_skill_scope(account: Any, skill_id: str, modules: Any) -> List[str]:
         raise ValueError(f"没有这条技能：{target}")
     if isinstance(modules, str):
         raw = modules
-    else:
+    elif modules is None or isinstance(modules, (list, tuple)):
         raw = ",".join(str(item or "") for item in (modules or []))
+    else:
+        # 脏载荷（数字/字典等）走 ValueError→路由 400；原先 for item in 123
+        # 抛 TypeError 被兜成 500（同族防御见 _skill_errors 的 scope 校验）
+        raise ValueError("适用节点格式不对：请传节点名数组或逗号分隔文本")
     scope = _parse_scope(raw)
     state = read_state(account)
     table = dict(state.get("scope") or {})

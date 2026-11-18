@@ -276,6 +276,7 @@ _PHASE_LABELS = {
     "apply": "应用建议",
     "expand": "拓展进阶",
     "preset": "创造模式",
+    "forge": "造技能",
     "chat": "答疑模式",
     "coach": "课程表体检",
     "undo": "撤销回滚",
@@ -2244,7 +2245,9 @@ async def review_graph(
 
     mode = str(mode or "auto").strip().lower()
     # ---- 澄清阶段：确定性撤销前置短路（T396 拆分，不调模型直接回滚）----
-    undo_result = _try_deterministic_undo(
+    # forge 例外（2026-11-18）：技能工坊里「重来/不要了」指的是技能草稿，
+    # 不是画布——短路回滚会误撤上一批图操作，交给模型按 forge 语境处理
+    undo_result = None if phase == "forge" else _try_deterministic_undo(
         instruction, focus_node_ids, previous_ops, all_previous_ops,
         previous_snapshot, initial_snapshot, snapshot, current,
         call_counter, _emit,
@@ -2358,9 +2361,11 @@ async def review_graph(
         can_require = _supports_required_tool_choice(provider)
         if not tools:
             tool_choice = None
-        elif phase == "chat":
+        elif phase in ("chat", "forge"):
             # 答疑模式：工具表照给（与 normal 同构）但永不强制调用——
-            # 强制只会逼模型硬产出操作，与「只说不改」的红线相悖
+            # 强制只会逼模型硬产出操作，与「只说不改」的红线相悖。
+            # forge 同理（2026-11-18）：提示词要求信息不足先开口问，
+            # 「创建技能」命中编辑意图词就 required 会堵死访谈
             tool_choice = "auto"
         elif phase in ("expand", "evaluate", "apply", "preset"):
             tool_choice = "required" if can_require else "auto"

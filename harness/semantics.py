@@ -131,9 +131,9 @@ def rule_selfcheck(
 ) -> Dict[str, Any]:
     """Cheap deterministic coverage checks. Returns {"ok": bool, "issues": [...]}.
 
-    chat 相位的图操作会被服务端保险丝强制清空，所有「没提出操作」类规则
-    在这里都是误报，直接放行。"""
-    if phase == "chat":
+    chat/forge 相位的图操作会被服务端保险丝强制清空（forge 的技能写盘
+    不走图 ops），所有「没提出操作」类规则在这里都是误报，直接放行。"""
+    if phase in ("chat", "forge"):
         return {"ok": True, "issues": []}
     issues: List[str] = []
     text = str(instruction or "")

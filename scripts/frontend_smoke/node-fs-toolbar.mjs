@@ -598,4 +598,108 @@ export function run() {
     if (!code.includes('_nodeFsSerializeContent')) return false; // 漏注册守卫之外的行为面确认
     return true;
   });
+
+  // ---------- 生成中写回防护＋预览桥加固（2026-11-18 排查修复）----------
+
+  check('node-fs-toolbar: 忙态闸——生成中拒加粗/拒编辑，写回路径再查一次（流式截断防护）', () => {
+    const realState = sandbox._graphState;
+    const realUndo = sandbox._pushGraphUndo;
+    const realSave = sandbox._saveGraphState;
+    const realRender = sandbox.renderGraphCanvas;
+    const realReadonly = sandbox.phyIsReadonly;
+    const state = {
+      nodes: [
+        { id: 'n_busy', kind: 'answer', messageIndex: 0, busy: true },
+        { id: 'n_idle', kind: 'answer', messageIndex: 1, busy: false },
+        { id: 'n_regen', kind: 'answer', messageIndex: 2, busy: false },
+      ],
+      customNodes: [],
+      harnessNodeOverrides: {},
+    };
+    try {
+      sandbox._graphState = () => state;
+      sandbox._pushGraphUndo = () => {};
+      sandbox._saveGraphState = () => {};
+      sandbox.renderGraphCanvas = () => {};
+      sandbox.phyIsReadonly = () => false;
+      // _regeneratingNodes 是 graph-interact.js 顶层 const（词法全局）——种值进 VM
+      vm.runInContext('_regeneratingNodes.add("n_regen")', sandbox);
+      const busy = sandbox._nodeFsNodeBusy;
+      const avail = sandbox._nodeFsBoldAvailable;
+      if (typeof busy !== 'function') throw new Error('忙态闸 API 未挂出');
+      if (!busy({ id: 'n_busy' })) return false;   // 活节点 busy（从 state 取，不信入参快照）
+      if (!busy({ id: 'n_regen' })) return false;  // 重生成名单
+      if (busy({ id: 'n_idle' })) return false;
+      if (avail(state.nodes[0])) return false;     // 生成中拒加粗
+      if (avail(state.nodes[2])) return false;
+      if (!avail(state.nodes[1])) throw new Error('空闲节点被误拒');
+      // 渲染态编辑继承同闸（_nodeFsEditAvailable 委托 _nodeFsBoldAvailable）
+      if (sandbox._nodeFsEditAvailable(state.nodes[0])) return false;
+      if (!sandbox._nodeFsEditAvailable(state.nodes[1])) throw new Error('空闲节点编辑被误拒');
+      // 写回再查一次：可用性判定之后生成才启动也拦得住，且不落覆盖
+      const res = sandbox._nodeFsBoldWrite(state.nodes[0], { role: 'assistant', content: '半截回答' }, '半截**回答**');
+      if (res.ok) throw new Error('生成中写回没拦住');
+      if (!String(res.message).includes('生成')) return false;
+      if (state.harnessNodeOverrides['n_busy']) throw new Error('拦下了却仍写了覆盖');
+      return true;
+    } finally {
+      sandbox._graphState = realState;
+      sandbox._pushGraphUndo = realUndo;
+      sandbox._saveGraphState = realSave;
+      sandbox.renderGraphCanvas = realRender;
+      sandbox.phyIsReadonly = realReadonly;
+      vm.runInContext('_regeneratingNodes.delete("n_regen")', sandbox);
+    }
+  });
+
+  check('node-fs-toolbar: 快照带 prevToken＋登记前先认回旧窗（超时+刷新／先开新窗两场景）', () => {
+    // 沙箱默认无 sessionStorage（源码 typeof 守卫静默退纯内存）——本用例临时种一个，
+    // finally 拆掉还原；_nfsPreviewCtxs 是词法 let，清表进 VM
+    const hadSession = Object.prototype.hasOwnProperty.call(sandbox, 'sessionStorage');
+    const realSession = sandbox.sessionStorage;
+    const mem = {};
+    sandbox.sessionStorage = {
+      getItem: (k) => (Object.prototype.hasOwnProperty.call(mem, k) ? mem[k] : null),
+      setItem: (k, v) => { mem[k] = String(v); },
+      removeItem: (k) => { delete mem[k]; },
+    };
+    try {
+      vm.runInContext('_nfsPreviewCtxs = []', sandbox);
+      const set = sandbox._setNodeFsPreviewCtx;
+      // 场景①：token 轮换后超时，预览窗继续用旧 token——prevToken 必须一起落盘
+      set({ token: 'tkNew', nodeId: 'n1', sessionId: 's1', title: '窗' });
+      vm.runInContext('_nfsPreviewCtxs[0].prevToken = "tkOld"; _nodeFsPersistPreviewCtx();', sandbox);
+      const stored = JSON.parse(mem['phymathia_node_fs_preview_ctx'] || '[]');
+      if (!stored.length || stored[0].prevToken !== 'tkOld') throw new Error('prevToken 没落快照');
+      // 刷新：表清空后从快照认回，旧 token 仍放行（否则永久锁窗）
+      vm.runInContext('_nfsPreviewCtxs = []; _nodeFsRestorePreviewCtx();', sandbox);
+      if (!sandbox._nodeFsPreviewCtxFor('tkOld', { closed: false })) throw new Error('刷新后旧 token 认不回');
+      // 场景②：刷新后先开新窗——登记前必须先合并旧窗快照，旧窗不能失联
+      vm.runInContext('_nfsPreviewCtxs = []', sandbox);
+      set({ token: 'tkFresh', nodeId: 'n2', sessionId: 's1', title: '新窗' });
+      const tokens = vm.runInContext('_nfsPreviewCtxs.map(c => c.token)', sandbox);
+      if (!tokens.includes('tkNew') || !tokens.includes('tkFresh')) throw new Error('先开新窗把旧窗快照挤掉了');
+      if (!sandbox._nodeFsPreviewCtxFor('tkOld', { closed: false })) throw new Error('旧窗永久失联');
+      return true;
+    } finally {
+      vm.runInContext('_nfsPreviewCtxs = []', sandbox);
+      if (hadSession) sandbox.sessionStorage = realSession;
+      else delete sandbox.sessionStorage;
+    }
+  });
+
+  check('node-fs-toolbar: ack 按序号认领——并发动作不串台（主应用回显/壳转发/内嵌认领三处同改）', () => {
+    const src = readSrc('src/static/js/node-fs-toolbar.js');
+    if (!src.includes('seq: d.seq, ok, message, nextToken')) return false; // 主应用回显
+    if (!src.includes('seq:++SEQ')) return false;                          // 内嵌自增序号
+    if (!src.includes('d.seq!==msg.seq')) return false;                    // 内嵌只认自己的
+    const shell = readSrc('src/static/content-preview.html');
+    if (!shell.includes('ad.seq !== d.seq')) return false;                 // 壳只转发本动作
+    if (!shell.includes('seq: d.seq, ok: false')) return false;            // 合成失败也带序号
+    const script = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
+    if (!script.includes('var SEQ=0;')) return false;
+    // 老主应用不回显 seq 时照旧放行（typeof 守卫）——刷新后的旧预览窗向后兼容
+    if (!script.includes('typeof d.seq==="number"')) return false;
+    return true;
+  });
 }

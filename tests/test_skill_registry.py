@@ -539,6 +539,19 @@ def test_scope_assignment_persists_and_can_be_cleared():
         skill_registry.set_skill_scope("default", "not-exist", ["viz"])
 
 
+def test_scope_rejects_non_list_payload():
+    """脏载荷（数字/字典）要 ValueError→路由 400，不能 TypeError 炸成 500（2026-11-18）。"""
+    root = skill_registry._user_dir("default")
+    _write_skill_file(root / "bare" / "SKILL.md", "---\nname: bare\ndescription: 无节点\n---\n\n正文\n")
+    skill_registry.reload_skills()
+    with pytest.raises(ValueError):
+        skill_registry.set_skill_scope("default", "bare", 123)
+    with pytest.raises(ValueError):
+        skill_registry.set_skill_scope("default", "bare", {"viz": 1})
+    # None＝撤销指定，照常工作
+    assert skill_registry.set_skill_scope("default", "bare", None) == []
+
+
 def test_desc_limit_is_256_and_import_truncates_long_ones():
     """手写超限即拒（不静默截断）；导入路径截断 + 明示（确认卡上能看见再改）。"""
     assert skill_registry.LIMITS["desc"] == 256

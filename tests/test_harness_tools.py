@@ -126,11 +126,14 @@ class ParseToolCallsConversionsTest(unittest.TestCase):
     def test_tool_to_op_covers_all_phase_tools(self):
         # 只读查询工具（T93）不产出图操作，不进 TOOL_TO_OP——混进编辑批次时由
         # parse_tool_calls 的「不支持的工具」错误软重试兜底；dry_run（2026-10-25
-        # 方向 1 试改自检）同理：在查询环内消化，不映射图操作
-        from harness.tools import DRY_RUN_TOOL_NAME, READONLY_TOOL_NAMES
+        # 方向 1 试改自检）同理：在查询环内消化，不映射图操作。
+        # 技能工坊四项（2026-11-17 forge）同口径：由 execute_skill_tool 服务端执行、
+        # 经查询回灌环消化——会写盘（install_skill）但不走图 ops 通道，
+        # 补进 TOOL_TO_OP 反而会让 parse_tool_calls 放行后撞 _args_to_op 空分支
+        from harness.tools import DRY_RUN_TOOL_NAME, READONLY_TOOL_NAMES, SKILL_TOOL_NAMES
         for names in PHASE_TOOLS.values():
             for name in names:
-                if name in READONLY_TOOL_NAMES or name == DRY_RUN_TOOL_NAME:
+                if name in READONLY_TOOL_NAMES or name == DRY_RUN_TOOL_NAME or name in SKILL_TOOL_NAMES:
                     continue
                 self.assertIn(name, TOOL_TO_OP)
 

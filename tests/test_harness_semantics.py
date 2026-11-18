@@ -100,6 +100,14 @@ class RuleSelfcheckTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["issues"], [])
 
+    def test_forge_phase_is_exempt(self):
+        # forge 的图操作被保险丝恒清空（技能写盘不走图 ops）——
+        # 「创建技能」命中动作词、选中节点未涉及，都不得误报（2026-11-18）
+        snapshot = _snap(["A"], [])
+        result = rule_selfcheck(snapshot, "创建一条技能", ["A"], [], phase="forge")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["issues"], [])
+
 
 class FindMissingExpansionChainsTest(unittest.TestCase):
     def test_no_targets_no_report(self):
