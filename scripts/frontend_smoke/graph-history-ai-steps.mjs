@@ -12,6 +12,10 @@ import { check, drain, sandbox, vm, storageData, restoreWindowStub } from './_ru
 const SID = 'sess_history_ai';
 const HIST_KEY = 'phymathia_graph_history_' + SID;
 const EXIT_KEY = 'phymathia_graph_history_exit_' + SID;
+const SWEEP_KEY = 'phymathia_graph_history_sweep';
+const OTHER_SID = 'sess_history_other';
+const OTHER_HIST_KEY = 'phymathia_graph_history_' + OTHER_SID;
+const OTHER_EXIT_KEY = 'phymathia_graph_history_exit_' + OTHER_SID;
 
 function _note(id, extra) {
   return Object.assign({ id: id, kind: 'note', manual: true, messageIndex: -1, timestamp: 100, content: '正文 ' + id, title: '', status: 'done', x: 100, y: 100 }, extra || {});
@@ -40,8 +44,12 @@ export async function run() {
   const prevPerf = sandbox.performance;
   const prevReadonly = sandbox.window.PHYMATHIA_READONLY;
   const prevHist = storageData[HIST_KEY], prevExit = storageData[EXIT_KEY];
+  const prevSweep = storageData[SWEEP_KEY], prevOtherH = storageData[OTHER_HIST_KEY], prevOtherE = storageData[OTHER_EXIT_KEY];
   delete storageData[HIST_KEY];
   delete storageData[EXIT_KEY];
+  delete storageData[SWEEP_KEY];
+  delete storageData[OTHER_HIST_KEY];
+  delete storageData[OTHER_EXIT_KEY];
   let mem = _state([]);
   let chat = [];
   const els = {};
@@ -226,6 +234,37 @@ export async function run() {
       return true;
     }]);
 
+    serial.push(['2026-11-18 批量结算：正常退出登记的其余画布历史一次清空（本地键＋服务端镜像）', async () => {
+      seed(2);
+      runCtx('_persistGraphHistory();');
+      // 模拟另一张画布：有自己的历史键 + 退出标记，并登记进全局 sweep 名单
+      storageData[OTHER_HIST_KEY] = JSON.stringify({ v: 2, e: [{ id: 'o1', kind: 'note', manual: true, messageIndex: -1, timestamp: 1, content: 'x', title: '', status: 'done', x: 0, y: 0 }], c: 1, t: Date.now() });
+      storageData[OTHER_EXIT_KEY] = JSON.stringify({ sid: 'sess_history_other', at: Date.now(), fp: '0|0|1', atLatest: true });
+      runCtx('_graphHistorySweepWrite(["sess_history_other", "' + SID + '"]);');
+      sandbox.performance.getEntriesByType = () => [{ type: 'navigate' }];
+      const cleared = await runCtx('settleGraphHistoryBatchOnOpen()');
+      if (cleared !== 1) throw new Error('批量结算应清 1 张其余画布，实际 ' + cleared);
+      if (storageData[OTHER_HIST_KEY]) throw new Error('其余画布本地历史键没删');
+      if (storageData[OTHER_EXIT_KEY]) throw new Error('其余画布退出标记没删');
+      if (!storageData[HIST_KEY]) throw new Error('当前画布历史被批量错误清掉（应留给单画布结算）');
+      if (runCtx('_graphHistorySweepRead().length') !== 0) throw new Error('sweep 名单没消费清空');
+      return true;
+    }]);
+
+    serial.push(['2026-11-18 批量结算：F5 刷新作废 sweep 名单，一张都不清', async () => {
+      seed(2);
+      runCtx('_persistGraphHistory();');
+      storageData[OTHER_HIST_KEY] = JSON.stringify({ v: 2, e: [], c: 0, t: Date.now() });
+      storageData[OTHER_EXIT_KEY] = JSON.stringify({ sid: 'sess_history_other', at: Date.now() });
+      runCtx('_graphHistorySweepWrite(["sess_history_other"]);');
+      sandbox.performance.getEntriesByType = () => [{ type: 'reload' }];
+      const cleared = await runCtx('settleGraphHistoryBatchOnOpen()');
+      if (cleared !== 0) throw new Error('F5 不该批量清');
+      if (!storageData[OTHER_HIST_KEY]) throw new Error('F5 把其余画布历史清了');
+      if (runCtx('_graphHistorySweepRead().length') !== 0) throw new Error('F5 后 sweep 名单没作废');
+      return true;
+    }]);
+
     serial.push(['面板手动口：清空历史内核只清历史，不动当前图（直接调内核，绕过武装）', async () => {
       seed(3);
       els.graphHistoryList = _mkEl('div');
@@ -287,5 +326,8 @@ export async function run() {
     sandbox.window.PHYMATHIA_READONLY = prevReadonly;
     if (prevHist === undefined) delete storageData[HIST_KEY]; else storageData[HIST_KEY] = prevHist;
     if (prevExit === undefined) delete storageData[EXIT_KEY]; else storageData[EXIT_KEY] = prevExit;
+    if (prevSweep === undefined) delete storageData[SWEEP_KEY]; else storageData[SWEEP_KEY] = prevSweep;
+    if (prevOtherH === undefined) delete storageData[OTHER_HIST_KEY]; else storageData[OTHER_HIST_KEY] = prevOtherH;
+    if (prevOtherE === undefined) delete storageData[OTHER_EXIT_KEY]; else storageData[OTHER_EXIT_KEY] = prevOtherE;
   }
 }

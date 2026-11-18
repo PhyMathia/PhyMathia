@@ -1999,6 +1999,11 @@
       if (typeof window.settleGraphHistoryOnOpen === 'function') {
         Promise.resolve(window.settleGraphHistoryOnOpen()).catch(() => {});
       }
+      // 2026-11-18 退出后批量结算：清掉其余画布从没被单画布结算到的历史存量（
+      // 本地键＋服务端镜像一起删，防复活）。与单画布结算并行、fire-and-forget。
+      if (typeof window.settleGraphHistoryBatchOnOpen === 'function') {
+        Promise.resolve(window.settleGraphHistoryBatchOnOpen()).catch(() => {});
+      }
     }
 
 

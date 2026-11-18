@@ -502,6 +502,25 @@ function _graphHistoryExitKeyFor(sid) {
   return GRAPH_HISTORY_EXIT_KEY + (sid || "default");
 }
 
+// 全局 sweep 标记（2026-11-18）：每个画布各自的退出标记只结算"最后打开那一张"，其余画布
+// 的历史键永远清不到（本机实测 22 键 / 6.37 MB 存量）。正常退出时再写这一个全局标记，
+// 下次打开据此批量清所有带标记的画布。存在 localStorage 键 phymathia_graph_history_sweep，
+// 值是一批 sid 的数组。F5 刷新会在结算侧作废它；强杀/崩溃不发 beforeunload → 标记不写。
+const GRAPH_HISTORY_SWEEP_KEY = "phymathia_graph_history_sweep";
+function _graphHistorySweepRead() {
+  try {
+    const raw = localStorage.getItem(GRAPH_HISTORY_SWEEP_KEY);
+    const arr = raw ? JSON.parse(raw) : null;
+    return Array.isArray(arr) ? arr.filter(Boolean) : [];
+  } catch (e) { return []; }
+}
+function _graphHistorySweepWrite(sids) {
+  try { localStorage.setItem(GRAPH_HISTORY_SWEEP_KEY, JSON.stringify(sids || [])); } catch (e) { /* 配额异常不阻断退出 */ }
+}
+function _graphHistorySweepClear() {
+  try { localStorage.removeItem(GRAPH_HISTORY_SWEEP_KEY); } catch (e) { /* best effort */ }
+}
+
 function _graphHistoryExitFingerprint() {
   const last = graphUndoStack[graphUndoStack.length - 1];
   const ts = (last && last.meta && (last.meta.pushedAt || last.meta.ts)) || 0;
@@ -521,6 +540,10 @@ function markGraphHistoryCleanExit() {
       fp: _graphHistoryExitFingerprint(),
       atLatest: graphHistoryCursor >= graphUndoStack.length,
     }));
+    // 2026-11-18：把本次正常退出的画布登记进全局 sweep 名单（去重、保留顺序）。
+    // 下次打开时 settleGraphHistoryBatchOnOpen 据此批量清所有画布，而不只最后那一张。
+    const sweep = _graphHistorySweepRead();
+    if (sweep.indexOf(sid) < 0) { sweep.push(sid); _graphHistorySweepWrite(sweep); }
     return true;
   } catch (e) { return false; }
 }
@@ -610,6 +633,41 @@ async function settleGraphHistoryOnOpen() {
     return _settleClearGraphHistory("这张画布超过 12 小时没动 · 历史已从当前状态重新开始");
   }
   return false;
+}
+
+// 2026-11-18 退出后批量结算：正常退出时会给每张被关闭的画布写 per-sid 标记，并汇总进
+// 全局 sweep 名单。settleGraphHistoryOnOpen 只结算"当前画布"这一张；这里把名单里其余
+// 画布的历史一起清掉——本地键与服务端镜像一起删（_batchDiscardGraphHistories 带防复活），
+// 从而回收那批从没被结算到的存量。守卫口径与单画布结算一致：
+//   · F5 刷新（nav=reload）：名单作废，一张都不清（刷新不该丢撤销）；
+//   · 只读态：不清且不删名单（免得查阅态把别人的清理标记吃掉）；
+//   · 每个 sid 仍校验自己的 per-sid 标记在且 sid 匹配（防多标签/旧标记串台误清）。
+//     别的画布不在内存里、算不出指纹，故只认标记存在＋sid 匹配这两项。
+// 无论清没清，处理完都清空 sweep 名单（一次性消费；下次退出会重新写）。
+async function settleGraphHistoryBatchOnOpen() {
+  if (typeof phyIsReadonly === "function" && phyIsReadonly()) return 0;
+  const nav = _graphHistoryNavType();
+  if (nav === "reload") { _graphHistorySweepClear(); return 0; }
+  const sids = _graphHistorySweepRead();
+  _graphHistorySweepClear(); // 先消费，防并发重复清
+  if (!sids.length) return 0;
+  const current = _currentSessionId();
+  const targets = [];
+  for (const sid of sids) {
+    if (!sid || sid === current) continue; // 当前画布由 settleGraphHistoryOnOpen 精细结算
+    let marker = null;
+    try { marker = JSON.parse(localStorage.getItem(_graphHistoryExitKeyFor(sid)) || "null"); } catch (e) { marker = null; }
+    if (!marker || (marker.sid && marker.sid !== sid)) continue; // 无标记/标记串台：不清
+    // 只清带历史键的（没有历史的画布无需 DELETE 镜像，省网络）。per-sid 标记本就是退出时
+    // 写的权威信号，无需再叠时间兜底（早先误把 marker.at 当陈旧上限判断，方向写反已去掉）。
+    let hasKey = false;
+    try { hasKey = !!localStorage.getItem(_graphHistoryKey(sid)); } catch (e) { hasKey = false; }
+    if (!hasKey) continue;
+    targets.push(sid);
+  }
+  if (!targets.length) return 0;
+  if (typeof window._batchDiscardGraphHistories !== "function") return 0;
+  try { return await window._batchDiscardGraphHistories(targets); } catch (e) { return 0; }
 }
 
 // 面板里的手动口（§6.1.4「定稿并清空历史」）：随时可清，和自动结算走同一条路。
@@ -822,6 +880,11 @@ window.requestGraphHistoryClear = requestGraphHistoryClear;
 window.disarmGraphHistoryClear = disarmGraphHistoryClear;
 window.markGraphHistoryCleanExit = markGraphHistoryCleanExit;
 window.settleGraphHistoryOnOpen = settleGraphHistoryOnOpen;
+// 2026-11-18 退出后批量结算：清掉其余画布从没被单画布结算到的历史存量
+window.settleGraphHistoryBatchOnOpen = settleGraphHistoryBatchOnOpen;
+window._graphHistorySweepRead = _graphHistorySweepRead;
+window._graphHistorySweepWrite = _graphHistorySweepWrite;
+window._graphHistorySweepClear = _graphHistorySweepClear;
 window.getGraphHistoryFingerprint = _graphHistoryExitFingerprint;
 window.graphHistoryLiveEventDone = _graphHistoryLiveEventDone;
 window.graphEventText = function (text) { return _graphShorten(String(text || ""), 30); };

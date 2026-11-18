@@ -348,3 +348,32 @@ function discardGraphHistoryForSession(sid) {
           function () { delete _graphHistoryWipeInFlight[sid]; });
 }
 window.discardGraphHistoryForSession = discardGraphHistoryForSession;
+
+// ===== 2026-11-18 退出后批量结算：把所有"上次正常退出"画布的历史一起清 =====
+// 背景：退出结算 markGraphHistoryCleanExit 按 sid 逐个写标记，但用户平时只关一个页面、
+// 只结算"上次最后打开的那一张"（settleGraphHistoryOnOpen 只认 _currentSessionId）。其余
+// 画布的历史键（本机实测 22 个键 / 6.37 MB）永远等不到那一次结算，成了清不动的存量。
+// 做法：正常退出时额外写一个全局 sweep 标记（见 graph-history-panel.js），下次打开时在此
+// 一次性清掉所有带标记的画布历史。清本地键必须连服务端镜像一起 DELETE，否则
+// _upgradeGraphHistoryFromServer「存档更长才采纳」会把旧栈灌回（白清）；这里复用上面的
+// 防复活三件套：wipeEpoch 作废在途 GET、wipeInFlight 挡迟到响应、DELETE landing 后撤标记。
+// 只在启动、服务端可达时跑；F5/强杀/只读由标记写入侧把关（标记本就不写）。
+function _batchDiscardGraphHistories(sids) {
+  const list = Array.isArray(sids) ? sids.filter(Boolean) : [];
+  if (!list.length) return Promise.resolve(0);
+  _graphHistoryWipeEpoch++; // 一次性作废所有在途镜像 GET（批量清期间谁都不许采纳旧存档）
+  list.forEach(function (sid) { _graphHistoryWipeInFlight[sid] = true; });
+  const jobs = list.map(function (sid) {
+    try { localStorage.removeItem(_graphHistoryKey(sid)); } catch (e) { /* 配额异常不阻断 */ }
+    try { localStorage.removeItem(GRAPH_HISTORY_EXIT_KEY + sid); } catch (e) { /* 同上 */ }
+    return fetch('/api/kv/' + encodeURIComponent('graph_history:' + sid), {
+      method: 'DELETE',
+      signal: (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function')
+        ? AbortSignal.timeout(10000) : undefined,
+    }).catch(function () { /* 镜像删除失败静默：本地已清，主流程不被卡住 */ })
+      .then(function () { delete _graphHistoryWipeInFlight[sid]; },
+            function () { delete _graphHistoryWipeInFlight[sid]; });
+  });
+  return Promise.all(jobs).then(function () { return jobs.length; });
+}
+window._batchDiscardGraphHistories = _batchDiscardGraphHistories;
