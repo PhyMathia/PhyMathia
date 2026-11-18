@@ -332,12 +332,17 @@ function _nodeFsBoldAvailable(node) {
 }
 
 // 写回 + 自检：写完立刻按全屏同一条取文口径再读一次，读回不是新文本就回滚——
-// 这类节点（blank 之类正文由别处生成）宁可报「改不了」，也不能让页面上留着假的粗体
-function _nodeFsBoldWrite(node, message, next) {
+// 这类节点（blank 之类正文由别处生成）宁可报「改不了」，也不能让页面上留着假的粗体。
+// opts（2026-11-18）：渲染态编辑共用这条链路，只换文案（summary 进撤销点、okMessage
+// 是成功 toast、verb 进拒绝文案）；缺省值＝划词加粗，老调用零变化
+function _nodeFsBoldWrite(node, message, next, opts) {
+  const verb = (opts && opts.verb) || '加粗';
   const state = typeof _graphState === 'function' ? _graphState() : null;
   const route = _nodeFsBoldTarget(node);
-  if (!state || !route) return { ok: false, message: '这个节点不支持加粗' };
-  if (typeof _pushGraphUndo === 'function') _pushGraphUndo(false, { source: 'user', summary: '选段加粗' });
+  if (!state || !route) return { ok: false, message: '这个节点不支持' + verb };
+  if (typeof _pushGraphUndo === 'function') {
+    _pushGraphUndo(false, { source: 'user', summary: (opts && opts.summary) || '选段加粗' });
+  }
   let rollback = null;
   if (route === 'custom') {
     const entry = (state.customNodes || []).find(item => item && item.id === node.id);
@@ -366,7 +371,7 @@ function _nodeFsBoldWrite(node, message, next) {
   }
   if (typeof renderGraphCanvas === 'function') renderGraphCanvas();
   _saveGraphState(state);
-  return { ok: true, message: '已加粗' };
+  return { ok: true, message: (opts && opts.okMessage) || '已加粗' };
 }
 
 // 选区所在块（一次只许一段）——块内换行可以，跨块拒绝
@@ -861,6 +866,9 @@ function _nodeFsOnSelectionSettled() {
   const overlay = document.querySelector('.graph-node-fs-overlay');
   if (!overlay) { _nodeFsHideBar(); return; }
   if (_nfsState && _nfsState.expanded) return; // 输入行展开时不重判（用户在打字）
+  // 渲染态编辑中不弹浮条（2026-11-18）：划词是在改正文，追问/加粗那套动作会打架；
+  // 退出编辑后浮条自动恢复
+  if (typeof _nodeFsEditActive === 'function' && _nodeFsEditActive()) return;
   const content = overlay.querySelector('.graph-node-fs-content');
   if (!content) return;
   const picked = _nodeFsPickSelection(content);

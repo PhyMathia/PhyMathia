@@ -4007,6 +4007,44 @@ html[data-theme="light"] .graph-node-fs,
   }
 }
 
+/* ---------- 渲染态直接编辑（2026-11-18，node-fs-edit.js）---------- */
+/* 全屏正文 contenteditable 会话：虚线框＋微弱底色标出「现在是编辑面」，原子块
+   （公式/图/代码）hover 描边提示「整块」——与加粗的拒绝口径同一套视觉语言 */
+.graph-node-fs-content[data-editing="1"] {
+  padding: 14px 18px;
+  border: 1.5px dashed color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+  caret-color: var(--accent);
+  cursor: text;
+  outline: none;
+}
+
+/* 原子块进不去编辑：hover 打虚线提示这是整块（删就整删，改内容走对应编辑器） */
+.graph-node-fs-content[data-editing="1"] .katex:hover,
+.graph-node-fs-content[data-editing="1"] .katex-display:hover,
+.graph-node-fs-content[data-editing="1"] pre:hover,
+.graph-node-fs-content[data-editing="1"] .mermaid-container:hover,
+.graph-node-fs-content[data-editing="1"] .viz-card:hover,
+.graph-node-fs-content[data-editing="1"] img:hover {
+  outline: 1.5px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+/* 编辑态一行 hint：只说这是什么＋一句怎么用（硬规则 9 口径），随正文列宽对齐 */
+.graph-node-fs-edit-hint {
+  max-width: 760px;
+  margin: 0 auto 10px;
+  padding: 6px 14px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--btn-bg);
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  text-align: center;
+}
+
 /* ---------- 拖线吸附高亮（2026-10-10 ② 统一吸附）---------- */
 /* 拖线悬停在「松手即可连」的节点身上时打虚线描边；与选中态（实线）区分 */
 .graph-node.graph-link-drop-target {

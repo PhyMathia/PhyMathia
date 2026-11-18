@@ -2,7 +2,7 @@
 // 范围：本页全屏阅读层浮条 ＋ 新窗口预览页内嵌浮条 ＋ 预览壳转发桥。
 // 只写同步用例——共享沙箱教训：异步用例不能和重置沙箱的同步用例同文件（AGENTS.md）；
 // 行为验证靠浏览器真机档（当日日志有验收清单），这里守住「符号在、接线对、坏拼接当场炸」。
-import { check, code, sandbox, fs } from './_runner.mjs';
+import { check, code, sandbox, fs, vm } from './_runner.mjs';
 
 const readSrc = (p) => fs.readFileSync(p, 'utf8');
 
@@ -434,5 +434,168 @@ export function run() {
       && css.includes('.node-fs-input')
       && css.includes('.node-fs-quote-chip')
       && css.includes('@media (max-width: 520px)');
+  });
+
+  // ---------- 渲染态直接编辑（node-fs-edit.js，2026-11-18）----------
+
+  // 序列化器吃的是最小 DOM 面（nodeType/tagName/childNodes/textContent/getAttribute/
+  // classList.contains/querySelector），用假节点就能做行为断言——不依赖真 DOM。
+  const editEl = (tag, kids, extra) => Object.assign({
+    nodeType: 1,
+    tagName: tag,
+    childNodes: kids || [],
+    classList: { contains: () => false },
+    getAttribute: () => null,
+    querySelector: () => null,
+    textContent: '',
+  }, extra || {});
+  const editT = (v) => ({ nodeType: 3, nodeValue: v });
+  const editKatex = (tex, display) => editEl('SPAN', [], {
+    classList: { contains: (c) => c === 'katex' || (!!display && c === 'katex-display') },
+    closest: () => null,
+    querySelector: (sel) => (String(sel).indexOf('annotation') >= 0 ? { textContent: tex } : null),
+    textContent: tex,
+  });
+
+  check('node-fs-edit: 序列化往返——标题/强调/链接/列表/引用/代码/分割线/公式都拼回原文', () => {
+    const ser = sandbox._nodeFsSerializeContent;
+    if (typeof ser !== 'function') throw new Error('序列化 API 未挂出');
+    const codeEl = editEl('CODE', [], { className: 'language-js', textContent: 'const a = 1;' });
+    const doc = editEl('DIV', [
+      editEl('H2', [editT('恒定电流')]),
+      editEl('P', [
+        editT('电流的 '),
+        editEl('STRONG', [editT('定义')]),
+        editT(' 是 '),
+        editEl('EM', [editT('电荷')]),
+        editT(' 的定向移动，见 '),
+        editEl('A', [editT('维基')], { getAttribute: (a) => (a === 'href' ? 'https://w.org' : null) }),
+        editT('。'),
+      ]),
+      editEl('UL', [
+        editEl('LI', [editT('第一项')]),
+        editEl('LI', [editT('第二项'), editEl('UL', [editEl('LI', [editT('子项')])])]),
+      ]),
+      editEl('OL', [editEl('LI', [editT('有序甲')]), editEl('LI', [editT('有序乙')])]),
+      editEl('BLOCKQUOTE', [editEl('P', [editT('引用一句')])]),
+      // pre 的代码文本从 code 子元素读（querySelector 取不到就读空）
+      editEl('PRE', [codeEl], { querySelector: (sel) => (sel === 'code' ? codeEl : null) }),
+      editEl('HR', []),
+      editEl('P', [editT('行内公式 '), editKatex('E=mc^2', false), editT(' 与展示公式 '), editKatex('F=ma', true), editT(' 收尾。')]),
+    ]);
+    const got = ser(doc);
+    const want = '## 恒定电流\n\n'
+      + '电流的 **定义** 是 *电荷* 的定向移动，见 [维基](https://w.org)。\n\n'
+      + '- 第一项\n- 第二项\n  - 子项\n\n'
+      + '1. 有序甲\n2. 有序乙\n\n'
+      + '> 引用一句\n\n'
+      + '```js\nconst a = 1;\n```\n\n'
+      + '---\n\n'
+      + '行内公式 $E=mc^2$ 与展示公式 $$F=ma$$ 收尾。';
+    if (got !== want) throw new Error('序列化不一致：\n【得】' + got + '\n【期】' + want);
+    return true;
+  });
+
+  check('node-fs-edit: 管道表/mermaid/viz 原子块还原（viz 存的是成品 iframe 源，桥剥离由源码口径守）', () => {
+    const ser = sandbox._nodeFsSerializeContent;
+    const doc = editEl('DIV', [
+      editEl('TABLE', [
+        editEl('THEAD', [
+          editEl('TR', [
+            editEl('TH', [editT('名称')], { getAttribute: (a) => (a === 'style' ? 'text-align: center' : null) }),
+            editEl('TH', [editT('值')]),
+          ]),
+        ]),
+        editEl('TBODY', [
+          editEl('TR', [editEl('TD', [editT('质量')]), editEl('TD', [editT('1 kg')])]),
+        ]),
+      ]),
+      editEl('DIV', [], {
+        classList: { contains: (c) => c === 'mermaid-container' },
+        querySelector: (sel) => (sel === '.mermaid-source'
+          ? { getAttribute: (a) => (a === 'data-mermaid-src' ? encodeURIComponent('<b>&gt;</b>') : null) }
+          : null),
+      }),
+      editEl('DIV', [], {
+        id: 'viz_fs_smoke',
+        classList: { contains: (c) => c === 'viz-card' },
+      }),
+    ]);
+    // _vizStore 是 render.js 顶层 const（词法全局，不在 VM global 对象上）——
+    // 种值/清桩都必须进 VM 跑，沙箱外读 sandbox._vizStore 恒 undefined
+    vm.runInContext('_vizStore.viz_fs_smoke = "<html><body>成品源（含桥）</body></html>"', sandbox);
+    // _unescapeHtmlEntities 走 textarea 的 innerHTML→value DOM 往返，冒烟混合桩下
+    // 取值会被归成 0（README T431 同款坑）——按 escapeHtml 用例先例换真实现
+    const realUnesc = sandbox._unescapeHtmlEntities;
+    sandbox._unescapeHtmlEntities = (s) => String(s == null ? '' : s)
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+    try {
+      const got = ser(doc);
+      const want = '| 名称 | 值 |\n| :---: | --- |\n| 质量 | 1 kg |'
+        + '\n\n```mermaid\n<b>></b>\n```'   // decodeURIComponent ＋实体还原（&gt; 呛 KaTeX 的老坑）
+        + '\n\n```html\n<html><body>成品源（含桥）</body></html>\n```';
+      if (got !== want) throw new Error('原子块序列化不一致：\n【得】' + got + '\n【期】' + want);
+    } finally {
+      sandbox._unescapeHtmlEntities = realUnesc;
+      vm.runInContext('delete _vizStore.viz_fs_smoke', sandbox);
+    }
+    // 桥剥离认 render.js 顶层 const（词法全局，不在 window 上）——直接按名引用
+    const src = readSrc('src/static/js/node-fs-edit.js');
+    for (const name of ['_VIZ_MATH_BRIDGE', '_VIZ_THEME_BRIDGE', '_VIZ_CHECK_BRIDGE']) {
+      if (!src.includes("typeof " + name + " === 'string'")) return false;
+    }
+    return true;
+  });
+
+  check('node-fs-edit: 资格闸——blank 直接拒绝；API 挂出；保存走加粗同一条写回链路（换文案不换机制）', () => {
+    const avail = sandbox._nodeFsEditAvailable;
+    for (const fn of ['_nodeFsEditAvailable', '_nodeFsEditActive', '_nodeFsEditCloseGuard', '_nodeFsEditRoundTripDiff', 'openNodeFsEdit', 'saveNodeFsEdit', 'cancelNodeFsEdit', '_nodeFsEditDomVisibleText']) {
+      if (typeof sandbox[fn] !== 'function') throw new Error(fn + ' 未暴露');
+    }
+    if (avail(null) !== false) return false;
+    if (avail({ kind: 'blank' }) !== false) throw new Error('blank 节点必须拒绝渲染态编辑（整篇写回会丢 XML 分节）');
+    const src = readSrc('src/static/js/node-fs-edit.js');
+    if (!src.includes('_nodeFsBoldAvailable(node)')) return false;       // 与划词加粗同闸
+    if (!src.includes("summary: '渲染态编辑'")) return false;
+    // 可见文本自检用加粗那套同管归一；入场往返校验过 renderMarkdown 管道
+    if (!src.includes('_nodeFsBoldScan(String(next || \'\')).text')) return false;
+    if (!src.includes('_nodeFsEditSignature(src)') || !src.includes('_nodeFsEditSignature(domMd)')) return false;
+    // 人工定稿（T355）＋自有节点落盘，双 typeof 守卫
+    if (!src.includes("_markNodeHumanFinalized(node)") || !src.includes('_saveCustomNodes()')) return false;
+    return true;
+  });
+
+  check('node-fs-edit: 接线三处——头部按钮资格闸/关闭守卫/浮条编辑态收声，加粗老调用零变化', () => {
+    const gc = readSrc('src/static/js/graph-custom.js');
+    if (!gc.includes("typeof _nodeFsEditAvailable === 'function' && _nodeFsEditAvailable(node)")) return false;
+    if (!gc.includes("openNodeFsEdit(\\''")) return false; // onclick="openNodeFsEdit('id')"
+    if (!gc.includes("typeof _nodeFsEditCloseGuard === 'function' && _nodeFsEditCloseGuard()")) return false;
+    const bar = readSrc('src/static/js/node-fs-toolbar.js');
+    if (!bar.includes("typeof _nodeFsEditActive === 'function' && _nodeFsEditActive()")) return false;
+    // 加粗调用点保持原样（老契约）：冒烟上一条断言认这个串
+    if (!bar.includes('_nodeFsBoldWrite(node, message, next)')) return false;
+    if (!bar.includes("function _nodeFsBoldWrite(node, message, next, opts)")) return false;
+    if (!bar.includes("(opts && opts.okMessage) || '已加粗'")) return false;
+    // 编辑态 Esc capture：有改动拦下指路、干净退出编辑（关全屏是下一拍）
+    const edit = readSrc('src/static/js/node-fs-edit.js');
+    const escAt = edit.indexOf("ev.key !== 'Escape'");
+    if (escAt < 0) return false;
+    if (edit.slice(escAt, escAt + 300).indexOf('stopPropagation') < 0) return false;
+    if (edit.slice(escAt, escAt + 700).indexOf('}, true);') < 0) return false;
+    // 编辑态样式与 hint 进 CSS（编辑面虚线框＋原子块 hover 描边）
+    const css = readSrc('src/static/css/graph-override.css');
+    if (!css.includes('.graph-node-fs-content[data-editing="1"]')) return false;
+    if (!css.includes('.graph-node-fs-edit-hint')) return false;
+    if (!css.includes('.mermaid-container:hover')) return false;
+    return true;
+  });
+
+  check('node-fs-edit: 构建顺序在 node-fs-toolbar 之后、app.js 产物已含本模块', () => {
+    const bf = readSrc('scripts/build_frontend.mjs');
+    const a = bf.indexOf("'node-fs-toolbar.js'");
+    const b = bf.indexOf("'node-fs-edit.js'");
+    if (a < 0 || b < 0 || b < a) return false;
+    if (!code.includes('_nodeFsSerializeContent')) return false; // 漏注册守卫之外的行为面确认
+    return true;
   });
 }

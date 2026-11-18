@@ -52,6 +52,9 @@ const entries = [
   // 节点全屏划词快捷工具（2026-10-25）：选区/消息监听自带、画布函数运行期 typeof
   // 守卫调用，加载期零副作用；放 graph-custom 之后取其全屏/预览页挂接点
   'node-fs-toolbar.js',
+  // 渲染态直接编辑（2026-11-18）：全屏正文 contenteditable 会话＋DOM→markdown 序列化，
+  // 复用 toolbar 的取文/写回/归一助手（运行期调用），紧跟其后同族归堆
+  'node-fs-edit.js',
   'graph-recipe-edit.js',
   // 官方配方包（P4 生态，2026-11-01）：数据＋勾选清单弹窗，加载期零副作用；
   // 依赖 graph-recipes.js 的导入核心与 graph-recipe-edit.js 的 _recipeRefreshAddPanel

@@ -734,6 +734,9 @@ function _nodeFsTogglesHtml(node, message) {
 let nodeFsOverlay = null;
 
 function closeNodeFullscreen() {
+  // 渲染态编辑守卫（2026-11-18）：编辑中有未保存改动先拦下（Esc/×/点遮罩都从这过），
+  // 干净则顺手收会话放行——不许一层关掉了、页面背后还挂着个编辑会话
+  if (typeof _nodeFsEditCloseGuard === 'function' && _nodeFsEditCloseGuard()) return;
   // 划词浮条挂在 overlay 上，随层一起移除；状态在这单点收（Esc capture 先收浮条
   // 的路径也是走 _nodeFsHideBar，见 node-fs-toolbar.js）
   if (typeof _nodeFsHideBar === 'function') _nodeFsHideBar();
@@ -763,12 +766,17 @@ function openNodeFullscreen(nodeId) {
   closeModuleNodeModal();
   closeNodeFullscreen();
   const externalIcon = (typeof UI_ICON_SVG !== 'undefined' && UI_ICON_SVG.external) || '↗';
+  const editIcon = (typeof UI_ICON_SVG !== 'undefined' && UI_ICON_SVG.pencil) || '✎';
   const overlay = document.createElement('div');
   overlay.className = 'graph-node-fs-overlay';
   overlay.innerHTML = '<div class="graph-node-fs aurora-glass aurora-glass--panel">'
     + '<div class="graph-node-fs-head"><span class="graph-node-fs-title">' + escapeHtml(_nodeFsTitle(node)) + '</span>'
     + '<span class="graph-node-fs-meta">' + escapeHtml(_nodeFsReadingMeta(text)) + '</span>'
     + '<span class="graph-node-fs-head-actions">'
+    // 渲染态编辑（2026-11-18）：资格闸在 node-fs-edit.js（与划词加粗同闸＋blank 排除）
+    + (typeof _nodeFsEditAvailable === 'function' && _nodeFsEditAvailable(node)
+      ? '<button type="button" onclick="openNodeFsEdit(\'' + node.id + '\')" title="编辑正文">' + editIcon + '</button>'
+      : '')
     + '<button type="button" onclick="openNodeNewWindow(\'' + node.id + '\')" title="新窗口全屏">' + externalIcon + '</button>'
     + '<button type="button" onclick="closeNodeFullscreen()" title="关闭（Esc）">×</button>'
     + '</span>'
