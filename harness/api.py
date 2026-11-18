@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import threading
 import time
 from pathlib import Path
@@ -587,8 +588,48 @@ async def graph_feedback(request: Request):
             items = []
             if path.exists():
                 try:
-                    items = json.loads(path.read_text(encoding="utf-8"))
-                except Exception:
+                    items = json.loads(path.read_bytes().decode("utf-8"))
+                except Exception as exc:
+                    # 496：读/解码/解析失败绝不能当空历史继续写。坏文件先原子
+                    # 改名备份（原文一字不动），再把能救的条目逐条 append 进归档；
+                    # 救不出（半截 JSON / 非 UTF-8）则把原文包成一条 JSON 行归档，
+                    # 保持归档 jsonl「每行一条 JSON」格式不变。全程留痕。
+                    logger.warning("反馈文件读/解码失败，先隔离再重建（历史不丢）: %s (%s)", path, exc)
+                    corrupt_bytes = b""
+                    try:
+                        corrupt_bytes = path.read_bytes()
+                    except Exception:
+                        logger.exception("读取坏反馈文件失败: %s", path)
+                    try:
+                        backup = path.with_name(f"harness_feedback.corrupt-{int(time.time() * 1000)}.json")
+                        path.replace(backup)   # 原子改名，原文保底
+                        logger.warning("坏反馈文件已改名备份到 %s", backup)
+                    except Exception:
+                        logger.exception("备份坏反馈文件失败: %s", path)
+                    rescued = []
+                    try:
+                        maybe = json.loads(corrupt_bytes.decode("utf-8-sig"))
+                        if isinstance(maybe, list):
+                            rescued = maybe
+                    except Exception:
+                        pass   # 半截 JSON / 非 UTF-8：走下面的原文归档
+                    archive_path = DATA_DIR / "harness_feedback.archive.jsonl"
+                    try:
+                        with open(archive_path, "a", encoding="utf-8") as af:
+                            if rescued:
+                                for old in rescued:
+                                    af.write(json.dumps(old, ensure_ascii=False) + "\n")
+                                archived += len(rescued)
+                            else:
+                                af.write(json.dumps({
+                                    "_corrupt": True,
+                                    "ts": round(time.time(), 3),
+                                    "raw": corrupt_bytes.decode("utf-8", errors="replace")[:10000],
+                                }, ensure_ascii=False) + "\n")
+                                archived += 1
+                        logger.warning("坏反馈文件内容已归档 %d 条到 %s", archived, archive_path)
+                    except Exception:
+                        logger.exception("坏反馈文件归档失败: %s", archive_path)
                     items = []
             if not isinstance(items, list):
                 items = []
@@ -600,10 +641,21 @@ async def graph_feedback(request: Request):
                     with open(DATA_DIR / "harness_feedback.archive.jsonl", "a", encoding="utf-8") as af:
                         for old in dropped:
                             af.write(json.dumps(old, ensure_ascii=False) + "\n")
-                    archived = len(dropped)
+                    archived += len(dropped)
                 except Exception:
-                    archived = 0
-            path.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+                    logger.exception("超上限反馈条目归档失败")
+            # 496：临时文件 + os.replace 原子替换，绝不半截覆盖热文件（挖掘脚本
+            # 与下一次请求都只会看到「旧版」或「完整新版」之一）。
+            tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+            try:
+                tmp.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+                os.replace(tmp, path)
+            except Exception:
+                try:
+                    tmp.unlink()
+                except Exception:
+                    pass
+                raise
         # 同步在 Φ 会话事件日志里落一条 feedback 事件（关联 review 事件 id），
         # 会话文件里就能看到「请求→应用→反馈」的完整链条
         phi_sid = str(payload.get("phi_session_id") or "")[:80]

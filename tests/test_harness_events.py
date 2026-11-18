@@ -18,6 +18,7 @@ monkeypatch 到 tmp，绝不写真实日志。
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
@@ -424,6 +425,110 @@ def test_feedback_overflow_archives_instead_of_discarding(client, events_dir, tm
     lines = archive_path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
     assert json.loads(lines[0])["note"] == "第0条"
+
+
+# ---- 8b-1. 坏反馈文件不吞历史（496）：BOM/半截 JSON → 备份＋归档＋留痕 ----
+
+
+def _write_bad_feedback(data_dir, raw: bytes):
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "harness_feedback.json").write_bytes(raw)
+
+
+def test_feedback_corrupt_file_bom_rescues_history(client, tmp_path, monkeypatch, caplog):
+    """BOM 前缀的合法历史文件：救回 3 条进归档，坏文件改名备份，留 warning。"""
+    import logging
+    import src.server.config as server_config
+
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(server_config, "DATA_DIR", data_dir)
+    history = [
+        {"ts": 1.0, "kind": "good", "note": "历史甲"},
+        {"ts": 2.0, "kind": "bad", "note": "历史乙"},
+        {"ts": 3.0, "kind": "good", "note": "历史丙"},
+    ]
+    _write_bad_feedback(data_dir, b"\xef\xbb\xbf" + json.dumps(history, ensure_ascii=False).encode("utf-8"))
+
+    with caplog.at_level(logging.WARNING, logger="harness.api"):
+        response = client.post("/api/harness/graph/feedback", json={
+            "kind": "bad", "note": "新反馈", "phi_session_id": "../evil",
+        })
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "count": 1, "archived": 3}
+
+    # 主文件只剩新条目，重写干净（不再带 BOM）
+    items = json.loads((data_dir / "harness_feedback.json").read_text(encoding="utf-8"))
+    assert [it["note"] for it in items] == ["新反馈"]
+
+    # 救回的 3 条按行进归档，格式不变（每行一条 JSON）
+    lines = (data_dir / "harness_feedback.archive.jsonl").read_text(encoding="utf-8").splitlines()
+    assert [json.loads(line)["note"] for line in lines] == ["历史甲", "历史乙", "历史丙"]
+
+    # 坏文件原文改名备份，字节完全一致（一字未改）
+    backups = list(data_dir.glob("harness_feedback.corrupt-*.json"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == b"\xef\xbb\xbf" + json.dumps(history, ensure_ascii=False).encode("utf-8")
+
+    # logger.warning 留痕
+    assert any("反馈文件读/解码失败" in rec.message for rec in caplog.records)
+
+
+def test_feedback_corrupt_file_truncated_archives_raw(client, tmp_path, monkeypatch, caplog):
+    """半截 JSON 救不出条目：原文包成一条 JSON 进归档，备份＋留痕。"""
+    import logging
+    import src.server.config as server_config
+
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(server_config, "DATA_DIR", data_dir)
+    raw = '[{"note": "半截历史甲"}, {"note": "半截历史乙"'
+    _write_bad_feedback(data_dir, raw.encode("utf-8"))
+
+    with caplog.at_level(logging.WARNING, logger="harness.api"):
+        response = client.post("/api/harness/graph/feedback", json={"kind": "bad", "note": "新反馈"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok" and body["count"] == 1 and body["archived"] == 1
+
+    # 归档仍是一行一条 JSON；原文被完整保留在 raw 字段里
+    lines = (data_dir / "harness_feedback.archive.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record["_corrupt"] is True
+    assert record["raw"] == raw
+
+    assert len(list(data_dir.glob("harness_feedback.corrupt-*.json"))) == 1
+    assert any("反馈文件读/解码失败" in rec.message for rec in caplog.records)
+
+
+def test_feedback_write_is_atomic(client, tmp_path, monkeypatch):
+    """落盘走临时文件 + os.replace，而非直接 write_text 覆盖主文件。"""
+    import src.server.config as server_config
+
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(server_config, "DATA_DIR", data_dir)
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    replaced = []
+    real_replace = api_mod.os.replace
+
+    def _spy_replace(src, dst):
+        replaced.append((Path(src), Path(dst)))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(api_mod.os, "replace", _spy_replace)
+    response = client.post("/api/harness/graph/feedback", json={"kind": "good", "note": "原子落盘"})
+    assert response.status_code == 200
+    assert len(json.loads((data_dir / "harness_feedback.json").read_text(encoding="utf-8"))) == 1
+
+    # 主文件确由同名目录下的临时文件经 os.replace 原子就位，且 tmp 不残留
+    assert len(replaced) == 1
+    src, dst = replaced[0]
+    assert dst == data_dir / "harness_feedback.json"
+    assert src.parent == data_dir and src.name.startswith(".harness_feedback.json.") and src.name.endswith(".tmp")
+    assert not src.exists()
+    assert list(data_dir.glob(".*.tmp")) == []
 
 
 # ---- 8c. SSE 进度队列有界（T108）：进度风暴不堆积，result 永不丢 ----
