@@ -369,6 +369,24 @@ export async function run() {
       return true;
     }]);
 
+    serial.push(['2026-11-18 502 兜底 v2：名单非空＋F5＋配额满也全量清（兜底不看名单；探测改 1MB 同量级）', async () => {
+      seed(2);
+      runCtx('_persistGraphHistory();');
+      storageData[STOCK_HIST_KEYS[0]] = JSON.stringify({ v: 2, e: [], c: 0, t: Date.now() });
+      runCtx('_graphHistorySweepWrite(["' + SID + '"]);'); // 名单非空：小写入成功过、大写入放不下的真实形状
+      sandbox.performance.getEntriesByType = () => [{ type: 'reload' }];
+      const prevSet = sandbox.localStorage.setItem;
+      sandbox.localStorage.setItem = () => { throw new Error('QuotaExceededError'); };
+      let cleared = 0;
+      try {
+        cleared = await runCtx('settleGraphHistoryBatchOnOpen()');
+      } finally { sandbox.localStorage.setItem = prevSet; }
+      if (cleared < 1) throw new Error('名单非空＋F5＋配额满没触发兜底清（v2 口径：兜底不看名单）');
+      if (storageData[STOCK_HIST_KEYS[0]]) throw new Error('兜底没清存量键');
+      if (!storageData[HIST_KEY]) throw new Error('当前画布历史被误清');
+      return true;
+    }]);
+
     serial.push(['面板手动口：清空历史内核只清历史，不动当前图（直接调内核，绕过武装）', async () => {
       seed(3);
       els.graphHistoryList = _mkEl('div');

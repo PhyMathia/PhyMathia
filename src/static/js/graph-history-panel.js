@@ -521,14 +521,15 @@ function _graphHistorySweepClear() {
   try { localStorage.removeItem(GRAPH_HISTORY_SWEEP_KEY); } catch (e) { /* best effort */ }
 }
 
-// 502 兜底用（2026-11-18）：探测 localStorage 此刻还写不写得进。写得进＝退出侧的名单
-// 写入当时也写得进（关机期间存储不会自己变少）＝名单空是真的（强杀/崩溃），维持不清；
-// 写不进＝配额已满，名单多半是退出时写失败丢的（「越满越清不动」自锁）——调用侧据此
-// 绕过名单全量清。探测键特意避开 phymathia_graph_history_ 前缀，不会被历史扫描误伤。
+// 502 兜底用（2026-11-18）：探测 localStorage 还放不放得下「大块写入」。v1 用 1 字节
+// 探测太宽松——存储剩一丝缝隙时 1 字节能过、几百 KB 的缓存写入照样失败弹「空间已满」，
+// 兜底永远不触发（用户实测实锤）。v2 改写 1MB 测试载荷（与真实失败的大写入同量级），
+// 成功即删并返回 true；失败＝配额实际已满，调用侧绕名单全量清。探测键避开
+// phymathia_graph_history_ 前缀，不会被历史扫描误伤。
 function _graphHistoryQuotaProbe() {
   const PROBE_KEY = "phymathia_storage_probe";
   try {
-    localStorage.setItem(PROBE_KEY, "1");
+    localStorage.setItem(PROBE_KEY, "p".repeat(1024 * 1024));
     localStorage.removeItem(PROBE_KEY);
     return true;
   } catch (e) {
@@ -660,8 +661,8 @@ async function settleGraphHistoryOnOpen() {
 // 画布内容／对话／图状态都原样保留。守卫口径：
 //   · F5 刷新（nav=reload）：名单作废，一张不清（刷新不该丢撤销）；
 //   · 强杀/崩溃：不发 beforeunload → 名单不写 → 下次打开名单为空 → 不清；
-//   · 配额满自锁兜底（502，2026-11-18）：名单空且写入探测失败 → 绕过名单全量清
-//     （连 F5 也清，牺牲 F5 守卫已拍板——解锁比守卫重要，清一次下次即恢复）；
+//   · 配额满自锁兜底（502，2026-11-18）：写入探测失败（1MB 放不进）→ 绕过名单全量清
+//     （无视名单有无、连 F5 也清，牺牲 F5 守卫已拍板——解锁比守卫重要，清一次下次即恢复）；
 //   · 只读态：不清且不消费名单（免得查阅态把别人的清理标记吃掉）；
 //   · 当前画布：跳过，留给 settleGraphHistoryOnOpen 做指纹校验的精细结算。
 // 名单消费（2026-11-18 复审修正）：不再无条件先清空。内核 _batchDiscardGraphHistories
@@ -690,13 +691,12 @@ async function settleGraphHistoryBatchOnOpen() {
   const sids = _graphHistorySweepRead();
   const probeOk = _graphHistoryQuotaProbe();
   console.log("[history-sweep] 启动检查：nav=" + (nav || "未知") + "，名单=" + sids.length + " 键，写入探测=" + (probeOk ? "通过" : "失败(配额满)"));
-  // 502 兜底（2026-11-18 拍板）：名单空通常＝上次非正常退出，不清；但配额满时退出侧的
-  // 名单写入本身会失败（catch 吞掉），「越满越清不动」自锁——恰是存储最满、最该清的
-  // 时候清不动。探测写得进＝名单空是真的（强杀/崩溃），维持不清；探测失败＝配额已满，
-  // 绕过名单直接全量清。此路径连 F5 也清（牺牲 F5 守卫已拍板）：清一次即解锁，
-  // 下次刷新恢复正常守卫。
-  const bypassList = !sids.length && !probeOk;
-  if (bypassList) _logStorageTopKeys("配额已满，绕名单全量清（撤销历史），其余大户见下表");
+  // 502 兜底（2026-11-18 拍板，同日 v2 升级）：探测失败＝连 1MB 都放不进＝配额实际已满，
+  // 直接绕过名单全量清（无视名单有无与 F5 守卫——清一次即解锁，下次恢复）。v1 只在名单
+  // 空时兜底，被「1 字节探测太宽松」架空（存储剩一丝缝隙时探测恒通过、兜底恒不触发）；
+  // v2 探测改 1MB 同量级＋兜底不看名单，任何「大写入已放不下」的状态启动即自愈。
+  const bypassList = !probeOk;
+  if (bypassList) _logStorageTopKeys("配额已满（1MB 探测失败），绕名单全量清撤销历史，其余大户见下表");
   if (nav === "reload" && !bypassList) { _graphHistorySweepClear(); return 0; }
   if (!sids.length && !bypassList) return 0; // 名单为空＝上次非正常退出，什么都不清
   const current = _currentSessionId();

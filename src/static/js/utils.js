@@ -198,6 +198,11 @@ function safeLocalStorageSet(key, value) {
   } catch (e) {
     if (Date.now() - _storageWarnedAt > 24 * 3600 * 1000) {
       _storageWarnedAt = Date.now();
+      // 502 排障（2026-11-18）：写失败的瞬间打一张占用大户表进控制台——「空间已满」
+      // toast 只说结论不说元凶，表才有追查线索（graph-history-panel.js 同款诊断口）。
+      if (typeof _logStorageTopKeys === 'function') {
+        _logStorageTopKeys('本地写入失败（键 ' + key + '，' + ((value || '').length / 1024).toFixed(0) + ' KB）');
+      }
       if (typeof showToast === 'function') {
         toastMsg('浏览器本地空间已满：记录已完整保存在电脑存档中，仅本机快速加载暂不可用', TOAST_MS_LONG);
       } else {
