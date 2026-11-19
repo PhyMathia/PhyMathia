@@ -101,6 +101,7 @@ import { run as _graph_branch_workflow } from './frontend_smoke/graph-branch-wor
 import { run as _graph_scope_confirm } from './frontend_smoke/graph-scope-confirm.mjs';
 import { run as _graph_cv_lazy } from './frontend_smoke/graph-cv-lazy.mjs';
 import { run as _graph_reflow_guards } from './frontend_smoke/graph-reflow-guards.mjs';
+import { run as _graph_heavy_degrade } from './frontend_smoke/graph-heavy-degrade.mjs';
 import { run as _generation_resume } from './frontend_smoke/generation-resume.mjs';
 import { run as _harness_health } from './frontend_smoke/harness-health.mjs';
 import { run as _workshop } from './frontend_smoke/workshop.mjs';
@@ -159,6 +160,8 @@ await _graph_branch_workflow();
 _graph_scope_confirm();
 await _graph_cv_lazy();
 await _graph_reflow_guards();
+await _graph_heavy_degrade(); // 509 节点数自动降级（2026-11-19）：纯同步钉桩用例，接 reflow-guards（同为 _applyGraphTransform 域）
+
 _generation_resume(); // 484 生成断点续跑（2026-11-19）：续跑接线静态契约＋清扫暂缓/取消口行为，纯同步
 // Φ 主动体检芯片（2026-10-26）：自带收口线（行为链用例换 fetch/getElementById 桩、
 // 用毕即还原），紧挨 workshop 之前——workshop 也换全局桩，两域整体 await 不交叠。

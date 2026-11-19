@@ -2105,6 +2105,25 @@ function _refreshEdgeGeometry(edgeKeys) {
 // 极易耗尽显存，产生灰白瓦片伪影与卡顿。此时画布挂 .graph-heavy-zoom，由 CSS 关闭重型特效。
 const GRAPH_HEAVY_ZOOM_THRESHOLD = 2.2;
 
+// 节点数降级阈值（509，2026-11-19）：卡片磨砂 backdrop-filter＋box-shadow 在平移每帧重算，
+// 合成代价随节点数线性涨——真机量测（隔离实例＋逐帧改 pan）帧间隔中位数 10 节点 16.6ms、
+// 80 节点 30.6ms（7/43 帧超 33ms＝肉眼高频抖动），全关特效回 19.9ms。达到阈值挂
+// .graph-heavy-nodes，由 CSS 关磨砂＋投影（观感口径同 node-blur-lite 慢机降级，styles.css）。
+// 60＝按实测斜率（约 0.2ms/节点）插值中位数约 27ms，比实测已翻车的 80 留一档余量，
+// 常规中小画布（≤30 节点，插值 ≤22ms）够不着、不误伤。
+const GRAPH_HEAVY_NODES_THRESHOLD = 60;
+
+// heavy-zoom / heavy-nodes 两个降级类的统一落点：pan/zoom 每帧（_applyGraphTransform）与
+// 渲染尾部（_patchGraphStreaming）都调——zoom 只在 pan/zoom 时变，节点数只在渲染时变，
+// 两处都调才不会出现「加了节点不降级 / 删了节点不恢复」的滞后。classList.toggle 带 force
+// 在状态不变时不动 DOM，每帧调用无副作用。
+function _syncGraphHeavyClasses(zoom) {
+  if (typeof graphCanvas === 'undefined' || !graphCanvas) return;
+  const heavyNodes = (graphView.nodes || []).length >= GRAPH_HEAVY_NODES_THRESHOLD;
+  graphCanvas.classList.toggle('graph-heavy-zoom', (zoom || 1) > GRAPH_HEAVY_ZOOM_THRESHOLD);
+  graphCanvas.classList.toggle('graph-heavy-nodes', heavyNodes);
+}
+
 function _applyGraphTransform() {
   if (!graphInner) return;
   const state = _graphState();
@@ -2123,9 +2142,7 @@ function _applyGraphTransform() {
   // 挂在这里＝滚轮/双击/刘海/适应画布自动都有，不用逐个调用点埋同步。
   // 本文件在构建顺序里早于 graph-interact.js，用 typeof 守卫免悬空引用（同 _renderGraphHarnessPreview 惯例）
   if (typeof _syncGraphZoomReadout === 'function') _syncGraphZoomReadout(state.zoom);
-  if (typeof graphCanvas !== 'undefined' && graphCanvas) {
-    graphCanvas.classList.toggle('graph-heavy-zoom', (state.zoom || 1) > GRAPH_HEAVY_ZOOM_THRESHOLD);
-  }
+  _syncGraphHeavyClasses(state.zoom);
   // 预览渲染已归族至 harness-preview.js（T261 拆分）：主包必有该函数；viewer 子集
   // 不带 Φ、预览数组恒空，typeof 守卫免悬空引用（同 graph.js 对可选跨文件函数的惯例）
   if (graphView.previewNodes.length || graphView.previewEdges.length) {
@@ -2281,5 +2298,6 @@ function _patchGraphStreaming(messages, state) {
   _redrawEdges();
   _updateNodeTransforms();
   _observeNodeGeometry(); // 流式补丁会新增/替换卡元素，观察目标重挂（见 _observeNodeGeometry 注释）
+  _syncGraphHeavyClasses(state && state.zoom); // 509：节点数只在渲染时变（增删/导入/恢复），降级类同步刷新
 }
 
