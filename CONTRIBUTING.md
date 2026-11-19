@@ -1,13 +1,15 @@
 # 参与 PhyMathia 开发
 
-这份文档写给要动手改代码的人，只放每个改动都适用的通则。各领域的设计手册
-正在整理中，将在下个版本随仓库发布。
+这份文档写给要动手改代码的人，只放每个改动都适用的通则。更细的逐会话硬规则与
+各领域手册在仓库根的 `AGENTS.md` 与 `docs/` 下（按「提交范围对齐开源版」策略不入库、
+只在本机留存，GitHub 上可能看不到），开发前先读。
 
 ## 硬规则
 
-1. **启动**：`python3 src/main.py -p 5050`（Windows 上若提示找不到命令，改用 `python`）。
-   服务**不带 `--reload`**，改完 `src/main.py` 或 `src/system prompt.md` 要杀掉旧进程重启。
-   冒烟：`curl -s localhost:5050/health`。
+1. **启动**：`python3 src/main.py -p 5050`（本机无 `python` 命令；Windows 上若提示找不到，
+   改用 `py -3`）。服务**不带 `--reload`**，改完 `src/main.py` 或后端 `.py` 要杀掉旧进程重启。
+   提示词是代码内常量（`src/server/prompts.py` 与 `harness/prompts.py`，两份别改混；
+   旧的 `src/system prompt.md` 已退役）。冒烟：`curl -s localhost:5050/health`。
 2. **前端是打包产物**：页面只加载 `/dist/app.js`。改 `src/static/js/*.js` 后
    `npm install && npm run build:js` 再刷新页面（服务端已发 no-cache + ETag，普通刷新即得新 JS，
    硬刷新兜底）；只改查看器子集（`viewer-*.js` 及其 entries）另跑 `npm run build:viewer`。
@@ -20,7 +22,7 @@
    （`msgs_` / `graph_` / `graph_history_` / `harness_history_` + sid）按会话隔离，切会话时别混用。
    前端是原生 JS 顶层脚本，全局函数与 `window.*` 跨模块可调；写共享工具前先看 `utils.js` 里有没有。
 4. **拆通道 / 删入口 / 改发送链的改动，收尾必须真发一次**：在配置了可用模型（mock 上游也行）的状态下，
-   把每条幸存通道都真跑通并逐条记录——工作流首问、节点追问、没看懂、苏格拉底回答、进阶支线、重试。
+   把每条幸存通道都真跑通并逐条记录——完整清单见 `scripts/verify_send_channels.mjs`（当前 ①–⑩）。
    静态检查全绿不等于真机能发，回归沙箱没配模型是走不到发送段的。
 
 ## 验证
@@ -57,8 +59,10 @@ node scripts/frontend_smoke.mjs      # 前端冒烟（需先 npm install）
   与 `src/server/prompts.py` 是两份，别改混。**
 - `src/server/` 后端模块包；`src/static/js/` 前端模块；`src/static/vendor/` 是
   KaTeX / Marked / Mermaid / DOMPurify 的本地副本（零 CDN 依赖，别换成线上引用）。
-- `data/` 运行时 JSON（服务首次启动自动创建：`sessions/`、`knowledge/`、`formulas/`、
-  `kv_store/`、`messages/` 等），已在 `.gitignore` 里。
+- `data/` 运行时数据（服务首次启动自动创建，已在 `.gitignore` 里）：账号化后按
+  `data/users/<账号>/` 分目录存 `sessions.json` / `messages/` / `kv/` / `models.json` /
+  `knowledge.json` / `formulas.json` 等；`data/users/accounts.json` 是账号表，
+  `data/backup/`、`data/usage/`、`data/profiles/` 等是全局共享数据。
 - `scripts/` 构建与测试；`tests/` 后端单测。
 
 ## 常见问题

@@ -395,6 +395,11 @@ def lean_results(results):
             for r in results]
 
 
+def safe_model_for_report(model):
+    """报告 meta 用的模型快照：抹掉真机 apiKey，绝不让它随报告落盘/入库。"""
+    return {**model, 'apiKey': '<REDACTED>' if model.get('apiKey') else ''}
+
+
 def save_baseline(meta, summary, results, path=BASELINE_PATH):
     blob = {'saved_at': time.strftime('%Y-%m-%d %H:%M:%S'), 'meta': meta,
             'summary': summary, 'results': lean_results(results)}
@@ -660,6 +665,12 @@ def selftest():
     sa2._resolve_model()
     ok(sa2.model['model'] == 'mock-1' and sa2.model['baseUrl'] == 'http://127.0.0.1:5065/v1',
        '手动直连模型解析（mock 上游口径）')
+    # 报告 meta 脱敏（T443）：真机 key 只进 payload 发请求，落盘快照必为占位符
+    safe = safe_model_for_report({'provider': 'p', 'model': 'm', 'baseUrl': 'u', 'apiKey': 'sk-real-secret'})
+    ok(safe['apiKey'] == '<REDACTED>' and safe['model'] == 'm' and safe['provider'] == 'p',
+       '报告模型快照脱敏：apiKey 抹成占位符、其余字段保留')
+    ok(safe_model_for_report({'provider': 'p', 'apiKey': ''})['apiKey'] == '',
+       '报告模型快照：空密钥保持空串')
 
     # judge（打桩单测，不联网）：回包解析、输入拼装、缓存命中/不缓存垃圾
     from judge import (JudgeParseError, build_judge_input,  # noqa: E402
@@ -841,7 +852,7 @@ def main():
     meta = {'time': stamp, 'adapter': adapter.name,
             'questions_file': args.questions, 'total': len(items)}
     if args.adapter == 'server':
-        meta.update({'adapter_desc': adapter.describe(), 'model': adapter.model,
+        meta.update({'adapter_desc': adapter.describe(), 'model': safe_model_for_report(adapter.model),
                      'level': args.level,
                      'sent_ok': adapter.sent_ok, 'sent_fail': adapter.sent_fail})
     if judge_client is not None:
