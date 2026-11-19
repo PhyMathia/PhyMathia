@@ -224,7 +224,10 @@ function renderGraphCanvas(streaming) {
     if (typeof _initVizIframes === 'function') _initVizIframes(graphInner);
     _measureNodes();
     if (needsFit) _runLayout(true);
-    else _updateNodeTransforms();
+    else {
+      _updateNodeTransforms();
+      if (typeof _scheduleGraphLayerBands === 'function') _scheduleGraphLayerBands();
+    }
     _redrawEdges();
     // 首帧的边是拿「此刻」的端口矩形画的：屏外卡（T376 content-visibility）此刻只有
     // 占位尺寸，真身要等它进视口才排——把卡几何交给 ResizeObserver 盯着，尺寸一变就
@@ -2162,6 +2165,11 @@ function _startNodeDrag(event, nodeEl) {
   graphView.dragNodeId = node.id;
   graphView.dragWasSelected = isSelected;
   graphView.dragModifier = modifier;
+  graphView.altFree = !!event.altKey;
+  graphView.dragTargetLayer = null;
+  // 列锚点只在起手时算一次：拖动中每帧重算要走一遍 BFS + 排序，而拖动期间
+  // 其它节点都不动，锚点根本不会变（被拖的节点本来就被排除）。
+  graphView.dragLayerAnchors = moveIds.size === 1 ? _graphLayerAnchors(new Set(moveIds)) : null;
   graphView.dragStartPositions = {};
   moveIds.forEach(id => {
     const n = _findGraphNode(id);
@@ -2250,6 +2258,8 @@ function _clearGraphTextSelection() {
 
 function _handlePointerMove(event) {
   if (graphView.pointerId !== event.pointerId) return;
+  // Alt＝临时脱离吸附（Figma 手感）：每帧记一次，rAF 里读；松手保留自由坐标
+  graphView.altFree = !!event.altKey;
   // 高回报率鼠标一次显示帧内会触发多次 pointermove——这里只记录最新坐标，
   // 用 requestAnimationFrame 合成每帧最多一次绘制（否则一次 move 就是
   // 「全节点 transform 写 + 每边多次强制回流 + SVG 整层重建」×N 次）。
@@ -2358,14 +2368,35 @@ function _applyPointerDrag(clientX, clientY) {
     const ids = Object.keys(graphView.dragStartPositions || {});
     const offsetX = dx / (graphView.zoom || 1);
     const offsetY = dy / (graphView.zoom || 1);
+    // 拖动中吸列（Alt 临时脱离）：只对单节点生效——多选要保持相对位置，
+    // 各自吸到不同列会把一组拆散。阈值内横向吸到该列中线，纵向始终跟手。
+    let snapX = 0;
+    let targetLayer = null;
+    if (ids.length === 1 && !graphView.altFree) {
+      const start = graphView.dragStartPositions[ids[0]];
+      if (start) {
+        const anchors = graphView.dragLayerAnchors || [];
+        let best = null;
+        for (const a of anchors) {
+          const dist = Math.abs(a.cx - (start.x + offsetX));
+          if (!best || dist < best.dist) best = { dist, a };
+        }
+        if (best && best.dist <= GRAPH_LAYER_SNAP_X) {
+          snapX = best.a.cx - (start.x + offsetX);
+          targetLayer = best.a.depth;
+        }
+      }
+    }
     for (const id of ids) {
       const n = _findGraphNode(id);
       const start = graphView.dragStartPositions[id];
       if (n && start) {
-        n.x = start.x + offsetX;
+        n.x = start.x + offsetX + snapX;
         n.y = start.y + offsetY;
       }
     }
+    graphView.dragTargetLayer = targetLayer;
+    _highlightGraphLayer(targetLayer);
     _updateNodeTransforms(ids);
     if (!_refreshEdgeGeometry(_edgesTouchingNodeIds(ids))) _redrawEdges();
   } else if (graphView.panning) {
@@ -2502,6 +2533,7 @@ function _endPointerDrag(event) {
       _saveGraphState(state, { layout: true }); // T219：整组/多选拖拽收尾钉位＝布局写（成员归属变化由 _sync 的内层存盘诚实置脏）
       _syncGroupMembersByContainment();
       _savePositions();
+      if (typeof _scheduleGraphLayerBands === 'function') _scheduleGraphLayerBands();
     }
     graphInner?.querySelectorAll('.graph-group.dragging').forEach(el => el.classList.remove('dragging'));
     graphView.dragGroupId = null;
@@ -2542,6 +2574,22 @@ function _endPointerDrag(event) {
       }
       _pushGraphUndo(false, { layout: true });
       const state = _graphState();
+      // 落点归层（Alt 松手＝自由坐标，不归层）：单节点拖动时 x 对齐列中线、
+      // y 对齐行槽，并把层归属写进 state.layerOf——自动整理以用户落点为准，
+      // 不会下一次整理又把节点拉回自动推导的原层。
+      if (!graphView.altFree && !graphView.dragWasSelected) {
+        const dragged = Object.keys(graphView.dragStartPositions || {});
+        if (dragged.length === 1 && node) {
+          const snap = _snapGraphNodeToLayer(node, new Set(dragged));
+          if (snap) {
+            node.x = snap.x;
+            node.y = snap.y;
+            state.layerOf = state.layerOf || {};
+            state.layerOf[node.id] = snap.depth;
+            _updateNodeTransforms([node.id]);
+          }
+        }
+      }
       state.positions = state.positions || {};
       state.pinned = state.pinned || {};
       for (const id of Object.keys(graphView.dragStartPositions || {})) {
@@ -2556,6 +2604,7 @@ function _endPointerDrag(event) {
       _saveGraphState(state, { layout: true }); // T219：整组/多选拖拽收尾钉位＝布局写（成员归属变化由 _sync 的内层存盘诚实置脏）
       _syncGroupMembersByContainment();
       _savePositions();
+      if (typeof _scheduleGraphLayerBands === 'function') _scheduleGraphLayerBands();
     }
     let droppedIntoGroup = false;
     const dropGroupEl = event.target && typeof event.target.closest === 'function'
@@ -2576,6 +2625,10 @@ function _endPointerDrag(event) {
       if (hitGroup) droppedIntoGroup = _addNodeIdsToGroup(hitGroup.id, draggedIds);
     }
     graphInner?.querySelectorAll('.graph-node.dragging').forEach(el => el.classList.remove('dragging'));
+    _highlightGraphLayer(null);
+    graphView.dragTargetLayer = null;
+    graphView.dragLayerAnchors = null;
+    graphView.altFree = false;
     graphView.dragNodeId = null;
     graphView.dragStartPositions = {};
     graphView.dragWasSelected = false;

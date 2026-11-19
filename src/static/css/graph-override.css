@@ -1960,6 +1960,78 @@ html[data-theme="light"][data-wallpaper="night"] {
   z-index: 40 !important;
 }
 
+/* ---------- 14.5 层带（2026-11-19）----------
+   层的视觉只有「一列极淡的提亮」：无边框、无标题条、无圆角、无文字。
+   两条轴向的羽化各管一边——横向靠 background 渐变淡出，纵向靠 mask 淡出，
+   四边都没有能指认的边界（用户口径：视觉上不可见边框）。 */
+.graph-layers {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.graph-layer-band {
+  position: absolute;
+  pointer-events: none;
+  background: linear-gradient(90deg,
+    rgba(186, 212, 255, 0) 0%,
+    rgba(186, 212, 255, 0.095) 42%,
+    rgba(186, 212, 255, 0.095) 58%,
+    rgba(186, 212, 255, 0) 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 20%, #000 80%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 20%, #000 80%, transparent 100%);
+  /* 平时完全隐藏（2026-11-19 用户拍板）：层只作为拖动时的吸附提示，
+     静态画面上不留任何分组光晕，避免和手动分组框抢视觉。 */
+  opacity: 0;
+  transition: background 0.18s ease, opacity 0.12s ease;
+}
+
+.graph-layer-band:nth-child(even) {
+  background: linear-gradient(90deg,
+    rgba(186, 212, 255, 0) 0%,
+    rgba(186, 212, 255, 0.14) 42%,
+    rgba(186, 212, 255, 0.14) 58%,
+    rgba(186, 212, 255, 0) 100%);
+}
+
+[data-theme="light"] .graph-layer-band {
+  background: linear-gradient(90deg,
+    rgba(30, 64, 120, 0) 0%,
+    rgba(30, 64, 120, 0.05) 42%,
+    rgba(30, 64, 120, 0.05) 58%,
+    rgba(30, 64, 120, 0) 100%);
+}
+
+[data-theme="light"] .graph-layer-band:nth-child(even) {
+  background: linear-gradient(90deg,
+    rgba(30, 64, 120, 0) 0%,
+    rgba(30, 64, 120, 0.085) 42%,
+    rgba(30, 64, 120, 0.085) 58%,
+    rgba(30, 64, 120, 0) 100%);
+}
+
+/* 拖动中目标层：只在吸附成立时显形（不提亮别的层，也不画任何描边） */
+.graph-layer-band.is-target {
+  opacity: 1;
+  background: linear-gradient(90deg,
+    rgba(186, 212, 255, 0) 0%,
+    rgba(186, 212, 255, 0.22) 42%,
+    rgba(186, 212, 255, 0.22) 58%,
+    rgba(186, 212, 255, 0) 100%);
+}
+
+[data-theme="light"] .graph-layer-band.is-target {
+  background: linear-gradient(90deg,
+    rgba(30, 64, 120, 0) 0%,
+    rgba(30, 64, 120, 0.14) 42%,
+    rgba(30, 64, 120, 0.14) 58%,
+    rgba(30, 64, 120, 0) 100%);
+}
+
 /* ---------- 15. ComfyUI 风格分组 ---------- */
 .graph-node {
   z-index: 1;

@@ -1,6 +1,10 @@
 // ====== 力学与树状自动布局（2026-10-10 自 graph-render.js 拆出，T261 纯搬家）=====
 // 含 _savePositions：graph-interact.js 拖拽收尾三处裸调用；autoArrangeGraph 由工具栏/
 // 右键菜单触发（window 导出在 graph-workflow.js 尾部块，构建序本文件在其之前）。
+// 拖动吸附的尺度（世界坐标，缩放前）：列中线 180px 内吸过去；落点纵向对齐 40px 行槽
+const GRAPH_LAYER_SNAP_X = 180;
+const GRAPH_LAYER_ROW_STEP = 40;
+
 function _savePositions() {
   _syncGroupMembersByContainment();
   const state = _graphState();
@@ -138,6 +142,7 @@ function _runLayout(needsFit) {
   _fitAllGroupsToMembers();
   _redrawEdges();
   _savePositions();
+  _scheduleGraphLayerBands();
   if (needsFit) fitGraph();
 }
 
@@ -153,7 +158,7 @@ function _layoutNodeSize(node) {
 //   · BFS 深度 = 根到该节点的边数 → 同一深度同一横坐标（x = depth*colGap）；
 //   · 纵向用 tidy 中序排名 → 每个分支（如“物理视角 → 追问 → 追问回答 → 追问模块”）
 //     占据一条连续纵带，物理的追问与数学的追问各自的走廊互不混杂，并随深度逐级右移。
-function _arrangeTreeLayout(nodes, edges, colGap, rowUnit) {
+function _arrangeTreeLayout(nodes, edges, colGap, rowUnit, overrides) {
   if (!nodes.length) return;
   const byId = {};
   nodes.forEach(n => { byId[n.id] = n; });
@@ -192,6 +197,16 @@ function _arrangeTreeLayout(nodes, edges, colGap, rowUnit) {
   }
   let maxDepth = 0;
   nodes.forEach(n => { if (depth[n.id] != null && depth[n.id] > maxDepth) maxDepth = depth[n.id]; });
+
+  // 用户手动拖进的层优先：整理不得把人拖回去（否则「吸附到最近层」等于白做）
+  const ov = overrides || {};
+  nodes.forEach(n => {
+    if (ov[n.id] == null) return;
+    const wanted = Number(ov[n.id]);
+    if (!Number.isFinite(wanted)) return;
+    depth[n.id] = Math.max(0, Math.round(wanted));
+    if (depth[n.id] > maxDepth) maxDepth = depth[n.id];
+  });
 
   // tidy 中序排名：叶节点顺序编号，内部节点取子节点排名中点 → 纵向坐标
   const rank = {};
@@ -366,6 +381,176 @@ function _resolveLayoutRectOverlaps(blocks, maxPasses) {
   }
 }
 
+// ====== 层带（2026-11-19）======
+// 层＝按连线父子关系推导的对话代数（即横坐标列），纯结构、不带任何语义标签：
+// 每层是一条极淡的竖向色带，层与层之间不画框、不画线，只靠明暗交替与留白表达层次。
+// 这里只负责「读位置画背景」，不改任何节点坐标；吸附与整理在各自的链路里做。
+// 层号覆盖：用户手动拖进某一层后，以用户的意图为准（否则下次整理又把人拉回原层）。
+// 存在 state.layerOf[nodeId]＝层号；越界值夹到 [0, maxDepth+1]，免出孤儿列。
+function _graphLayerOverrides() {
+  const state = _graphState();
+  return (state && state.layerOf) || {};
+}
+
+function _graphLayerIndexMap(nodes, edges, overrides) {
+  const map = {};
+  if (!nodes || !nodes.length) return map;
+  const byId = {};
+  const children = {};
+  const parent = {};
+  nodes.forEach(n => { byId[n.id] = n; children[n.id] = []; });
+  (edges || []).forEach(e => {
+    if (e.draft || e.link) return; // 草稿与联系横连不参与分层（同 _arrangeTreeLayout）
+    const from = byId[e.from];
+    const to = byId[e.to];
+    if (!from || !to) return;
+    if (parent[to.id] == null) parent[to.id] = from.id; // 每个节点只认第一条入边，保证无环
+  });
+  nodes.forEach(n => { if (parent[n.id] != null) children[parent[n.id]].push(n.id); });
+
+  const parentless = nodes.filter(n => parent[n.id] == null);
+  let roots = parentless.filter(n => n.isRoot);
+  if (!roots.length) roots = parentless.filter(n => n.kind === 'user');
+  if (!roots.length) roots = parentless.slice();
+
+  const depth = {};
+  const queue = [];
+  roots.forEach(r => { depth[r.id] = 0; queue.push(r.id); });
+  while (queue.length) {
+    const id = queue.shift();
+    (children[id] || []).forEach(cid => {
+      if (depth[cid] == null) { depth[cid] = depth[id] + 1; queue.push(cid); }
+    });
+  }
+  let maxDepth = 0;
+  nodes.forEach(n => { if (depth[n.id] != null && depth[n.id] > maxDepth) maxDepth = depth[n.id]; });
+  // 游离节点（无父边且非主根）与整理口径一致：落到最右一层
+  nodes.forEach(n => { map[n.id] = depth[n.id] != null ? depth[n.id] : maxDepth + 1; });
+
+  const ov = overrides || {};
+  Object.keys(ov).forEach(id => {
+    if (map[id] == null) return; // 已删除/不属于本图的节点，忽略残留
+    const wanted = Number(ov[id]);
+    if (!Number.isFinite(wanted)) return;
+    map[id] = Math.max(0, Math.min(maxDepth + 1, Math.round(wanted)));
+  });
+  return map;
+}
+
+// 层锚点：每层当前的「列中心」。取该层成员 x 的中位数（抗离群），
+// 拖动中的节点自己要被排除，否则锚点会跟着指针跑。
+function _graphLayerAnchors(excludeIds) {
+  const nodes = (graphView.nodes || []).filter(n => n.kind !== 'draft');
+  if (!nodes.length) return [];
+  const layerOf = _graphLayerIndexMap(nodes, graphView.edges || [], _graphLayerOverrides());
+  const buckets = {};
+  nodes.forEach(n => {
+    if (excludeIds && excludeIds.has(n.id)) return;
+    const d = layerOf[n.id];
+    (buckets[d] = buckets[d] || []).push(n.x);
+  });
+  return Object.keys(buckets).map(Number).sort((a, b) => a - b).map(depth => {
+    const xs = buckets[depth].slice().sort((a, b) => a - b);
+    const mid = xs.length >> 1;
+    const cx = xs.length % 2 ? xs[mid] : (xs[mid - 1] + xs[mid]) / 2;
+    return { depth, cx };
+  });
+}
+
+// 拖动中的目标层高亮：只给该层加一级提亮，不画线、不加框
+function _highlightGraphLayer(depth) {
+  const wrap = graphInner && graphInner.querySelector('.graph-layers');
+  if (!wrap) return;
+  wrap.querySelectorAll('.graph-layer-band').forEach(el => {
+    const on = depth != null && Number(el.dataset.layer) === Number(depth);
+    if (el.classList.contains('is-target') !== on) el.classList.toggle('is-target', on);
+  });
+}
+
+// 落点归层：找最近的一列中线，返回对齐后的坐标与层号；
+// 超出阈值（或图里根本没有别的层）返回 null —— 视为落在空白，不强行安排。
+function _snapGraphNodeToLayer(node, excludeIds) {
+  if (!node) return null;
+  const anchors = _graphLayerAnchors(excludeIds || new Set([node.id]));
+  let best = null;
+  for (const a of anchors) {
+    const dist = Math.abs(a.cx - node.x);
+    if (!best || dist < best.dist) best = { dist, a };
+  }
+  if (!best || best.dist > GRAPH_LAYER_SNAP_X) return null;
+  return {
+    x: best.a.cx,
+    y: Math.round(node.y / GRAPH_LAYER_ROW_STEP) * GRAPH_LAYER_ROW_STEP,
+    depth: best.a.depth,
+  };
+}
+
+// 层带几何：横向取该层成员的实际包围盒（单节点层也保证有像样的宽度），
+// 纵向统一到全图上下界 —— 所有层等高，看起来才像「一层一层」而不是一列列小方块。
+function _graphLayerBands() {
+  const nodes = (graphView.nodes || []).filter(n => n.kind !== 'draft');
+  if (!nodes.length) return [];
+  const layerOf = _graphLayerIndexMap(nodes, graphView.edges || [], _graphLayerOverrides());
+  const padX = 56;
+  const padY = 96;
+  const groups = {};
+  nodes.forEach(n => {
+    const d = layerOf[n.id];
+    const s = _layoutNodeSize(n);
+    const g = groups[d] || (groups[d] = { depth: d, minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
+    g.minX = Math.min(g.minX, n.x - s.w / 2);
+    g.maxX = Math.max(g.maxX, n.x + s.w / 2);
+    g.minY = Math.min(g.minY, n.y - s.h / 2);
+    g.maxY = Math.max(g.maxY, n.y + s.h / 2);
+  });
+  let top = Infinity;
+  let bottom = -Infinity;
+  Object.keys(groups).forEach(k => {
+    top = Math.min(top, groups[k].minY);
+    bottom = Math.max(bottom, groups[k].maxY);
+  });
+  return Object.keys(groups)
+    .map(k => groups[k])
+    .sort((a, b) => a.depth - b.depth)
+    .map(g => {
+      const cx = (g.minX + g.maxX) / 2;
+      const width = Math.max(320, g.maxX - g.minX + padX * 2);
+      return {
+        depth: g.depth,
+        left: Math.round(cx - width / 2),
+        top: Math.round(top - padY),
+        width: Math.round(width),
+        height: Math.round((bottom - top) + padY * 2),
+      };
+    });
+}
+
+function _renderGraphLayerBands() {
+  if (!graphInner) return;
+  let wrap = graphInner.querySelector('.graph-layers');
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.className = 'graph-layers';
+    wrap.setAttribute('aria-hidden', 'true');
+    // 必须是最底层：层带在分组框、连线、节点之下
+    graphInner.insertBefore(wrap, graphInner.firstChild);
+  }
+  wrap.innerHTML = _graphLayerBands().map(b =>
+    '<div class="graph-layer-band" data-layer="' + b.depth + '" style="left:' + b.left + 'px;top:' + b.top
+    + 'px;width:' + b.width + 'px;height:' + b.height + 'px;"></div>'
+  ).join('');
+}
+
+// 拖拽/整理会在同一帧里连续改坐标：rAF 合并成一次重建，别每次调用都重排 DOM
+let _graphLayerBandsRaf = 0;
+function _scheduleGraphLayerBands() {
+  if (_graphLayerBandsRaf) return;
+  _graphLayerBandsRaf = requestAnimationFrame(() => {
+    _graphLayerBandsRaf = 0;
+    _renderGraphLayerBands();
+  });
+}
+
 function autoArrangeGraph(preservePinned) {
   if (!graphView.nodes.length) return;
   _pushGraphUndo(false, { layout: true });
@@ -386,7 +571,8 @@ function autoArrangeGraph(preservePinned) {
   const usableIds = new Set(usable.map(n => n.id));
 
   // 1) 树状层级排布：层级=连线父子深度，追问逐级右移成分支走廊
-  _arrangeTreeLayout(usable, graphView.edges, COL_GAP, ROW_STEP);
+  //    用户手动拖进别的层的节点按 state.layerOf 落位（层归属优先于自动推导）
+  _arrangeTreeLayout(usable, graphView.edges, COL_GAP, ROW_STEP, _graphLayerOverrides());
 
   // 2) 自由节点 + 分组块 统一矩形碰撞，避免组/大节点/相邻列互相压叠
   const freeNodes = usable.filter(n => !groupOf[n.id]);
@@ -420,5 +606,6 @@ function autoArrangeGraph(preservePinned) {
   if (typeof window.flushGraphStateServerSave === 'function') window.flushGraphStateServerSave();
   _updateNodeTransforms();
   _redrawEdges();
+  _scheduleGraphLayerBands();
   fitGraph();
 }
