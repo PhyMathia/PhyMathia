@@ -348,6 +348,35 @@ export async function run() {
     return true;
   });
 
+  check('节点工坊：手动调对话框回车发送（Shift+Enter 换行、组字回车不发）', () => {
+    const src = fs.readFileSync('src/static/js/graph-workshop.js', 'utf8');
+    if (!src.includes('onkeydown="rwChatKey(event)"')) throw new Error('rwChatInput 没挂回车发送');
+    const out = JSON.parse(vm.runInContext(`
+      (() => {
+        const prev = rwAsk;
+        let calls = 0;
+        rwAsk = function () { calls += 1; };
+        const ev = (extra) => Object.assign({
+          key: 'Enter', shiftKey: false, isComposing: false, keyCode: 13, prevented: 0,
+          preventDefault() { this.prevented++; },
+        }, extra);
+        const enter = ev({});
+        rwChatKey(enter);
+        const shift = ev({ shiftKey: true });
+        rwChatKey(shift);
+        const ime = ev({ isComposing: true });
+        rwChatKey(ime);
+        const ime229 = ev({ keyCode: 229 });
+        rwChatKey(ime229);
+        rwAsk = prev;
+        return JSON.stringify({ calls, prevented: [enter.prevented, shift.prevented, ime.prevented, ime229.prevented] });
+      })()
+    `, sandbox));
+    if (out.calls !== 1) throw new Error('只有无修饰 Enter 该发送，实际发送次数：' + out.calls);
+    if (out.prevented.join(',') !== '1,0,0,0') throw new Error('Enter 应 preventDefault，Shift/组字放行：' + JSON.stringify(out.prevented));
+    return true;
+  });
+
   // ---- 串行段：补丁往返 → 撤回 → 入册（同一份草稿状态，必须按序）----
   const originalFetch = sandbox.fetch;
   const originalModel = sandbox.getActiveModelForRole;

@@ -817,7 +817,7 @@
         + _escapeHtml(candidate.label) + '</button>'
         + (candidate.hint ? '<span class="graph-harness-clarify-hint">' + _escapeHtml(candidate.hint) + '</span>' : '')
         + '</div>').join('')
-      + '<div class="graph-harness-clarify-input"><input id="graphHarnessClarifyInput" placeholder="输入节点名称或ID">'
+      + '<div class="graph-harness-clarify-input"><input id="graphHarnessClarifyInput" placeholder="输入节点名称或ID" onkeydown="harnessClarifyInputKey(event)">'
       + '<button type="button" onclick="confirmHarnessClarifyInput()">确认</button></div>'
       + '<div class="graph-harness-clarify-cancel-row"><button type="button" class="graph-harness-clarify-cancel" onclick="cancelHarnessClarify()">取消</button></div>'
       + '</div>'
@@ -840,6 +840,15 @@
     if (!pending) return;
     harnessPendingClarify = null;
     runGraphHarnessWithFocus(pending.phase, [nodeId], pending.instruction);
+  }
+
+  // 澄清目标节点输入框回车＝确认（2026-11-18）：与旁边「确认」按钮同动作。
+  // 输入法组字期回车放行（isComposing／keyCode 229），别把选候选词当成确认。
+  function harnessClarifyInputKey(event) {
+    if (!event || event.key !== 'Enter') return;
+    if (event.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
+    confirmHarnessClarifyInput();
   }
 
   function confirmHarnessClarifyInput() {

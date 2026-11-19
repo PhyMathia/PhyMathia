@@ -24,6 +24,10 @@ check('harness：第一档七件套 T86–T92（澄清不抹历史/流式重置/
   }
   if (!rsrc.includes('graph-harness-message-clarify')) throw new Error('澄清追加气泡缺失');
   if (!rsrc.includes('cancelHarnessClarify')) throw new Error('澄清缺「取消」出口');
+  // 2026-11-18：澄清目标输入框回车＝确认（旁边「确认」按钮同动作）；组字期回车放行
+  if (!rsrc.includes('onkeydown="harnessClarifyInputKey(event)"')) throw new Error('澄清输入框没挂回车确认');
+  if (!rsrc.includes('function harnessClarifyInputKey')) throw new Error('澄清回车确认处理器缺失');
+  if (!asrc.includes('window.harnessClarifyInputKey = harnessClarifyInputKey')) throw new Error('harnessClarifyInputKey 未导出到 window');
   // T87：重试轮次开始时流式预览必须重置（后端 status 带 attempt，前端 attempt>0 清空）
   // T93：多步循环每步也会重发 stage='model'（带 step），同一处重置条件扩成 attempt||step
   if (!pysrc.includes('"attempt": attempt')) throw new Error('review.py 轮次 status 缺 attempt 字段');

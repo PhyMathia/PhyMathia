@@ -922,6 +922,7 @@ window.undoLastHarnessEdit = undoLastHarnessEdit;
   window.runGraphHarnessWithFocus = runGraphHarnessWithFocus;
   window.chooseHarnessClarifyNode = chooseHarnessClarifyNode;
   window.confirmHarnessClarifyInput = confirmHarnessClarifyInput;
+  window.harnessClarifyInputKey = harnessClarifyInputKey;
   window.acceptAiEvalNode = acceptAiEvalNode;
   window.ignoreAiEvalNode = ignoreAiEvalNode;
   window.keepHarnessSuggestion = keepHarnessSuggestion;

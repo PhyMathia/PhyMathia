@@ -26,6 +26,9 @@ const entries = [
   'send-queue.js',
   'tasks.js',
   'render.js',
+  // 进度胶囊的「工作中」粒子图标（2026-11-18）：105 点在球面 ↔ Φ 之间 morph 的 SVG 小图标，
+  // 自带 DOMContentLoaded 初始化＋观察胶囊 .active，加载期零依赖；紧跟 chat.js（胶囊行为都在那）。
+  'particle-glyph.js',
   'chat.js',
   'chat-features.js',
   'chat-branch.js',

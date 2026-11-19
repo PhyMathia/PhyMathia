@@ -1238,7 +1238,7 @@ function graphOpenRegenerate(nodeId) {
     : '哪里不满意，或想加点什么？可留空。例如：第三步跳步了 / 太啰嗦 / 换个比喻';
   main.insertAdjacentHTML('beforeend',
     '<div class="graph-regenerate-panel">'
-    + '<textarea class="graph-regenerate-input" rows="3" placeholder="' + placeholder + '"></textarea>'
+    + '<textarea class="graph-regenerate-input" rows="3" placeholder="' + placeholder + '" onkeydown="return regenerateInputKeydown(event, \'' + nodeId + '\')"></textarea>'
     + warnHtml
     + '<div class="graph-regenerate-actions">'
     + '<button class="graph-draft-btn" onclick="closeRegeneratePanel(\'' + nodeId + '\')">取消</button>'
@@ -1454,6 +1454,15 @@ async function _applyWorkflowNodeRegenerate(nodeId, text) {
     if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
     if (typeof renderGraphCanvas === 'function') renderGraphCanvas();
   }
+}
+
+// 重生成面板输入框回车发送（2026-11-18）：口径同草稿追问框——Enter 直接重生成、
+// Shift+Enter 换行；中文输入法组字期的回车（isComposing／keyCode 229）是选候选词，放行。
+function regenerateInputKeydown(event, nodeId) {
+  if (!event || event.key !== 'Enter' || event.shiftKey) return;
+  if (event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  submitRegenerateNode(nodeId);
 }
 
 async function submitRegenerateNode(nodeId) {

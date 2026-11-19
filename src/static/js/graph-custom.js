@@ -1121,6 +1121,8 @@ html[data-theme="dark"] .cp-theme .cp-i-moon{display:none;}
 .cp-body figure{margin:1.2em 0;}
 .cp-body figcaption{margin-top:.4em;font-size:.86em;color:var(--cp-mute);text-align:center;}
 .cp-body svg{max-width:100%;height:auto;}
+/* KaTeX 根号/分式线走 <svg>（height:inherit），通用 svg 兜底会让它塌陷成 3（2026-11-18） */
+.cp-body .katex svg{max-width:none;height:inherit;}
 .cp-body .katex{color:inherit;}
 /* 长公式横向滚动而不是把整页撑宽（display 公式在窄屏几乎必然溢出） */
 .cp-body .katex-display{margin:1.15em 0;padding:2px 0;overflow-x:auto;overflow-y:hidden;}

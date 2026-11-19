@@ -342,7 +342,7 @@ function _rwEnsureShell() {
     + '<div class="rw-pane-head">对话</div>'
     + '<div class="rw-chat-log" id="rwChatLog"></div>'
     + '<div class="rw-chat-input">'
-    + '<textarea id="rwChatInput" rows="2" placeholder="想要一个什么节点？说一句就行"></textarea>'
+    + '<textarea id="rwChatInput" rows="2" placeholder="想要一个什么节点？说一句就行" onkeydown="rwChatKey(event)"></textarea>'
     + '<button type="button" class="rw-btn rw-btn-primary" id="rwAskBtn" onclick="rwAsk()">发送</button>'
     + '</div>'
     + '</aside>'
@@ -1250,6 +1250,15 @@ function _rwShouldDraft() {
   if (recipeWorkshop.wishDraft) return true;
   const recipe = _rwCurrentRecipe();
   return !String(recipe.name || '').trim() && !String((recipe.generate || {}).prompt || '').trim();
+}
+
+// 手动调右栏对话框回车发送（2026-11-18）：与一句话档、画布草稿同口径——Enter 直发、
+// Shift+Enter 换行；输入法组字期回车放行，别把选候选词当发送。
+function rwChatKey(event) {
+  if (!event || event.key !== 'Enter' || event.shiftKey) return;
+  if (event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  rwAsk();
 }
 
 async function rwAsk() {

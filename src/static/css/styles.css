@@ -3900,6 +3900,29 @@
     @media (prefers-reduced-motion: reduce) {
       .progress-status.active .status-dot { animation: none; }
     }
+    /* 进行中的信号位：ZCode「工作中」粒子图标（2026-11-18，105 点在球面 ↔ 本应用的 Φ 之间
+       morph 同时自转，实现见 js/particle-glyph.js；字形按用户拍板换成 Φ，不用 ZCode 的 Z）。与上面那颗 6px 圆点二选一——
+       .active 时点阵接管，待命/终态仍用圆点；尺寸 20px（viewBox 同为 20、球半径 8.5），
+       负边距只为补回圆点那点占位，胶囊高度一点不变。颜色吃 currentColor → 主题
+       accent 自动跟随，深浅两套都不用另写。 */
+    .progress-status .status-glyph {
+      display: none;
+      flex: 0 0 auto;
+      width: 20px;
+      height: 20px;
+      margin: -2px -4px -2px -3px;
+      align-items: center;
+      justify-content: center;
+      color: var(--accent);
+    }
+    .progress-status .status-glyph svg {
+      width: 20px;
+      height: 20px;
+      display: block;
+      overflow: visible;
+    }
+    .progress-status.active .status-glyph { display: flex; }
+    .progress-status.active .status-dot { display: none; }
     /* 状态文字升一级：主文字色 + 中等字重，让它读作胶囊的标题而不是附注。 */
     .progress-status .status-text {
       flex: 0 1 auto;
