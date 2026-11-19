@@ -3963,8 +3963,14 @@ html[data-theme="light"] .graph-node-fs,
   filter: brightness(1.1);
 }
 
-
-
+/* 加粗钮的字形（2026-11-17 用户拍板，T507 并回）：按钮不写中文，就是一枚粗衬线 B——所见即
+   「加粗」本身；语义走 aria-label/title。不挂 data-icon，窄屏图标化不会叠出双 B。 */
+.node-fs-btn-b {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 1;
+}
 
 /* 追问输入行：引文 chip 可删（×），输入框留空用默认问句 */
 .node-fs-quote-row {

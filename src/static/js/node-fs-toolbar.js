@@ -218,6 +218,10 @@ function _nodeFsBuildExcerpt(text) {
 // 原文里散布着 `**`、<formula>、链接语法，选中文字与原文并不同形。
 // 做法：两侧同管归一（去 * ` ~、标签与 <formula>/\( \) 折成 $、空白压单空格）只用于
 // 比对，插入下标永远取自原串的 map。定位不到就如实拒绝，绝不「看着变粗、重开就没了」。
+// 取消加粗（T507，2026-11-17 用户报「已有加粗去不掉」）：选段整体落在一个粗体元素里就先试拆
+// ——就近找成对的 **/__/<strong> 标签，找到就整段拆掉（选段只盖住粗体的一部分时也拆
+// 整段：加粗是成段的，取消也整段取消）；找不到成对标记就如实拒绝，绝不往粗体里再套
+// 一层 **。按钮同步拍板：不写中文，一枚粗衬线 B（本页浮条与预览页同款）。
 
 const NODE_FS_BOLD_CTX = 12;       // 消歧上下文：去空白后正/后各取 12 字
 const NODE_FS_BOLD_HITS_MAX = 40;  // 同一段文字出现太多次就不必再挑了（取最佳分）
@@ -317,6 +321,65 @@ function _nodeFsBoldBlockedReason(src, span) {
   return '';
 }
 
+// 选段是否整体落在一个粗体元素（<strong>/<b>）里：是则这次点击是「取消加粗」。
+// 两端必须在同一个元素里——跨出粗体边界的选区不算（那归「挨着已有格式」的拒绝口径管）
+function _nodeFsBoldDomStrong(range) {
+  try {
+    const sc = range.startContainer;
+    const startEl = sc && sc.nodeType === 1 ? sc : (sc && sc.parentElement);
+    const strong = startEl && startEl.closest ? startEl.closest('strong, b') : null;
+    if (!strong) return null;
+    const ec = range.endContainer;
+    const endEl = ec && ec.nodeType === 1 ? ec : (ec && ec.parentElement);
+    if (!endEl || !strong.contains(endEl)) return null;
+    return strong;
+  } catch (e) { return null; }
+}
+
+// 选段外层若包着成对的粗体标记就去掉，返回去掉后的新原文；拆不到（没有/配不上对）
+// 返回 null。三种原文形态都认：**…**（***…*** 只剥粗那一层、斜体保留）、__…__（只认
+// 整段紧贴）、<strong>/<b> 直写标签（AI 偶尔不给 ** 直接给标签）。
+// ** 不裸配：就近取选段前最近的开 ** 与后最近的闭 **，但开口必须顶着行首/空白/另一个
+// *（否则多半是隔壁一句的闭符，如「**甲** *乙*」里选乙），再拿粗体元素的可见文字跟
+// 标记内原文对形——「**甲** x __重点__ y **乙**」这种隔山错配在这里拦下。宁可拒绝不拆错。
+function _nodeFsBoldUnmark(src, span, boldText) {
+  const s = String(src || '');
+  const want = String(boldText || '').replace(/\s+/g, '');
+  const cut = (a, b, c, d) => s.slice(0, a) + s.slice(b, c) + s.slice(d); // 掐头去尾留内容
+  // __…__：下划线族只认紧贴两侧的整段（半截选中的就近配对误伤面大，不认）
+  if (span.start >= 2 && s.slice(span.start - 2, span.start) === '__'
+    && s.slice(span.end, span.end + 2) === '__') {
+    return cut(span.start - 2, span.start, span.end, span.end + 2);
+  }
+  const po = s.lastIndexOf('**', span.start);
+  if (po >= 0 && /\S/.test(s.charAt(po + 2))
+    && (po === 0 || /\s/.test(s.charAt(po - 1)) || s.charAt(po - 1) === '*')) {
+    const pc = s.indexOf('**', span.end);
+    if (pc >= po + 3 && /\S/.test(s.charAt(pc - 1))
+      && (!want || _nodeFsBoldScan(s.slice(po + 2, pc)).text.replace(/\s+/g, '') === want)) {
+      return cut(po, po + 2, pc, pc + 2);
+    }
+  }
+  const openM = /<(strong|b)>$/i.exec(s.slice(Math.max(0, span.start - 8), span.start));
+  const closeM = /^<\/(strong|b)\s*>/i.exec(s.slice(span.end, span.end + 10));
+  if (openM && closeM && openM[1].toLowerCase() === closeM[1].toLowerCase()) {
+    return cut(span.start - openM[0].length, span.start, span.end, span.end + closeM[0].length);
+  }
+  return null;
+}
+
+// 拆 <strong>/<b>：子节点放回原位再合并相邻文本节点——显示层就地跟上原文，不用重渲染
+function _nodeFsBoldUnwrapEl(el) {
+  try {
+    const parent = el.parentNode;
+    if (!parent) return false;
+    while (el.firstChild) parent.insertBefore(el.firstChild, el);
+    parent.removeChild(el);
+    if (parent.normalize) parent.normalize();
+    return true;
+  } catch (e) { return false; }
+}
+
 // 忙态闸（2026-11-18）：节点正在生成时正文还在长——此刻写覆盖/自定义内容会把
 // 流式尾巴永久遮蔽（读回自检读的是刚写的覆盖、恒过），还会落盘。渲染态编辑
 // 共用这条写回链，同闸。口径同画布置灰（graph-render.js regenBusy）：自身 busy＋重生成名单
@@ -369,8 +432,11 @@ function _nodeFsBoldAvailable(node) {
 // 写回 + 自检：写完立刻按全屏同一条取文口径再读一次，读回不是新文本就回滚——
 // 这类节点（blank 之类正文由别处生成）宁可报「改不了」，也不能让页面上留着假的粗体。
 // opts（2026-11-18）：渲染态编辑共用这条链路，只换文案（summary 进撤销点、okMessage
-// 是成功 toast、verb 进拒绝文案）；缺省值＝划词加粗，老调用零变化
+// 是成功 toast、verb 进拒绝文案）；缺省值＝划词加粗，老调用零变化。
+// opts.undo（T507）：这次是取消加粗——撤销摘要分开记「选段取消加粗」，undo 标记随
+// 返回值走（桥上 ack 也带回预览页，那边好知道要拆 <strong> 而不是再包一层）
 function _nodeFsBoldWrite(node, message, next, opts) {
+  const undo = !!(opts && opts.undo);
   const verb = (opts && opts.verb) || '加粗';
   const state = typeof _graphState === 'function' ? _graphState() : null;
   const route = _nodeFsBoldTarget(node);
@@ -378,7 +444,7 @@ function _nodeFsBoldWrite(node, message, next, opts) {
   // 写时再查一次忙态：可用性判定之后生成才启动的话，这里拦住（渲染态编辑保存同走此路）
   if (_nodeFsNodeBusy(node)) return { ok: false, message: '正在生成，等它写完再改' };
   if (typeof _pushGraphUndo === 'function') {
-    _pushGraphUndo(false, { source: 'user', summary: (opts && opts.summary) || '选段加粗' });
+    _pushGraphUndo(false, { source: 'user', summary: (opts && opts.summary) || (undo ? '选段取消加粗' : '选段加粗') });
   }
   let rollback = null;
   if (route === 'custom') {
@@ -415,7 +481,7 @@ function _nodeFsBoldWrite(node, message, next, opts) {
   }
   if (typeof renderGraphCanvas === 'function') renderGraphCanvas();
   _saveGraphState(state);
-  return { ok: true, message: (opts && opts.okMessage) || '已加粗' };
+  return { ok: true, message: (opts && opts.okMessage) || (undo ? '已取消加粗' : '已加粗'), undo };
 }
 
 // 选区所在块（一次只许一段）——块内换行可以，跨块拒绝
@@ -517,6 +583,23 @@ function _nodeFsBoldInPage(picked) {
   const spanR = (raw === src) ? span
     : _nodeFsBoldLocate(raw, String(range.toString() || ''), _nodeFsBoldContext(st.container, range));
   if (!spanR) { if (typeof showToast === 'function') showToast('没能在原文里找到这段，换个范围再试'); return; }
+  // 先试「取消加粗」（T507，2026-11-17 用户报：已有加粗去不掉——blocked 的「挨着已有
+  // 格式」会拒绝一切贴着 ** 的操作）：选段整体落在粗体元素里就拆真原文里成对的标记；
+  // 拆不动就如实拒绝——绝不往粗体里再套一层 **（套了看不见，还谎报成功）
+  const strongEl = _nodeFsBoldDomStrong(range);
+  if (strongEl) {
+    const plain = _nodeFsBoldUnmark(raw, spanR, strongEl.textContent);
+    if (plain === null) { if (typeof showToast === 'function') showToast('这段的粗体在原文里找不到成对标记，取消不了'); return; }
+    const result = _nodeFsBoldWrite(node, message, plain, { undo: true });
+    if (!result.ok) { if (typeof showToast === 'function') showToast(result.message); return; }
+    _nodeFsHideBar();
+    if (_nodeFsBoldUnwrapEl(strongEl)) {
+      if (typeof showToast === 'function') showToast('已取消加粗，并写回节点');
+    } else if (typeof showToast === 'function') {
+      showToast('已写回原文，重开全屏即可看到'); // 显示层没拆开：不假装已经变回来
+    }
+    return;
+  }
   const blocked = _nodeFsBoldBlockedReason(raw, spanR);
   if (blocked) { if (typeof showToast === 'function') showToast(blocked); return; }
   const next = raw.slice(0, spanR.start) + '**' + raw.slice(spanR.start, spanR.end) + '**' + raw.slice(spanR.end);
@@ -527,8 +610,11 @@ function _nodeFsBoldInPage(picked) {
   if (typeof showToast === 'function') showToast('已加粗，并写回节点');
 }
 
-// 预览窗过桥：那边只有选段文字与上下文，按同一套定位改写主应用里的节点原文
-function _nodeFsBoldFromBridge(node, text, before, after) {
+// 预览窗过桥：那边只有选段文字与上下文，按同一套定位改写主应用里的节点原文。
+// inBold/boldText＝预览页自己的 DOM 判断（选段整体在一个粗体元素里＋该元素可见文字）：
+// 主应用这边没有那扇窗的 DOM，撤不撤只能信这个 flag，成对标记的核对仍在本侧真原文里做
+// （493 口径：raw）
+function _nodeFsBoldFromBridge(node, text, before, after, inBold, boldText) {
   if (!_nodeFsBoldAvailable(node)) return { ok: false, message: '这个节点不支持加粗' };
   const messages = typeof _getChatHistory === 'function' ? _getChatHistory() : [];
   const message = node.messageIndex >= 0 ? messages[node.messageIndex] : null;
@@ -540,6 +626,11 @@ function _nodeFsBoldFromBridge(node, text, before, after) {
   const raw = _nodeFsSourceTextRaw(node, message);
   const spanR = (raw === src) ? span : _nodeFsBoldLocate(raw, text, { before, after });
   if (!spanR) return { ok: false, message: '没能在原文里找到这段，换个范围再试' };
+  if (inBold) {
+    const plain = _nodeFsBoldUnmark(raw, spanR, boldText);
+    if (plain === null) return { ok: false, message: '这段的粗体在原文里找不到成对标记，取消不了' };
+    return _nodeFsBoldWrite(node, message, plain, { undo: true });
+  }
   const blocked = _nodeFsBoldBlockedReason(raw, spanR);
   if (blocked) return { ok: false, message: blocked };
   const next = raw.slice(0, spanR.start) + '**' + raw.slice(spanR.start, spanR.end) + '**' + raw.slice(spanR.end);
@@ -590,7 +681,11 @@ function _nodeFsShowBar(overlay, container, picked) {
   if (!readonly) html += _nodeFsButtonHtml('followup', '追问', '？', true);
   html += _nodeFsButtonHtml('copy', '复制', '⧉', false);
   if (!readonly && _nodeFsBoldAvailable(typeof _findGraphNode === 'function' ? _findGraphNode(nodeId) : null)) {
-    html += _nodeFsButtonHtml('bold', '加粗', 'B', false, '选段加粗');
+    // 加粗钮不写中文（2026-11-17 用户拍板，T507 并回）：一枚粗衬线 B，所见即「加粗」本身；
+    // 语义留给 aria-label/title。不挂 data-icon——窄屏图标化不会给它叠出第二个 B
+    html += '<button type="button" class="node-fs-btn" data-act="bold" aria-label="加粗" '
+      + 'title="选段加粗（粗体文字上再点一次取消）">'
+      + '<span class="node-fs-btn-b" aria-hidden="true">B</span></button>';
   }
   html += _nodeFsButtonHtml('search', '查找', '⌕', false, '在画布中查找');
   bar.innerHTML = html;
@@ -884,6 +979,7 @@ window.addEventListener('message', ev => {
   const node = (ctx.nodeId && typeof _findGraphNode === 'function') ? _findGraphNode(ctx.nodeId) : null;
   let ok = true;
   let message = '';
+  let undo = false; // 取消加粗时带回预览页：那边要拆 <strong> 而不是再包一层（T507）
   if (!node) { ok = false; message = '源节点已不在画布上'; }
   else if (String(ctx.sessionId || '') !== String((typeof currentSessionId !== 'undefined' && currentSessionId) || '')) {
     ok = false; message = '请先切回原画布再继续'; // 不跨会话建点
@@ -895,11 +991,14 @@ window.addEventListener('message', ev => {
       if (d.action === 'followup') { _nodeFsBridgedFollowup(node, text, route); message = '追问已发到主画布'; }
       else if (d.action === 'search') { _nodeFsBridgedSearch(text); message = '已在主应用打开画布搜索'; }
       else if (d.action === 'bold') {
-        // 加粗要消歧：预览窗把选段前后的可见文字一起带过来（before/after），够挑准那一处
+        // 加粗要消歧：预览窗把选段前后的可见文字一起带过来（before/after），够挑准那一处；
+        // inBold/bt＝预览页 DOM 里「选段整体在粗体元素里＋元素可见文字」，取消加粗靠它定向
         const res = _nodeFsBoldFromBridge(node, text,
-          String(d.before || '').slice(0, 64), String(d.after || '').slice(0, 64));
+          String(d.before || '').slice(0, 64), String(d.after || '').slice(0, 64),
+          d.inBold === true, String(d.bt || '').slice(0, 400));
         ok = !!res.ok;
         message = res.message || '';
+        undo = !!res.undo;
       }
     } catch (e) { ok = false; message = '主应用执行失败'; }
   }
@@ -911,8 +1010,9 @@ window.addEventListener('message', ev => {
   _nodeFsPersistPreviewCtx();
   try {
     ev.source.postMessage(
-      // seq 原样回显：预览侧按序号认领自己的 ack，并发动作不再串台（2026-11-18）
-      { kind: 'node-fs-ack', __phymathia: 1, token: d.token, seq: d.seq, ok, message, nextToken },
+      // seq 原样回显：预览侧按序号认领自己的 ack，并发动作不再串台（2026-11-18）；
+      // undo＝这次是取消加粗（T507），预览页好就地拆 <strong> 而不是再包一层
+      { kind: 'node-fs-ack', __phymathia: 1, token: d.token, seq: d.seq, ok, message, undo, nextToken },
       location.origin,
     );
   } catch (e2) { /* 预览窗已关，无从应答 */ }
@@ -1075,6 +1175,7 @@ function _buildNodeFsPreviewScript(cfg) {
     + '.cp-nfs-btn:hover{color:#e6ebff;background:rgba(139,147,184,.14);}'
     + '.cp-nfs-btn--primary{color:#fff;background:#0e74e9;}'
     + '.cp-nfs-btn--primary:hover{background:#2b86f2;color:#fff;}'
+    + '.cp-nfs-btn-b{font-family:Georgia,\'Times New Roman\',serif;font-weight:700;font-size:14px;line-height:1;}'
     + '.cp-nfs-quote-row{display:flex;align-items:center;gap:6px;min-width:0;}'
     + '.cp-nfs-quote-chip{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;'
     + 'color:#8b93b8;background:rgba(139,147,184,.14);border-radius:999px;padding:3px 10px;}'
@@ -1157,8 +1258,10 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'rect=(rects&&rects.length)?rects[rects.length-1]:r.getBoundingClientRect();}catch(e){}'
     + 'var searchText=pickSearchText(range).replace(/\\s+/g," ").replace(/^\\s+|\\s+$/g,"")||text;'
     + 'return {text:text,searchText:searchText,rect:rect,range:range};}'
-    // ---------- 选段加粗（2026-11-17）：本页只有快照，改原文得回主应用，显示在这边就地套 <strong> ----------
-    // 归一/定位/拒绝口径与主应用 _nodeFsBoldScan / _nodeFsBoldLocate / _nodeFsBoldBlockedReason 同源
+    // ---------- 选段加粗（2026-11-17）：本页只有快照，改原文得回主应用，显示在这边就地套/拆 <strong> ----------
+    // 归一/定位/拒绝口径与主应用 _nodeFsBoldScan / _nodeFsBoldLocate / _nodeFsBoldBlockedReason 同源；
+    // 取消加粗的 DOM 判断（domStrongOf，T507）只能在本页做——主应用没有这扇窗的 DOM，
+    // 判定结果（inBold/bt）随消息过桥，成对标记的核对与写回仍在主应用真原文里（493 口径：raw）
     + 'function boldScan(src){var s=String(src||""),out=[],map=[];'
     + 'for(var i=0;i<s.length;i++){var ch=s.charAt(i),rest,m;'
     + 'if(ch==="<"){rest=s.slice(i);'
@@ -1222,7 +1325,18 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'var after=document.createRange();after.selectNodeContents(strong);'
     + 'var sel=window.getSelection?window.getSelection():null;'
     + 'if(sel&&sel.removeAllRanges){sel.removeAllRanges();sel.addRange(after);}return true;}catch(e){return false;}}'
-    // 先请主应用写回原文，写成了才在本窗变粗——否则这一窗看着粗、重开就没了
+    // 取消加粗（T507，2026-11-17 用户报「已有加粗去不掉」）：选段整体落在一个粗体元素里就算
+    // 取消——domStrongOf 认 <strong>/<b>（两端都要在同一个元素里），把元素可见文字
+    // （bt）一并送过桥给主应用对形配对；写回成功后就地拆包，不重渲染
+    + 'function domStrongOf(range){try{var sc=range.startContainer;'
+    + 'var se=sc&&sc.nodeType===1?sc:(sc&&sc.parentElement);'
+    + 'var st=se&&se.closest?se.closest("strong,b"):null;if(!st)return null;'
+    + 'var ec=range.endContainer;var ee=ec&&ec.nodeType===1?ec:(ec&&ec.parentElement);'
+    + 'return (ee&&st.contains(ee))?st:null;}catch(e){return null;}}'
+    + 'function unwrapBold(el){try{var p=el.parentNode;if(!p)return false;'
+    + 'while(el.firstChild)p.insertBefore(el.firstChild,el);'
+    + 'p.removeChild(el);if(p.normalize)p.normalize();return true;}catch(e){return false;}}'
+    // 先请主应用写回原文，写成了才在本窗变粗/拆粗——否则这一看着变了、重开就没了
     + 'function boldSel(){if(READONLY){toast("查阅模式下不能改内容");return;}'
     + 'var container=document.querySelector(".cp-body");if(!container)return;'
     + 'var sel=window.getSelection?window.getSelection():null;'
@@ -1232,8 +1346,13 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'var bad=boldGuard(range);if(bad){toast(bad);return;}'
     + 'var text=String(range.toString?range.toString():"");if(!text)return;'
     + 'var ctx=boldContext(container,range);'
-    + 'postAction("bold",text,"",{before:ctx.before,after:ctx.after},function(ok,msg){'
+    + 'var stEl=domStrongOf(range);'
+    + 'postAction("bold",text,"",{before:ctx.before,after:ctx.after,'
+    + 'inBold:stEl?true:false,bt:stEl?String(stEl.textContent||""):""},'
+    + 'function(ok,msg,undo){'
     + 'if(!ok){toast(msg||"主应用没能写回原文");return;}'
+    + 'if(undo){if(unwrapBold(stEl)){hideBar();toast(msg||"已取消加粗，并写回节点");}'
+    + 'else{hideBar();toast("已写回原文，重开本页即可看到");}return;}'
     + 'if(wrapBold(range)){hideBar();toast("已加粗，并写回节点");}'
     + 'else{hideBar();toast("已写回原文，重开本页即可看到");}});}'
     + 'function copySelectionText(){var sel=window.getSelection?window.getSelection():null;'
@@ -1291,8 +1410,11 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'var html="";'
     + 'if(BRIDGE&&!READONLY)html+=btnHtml("followup","追问","？",true);'
     + 'html+=btnHtml("copy","复制","⧉",false);'
-    // 加粗要回主应用写原文：file:// 单文件（无桥）给不了，只读也不给
-    + 'if(BRIDGE&&!READONLY)html+=btnHtml("bold","加粗","B",false,"选段加粗");'
+    // 加粗要回主应用写原文：file:// 单文件（无桥）给不了，只读也不给。
+    // 钮面不写中文（2026-11-17 用户拍板，T507 并回，与主应用浮条同款）：一枚粗衬线 B；
+    // 语义走 aria/title。不挂 data-icon——窄屏图标化不会叠出第二个 B
+    + 'if(BRIDGE&&!READONLY)html+="<button type=\\"button\\" class=\\"cp-nfs-btn\\" data-act=\\"bold\\" '
+    + 'aria-label=\\"加粗\\" title=\\"选段加粗（粗体文字上再点一次取消）\\"><span class=\\"cp-nfs-btn-b\\">B</span></button>";'
     + 'if(BRIDGE)html+=btnHtml("search","查找","⌕",false,"在画布中查找");'
     + 'bar.innerHTML=html;bar.style.visibility="hidden";document.body.appendChild(bar);'
     + 'placeBar(pk.rect);bar.style.visibility="";}'
@@ -1329,8 +1451,10 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'if(!BRIDGE){toast("此窗口未连接主应用，只能复制");return;}'
     + 'var msg={kind:"node-fs-action",__phymathia:1,token:TOKEN,seq:++SEQ,action:action,'
     + 'text:String(text||"").slice(0,MAX_TEXT),title:CFG.title||"",route:String(route||""),'
-    // 加粗消歧要选段前后文（同一句话常在本页出现多次）
-    + 'before:String((extra&&extra.before)||""),after:String((extra&&extra.after)||"")};'
+    // 加粗消歧要选段前后文（同一句话常在本页出现多次）；inBold/bt＝取消加粗的
+    // DOM 判定（选段整体在一个粗体元素里＋元素可见文字），主应用信这个 flag 定向
+    + 'before:String((extra&&extra.before)||""),after:String((extra&&extra.after)||""),'
+    + 'inBold:!!(extra&&extra.inBold),bt:String((extra&&extra.bt)||"")};'
     + 'var notified=false;'
     + 'var onAck=function(ev){var d=ev.data;'
     + 'if(!d||d.__phymathia!==1||d.kind!=="node-fs-ack")return;'
@@ -1342,8 +1466,9 @@ function _buildNodeFsPreviewScript(cfg) {
     // 这扇窗此后每一发都会被主应用当成陌生 token 丢掉，只能一直超时
     + 'if(notified){window.removeEventListener("message",onAck);return;}'
     + 'notified=true;window.removeEventListener("message",onAck);'
-    // 带回调的动作（加粗）自己决定怎么说话：写回成败要说清，别让页面粗了但没存
-    + 'if(typeof onDone==="function"){onDone(!!d.ok,d.message||"");return;}'
+    // 带回调的动作（加粗）自己决定怎么说话：写回成败要说清，别让页面粗了但没存；
+    // undo＝这次是取消加粗（ack 原样带回，T507），预览页好就地拆 <strong>
+    + 'if(typeof onDone==="function"){onDone(!!d.ok,d.message||"",d.undo===true);return;}'
     + 'toast(d.ok?(d.message||"已发送到主应用"):(d.message||"主应用未能执行该操作"));};'
     + 'window.addEventListener("message",onAck);'
     + 'try{window.parent.postMessage(msg,"*");}catch(e){notified=true;toast("发送失败");}'

@@ -189,21 +189,64 @@ export function run() {
     return true;
   });
 
-  check('node-fs-toolbar: 加粗双端接线（本页浮条按钮＋预览页过桥＋主应用改写分支）', () => {
+  check('node-fs-toolbar: 加粗双端接线（B 图标钮＋取消加粗拆对＋预览页过桥带 inBold/bt/undo；T507）', () => {
     const src = readSrc('src/static/js/node-fs-toolbar.js');
-    if (!src.includes("_nodeFsButtonHtml('bold', '加粗', 'B', false, '选段加粗')")) return false;
+    // 钮面不写中文（2026-11-17 用户拍板）：一枚粗衬线 B，语义走 aria/title
+    if (!src.includes('<span class="node-fs-btn-b"')) return false;
+    if (src.includes("_nodeFsButtonHtml('bold'")) return false;
     if (!src.includes("if (act === 'bold') { _nodeFsBoldInPage({ range: st.range }); return; }")) return false;
+    // 取消加粗走同一条写回管道（undo 摘要分开记）；DOM 判定/拆包/去标记三件都在场
     if (!src.includes('_nodeFsBoldWrite(node, message, next)')) return false;
+    if (!src.includes('_nodeFsBoldWrite(node, message, plain, { undo: true })')) return false;
+    if (!src.includes('function _nodeFsBoldUnmark(')) return false;
+    if (!src.includes('_nodeFsBoldUnwrapEl(strongEl)')) return false;
     // 写回自检：读回不一致就回滚（别留「看着变粗、重开就没了」）；493 起读回走展示
     // 管道、预期值按同一管道算（answer 节点剥 <extend>/建议追问后比对），故对 expected
     if (!src.includes('if (after !== expected)')) return false;
     if (!src.includes("else if (d.action === 'bold')")) return false;
+    // 桥：inBold/bt 进消息体，undo 随 ack 回预览页（那边好拆 <strong> 而不是再包一层）
+    if (!src.includes('d.inBold === true')) return false;
+    if (!src.includes('ok, message, undo, nextToken')) return false;
     const script = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
     if (!script.includes('function boldSel()') || !script.includes('function boldLocate(')) return false;
-    if (!script.includes('postAction("bold",text,"",{before:ctx.before,after:ctx.after}')) return false;
+    if (!script.includes('postAction("bold",text,"",{before:ctx.before,after:ctx.after')) return false;
+    if (!script.includes('inBold:stEl?true:false') || !script.includes('unwrapBold(stEl)')) return false;
     if (!script.includes('wrapBold(range)')) return false;
+    if (!script.includes('onDone(!!d.ok,d.message||"",d.undo===true)')) return false;
     // file:// 单文件（无桥）不给这颗钮：写不回原文的粗体是假的
-    if (!script.includes('if(BRIDGE&&!READONLY)html+=btnHtml("bold"')) return false;
+    if (!script.includes('if(BRIDGE&&!READONLY)html+="<button type=\\"button\\" class=\\"cp-nfs-btn\\" data-act=\\"bold\\"')) return false;
+    return true;
+  });
+
+  check('node-fs-toolbar: 取消加粗拆对——**/__/标签三种原文都拆得到；斜体不碰、隔山错配拒绝（T507，2026-11-17 用户报去不掉）', () => {
+    const locate = sandbox._nodeFsBoldLocate;
+    const unmark = sandbox._nodeFsBoldUnmark;
+    if (typeof locate !== 'function' || typeof unmark !== 'function') throw new Error('拆对 API 未挂出');
+    // 整段粗体：两侧 ** 一起拆，内容留住
+    const full = '这是 **重点** 内容。';
+    if (unmark(full, locate(full, '重点', {}), '重点') !== '这是 重点 内容。') throw new Error('整段拆对错');
+    // 只选中粗体的一半：拆整段（加粗成段，取消也整段取消）
+    const half = '**重点内容** 后文';
+    if (unmark(half, locate(half, '内容', {}), '重点内容') !== '重点内容 后文') throw new Error('半截拆对错');
+    // ***粗斜体***：只剥粗那层，斜体保留
+    const bi = '***重点*** 后文';
+    if (unmark(bi, locate(bi, '重点', {}), '重点') !== '*重点* 后文') throw new Error('粗斜体拆对错');
+    // 斜体不是粗体：不动
+    if (unmark('*重点* 后文', locate('*重点* 后文', '重点', {}), '重点') !== null) throw new Error('斜体被误拆');
+    // 隔壁一句的闭 ** 不能被当成新开口（翼规则旁证）
+    if (unmark('**甲** *乙* 后文', locate('**甲** *乙* 后文', '乙', {}), '乙') !== null) throw new Error('隔壁闭符被误配');
+    // 相邻两段粗体（**甲****乙**）各拆各的
+    if (unmark('**甲****乙**', locate('**甲****乙**', '乙', {}), '乙') !== '**甲**乙') throw new Error('相邻粗体拆串了');
+    // __…__：整段紧贴可拆
+    const u = '前 __重点__ 后';
+    if (unmark(u, locate(u, '重点', {}), '重点') !== '前 重点 后') throw new Error('__ 拆对错');
+    // 粗体元素可见文字跟标记内原文对不上（嵌套/隔山）不动手——宁可拒绝
+    if (unmark('**乙 __重点内容__** 后文', locate('**乙 __重点内容__** 后文', '内容', {}), '重点内容') !== null) {
+      throw new Error('隔山错配没被拦下');
+    }
+    // <strong>/<b> 直写标签：紧贴两侧可拆（标签拆掉、内容留住）
+    const tag = '前<strong>重点</strong>后';
+    if (unmark(tag, locate(tag, '重点', {}), '重点') !== '前重点后') throw new Error('标签拆对错');
     return true;
   });
 
@@ -555,12 +598,13 @@ export function run() {
     return true;
   });
 
-  check('node-fs-toolbar: 浮条样式进 graph-override.css（胶囊＋引文输入行＋窄屏图标化）', () => {
+  check('node-fs-toolbar: 浮条样式进 graph-override.css（胶囊＋引文输入行＋窄屏图标化＋加粗 B 字形）', () => {
     const css = readSrc('src/static/css/graph-override.css');
     if (css.includes('.node-fs-more') || css.includes('node-fs-menu-item')) return false; // ⋯ 菜单已随工具条收窄退役
     return css.includes('.node-fs-bar')
       && css.includes('.node-fs-input')
       && css.includes('.node-fs-quote-chip')
+      && css.includes('.node-fs-btn-b')
       && css.includes('@media (max-width: 520px)');
   });
 
@@ -703,7 +747,7 @@ export function run() {
     // 加粗调用点保持原样（老契约）：冒烟上一条断言认这个串
     if (!bar.includes('_nodeFsBoldWrite(node, message, next)')) return false;
     if (!bar.includes("function _nodeFsBoldWrite(node, message, next, opts)")) return false;
-    if (!bar.includes("(opts && opts.okMessage) || '已加粗'")) return false;
+    if (!bar.includes("(opts && opts.okMessage) || (undo ? '已取消加粗' : '已加粗')")) return false;
     // 编辑态 Esc capture：有改动拦下指路、干净退出编辑（关全屏是下一拍）
     const edit = readSrc('src/static/js/node-fs-edit.js');
     const escAt = edit.indexOf("ev.key !== 'Escape'");
@@ -866,7 +910,7 @@ export function run() {
 
   check('node-fs-toolbar: ack 按序号认领——并发动作不串台（主应用回显/壳转发/内嵌认领三处同改）', () => {
     const src = readSrc('src/static/js/node-fs-toolbar.js');
-    if (!src.includes('seq: d.seq, ok, message, nextToken')) return false; // 主应用回显
+    if (!src.includes('seq: d.seq, ok, message, undo, nextToken')) return false; // 主应用回显（T507 起带 undo）
     if (!src.includes('seq:++SEQ')) return false;                          // 内嵌自增序号
     if (!src.includes('d.seq!==msg.seq')) return false;                    // 内嵌只认自己的
     const shell = readSrc('src/static/content-preview.html');
