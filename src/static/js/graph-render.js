@@ -949,7 +949,16 @@ function _customNodeStatusHtml(node, force) {
   const statusText = _customNodeStatusText(node);
   if (!statusText) return '';
   const stateKey = node.busy ? 'running' : (node.status || 'empty');
-  const title = stateKey === 'blocked' ? ' title="上游缺失，无法生成"' : '';
+  let title = '';
+  if (stateKey === 'blocked') {
+    title = ' title="上游缺失，无法生成"';
+  } else if (statusText === '失败') {
+    // 477（2026-11-19）：失败徽章补 title，说清「失败」只指本轮重生成——卡上内容仍是
+    // 回退的旧版/保留的草稿，可用，不是废稿（同 blocked 态挂 title 的做法）。
+    // 只钉在裸「失败」这一支（其余 kind 的错误态显示的是自己的状态词，别乱加）。
+    // 无内容时不谎称「内容可用」——首次生成就失败时空卡没有可回退的东西。
+    title = ' title="' + ((node.content || '').trim() ? '本轮失败，内容仍可用' : '本轮生成失败') + '"';
+  }
   return '<span class="graph-node-status status-' + stateKey + '"' + title + '>' + escapeHtml(statusText) + '</span>';
 }
 

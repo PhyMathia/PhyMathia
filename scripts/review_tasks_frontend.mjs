@@ -230,6 +230,31 @@ test('下游「上游缺失」的文案与状态词：blocked 不再混用 waiti
   assert.match(renderSrc, /上游缺失，无法生成/);
 });
 
+test('477 失败徽章 title：内容在＝本轮失败旧版可用，空内容＝本轮生成失败，别谎称回退', () => {
+  const { s, run } = fixture();
+  // graph-render.js 只有函数声明、无顶层副作用，载进同一 VM 直接调徽章工厂
+  vm.runInContext(readSrc('src/static/js/graph-render.js'), s, { filename: 'graph-render.js' });
+  const badge = node => run('_customNodeStatusHtml(' + JSON.stringify(node) + ')');
+  // 重生成失败→回退旧版：卡上有旧内容，title 说清「失败只指本轮，内容仍可用」
+  const rolled = badge({ kind: 'module', moduleKey: 'viz', messageIndex: -1, status: 'error', content: '<p>旧版</p>' });
+  assert.match(rolled, /status-error/);
+  assert.match(rolled, /title="本轮失败，内容仍可用"/);
+  assert.match(rolled, />失败<\/span>/);
+  // 超时兜底保留的半成品同样有内容，口径一致
+  const partial = badge({ kind: 'module', moduleKey: 'viz', messageIndex: -1, status: 'error', content: '<p>半截</p>' });
+  assert.match(partial, /title="本轮失败，内容仍可用"/);
+  // 首次生成就失败、空卡：没有可回退的东西，不许说「内容仍可用」
+  const empty = badge({ kind: 'module', moduleKey: 'viz', messageIndex: -1, status: 'error', content: '' });
+  assert.match(empty, /title="本轮生成失败"/);
+  assert.doesNotMatch(empty, /内容仍可用/);
+  // 其余 kind 的错误态显示的是自己的状态词，不该被扣上「失败」的 title
+  const other = badge({ kind: 'ai_eval', messageIndex: -1, status: 'error', content: 'x' });
+  assert.doesNotMatch(other, /title=/);
+  // blocked 的旧 title 不能被这次改动碰掉
+  const blocked = badge({ kind: 'module', moduleKey: 'viz', messageIndex: -1, status: 'blocked', content: '' });
+  assert.match(blocked, /title="上游缺失，无法生成"/);
+});
+
 test('结账：没干成的进「未完成」并给一键重试；重开页面看到的「已中断」保留可重放内容', () => {
   const { s, run } = fixture();
   run(`_tasksBeginWorkflow({ title: '丁', workNodes: [{ id: 'n1', label: '物理视角' }], allIds: ['n1'] });`);
