@@ -1,6 +1,6 @@
 // 输入节点（素材篮）出口几何验收：看得见、点得到、连线锚点对得上。
 //
-//   node scripts/verify_source_ports.mjs        （自带隔离实例，无需起服务；本机无头浏览器在 .tools/pw-browsers）
+//   node scripts/verify_source_ports.mjs        （自带隔离实例，无需起服务；无头浏览器走 playwright 缓存）
 //
 // 为什么单独一支：出口长在条目行里（`.graph-source-row-port`）＋折叠态改由输出列渲染，
 // 这两件事的正确性全在**布局层**——DOM 里查得到不等于看得见/点得到（首版 right:-18px
@@ -14,23 +14,12 @@
 // 开页面的测试一律不再打真机）；页面里又在注入的临时会话 id 下操作（替换
 // window.getCurrentSessionId + 断 fetch），不碰真实会话，可随时重跑。
 import { chromium } from 'playwright';
-import fs from 'node:fs';
 import path from 'node:path';
+import { resolveChromiumExecutable } from './lib/chromium.mjs';
 import { startIsolatedServer } from './lib/test_server.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-// 无头浏览器按目录扫（版本号目录会随 playwright 升级变，别写死）——同 visual_baseline.mjs
-function findShell() {
-  const base = path.join(ROOT, '.tools', 'pw-browsers');
-  if (fs.existsSync(base)) {
-    for (const d of fs.readdirSync(base)) {
-      const p = path.join(base, d, 'chrome-headless-shell-linux64', 'chrome-headless-shell');
-      if (fs.existsSync(p)) return p;
-    }
-  }
-  throw new Error('缺少 .tools/pw-browsers/*/chrome-headless-shell-linux64/chrome-headless-shell（本机没有可用的无头浏览器）');
-}
-const EXE = findShell();
+const EXE = resolveChromiumExecutable();
 const srv = await startIsolatedServer({ port: 5087, label: 'phymathia-portcheck' });
 const BASE = srv.base + '/';
 process.on('exit', () => srv.stop());

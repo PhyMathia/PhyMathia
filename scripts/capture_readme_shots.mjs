@@ -21,6 +21,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveChromiumExecutable } from './lib/chromium.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BASE = process.env.PHYMATHIA_BASE || '';
@@ -37,16 +38,6 @@ function arg(name, dflt) {
 }
 const OUT_DIR = path.resolve(ROOT, arg('out', 'docs/images'));
 const SESSION = arg('session', '');
-
-function findShell() {
-  const base = path.join(ROOT, '.tools', 'pw-browsers');
-  if (!fs.existsSync(base)) throw new Error('缺少 .tools/pw-browsers（本机没有可用的无头浏览器）');
-  for (const d of fs.readdirSync(base)) {
-    const p = path.join(base, d, 'chrome-headless-shell-linux64', 'chrome-headless-shell');
-    if (fs.existsSync(p)) return p;
-  }
-  throw new Error('.tools/pw-browsers 下没找到 chrome-headless-shell');
-}
 
 // 关掉所有浮层（与 visual_baseline.mjs 同款；两条坑见该脚本注释：别用内联 display、别用顶层 const）
 const CLOSE_ALL = `(function(){
@@ -88,7 +79,7 @@ const SHOTS = [
     settle: 1500 },
 ];
 
-const shell = findShell();
+const shell = resolveChromiumExecutable();
 fs.mkdirSync(OUT_DIR, { recursive: true });
 
 const PORT = Number(process.env.PHYMATHIA_CDP_PORT || 9333);

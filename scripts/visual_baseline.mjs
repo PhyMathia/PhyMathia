@@ -17,6 +17,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveChromiumExecutable } from './lib/chromium.mjs';
 import { startIsolatedServer } from './lib/test_server.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -33,17 +34,6 @@ const SHOT_DIR = path.join(ROOT, MODE === 'record' ? 'baseline/shots' : '.cache/
 if (!MODE) {
   console.error('用法: node scripts/visual_baseline.mjs --record | --check | --explain <类名关键字>');
   process.exit(2);
-}
-
-// ---------- 找无头浏览器 ----------
-function findShell() {
-  const base = path.join(ROOT, '.tools', 'pw-browsers');
-  if (!fs.existsSync(base)) throw new Error('缺少 .tools/pw-browsers（本机没有可用的无头浏览器）');
-  for (const d of fs.readdirSync(base)) {
-    const p = path.join(base, d, 'chrome-headless-shell-linux64', 'chrome-headless-shell');
-    if (fs.existsSync(p)) return p;
-  }
-  throw new Error('.tools/pw-browsers 下没找到 chrome-headless-shell');
 }
 
 // ---------- 探针 ----------
@@ -197,7 +187,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
   // 隔离实例已在模块顶层起好并等到 /health（T415），不再有「先起服务」前置
-  const shell = findShell();
+  const shell = resolveChromiumExecutable();
   const port = 9411;
   // 每次跑用独立 profile：复用同一个目录会撞上浏览器还在写缓存的竞态（ENOTEMPTY）。
   const cacheRoot = path.join(ROOT, '.cache');
