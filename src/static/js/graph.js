@@ -86,6 +86,15 @@ function _settleInterruptedCustomNode(node) {
   const next = { ...node, busy: false, status: node.status === 'running' ? '' : node.status };
   const content = typeof next.content === 'string' ? next.content : '';
   const versions = Array.isArray(next.versions) ? next.versions : null;
+  // 空卡不该顶着「已完成」（2026-11-19）：流尾过去无条件写 done，盘上会留下
+  // content 空 + status='done' 的组合——水合见 status 非 running 就原样放行，空卡
+  // 永久显示「完成」、生成守卫又不许重点。这里统一纠偏：走过生成链（带 genTaskId）
+  // 却一个字都没留下（账本也没可回退的版本）→ 按「失败」落地，徽章如实、可点重试。
+  // 不带 genTaskId 的人工/存量节点一律不碰（T275「其余原样」口径不变）。
+  if (next.status === 'done' && !content.trim() && String(next.genTaskId || '')
+      && !(versions && versions.some(v => String((v && v.content) || '').trim()))) {
+    next.status = 'error';
+  }
   if (versions && versions.length) {
     const total = versions.length;
     const av = (typeof next.activeVersion === 'number' && next.activeVersion >= 0 && next.activeVersion < total)
@@ -134,6 +143,17 @@ function _sanitizeStaleBusyCustomNodes(list, sid, deferGenTask) {
       if (deferGenTask && _recordPendingGenerationReattach(sid, cn)) return cn;
       changed = true;
       return _settleInterruptedCustomNode(cn);
+    }
+    // 空卡不顶「已完成」（2026-11-19）：这类节点 busy 早已被清、status 停在 done，
+    // 不算「中断残留」进不了上面的分支——但盘上 content 空、账本也没版，卡面就是
+    // 一张空白却顶着「完成」，生成守卫还拦着不让重点。只要它走过生成链（有
+    // genTaskId）就归「失败」，徽章如实、点击可重试；人工写的空卡不带 genTaskId，
+    // 一律不碰。
+    if (cn && typeof cn === 'object' && cn.status === 'done' && String(cn.genTaskId || '')
+        && !String(cn.content || '').trim()
+        && !(Array.isArray(cn.versions) && cn.versions.some(v => String((v && v.content) || '').trim()))) {
+      changed = true;
+      return { ...cn, status: 'error' };
     }
     return cn;
   });

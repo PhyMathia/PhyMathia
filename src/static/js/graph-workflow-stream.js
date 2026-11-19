@@ -199,10 +199,18 @@ async function _streamCustomNodeResponse(resp, node) {
   if (live) {
     live.content = cleaned;
     live.summary = _graphSummary(cleaned);
-    live.status = 'done';
-    live.generatedAt = Date.now();
-    live.inputHash = _nodeInputHash(live);
-    live.busy = false;
+    // 空内容不写终态（2026-11-19）：推理型上游可能把 token 全花在 reasoning_content 上
+    // （前端只取 content，一个字都收不到），流照样正常收尾。这里若无条件标 done，节点
+    // 会先显示「已完成」而卡面一片空白，而 viz 的兜底重试还在后台跑、任务行仍是
+    // 「生成中」——两头错位，刷新后空卡就永久顶着「完成」（水合见 status!=running 不动）。
+    // 空内容交给 _finishCustomNodeGeneration 定夺：viz 走重试/失败，普通模块走
+    // 「模型返回了空内容」的 error；busy 一并留到那里再清。
+    if (String(cleaned || '').trim()) {
+      live.status = 'done';
+      live.generatedAt = Date.now();
+      live.inputHash = _nodeInputHash(live);
+      live.busy = false;
+    }
   }
   _saveGraphNodeTail(live);
   if (node.kind === 'blank') _renderBlankNodeLive(node, cleaned);

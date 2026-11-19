@@ -75,8 +75,7 @@ export async function run() {
     return true;
   });
 
-  check('T359: 水合结算——无账本（首次生成被打断）草稿留着、状态仍按 T275 归空', () => {
-    const list = [
+  check('T359: 水合结算——无账本（首次生成被打断）草稿留着、状态仍按 T275 归空', () => {    const list = [
       { id: 'f1', kind: 'module', moduleKey: 'math', busy: true, status: 'running', content: '半截' },
       { id: 'f2', kind: 'module', moduleKey: 'math', busy: true, status: 'running', content: '' },
     ];
@@ -85,6 +84,26 @@ export async function run() {
     if (out[0].status !== '') return false;           // 不硬造账本、不硬标失败
     if (out[0].versions !== undefined) return false;
     if (out[1].status !== '' || out[1].content !== '') return false;
+    return true;
+  });
+
+  // 2026-11-19 用户报「交互可视化节点自动变完成、卡面一片空白、任务列表还在生成」：
+  // 流尾曾无条件写 done（推理型上游正文为空也照样收尾），盘上留下 done+空的组合，
+  // 水合见 status 非 running 原样放行 → 空卡永久显示完成且不许重点。本域守住纠偏：
+  // 走过生成链（有 genTaskId）的空 done 卡归「失败」，人工空卡与有账本可回退的不动。
+  check('2026-11-19: 水合结算——空卡不顶着「已完成」（带 genTaskId 的空 done 归失败）', () => {
+    const list = [
+      { id: 'e1', kind: 'module', moduleKey: 'viz', busy: false, status: 'done', content: '', genTaskId: 'gt-1' },
+      { id: 'e2', kind: 'module', moduleKey: 'viz', busy: false, status: 'done', content: ' ', genTaskId: 'gt-2',
+        versions: [{ content: '旧版全文', at: 1 }], activeVersion: 0 },
+      { id: 'e3', kind: 'human_note', busy: false, status: 'done', content: '' },
+    ];
+    const out = sandbox._sanitizeStaleBusyCustomNodes(list);
+    if (out === list) throw new Error('空卡纠偏必须返回新列表');
+    if (out[0].status !== 'error') return false;
+    if (out[1].status !== 'done') return false;    // 账本有版：不算空卡
+    if (out[2].status !== 'done') return false;    // 人工空卡不带 genTaskId，不碰
+    if (list[0].status !== 'done') return false;   // 入参一字不动
     return true;
   });
 

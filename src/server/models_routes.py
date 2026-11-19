@@ -750,7 +750,10 @@ async def api_models_chat(request: Request):
                                 data = json.loads(data_str)
                                 if data.get("usage"):
                                     last_usage = data["usage"]
-                                delta = data.get("choices", [{}])[0].get("delta", {})
+                                # choices 为空数组是合法帧（推理型上游在 reasoning/usage
+                                # 帧里会这么给）：默认值救不了 key 存在但值为 [] 的情况，
+                                # 直接 [0] 会 IndexError 刷 warning（2026-11-19 书生实测）
+                                delta = (data.get("choices") or [{}])[0].get("delta", {})
                                 delta_text = delta.get("content")
                                 if not delta_text:
                                     delta_text = delta.get("reasoning_content") or ""
@@ -828,7 +831,8 @@ async def api_models_chat(request: Request):
                             data = json.loads(data_str)
                             if data.get("usage"):
                                 last_usage = data["usage"]
-                            delta = data.get("choices", [{}])[0].get("delta", {})
+                            # 同上：choices=[] 是合法帧，别让 [0] 抛 IndexError
+                            delta = (data.get("choices") or [{}])[0].get("delta", {})
                             delta_text = delta.get("content")
                             if not delta_text:
                                 delta_text = delta.get("reasoning_content") or ""
