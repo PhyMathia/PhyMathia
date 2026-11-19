@@ -82,6 +82,21 @@ class ModelsConfigRouteTest(RouteTestBase):
         self.assertEqual(self.client.post("/api/models/config", json={
             "userModels": [], "modelGroupKeys": {}, "activeModels": []}).status_code, 400)
 
+    def test_disabled_providers_roundtrip_and_sanitize(self):
+        # 供应商级停用表（2026-11-19）：只收布尔真值、键长限幅；旧客户端不传按空表覆盖
+        blob = {**BLOB, "disabledProviders": {"openasi": True, "duckai": "yes", 123: True}}
+        self.assertEqual(self.client.post("/api/models/config", json=blob).status_code, 200)
+        data = self.client.get("/api/models/config").json()
+        # "yes" 是字符串不是布尔 → 丢弃；数字键转字符串保留
+        self.assertEqual(data["disabledProviders"], {"openasi": True, "123": True})
+        # 旧客户端（不带该键）整包上传 → 覆盖为空表（与 activeModels 同「新盖旧」口径）
+        self.assertEqual(self.client.post("/api/models/config", json=BLOB).status_code, 200)
+        self.assertEqual(self.client.get("/api/models/config").json()["disabledProviders"], {})
+
+    def test_get_fresh_account_disabled_providers_empty(self):
+        data = self.client.get("/api/models/config").json()
+        self.assertEqual(data["disabledProviders"], {})
+
     def test_post_rejects_oversized_model_list(self):
         bloated = {**BLOB, "userModels": [{"id": f"m{i}"} for i in range(1001)]}
         self.assertEqual(self.client.post("/api/models/config", json=bloated).status_code, 400)

@@ -265,6 +265,12 @@ const MODELS_STORAGE_KEY = 'phymathia_user_models';
 // 「密钥已配置」徽标、hasKey 全部零改动；组内单个条目仍可用模型配置弹窗覆盖自己的密钥。
 const MODEL_GROUP_KEYS_STORAGE = 'phymathia_model_group_keys';
 let modelGroupKeys = {};
+// 供应商级开关（2026-11-19，模仿 zcode 的供应商 toggle）：按 provider 记「已停用」，
+// 键缺失＝启用。停用＝该供应商全部模型从聊天模型下拉里消失；设置页仍列出整组，
+// 好让人重新打开。与单模型的 enabled 互相独立——先关供应商再打开，各模型原本的
+// 开关状态原样保留，所以不能用「批量改 enabled」来冒充这层开关。
+const MODEL_DISABLED_PROVIDERS_STORAGE = 'phymathia_model_disabled_providers';
+let modelDisabledProviders = {};
 // 分组折叠：默认全部收起（2026-11-13 用户反馈：供应商一多，打开模型面板时每组都
 // 摊开，列表被撑到要滚动才能找）。这里存的是「用户手动展开过的组」白名单——
 // 没记过＝收起，只有显式点开过才展开；新加的分组天然落在收起态。
@@ -282,6 +288,20 @@ window.isModelGroupCollapsed = isModelGroupCollapsed;
 function loadGroupKeys() {
   try { modelGroupKeys = JSON.parse(localStorage.getItem(MODEL_GROUP_KEYS_STORAGE) || '{}'); }
   catch { modelGroupKeys = {}; }
+}
+
+function loadDisabledProviders() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(MODEL_DISABLED_PROVIDERS_STORAGE) || '{}');
+    modelDisabledProviders = (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+      ? Object.fromEntries(Object.entries(parsed).filter(([, v]) => v === true))
+      : {};
+  } catch { modelDisabledProviders = {}; }
+}
+
+// 只存停用的（键缺失＝启用）：读方一律走 isProviderEnabled，不需要「启用表」第二份状态
+function isProviderEnabled(provider) {
+  return modelDisabledProviders[String(provider || '')] !== true;
 }
 
 function getGroupKey(provider) {
@@ -465,6 +485,7 @@ function loadUserModels() {
     userModelConfigs = raw ? JSON.parse(raw) : [];
   } catch { userModelConfigs = []; }
   loadGroupKeys();
+  loadDisabledProviders();
   // 刻意不预置任何模型：列表里只出现用户在「添加模型」里主动加过的条目。
   // （旧版 _ensure* 每次 loadUserModels 都把 OpenCode/DeepSeek 预设全量灌进列表，
   //  用户反馈「没添加过的预设不该出现」——预设只活在添加弹窗里。）
@@ -509,7 +530,8 @@ function _modelsSyncAction(serverTs, localTs, localHas) {
 function _localModelsHasAny() {
   return userModelConfigs.length > 0
     || Object.keys(modelGroupKeys).some(k => modelGroupKeys[k])
-    || Object.keys(activeModels).some(k => activeModels[k]);
+    || Object.keys(activeModels).some(k => activeModels[k])
+    || Object.keys(modelDisabledProviders).length > 0;
 }
 
 function _modelsSyncBlob() {
@@ -517,6 +539,7 @@ function _modelsSyncBlob() {
     userModels: userModelConfigs,
     modelGroupKeys: modelGroupKeys,
     activeModels: activeModels,
+    disabledProviders: modelDisabledProviders, // 供应商级停用表（整包上传，新盖旧同 activeModels 口径）
     clearKeys: _pendingModelKeyClears.slice(), // 显式清空清单（服务端唯一删钥口）
   };
 }
@@ -562,10 +585,14 @@ function _adoptModelsConfig(blob) {
   if (Array.isArray(blob.userModels)) userModelConfigs = blob.userModels.filter(m => m && typeof m === 'object');
   if (blob.modelGroupKeys && typeof blob.modelGroupKeys === 'object') modelGroupKeys = { ...blob.modelGroupKeys };
   if (blob.activeModels && typeof blob.activeModels === 'object') activeModels = { ...blob.activeModels };
+  if (blob.disabledProviders && typeof blob.disabledProviders === 'object' && !Array.isArray(blob.disabledProviders)) {
+    modelDisabledProviders = { ...blob.disabledProviders };
+  }
   try {
     localStorage.setItem(MODELS_STORAGE_KEY, JSON.stringify(userModelConfigs));
     localStorage.setItem(MODEL_GROUP_KEYS_STORAGE, JSON.stringify(modelGroupKeys));
     localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
+    localStorage.setItem(MODEL_DISABLED_PROVIDERS_STORAGE, JSON.stringify(modelDisabledProviders));
   } catch (e) {}
   return true;
 }
@@ -653,7 +680,7 @@ if (typeof document !== 'undefined' && document.addEventListener) {
 
 // 导入备份等「绕过 save* 直写 localStorage」的通道：先用它把内存拉回最新，再 scheduleModelsSync(0)
 function reloadModelsFromStorage() {
-  loadUserModels();
+  loadUserModels(); // 内含 loadDisabledProviders：供应商停用表一并拉回内存
   try {
     const raw = localStorage.getItem('phymathia_active_models');
     if (raw) activeModels = JSON.parse(raw) || activeModels;
@@ -718,6 +745,28 @@ function setModelEnabled(id, enabled) {
   return true;
 }
 
+// 供应商级开关写入（2026-11-19，模仿 zcode）：停用＝整个供应商从聊天模型下拉消失，
+// 并清掉指向该供应商模型的槽位引用（同 setModelEnabled 的口径——引用不清，发送链
+// 照旧能拿到它，开关就成了摆设）。启用只移除停用标记：各模型自己的 enabled 开关
+// 是独立状态，不在这里批量改写，重开后原样回来。写出口统一走 saveDisabledProviders
+// （本地镜像＋服务端整包同步），不另造第二份状态。
+function setProviderEnabled(provider, enabled) {
+  const p = String(provider || '');
+  if (!p) return false;
+  const on = !!enabled;
+  if (on) delete modelDisabledProviders[p];
+  else modelDisabledProviders[p] = true;
+  saveDisabledProviders();
+  if (!on) _clearActiveModelRefs(userModelConfigs.filter(m => m.provider === p).map(m => m.id));
+  try { renderModelList(); renderModelSelects(); } catch (e) {}
+  return true;
+}
+
+function saveDisabledProviders() {
+  try { localStorage.setItem(MODEL_DISABLED_PROVIDERS_STORAGE, JSON.stringify(modelDisabledProviders)); } catch (e) {}
+  scheduleModelsSync();
+}
+
 // 整组删除：清理旧版自动预置的大分组（如 37 个 OpenCode Go 条目）的出口
 function deleteModelGroup(provider) {
   const ids = userModelConfigs.filter(m => m.provider === provider).map(m => m.id);
@@ -726,6 +775,11 @@ function deleteModelGroup(provider) {
   _clearActiveModelRefs(ids);
   delete modelGroupKeys[provider];
   try { localStorage.setItem(MODEL_GROUP_KEYS_STORAGE, JSON.stringify(modelGroupKeys)); } catch {}
+  // 组都没了，供应商停用标记一并清掉（否则重建同名自定义供应商会被旧标记直接藏掉）
+  if (modelDisabledProviders[provider]) {
+    delete modelDisabledProviders[provider];
+    saveDisabledProviders();
+  }
   saveUserModels();
   return ids.length;
 }
@@ -746,10 +800,12 @@ function getAllModels() {
   for (const cfg of userModelConfigs) {
     const preset = MODEL_PRESETS[cfg.provider];
     const display = cfg.label || cfg.model;
-    // enabled 带出给设置抽屉的开关与槽位下拉共用；undefined（旧配置）按启用处理
+    // enabled 带出给设置抽屉的开关与槽位下拉共用；undefined（旧配置）按启用处理。
+    // providerOn 同理带出供应商级开关（该供应商整组是否停用）；undefined（服务端
+    // 旧档没有 disabledProviders 键）按启用处理，不需要迁移。
     // display 单独带出：下拉里按供应商分组后，组内只显示模型名（不重复组标题）；
     // 原 name 仍是「供应商 · 模型名」，供需要完整称呼的地方（如筛选、日志）使用
-    result.push({ id: cfg.id, name: (preset?.name || cfg.provider) + ' · ' + display, display, desc: preset?.name || cfg.provider, tags: [display], provider: cfg.provider, hasKey: !!(cfg.apiKey || getGroupKey(cfg.provider)), enabled: cfg.enabled !== false });
+    result.push({ id: cfg.id, name: (preset?.name || cfg.provider) + ' · ' + display, display, desc: preset?.name || cfg.provider, tags: [display], provider: cfg.provider, hasKey: !!(cfg.apiKey || getGroupKey(cfg.provider)), enabled: cfg.enabled !== false, providerOn: isProviderEnabled(cfg.provider) });
   }
   return result;
 }
@@ -823,9 +879,14 @@ async function fetchModels() {
   }
   if (thinkingMigrated) saveUserModels();
   // 悬空引用清理：槽位指向已删除的条目时回空（不强行回退到任何预设——
-  // 列表里只该有用户主动加过的模型，回空由界面提示补配）
+  // 列表里只该有用户主动加过的模型，回空由界面提示补配）。
+  // 指向「供应商已停用」条目的引用同样回空：停用动作本身会当场清引用，这里兜的是
+  // 在别的标签页/设备上停了供应商、本页从服务端采纳旧槽位状态的场景。
   for (const key of ['agent_model', 'html_model', 'descriptor_model', 'quiz_model', 'graph_model', 'branch_model']) {
-    if (activeModels[key] && !getModelById(activeModels[key])) activeModels[key] = '';
+    if (activeModels[key]) {
+      const ref = getModelById(activeModels[key]);
+      if (!ref || !isProviderEnabled(ref.provider)) activeModels[key] = '';
+    }
   }
   persistActiveModels();
   renderModelSelects();
@@ -837,7 +898,8 @@ const MODEL_PICKER_SELECT_IDS = ['agentModelSelect', 'htmlModelSelect', 'descrip
 function renderModelSelects() {
   // 停用的模型不进聊天模型选择下拉（页头口径「配置后可在聊天时选择使用」）；
   // 设置抽屉的「模型设置」页仍展示全部条目，好让开关能重新启用。
-  const allModels = getAllModels().filter(m => m.enabled !== false);
+  // 供应商级停用（2026-11-19）同样在这层挡：整组隐藏，单模型开关原状保留。
+  const allModels = getAllModels().filter(m => m.enabled !== false && m.providerOn !== false);
   const agentSelect = document.getElementById('agentModelSelect');
   const htmlSelect = document.getElementById('htmlModelSelect');
   const descriptorSelect = document.getElementById('descriptorModelSelect');

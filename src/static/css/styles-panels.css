@@ -6813,6 +6813,17 @@ html[data-theme="light"][data-panel-skin="candy"] .thinking-slider {
 .settings-model-switch input:disabled + .settings-switch-track { opacity: .45; cursor: not-allowed; }
 .settings-model-switch input:focus-visible + .settings-switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
 .settings-model-empty { padding: 24px 16px; border: 1px solid var(--border); border-radius: var(--r-lg); color: var(--text-secondary); font-size: var(--fs-md); line-height: 1.7; text-align: center; }
+/* 供应商级总开关（2026-11-19）：卡片右上角轨道＋整组停用弱化态。
+   行内开关保持可操作（写的是各模型自己的 enabled），视觉整体降下去配合
+   offnote 说明，避免「关了没反应」的观感。 */
+.settings-model-pswitch { margin-left: 0; margin-right: 4px; }
+.settings-model-card.is-provider-off .settings-model-card-title { color: var(--text-secondary); }
+.settings-model-card.is-provider-off .settings-model-count,
+.settings-model-card.is-provider-off .settings-model-badge,
+.settings-model-card.is-provider-off .settings-model-baseurl { opacity: .6; }
+.settings-model-rows.is-provider-off .settings-model-row { opacity: .55; }
+.settings-model-vendor.is-off { opacity: .55; }
+.settings-model-offnote { font-size: var(--fs-xs); color: var(--warn); }
 /* 只读查阅态：左栏只切选中项、不写入，仍允许点 */
 .settings-overlay.is-readonly .settings-model-side { pointer-events: auto; }
 @media (max-width: 640px) {

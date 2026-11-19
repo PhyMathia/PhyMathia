@@ -1031,7 +1031,7 @@ async def api_models_probe(request: Request):
 # 显式清空走 clearKeys 名单。详见 _merge_auth_keys。
 
 _MODELS_CONFIG_MAX_BYTES = 512 * 1024
-_MODELS_CONFIG_EMPTY = {"userModels": [], "modelGroupKeys": {}, "activeModels": {}, "updatedAt": 0}
+_MODELS_CONFIG_EMPTY = {"userModels": [], "modelGroupKeys": {}, "activeModels": {}, "disabledProviders": {}, "updatedAt": 0}
 
 
 def _models_config_path(account: str):
@@ -1181,11 +1181,17 @@ def _read_models_config(account: str) -> dict:
     if isinstance(inline_groups, dict):
         group_keys.update(inline_groups)
     active = data.get("activeModels")
+    # 供应商级停用表（2026-11-19，模仿 zcode 的供应商 toggle）：{provider: true}，
+    # 只存停用的、键缺失＝启用。旧档没有该键按空表处理，前端按启用渲染，无需迁移。
+    disabled_raw = data.get("disabledProviders")
+    disabled = ({str(k)[:128]: bool(v) for k, v in disabled_raw.items()}
+                if isinstance(disabled_raw, dict) else {})
     updated = data.get("updatedAt", 0)
     return {
         "userModels": filled,
         "modelGroupKeys": group_keys,
         "activeModels": active if isinstance(active, dict) else {},
+        "disabledProviders": disabled,
         "updatedAt": updated if isinstance(updated, (int, float)) else 0,
     }
 
@@ -1209,11 +1215,18 @@ async def api_models_config_save(request: Request):
     user_models = payload.get("userModels")
     group_keys = payload.get("modelGroupKeys")
     active_models = payload.get("activeModels")
+    disabled_providers = payload.get("disabledProviders")
     clear_keys = payload.get("clearKeys")
     if not isinstance(user_models, list) or not all(isinstance(m, dict) for m in user_models):
         raise HTTPException(status_code=400, detail="userModels 必须是对象数组")
     if not isinstance(group_keys, dict) or not isinstance(active_models, dict):
         raise HTTPException(status_code=400, detail="modelGroupKeys/activeModels 必须是对象")
+    # 供应商停用表：旧客户端不传按空表整包覆盖——与 activeModels 同属「新盖旧」
+    # 整包语义（刻意接受的双标签页竞态）。值只收真布尔（前端只发 true），键长限幅防垃圾键
+    if not isinstance(disabled_providers, dict):
+        disabled_providers = {}
+    disabled_providers = {str(k)[:128]: v for k, v in disabled_providers.items()
+                          if isinstance(v, bool)}
     if clear_keys is None:
         clear_keys = []
     if not isinstance(clear_keys, list):
@@ -1238,6 +1251,7 @@ async def api_models_config_save(request: Request):
         "userModels": clean_models,
         "modelGroupKeys": {},  # 分家后恒空：组密钥住 auth.json，读路径回填
         "activeModels": active_models,
+        "disabledProviders": disabled_providers,
         "updatedAt": time.time(),
     }
     raw = json.dumps(blob, ensure_ascii=False)

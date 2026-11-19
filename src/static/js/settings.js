@@ -414,7 +414,10 @@ function _settingsPageModel() {
   for (const p of data.order) {
     const list = data.groups[p] || [];
     const ok = list.some(m => m && m.hasKey);
-    const item = '<button type="button" class="settings-model-vendor' + (p === cur ? ' active' : '') +
+    // 供应商级停用（models.js 的 disabledProviders，行上以 providerOn 带出）：整组关掉
+    // 时左列表也弱化标记，不另造第二份状态
+    const off = !(list[0] && list[0].providerOn !== false);
+    const item = '<button type="button" class="settings-model-vendor' + (p === cur ? ' active' : '') + (off ? ' is-off' : '') +
       '" onclick="settingsModelSelect(\'' + _settingsJsArg(p) + '\', event)" title="' + _settingsEsc(_settingsModelName(p)) + '">' +
       '<span class="settings-model-vendor-icon">' + _settingsIcon('hex') + '</span>' +
       '<span class="settings-model-vendor-name">' + _settingsEsc(_settingsModelName(p)) + '</span>' +
@@ -428,17 +431,28 @@ function _settingsPageModel() {
   const hasKey = rows.some(m => m && m.hasKey);
   const base = _settingsModelBaseUrl(cur);
   const jsCur = _settingsJsArg(cur);
-  let detail = '<div class="settings-model-card">' +
+  // 供应商级总开关（2026-11-19，模仿 zcode）：当前组的行都带 providerOn（同一供应商
+  // 同值）；关掉＝聊天模型列表整组隐藏，各模型自己的开关保持不变。设置页恒列出整组，
+  // 好让人重新打开。
+  const providerOn = !(rows[0] && rows[0].providerOn === false);
+  const ro = _settingsReadonly();
+  let detail = '<div class="settings-model-card' + (providerOn ? '' : ' is-provider-off') + '">' +
     '<div class="settings-model-card-head">' +
       '<div class="settings-model-card-title">' + _settingsEsc(_settingsModelName(cur)) +
         '<span class="settings-model-count">' + rows.length + ' 个模型</span></div>' +
       '<div class="settings-model-card-ops">' +
+        '<label class="settings-model-switch settings-model-pswitch" title="供应商总开关：关掉后聊天模型列表不再显示该供应商，各模型自己的开关保持不变">' +
+          '<input type="checkbox" role="switch" aria-label="启用该供应商"' + (providerOn ? ' checked' : '') + (ro ? ' disabled' : '') +
+          ' onchange="settingsModelAction(\'toggleProvider\', \'' + jsCur + '\', this.checked)">' +
+          '<span class="settings-switch-track"><span class="settings-switch-knob"></span></span>' +
+        '</label>' +
         '<button type="button" class="settings-model-mini" onclick="settingsModelAction(\'refresh\', \'' + jsCur + '\')" title="从上游对比新增／已下线的模型">↻ 更新列表</button>' +
         '<button type="button" class="settings-model-mini" onclick="settingsModelAction(\'delGroup\', \'' + jsCur + '\')" title="删除该供应商的全部模型">删除分组</button>' +
       '</div></div>' +
     '<div class="settings-model-card-meta">' +
       '<span class="settings-model-badge ' + (hasKey ? 'ok' : 'warn') + '">' + (hasKey ? '密钥已配置' : '密钥未配置') + '</span>' +
       (base ? '<span class="settings-model-baseurl" title="' + _settingsEsc(base) + '">' + _settingsEsc(base) + '</span>' : '') +
+      (providerOn ? '' : '<span class="settings-model-offnote">已停用：聊天模型列表不显示该供应商的任何模型</span>') +
     '</div></div>';
   detail += '<div class="settings-model-subhead"><span>模型列表</span>' +
     '<button type="button" class="settings-model-mini" onclick="settingsModelToggleAdd()" title="添加到当前供应商">' + (_settingsModelAddOpen ? '收起' : '手动添加模型') + '</button></div>';
@@ -451,8 +465,9 @@ function _settingsPageModel() {
       '<button type="button" class="settings-model-mini" onclick="settingsModelAddSubmit()">添加</button>' +
       '<span class="settings-model-addhint" id="settingsModelAddHint"></span></div>';
   }
-  const ro = _settingsReadonly();
-  detail += '<div class="settings-model-rows">' + rows.map(m => {
+  // 整组停用时的弱化态挂在 rows 容器上：行内开关仍可操作（写的是各模型自己的
+  // enabled，重开供应商后原样生效），只是视觉上整体降下去，别让人以为没生效
+  detail += '<div class="settings-model-rows' + (providerOn ? '' : ' is-provider-off') + '">' + rows.map(m => {
     const mid = _settingsJsArg(m && m.id);
     // enabled 缺省＝启用（旧配置无该字段）；停用条目仍显示，好让开关能重新启用
     const on = !m || m.enabled !== false;
@@ -1896,6 +1911,8 @@ function settingsModelAction(kind, arg, val) {
     else if (kind === 'delGroup' && typeof confirmDeleteModelGroup === 'function') confirmDeleteModelGroup(a);
     // 行右侧开关：写入逻辑全在 models.js 的 setModelEnabled，抽屉只转发当前状态
     else if (kind === 'toggle' && typeof setModelEnabled === 'function') setModelEnabled(a, val !== false);
+    // 供应商总开关（卡片右上）：写入逻辑在 models.js 的 setProviderEnabled
+    else if (kind === 'toggleProvider' && typeof setProviderEnabled === 'function') setProviderEnabled(a, val !== false);
   } catch (e) {}
   // 保存/删除后 models.js 会 renderModelList() 派发 phymathia:models-changed 让本页重画；
   // 打开弹窗类动作无需重画，抽屉由捕获相监听保持打开。
