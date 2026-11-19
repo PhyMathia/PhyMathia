@@ -1509,6 +1509,16 @@ def _resolve_socratic_branch(session_id: str, account: str = DEFAULT_ACCOUNT) ->
     return ""
 
 
+def _safe_int(value, default: int = 0) -> int:
+    """脏值兜底 int（backlog 499，2026-11-19）：闭环状态文件里的计数可能被外部写脏
+    （"2次"、{}）——int() 直抛会让提示词装配/状态更新把整轮对话打成 500，这里
+    一律回落默认值（None/""/非数字串都归 default）。"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _socratic_state_instruction(ref: str, mode: str = "answer",
                                account: str = DEFAULT_ACCOUNT) -> str:
     state = _read_socratic_state(ref, account)
@@ -1527,8 +1537,8 @@ def _socratic_state_instruction(ref: str, mode: str = "answer",
             )
         return ""
     level = state.get("level", "") or "basic"
-    streak = int(state.get("correctStreak", 0) or 0)
-    answered = int(state.get("answeredCount", 0) or 0)
+    streak = _safe_int(state.get("correctStreak"))
+    answered = _safe_int(state.get("answeredCount"))
     question = state.get("question", "") or ""
     last_correct = state.get("lastCorrect", "") or ""
     last_confidence = state.get("lastConfidence", "") or ""
@@ -1606,12 +1616,12 @@ def _update_socratic_state_from_content(content: str, ref: str,
     state["active"] = True
     state["lastCorrect"] = correct
     if correct == "correct":
-        state["correctStreak"] = int(state.get("correctStreak", 0) or 0) + 1
+        state["correctStreak"] = _safe_int(state.get("correctStreak")) + 1
     elif correct in ("partial", "wrong"):
         state["correctStreak"] = 0
-    state["answeredCount"] = int(state.get("answeredCount", 0) or 0) + 1
+    state["answeredCount"] = _safe_int(state.get("answeredCount")) + 1
 
-    if done or int(state.get("correctStreak", 0) or 0) >= 2:
+    if done or _safe_int(state.get("correctStreak")) >= 2:
         _delete_socratic_state(ref, account)
     else:
         _write_socratic_state(ref, state, account)
@@ -1682,5 +1692,6 @@ __all__ = [
     "SOCRATIC_STATE_PREFIX", "SOCRATIC_STATE_TTL_SECONDS", "estimate_tokens", "resolve_context_budget", "_shrink_history_to_budget", "_content_timestamp_map", "_socratic_state_expired", "_viz_digest", "_socratic_key", "_kv_path", "_socratic_path", "_mem_path", "_read_rolling_memory", "_write_rolling_memory", "_rolling_summary_due", "_rolling_memory_input", "rolling_memory_block", "_read_socratic_state",
     "_write_socratic_state", "_delete_socratic_state", "_resolve_socratic_branch", "_socratic_state_instruction",
     "_sync_socratic_state_from_prompt", "_update_socratic_state_from_content", "_is_socratic_followup",
+    "_safe_int",
     "merge_message_lists",
 ]

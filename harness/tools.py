@@ -496,6 +496,16 @@ PHASE_TOOLS: Dict[str, List[str]] = {
 def build_tools(phase: str) -> List[Dict[str, Any]]:
     """Return the tool schema list for a harness phase ([] when unsupported)."""
     names = PHASE_TOOLS.get(str(phase or "normal"), [])
+    if names and all(name in SKILL_TOOL_NAMES for name in names):
+        # 装配点筛选（skill_forge.available() 的承诺兑现，494）：server.skill_registry
+        # 不可用（battery 测试桩/独立部署）时 forge 四件套整表不给——否则模型拿着
+        # 工具表每次调用都只收到「技能系统不可用」。其余相位不含技能工具，不受影响。
+        try:
+            from .skill_forge import available as _skill_forge_available  # noqa: PLC0415
+            if not _skill_forge_available():
+                names = []
+        except Exception:
+            names = []
     return [_TOOL_DEFS[name] for name in names if name in _TOOL_DEFS]
 
 

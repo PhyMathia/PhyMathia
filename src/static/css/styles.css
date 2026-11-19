@@ -2456,6 +2456,12 @@
        覆盖会把那套语言压成普通磨砂。 */
     /* 显式 display 会盖过 hidden 属性的 UA 样式，收起必须写死 */
     .pm-picker-menu[hidden] { display: none; }
+    /* 贴底上翻（487，2026-11-19）：默认下开落点越过视口／被祖先 overflow 裁时，
+       utils.js pmPickerToggle 加 pm-picker--flip，菜单翻到按钮上方 */
+    .pm-picker--flip .pm-picker-menu {
+      top: auto;
+      bottom: calc(100% + 6px);
+    }
     /* 分组标题只做「轻量的分隔」，不再是一条抢戏的灰底横条 */
     .pm-picker-group {
       padding: 10px 10px 4px;

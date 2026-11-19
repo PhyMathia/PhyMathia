@@ -394,8 +394,11 @@ function _batchDiscardGraphHistories(sids) {
       signal: (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function')
         ? AbortSignal.timeout(10000) : undefined,
     }).then(function (r) {
-      // fetch resolve 即算删除成功（沿用既有口径：非 2xx 的 delete 也不该让清历史卡住）；
-      // 只有 reject（网络断/超时/沙箱注入失败）才当作失败、留给下次重试。
+      // 只有「请求走到且 HTTP 2xx」才算删除成功：reject（网络断/超时/沙箱注入失败）
+      // 与 r.ok === false（非 2xx）一律当失败——本地键保留、标记原样，留给下次全量
+      // 扫描重试。当前服务端 DELETE /api/kv 恒 200，这条 ok 闸平时走不到（501
+      // 修正注释：此前注释写「resolve 即成功」，与代码不符）；万一哪天服务端改了
+      // 状态码口径，这里的失败处理也已经是对的。
       if (r && r.ok === false) return false;
       try { localStorage.removeItem(_graphHistoryKey(sid)); } catch (e) { /* 配额异常不阻断 */ }
       try { localStorage.removeItem(GRAPH_HISTORY_EXIT_KEY + sid); } catch (e) { /* 同上 */ }

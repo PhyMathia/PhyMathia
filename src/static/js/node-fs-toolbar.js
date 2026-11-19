@@ -43,17 +43,18 @@ function _nodeFsRouteStoreKey() {
     ? STORAGE_KEY_NODE_FS_ROUTE : NODE_FS_ROUTE_FALLBACK;
 }
 
-// 当前该用哪一档：存过的手动档照用；auto 档在总开关关掉后自动降级 analysis
-// （与画布追问卡「关时不出现自动判断」同一口径，别让旧值把人锁在判断请求上）
+// 当前该用哪一档（492 修，2026-11-19）：_nfsRoute 缓存的是**原始存值**（含 'auto'），
+// 展示降级只发生在返回值上——此前总开关关着读到 saved='auto' 时把降级结果 'analysis'
+// 写进了缓存，原始 'auto' 就丢了，之后再开总开关也不恢复（要刷新才回来），与画布
+// 追问卡（每次现读原始存值）两处 UI 不一致。
 function _nodeFsRouteCurrent() {
   const auto = _nodeFsRouteAutoEnabled();
-  if (_nfsRoute === 'direct' || _nfsRoute === 'analysis') return _nfsRoute;
+  if (_nfsRoute !== 'direct' && _nfsRoute !== 'analysis' && _nfsRoute !== 'auto') {
+    let saved = '';
+    try { saved = String(localStorage.getItem(_nodeFsRouteStoreKey()) || '').toLowerCase(); } catch (e) { saved = ''; }
+    _nfsRoute = (saved === 'direct' || saved === 'analysis' || saved === 'auto') ? saved : 'auto';
+  }
   if (_nfsRoute === 'auto') return auto ? 'auto' : 'analysis';
-  let saved = '';
-  try { saved = String(localStorage.getItem(_nodeFsRouteStoreKey()) || '').toLowerCase(); } catch (e) { saved = ''; }
-  if (saved === 'direct' || saved === 'analysis') _nfsRoute = saved;
-  else if (saved === 'auto' && auto) _nfsRoute = 'auto';
-  else _nfsRoute = auto ? 'auto' : 'analysis';
   return _nfsRoute;
 }
 
@@ -325,6 +326,22 @@ function _nodeFsNodeBusy(node) {
 
 // 内容住哪儿：自己写的（customNodes）改 content；AI 回答/模块改节点覆盖表（harnessNodeOverrides，
 // _nodeContent 与 _graphAnswerExpandRaw 都优先读它，不动 msg.content 原文）
+
+// 未剥原文取材（493，2026-11-19）：answer 节点的展示文本剥过 <extend>／建议追问
+// （_graphAnswerDisplayContent 只剥展示），拿展示文本当覆盖落盘＝把剥后版存成节点
+// 正文，Φ 快照/apply（_syncHarnessFormulas 读 ov.content）从此只见剥后版。加粗的
+// 插入位置必须按真原文算：展示与原文各定位一次，标记永远插进未剥原文。
+// 其余 kind（custom/blank/module）原文＝展示，直接复用 _nodeFsSourceText。
+function _nodeFsSourceTextRaw(node, message) {
+  if (!node) return '';
+  if (node.kind === 'answer' && !node.manual && node.messageIndex >= 0) {
+    const state = typeof _graphState === 'function' ? _graphState() : {};
+    const ov = ((state && state.harnessNodeOverrides) || {})[node.id];
+    if (ov && ov.content != null) return String(ov.content);
+    return message ? String(message.content || '') : '';
+  }
+  return _nodeFsSourceText(node, message);
+}
 function _nodeFsBoldTarget(node) {
   if (!node) return '';
   const state = typeof _graphState === 'function' ? _graphState() : null;
@@ -380,7 +397,14 @@ function _nodeFsBoldWrite(node, message, next, opts) {
   }
   let after = '';
   try { after = _nodeFsSourceText(node, message); } catch (e) { after = ''; }
-  if (after !== next) {
+  // 读回走的是展示管道（answer 节点剥 <extend>／建议追问），预期值须按同一管道算
+  // （493）——next 已是真原文（带标记），剥口后逐字比对才对得上；其余 kind 管道恒等
+  let expected = next;
+  if (route === 'override' && node.kind === 'answer' && !node.manual
+    && typeof _graphAnswerDisplayContent === 'function') {
+    try { expected = _graphAnswerDisplayContent(next, message, node); } catch (e) { expected = next; }
+  }
+  if (after !== expected) {
     rollback();
     return { ok: false, message: '这个节点改不了：正文由别处生成' };
   }
@@ -469,9 +493,15 @@ function _nodeFsBoldInPage(picked) {
   const src = _nodeFsSourceText(node, message);
   const span = _nodeFsBoldLocate(src, String(range.toString() || ''), _nodeFsBoldContext(st.container, range));
   if (!span) { if (typeof showToast === 'function') showToast('没能在原文里找到这段，换个范围再试'); return; }
-  const blocked = _nodeFsBoldBlockedReason(src, span);
+  // 插入位置按真原文算（493）：answer 展示文本剥过 <extend>/建议追问，拿展示偏移
+  // 写回会把剥后版存成节点正文。原文里找不中（同一套上下文定位）宁可拒绝。
+  const raw = _nodeFsSourceTextRaw(node, message);
+  const spanR = (raw === src) ? span
+    : _nodeFsBoldLocate(raw, String(range.toString() || ''), _nodeFsBoldContext(st.container, range));
+  if (!spanR) { if (typeof showToast === 'function') showToast('没能在原文里找到这段，换个范围再试'); return; }
+  const blocked = _nodeFsBoldBlockedReason(raw, spanR);
   if (blocked) { if (typeof showToast === 'function') showToast(blocked); return; }
-  const next = src.slice(0, span.start) + '**' + src.slice(span.start, span.end) + '**' + src.slice(span.end);
+  const next = raw.slice(0, spanR.start) + '**' + raw.slice(spanR.start, spanR.end) + '**' + raw.slice(spanR.end);
   const result = _nodeFsBoldWrite(node, message, next);
   if (!result.ok) { if (typeof showToast === 'function') showToast(result.message); return; }
   _nodeFsBoldWrapRange(range);
@@ -487,9 +517,13 @@ function _nodeFsBoldFromBridge(node, text, before, after) {
   const src = _nodeFsSourceText(node, message);
   const span = _nodeFsBoldLocate(src, text, { before, after });
   if (!span) return { ok: false, message: '没能在原文里找到这段，换个范围再试' };
-  const blocked = _nodeFsBoldBlockedReason(src, span);
+  // 插入位置按真原文算（493，同 _nodeFsBoldInPage）
+  const raw = _nodeFsSourceTextRaw(node, message);
+  const spanR = (raw === src) ? span : _nodeFsBoldLocate(raw, text, { before, after });
+  if (!spanR) return { ok: false, message: '没能在原文里找到这段，换个范围再试' };
+  const blocked = _nodeFsBoldBlockedReason(raw, spanR);
   if (blocked) return { ok: false, message: blocked };
-  const next = src.slice(0, span.start) + '**' + src.slice(span.start, span.end) + '**' + src.slice(span.end);
+  const next = raw.slice(0, spanR.start) + '**' + raw.slice(spanR.start, spanR.end) + '**' + raw.slice(spanR.end);
   return _nodeFsBoldWrite(node, message, next);
 }
 

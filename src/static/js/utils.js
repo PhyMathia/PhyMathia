@@ -465,8 +465,13 @@ function pmPickerCloseAll(exceptWrap) {
   Array.prototype.slice.call(document.querySelectorAll('.pm-picker.open')).forEach(wrap => {
     if (wrap === exceptWrap) return;
     wrap.classList.remove('open');
+    // 上翻态与高度钳制是「这次打开」的摆位，收起一并还原（下次打开重新量）
+    if (wrap.classList && wrap.classList.remove) wrap.classList.remove('pm-picker--flip');
     const menu = wrap.querySelector ? wrap.querySelector('.pm-picker-menu') : null;
-    if (menu) menu.hidden = true;
+    if (menu) {
+      menu.hidden = true;
+      try { menu.style.maxHeight = ''; } catch (e) { /* 沙箱兜底 */ }
+    }
     const btn = wrap.querySelector ? wrap.querySelector('.pm-picker-btn') : null;
     if (btn && btn.setAttribute) btn.setAttribute('aria-expanded', 'false');
   });
@@ -498,6 +503,26 @@ function pmPickerToggle(selectEl) {
   if (wrap.classList) wrap.classList[willOpen ? 'add' : 'remove']('open');
   if (btn && btn.setAttribute) btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
   if (!willOpen) return;
+  // 贴底裁切自检（487，2026-11-19）：菜单默认下开（top: 100%+6px），落点越过视口
+  // （或被祖先 overflow 裁得放不下 40px）就翻到按钮上方（bottom: 100%+6px）；
+  // 两个方向都不够高时钳掉 max-height 保住「按钮不被盖、菜单能滚」。设置抽屉
+  // 底部的模型选择器（原案例）与一切 .pm-picker 调用点共用这一条。
+  if (wrap.classList) wrap.classList.remove('pm-picker--flip');
+  try { menu.style.maxHeight = ''; } catch (e) { /* 沙箱兜底 */ }
+  if (typeof window !== 'undefined' && typeof document.documentElement !== 'undefined'
+    && wrap.getBoundingClientRect && menu.getBoundingClientRect) {
+    const bh = typeof btn.getBoundingClientRect === 'function' ? btn.getBoundingClientRect() : null;
+    const mh = menu.getBoundingClientRect();
+    const vh = (window.innerHeight || 0);
+    const btnTop = bh ? bh.top : (mh.top - mh.height - 6);
+    const want = Math.ceil(mh.height) || 0;
+    const below = Math.max(0, vh - (btnTop + (bh ? bh.height : 0) - 6)); // 菜单可用下空间
+    if (below < Math.min(want, 40)) {
+      const above = Math.max(0, btnTop); // 菜单可用上空间
+      if (above >= Math.min(want, 40)) wrap.classList.add('pm-picker--flip');
+      try { menu.style.maxHeight = Math.max(120, Math.floor(Math.max(below, above) - 6)) + 'px'; } catch (e) {}
+    }
+  }
   pmPickerSync(selectEl);
   // 打开时把当前选中项滚进可视区（长列表里别让人自己找）
   const active = menu.querySelector ? menu.querySelector('.pm-picker-item.active') : null;

@@ -109,8 +109,9 @@ export function run() {
     if (!src.includes("_nodeFsButtonHtml('bold', '加粗', 'B', false, '选段加粗')")) return false;
     if (!src.includes("if (act === 'bold') { _nodeFsBoldInPage({ range: st.range }); return; }")) return false;
     if (!src.includes('_nodeFsBoldWrite(node, message, next)')) return false;
-    // 写回自检：全屏取文口径读回不一致就回滚（别留「看着变粗、重开就没了」）
-    if (!src.includes('if (after !== next)')) return false;
+    // 写回自检：读回不一致就回滚（别留「看着变粗、重开就没了」）；493 起读回走展示
+    // 管道、预期值按同一管道算（answer 节点剥 <extend>/建议追问后比对），故对 expected
+    if (!src.includes('if (after !== expected)')) return false;
     if (!src.includes("else if (d.action === 'bold')")) return false;
     const script = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
     if (!script.includes('function boldSel()') || !script.includes('function boldLocate(')) return false;
@@ -402,6 +403,11 @@ export function run() {
     if (cur() !== 'auto') throw new Error('总开关开着却选不了自动判断');
     sandbox.localStorage.removeItem('phymathia_followup_auto_route');
     if (cur() !== 'analysis') throw new Error('总开关关掉后 auto 应降级 analysis');
+    // 降级只发生在返回值、缓存仍存原始档（492）：再开总开关要回到 auto，
+    // 旧实现把降级结果 'analysis' 写进缓存，重开开关也不恢复（要刷新）
+    sandbox.localStorage.setItem('phymathia_followup_auto_route', '1');
+    if (cur() !== 'auto') throw new Error('总开关重开没恢复自动判断（缓存粘滞）');
+    sandbox.localStorage.removeItem('phymathia_followup_auto_route');
     // 复位，别让本用例的残留影响后续用例
     set('analysis');
     sandbox.localStorage.removeItem('phymathia_node_fs_followup_route');
@@ -649,6 +655,54 @@ export function run() {
       sandbox.renderGraphCanvas = realRender;
       sandbox.phyIsReadonly = realReadonly;
       vm.runInContext('_regeneratingNodes.delete("n_regen")', sandbox);
+    }
+  });
+
+  check('node-fs-toolbar: 加粗写回不吃展示剥口——override 保留建议追问与 meta（493）', () => {
+    const realState = sandbox._graphState;
+    const realHistory = sandbox._getChatHistory;
+    const realUndo = sandbox._pushGraphUndo;
+    const realSave = sandbox._saveGraphState;
+    const realRender = sandbox.renderGraphCanvas;
+    const realReadonly = sandbox.phyIsReadonly;
+    // socratic 反馈 answer：展示文本剥建议追问＋meta（graph-data 展示管道），
+    // 旧实现把剥后版当节点正文落 override，Φ 快照/apply 从此只见剥后版
+    const content = '讲解正文，关键结论是勾股定理。'
+      + '\n1. [基础] 什么是直角三角形？\n2. [进阶] 如何证明？'
+      + '\n<socratic_meta correct="correct" />';
+    const state = {
+      nodes: [{ id: 'n_sq', kind: 'answer', messageIndex: 0, busy: false }],
+      customNodes: [],
+      harnessNodeOverrides: {},
+    };
+    const messages = [{ role: 'assistant', branchType: 'socratic', content }];
+    try {
+      sandbox._graphState = () => state;
+      sandbox._getChatHistory = () => messages;
+      sandbox._pushGraphUndo = () => {};
+      sandbox._saveGraphState = () => {};
+      sandbox.renderGraphCanvas = () => {};
+      sandbox.phyIsReadonly = () => false;
+      const display = sandbox._nodeFsSourceText(state.nodes[0], messages[0]);
+      if (display.includes('[基础]')) throw new Error('展示管道没剥建议追问，用例前提不成立');
+      const res = sandbox._nodeFsBoldFromBridge(state.nodes[0], '勾股定理', '关键结论是', '。');
+      if (!res.ok) throw new Error('加粗被拒：' + res.message);
+      const ov = state.harnessNodeOverrides['n_sq'];
+      if (!ov) throw new Error('覆盖没落盘');
+      // 插入位置按真原文算：标记插进未剥原文，剥掉的建议追问与 meta 原样保留
+      if (!ov.content.includes('**勾股定理**')) throw new Error('标记没插进原文');
+      if ((ov.content.match(/\*\*/g) || []).length !== 2) throw new Error('标记不成对');
+      if (!ov.content.includes('[基础]') || !ov.content.includes('<socratic_meta')) {
+        throw new Error('override 吃了展示剥口，建议追问/meta 被剥掉落盘');
+      }
+      return true;
+    } finally {
+      sandbox._graphState = realState;
+      sandbox._getChatHistory = realHistory;
+      sandbox._pushGraphUndo = realUndo;
+      sandbox._saveGraphState = realSave;
+      sandbox.renderGraphCanvas = realRender;
+      sandbox.phyIsReadonly = realReadonly;
     }
   });
 
