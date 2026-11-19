@@ -131,6 +131,36 @@ def test_clear_messages_removes_archive(acc_env):
     assert _archives("sess_hist_e") == []
 
 
+def test_archive_includes_graph_nodes_when_messages_missing(acc_env):
+    """聊天流缺失的会话（本机 48/53）内容仍在画布节点里：归档必须把节点写进来，
+    交互可视化的 HTML 代码不写（几十 KB 代码不是历史），只留一句说明。"""
+    _seed_session("sess_hist_g", title="三相")
+    kv_path = accounts.resolve_paths("default").kv_dir / "sess_hist_g.json"
+    kv_path.parent.mkdir(parents=True, exist_ok=True)
+    kv_path.write_text(json.dumps({
+        "graph:sess_hist_g": {"customNodes": [
+            {"kind": "user", "content": "三相交流电路", "timestamp": 1000},
+            {"kind": "module", "label": "物理视角", "content": "空间对称 → 时间错相", "timestamp": 2000},
+            {"kind": "module", "label": "交互可视化",
+             "content": "```html\n<!DOCTYPE html><html><body>viz</body></html>", "timestamp": 3000},
+        ]},
+    }, ensure_ascii=False), encoding="utf-8")
+
+    target = storage.write_message_archive("sess_hist_g", [], "default")
+    assert target is not None
+    text = target.read_text(encoding="utf-8")
+    assert "三相交流电路" in text
+    assert "物理视角" in text and "空间对称 → 时间错相" in text
+    assert "交互可视化" in text and "字代码，正文见画布" in text
+    assert "<!DOCTYPE html>" not in text
+
+
+def test_empty_session_writes_no_archive(acc_env):
+    _seed_session("sess_hist_h", title="空画布")
+    assert storage.write_message_archive("sess_hist_h", [], "default") is None
+    assert _archives("sess_hist_h") == []
+
+
 def test_backfill_helper_rebuilds_archive(acc_env):
     """归档是派生副本：删掉后能由消息文件原样重建（回填脚本就是干这个）。"""
     _seed_session("sess_hist_f", title="可重建")

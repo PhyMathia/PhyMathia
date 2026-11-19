@@ -121,20 +121,28 @@ def _resolve_messages_path(session_id: str, account: str = DEFAULT_ACCOUNT) -> P
     raise ValueError(f"invalid session id: {session_id!r}")
 
 
-# ====== 会话消息的可读归档（2026-11-19）======
-# 机器读的消息在 data/users/<账号>/messages/<sid>.json，用户看不见；这里同时
-# 在 data/history/<账号>/<标题>-<sid后8>.md 写一份人可读的 Markdown，摆在项目
-# 文件夹里，不依赖浏览器。
+# ====== 会话历史的可读归档（2026-11-19）======
+# 机器读的数据分两处：聊天流在 data/users/<账号>/messages/<sid>.json，画布与
+# 节点在 data/users/<账号>/kv/<sid>.json——用户都看不见。这里在
+# data/history/<账号>/<标题>-<sid后8>.md 写一份人可读的时间线，摆在项目文件夹里。
 #
-# 为什么必须有这一层：浏览器 localStorage 的 phymathia_msgs_ 只是读取缓存
-# （session.js SESSION_LOCAL_CACHE_KEEP=5，启动/切会话/同步时 LRU 回收），
-# 2026-11-19 实测本机 53 个会话里 48 个连服务端消息文件都不存在——本地缓存被
-# 挤掉、服务端又从没落过盘，历史就是永久丢失。归档是纯派生副本：删了可由
-# 消息文件重建（scripts/backfill_history_archive.py），不参与任何读写决策。
+# 为什么必须两处都读：本机 53 个会话里 48 个没有消息文件（聊天流从没落盘），
+# 但内容其实还在画布节点里（物理/数学视角、交互可视化、追问卡）。只按消息文件
+# 判断会得出「历史全丢了」的错误结论（2026-11-19 自己踩过，用户当场纠正）。
+# 归档是纯派生副本：删了可由 kv/消息重建（scripts/backfill_history_archive.py），
+# 不参与任何读写决策。
 
 _HISTORY_ROLE_LABEL = {"user": "我", "assistant": "AI", "system": "系统"}
+_HISTORY_KIND_LABEL = {
+    "user": "我", "human_note": "我的笔记", "module": "模块", "direct": "AI",
+    "source": "素材", "answer": "回答", "analysis": "分析",
+}
 _HISTORY_ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _HISTORY_TITLE_MAX = 40
+# 单条正文上限：交互可视化的 HTML 不写进来（几十 KB 代码不是历史），其它长文
+# 超限截断并注明——归档要「翻得动」，不是第二份全量数据。
+_HISTORY_ENTRY_MAX = 8000
+_HISTORY_HTML_RE = re.compile(r'^\s*(```html|<!DOCTYPE\s+html|<html[\s>])', re.IGNORECASE)
 
 
 def history_dir(account: str = DEFAULT_ACCOUNT) -> Path:
@@ -158,41 +166,102 @@ def _archive_name(session_id: str, title: str) -> str:
 
 def _fmt_ms(ts) -> str:
     try:
-        return datetime.datetime.fromtimestamp(float(ts) / 1000).strftime("%Y-%m-%d %H:%M")
+        return datetime.datetime.fromtimestamp(float(ts) / 1000).strftime("%m-%d %H:%M")
     except (TypeError, ValueError, OSError, OverflowError):
         return ""
 
 
-def message_archive_markdown(session_id: str, messages: list, title: str = "") -> str:
-    lines = [
-        f"# {title or '未命名画布'}", "",
-        f"- 会话 ID：`{session_id}`",
-        f"- 消息数：{len(messages)}",
-        f"- 导出时间：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}", "", "---", "",
-    ]
-    n = 0
-    for msg in messages:
+def _ts_of(value) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("inf")  # 没有时间戳的排最后
+
+
+def _graph_nodes(session_id: str, account: str) -> list:
+    """读该会话画布快照里的节点（kv/<sid>.json → graph:<sid>.customNodes）。"""
+    try:
+        kv_path = accounts.resolve_paths(account).kv_dir / f"{session_id}.json"
+    except Exception:
+        return []
+    # 走 mtime+size 失效的读缓存：消息每次保存都会来取一次，大画布别反复全量解析
+    kv = _read_json_cached(kv_path, {})
+    if not isinstance(kv, dict):
+        return []
+    graph = kv.get(f"graph:{session_id}") or kv.get("graph") or {}
+    nodes = graph.get("customNodes") if isinstance(graph, dict) else None
+    return [n for n in (nodes or []) if isinstance(n, dict)]
+
+
+def _clip_entry(text) -> str:
+    text = str(text or "").strip()
+    if _HISTORY_HTML_RE.match(text):
+        return f"（交互可视化，{len(text):,} 字代码，正文见画布）"
+    if len(text) > _HISTORY_ENTRY_MAX:
+        return text[:_HISTORY_ENTRY_MAX].rstrip() + f"\n\n…（已截断，共 {len(text):,} 字，完整内容见画布）"
+    return text
+
+
+def _archive_entries(messages, nodes) -> list:
+    """消息与画布节点合成一条时间线：[(ts, 角色/类型, 小标题, 正文), ...]。"""
+    entries = []
+    for msg in messages or []:
         if not isinstance(msg, dict):
             continue
         role = str(msg.get("role") or "")
         if role == "system":
             continue
-        n += 1
-        label = _HISTORY_ROLE_LABEL.get(role, role or "记录")
-        when = _fmt_ms(msg.get("timestamp"))
-        lines.append(f"## {n}. {label}{(' · ' + when) if when else ''}")
+        content = _clip_entry(msg.get("content"))
+        if not content:
+            continue
+        entries.append((_ts_of(msg.get("timestamp")),
+                        _HISTORY_ROLE_LABEL.get(role, role or "记录"), "", content))
+    for node in nodes:
+        kind = str(node.get("kind") or "")
+        label = str(node.get("label") or "").strip()
+        content = _clip_entry(node.get("content"))
+        if not content and not label:
+            continue
+        entries.append((_ts_of(node.get("timestamp")),
+                        _HISTORY_KIND_LABEL.get(kind, kind or "节点"), label, content))
+    entries.sort(key=lambda e: e[0])
+    return entries
+
+
+def message_archive_markdown(session_id: str, messages: list, title: str = "", nodes=None) -> str:
+    entries = _archive_entries(messages, nodes or [])
+    stamps = [e[0] for e in entries if e[0] != float("inf")]
+    lines = [
+        f"# {title or '未命名画布'}", "",
+        f"- 会话 ID：`{session_id}`",
+        f"- 条目：{len(entries)} 条（画布节点 {len(nodes or [])} 个、聊天消息 {len(messages or [])} 条，空条目已略）",
+    ]
+    if stamps:
+        lines.append(f"- 时间跨度：{_fmt_ms(min(stamps))} → {_fmt_ms(max(stamps))}")
+    lines += [f"- 导出时间：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}", "", "---", ""]
+    for i, (ts, head, label, content) in enumerate(entries, 1):
+        line = f"## {i}. {head}"
+        if label and label != head:
+            line += f" · {label}"
+        if ts != float("inf"):
+            line += f" · {_fmt_ms(ts)}"
+        lines.append(line)
         lines.append("")
-        lines.append(str(msg.get("content") or "").strip())
-        lines.append("")
+        if content:
+            lines.append(content)
+            lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
 def write_message_archive(session_id: str, messages: list, account: str = DEFAULT_ACCOUNT):
-    """把一份消息列表写成可读 Markdown；空列表视为「没有可归档内容」直接返回 None。
+    """把「画布节点 + 聊天消息」写成一份可读时间线；两者都空时返回 None。
 
     返回归档路径。写失败由调用方吞掉——归档是副本，不许影响消息本体的保存。
     """
-    if not isinstance(messages, list) or not messages:
+    if not isinstance(messages, list):
+        messages = []
+    nodes = _graph_nodes(session_id, account)
+    if not messages and not nodes:
         return None
     title = _session_title(session_id, account)
     target_dir = history_dir(account)
@@ -205,7 +274,7 @@ def write_message_archive(session_id: str, messages: list, account: str = DEFAUL
                 old.unlink()
             except OSError:
                 pass
-    content = message_archive_markdown(session_id, messages, title)
+    content = message_archive_markdown(session_id, messages, title, nodes)
     tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
     tmp.write_text(content, encoding="utf-8")
     os.replace(tmp, target)

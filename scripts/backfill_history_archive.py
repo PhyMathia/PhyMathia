@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""会话历史可读归档回填：data/users/<账号>/messages/*.json → data/history/<账号>/*.md
+"""会话历史可读归档回填：把每个会话的「画布节点 + 聊天消息」写成
+data/history/<账号>/<标题>-<sid后8>.md
 
-背景（2026-11-19）：浏览器 localStorage 的 phymathia_msgs_ 只是读取缓存
-（session.js 只留最近 5 个会话），服务端消息文件才是权威副本；但本机实测
-53 个会话里 48 个连消息文件都不存在。为了让「历史留在项目文件夹里」变成
-看得见的事实，服务端从今天起在每次消息落盘后同步写一份 Markdown 归档，
-本脚本负责把已经存在的消息文件一次性补齐。
+背景（2026-11-19）：本机 53 个会话里只有 5 个有消息文件——但内容并没有全丢，
+大部分以画布节点形式存在 data/users/<账号>/kv/<sid>.json（物理/数学视角、
+交互可视化、追问卡）。本脚本按会话名单逐个生成可读时间线，让「历史在项目
+文件夹里」变成看得见的事实。
 
 用法：
   python3 scripts/backfill_history_archive.py                 # 全部账号
@@ -17,26 +17,27 @@
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from server import storage  # noqa: E402
+from server import accounts, storage  # noqa: E402
 
 
 def _load_messages(path: Path):
+    if not path.exists():
+        return []
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError, OSError):
-        return None
-    return data if isinstance(data, list) else None
+        return []
+    return data if isinstance(data, list) else []
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="把会话消息文件回填成可读 Markdown 归档")
+    parser = argparse.ArgumentParser(description="把会话的画布节点与消息回填成可读 Markdown")
     parser.add_argument("--account", default="", help="只处理指定账号（默认全部）")
     parser.add_argument("--dry-run", action="store_true", help="只打印计划，不写文件")
     args = parser.parse_args()
@@ -46,40 +47,43 @@ def main() -> int:
         print(f"没有找到 {users_dir}，先启动一次服务让目录生成。")
         return 1
 
-    accounts = []
-    for entry in sorted(users_dir.iterdir()):
-        if not entry.is_dir() or entry.name.startswith("_"):
-            continue
-        if args.account and entry.name != args.account:
-            continue
-        accounts.append(entry.name)
+    account_ids = [
+        entry.name for entry in sorted(users_dir.iterdir())
+        if entry.is_dir() and not entry.name.startswith("_")
+        and (not args.account or entry.name == args.account)
+    ]
 
-    total_files = total_written = total_empty = 0
-    for account in accounts:
-        msg_dir = users_dir / account / "messages"
-        if not msg_dir.is_dir():
+    total_written = total_skip = 0
+    for account in account_ids:
+        paths = accounts.resolve_paths(account)
+        sessions = storage._read_json(paths.sessions_path, {})
+        if not isinstance(sessions, dict) or not sessions:
+            print(f"== 账号 {account}：没有会话名单")
             continue
-        files = sorted(msg_dir.glob("*.json"))
-        written = 0
-        for path in files:
-            msgs = _load_messages(path)
-            if not msgs:
-                total_empty += 1
+        written = skipped = 0
+        for sid, meta in sessions.items():
+            msgs = _load_messages(paths.messages_dir / f"{sid}.json")
+            nodes = storage._graph_nodes(sid, account)
+            if not msgs and not nodes:
+                skipped += 1
                 continue
-            total_files += 1
-            target = None
-            if not args.dry_run:
-                target = storage.write_message_archive(path.stem, msgs, account)
-            written += 1
+            title = (meta or {}).get("title") if isinstance(meta, dict) else ""
             if args.dry_run:
-                print(f"[计划] {account}/{path.name} → {len(msgs)} 条")
+                print(f"[计划] {account}/{sid} 《{title}》 节点 {len(nodes)} · 消息 {len(msgs)}")
             else:
-                print(f"[写入] {account}/{path.name} → {target.name if target else '（跳过）'}")
+                target = storage.write_message_archive(sid, msgs, account)
+                if target:
+                    print(f"[写入] {target.name}  节点 {len(nodes)} · 消息 {len(msgs)}")
+                else:
+                    skipped += 1
+                    continue
+            written += 1
         total_written += written
-        print(f"== 账号 {account}：消息文件 {len(files)} 个，可归档 {written} 个")
+        total_skip += skipped
+        print(f"== 账号 {account}：会话 {len(sessions)} 个，生成 {written} 个，跳过空会话 {skipped} 个")
 
-    verb = "将写入" if args.dry_run else "已写入"
-    print(f"\n汇总：{verb} {total_written} 个归档（跳过空/损坏 {total_empty} 个）")
+    verb = "将生成" if args.dry_run else "已生成"
+    print(f"\n汇总：{verb} {total_written} 个归档（跳过 {total_skip} 个空会话）")
     if args.dry_run:
         print("这是 dry-run，未落盘。去掉 --dry-run 再跑一次。")
     return 0
