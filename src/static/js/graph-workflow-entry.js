@@ -135,9 +135,12 @@ function stopWorkflowRun() {
   }
   if (workflowAbortController) workflowAbortController.abort();
   // T299：在跑的节点一起掐断。总闸只断自己的话，这最多 6 颗并行节点会各自把当前这
-  // 一流式跑完（免费模型一颗几十秒到几分钟），用户点了「停止生成」还在出字——
+  // 一轮流式跑完才收工（免费模型一颗几十秒到几分钟），用户点了「停止生成」还在出字——
   // 按钮全程有反应、活儿不停，就是按钮失灵的样子。
   workflowInFlightControllers.forEach(function(controller) { controller.abort(); });
+  // 484（2026-11-19）：订阅断开≠取消——在跑节点的后台任务要显式 DELETE，否则
+  // 服务端 reader 会把上游读到底（宽限到点才自动停）。
+  if (typeof _cancelBusyNodesServerGenerations === 'function') _cancelBusyNodesServerGenerations();
 }
 
 function _renderBlankNodeLive(node, content) {

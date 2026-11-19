@@ -251,12 +251,70 @@ function _taskCancelNode(taskId, nodeId) {
   const controller = ctx.runtime.nodeControllers.get(nodeId);
   if (controller) {
     controller.abort();
+    // 484（2026-11-19）：后台任务显式取消（订阅断开≠取消，不补这刀上游会跑到底）
+    const node = (typeof _findGraphNode === 'function') ? _findGraphNode(nodeId) : null;
+    if (node && node.genTaskId && typeof _cancelServerGeneration === 'function') {
+      _cancelServerGeneration(node.genTaskId);
+    }
     return true;
   }
   // 还没轮到的节点：登记进「用户停掉的」，调度口扫到它就跳过并把下游标成上游缺失
   ctx.runtime.userCancelled.add(nodeId);
   _taskNodeFinish(taskId, nodeId, 'stopped', '已取消');
   return true;
+}
+
+// ===== 484 生成断点续跑：任务行与后台续跑联动（2026-11-19）=====
+// 刷新回来探到服务端任务还活着时，把该节点的「已中断」任务行翻回「进行中」；
+// 收编结束按结果落终态。v1 口径：整行 done/interrupted 两态（更细的 partial
+// 记账归任务并行化 504 的队列重构管，不在这里铺）。
+const _taskResumingByNode = new Map();
+
+function _taskHasNodeId(task, nodeId) {
+  if (!task) return false;
+  const inReplay = task.replay && Array.isArray(task.replay.nodeIds)
+    && task.replay.nodeIds.indexOf(nodeId) >= 0;
+  const inNodes = Array.isArray(task.nodes) && task.nodes.some(n => n && n.id === nodeId);
+  return !!(inReplay || inNodes);
+}
+
+function _flipTaskNodeState(task, nodeId, state) {
+  if (!Array.isArray(task.nodes)) return;
+  task.nodes.forEach(n => {
+    if (n && n.id === nodeId && n.state !== 'done') {
+      n.state = state;
+      n.endedAt = state === 'running' ? 0 : Date.now();
+    }
+  });
+}
+
+function _taskResumeGenerationForNode(nodeId) {
+  if (_taskResumingByNode.has(nodeId)) return _taskActive.find(t => t && t.id === _taskResumingByNode.get(nodeId)) || null;
+  let task = _taskActive.find(t => t && t.state === 'interrupted' && _taskHasNodeId(t, nodeId));
+  if (!task) {
+    const idx = _taskHistory.findIndex(t => t && t.state === 'interrupted' && _taskHasNodeId(t, nodeId));
+    if (idx < 0) return null;
+    task = _taskHistory.splice(idx, 1)[0];
+    _taskActive.unshift(task);
+  }
+  task.state = 'running';
+  task.endedAt = 0;
+  task.note = '后台续跑中';
+  _flipTaskNodeState(task, nodeId, 'running');
+  _taskResumingByNode.set(nodeId, task.id);
+  _taskChanged();
+  return task;
+}
+
+function _taskResumeSettleForNode(nodeId, ok) {
+  const resumedId = _taskResumingByNode.get(nodeId);
+  if (!resumedId) return;
+  _taskResumingByNode.delete(nodeId);
+  const task = _taskActive.find(t => t && t.id === resumedId);
+  if (!task) return;
+  _flipTaskNodeState(task, nodeId, ok ? 'done' : 'error');
+  _taskFinish(task.id, ok ? 'done' : 'interrupted',
+    ok ? '后台续跑完成' : '后台续跑中断，可重试');
 }
 
 function _taskWasNodeCancelled(nodeId) {
@@ -817,8 +875,27 @@ async function _taskLoadFromServer() {
       if (_taskHistory.length > TASK_HISTORY_LIMIT) _taskHistory.length = TASK_HISTORY_LIMIT;
     }
     _taskRenderSoon();
+    // 484：任务账到货后补一次联动——若某颗「已中断」的节点此刻正被后台续跑
+    // （画布上 busy 且收编在途，翻行发生在账本到货之前），把任务行翻回进行中
+    if (typeof _taskSyncResumingRows === 'function') _taskSyncResumingRows();
   } catch (err) {
     console.warn('[Tasks] load failed:', err);
+  }
+}
+
+// 484：账本到货后的补偿联动。扫当前画布 busy+genTaskId 的节点，凡落在「已中断」
+// 任务行里的就翻回进行中（与 _taskResumeGenerationForNode 同一翻法，防抖靠
+// _taskResumingByNode 的去重）。
+function _taskSyncResumingRows() {
+  if (typeof graphView === 'undefined' || !graphView || !Array.isArray(graphView.nodes)) return;
+  const busyIds = new Set(graphView.nodes.filter(n => n && n.busy && n.genTaskId).map(n => n.id));
+  if (!busyIds.size) return;
+  for (const task of _taskHistory.concat(_taskActive)) {
+    if (!task || task.state !== 'interrupted') continue;
+    const fromNodes = (Array.isArray(task.nodes) ? task.nodes : []).map(n => n && n.id).find(id => busyIds.has(id));
+    const fromReplay = (task.replay && Array.isArray(task.replay.nodeIds) || []).find(id => busyIds.has(id));
+    const nodeId = fromNodes || fromReplay;
+    if (nodeId && typeof _taskResumeGenerationForNode === 'function') _taskResumeGenerationForNode(nodeId);
   }
 }
 

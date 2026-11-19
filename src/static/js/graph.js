@@ -118,7 +118,7 @@ function _settleInterruptedCustomNode(node) {
   return next;
 }
 
-function _sanitizeStaleBusyCustomNodes(list) {
+function _sanitizeStaleBusyCustomNodes(list, sid, deferGenTask) {
   if (!Array.isArray(list)) return list;
   let changed = false;
   const next = list.map(cn => {
@@ -128,12 +128,39 @@ function _sanitizeStaleBusyCustomNodes(list) {
         const live = _findGraphNode(cn.id);
         if (live && live.busy) return cn;
       }
+      // 484（2026-11-19）：带 genTaskId 的中断生成暂缓结算——服务端任务可能还在
+      // 后台跑（拍板：后台跑完＋限时自动停），探活后再定。登记进去、busy 原样
+      // 留在盘上，由 _reattachOneNode（graph-workflow-generate.js）收编。
+      if (deferGenTask && _recordPendingGenerationReattach(sid, cn)) return cn;
       changed = true;
       return _settleInterruptedCustomNode(cn);
     }
     return cn;
   });
   return changed ? next : list;
+}
+
+// ===== 484：暂缓结算的中断生成登记（2026-11-19）=====
+// 水合剥 busy 的老口径对带 genTaskId 的节点先按下不表：登记 {sid,nodeId,genTaskId,kind}
+// 等水合钩子（session.js 的 _loadGraphStateFromServer finally）唤收编器探活。
+// 同节点同任务 id 只登记一次——启动清扫与服务端水合会先后过同一份数据。
+const _pendingGenerationReattach = [];
+const _reattachInFlightNodes = new Set();
+let _reattachPumpRetries = 0;
+function _recordPendingGenerationReattach(sid, cn) {
+  if (!cn || typeof cn.genTaskId !== 'string' || !cn.genTaskId) return false;
+  const nodeId = String(cn.id);
+  for (let i = 0; i < _pendingGenerationReattach.length; i++) {
+    const e = _pendingGenerationReattach[i];
+    if (e && e.nodeId === nodeId && e.genTaskId === cn.genTaskId) return true;
+  }
+  _pendingGenerationReattach.push({
+    sid: String(sid || ''),
+    nodeId: nodeId,
+    genTaskId: cn.genTaskId,
+    kind: cn.genTaskKind === 'analysis' ? 'analysis' : 'content',
+  });
+  return true;
 }
 
 // 启动全库扫一次（同 session.js 坏键清扫的手法）：只洗活图键 phymathia_graph_*，
@@ -151,11 +178,11 @@ function _sweepStaleBusyGraphKeys() {
       let parsed;
       try { parsed = JSON.parse(raw); } catch (e) { continue; }
       if (!parsed || typeof parsed !== 'object') continue;
-      const cleaned = _sanitizeStaleBusyCustomNodes(parsed.customNodes);
-      if (cleaned === parsed.customNodes) continue; // busy 只出现在 checkpoint 等无关字段：不动
+      const sid = key.slice('phymathia_graph_'.length);
+      const cleaned = _sanitizeStaleBusyCustomNodes(parsed.customNodes, sid, true);
+      if (cleaned === parsed.customNodes) continue; // busy 只出现在 checkpoint 等无关字段（或全部暂缓续跑）：不动
       parsed.customNodes = cleaned;
       try { localStorage.setItem(key, JSON.stringify(parsed)); } catch (e) { continue; }
-      const sid = key.slice('phymathia_graph_'.length);
       try {
         // T360：回写走合并通道（见 session.js 的 _graphSyncMergePayload）——直连 POST 会
         // 拿整份本地状态盖掉另一台设备刚生成的内容，而「旧设备开机触发清扫」正是 T360
@@ -174,6 +201,16 @@ function _sweepStaleBusyGraphKeys() {
   } catch (e) { /* localStorage 不可用等：清扫只是兜底，不阻断启动 */ }
 }
 _sweepStaleBusyGraphKeys();
+// 484：启动后收编暂缓生成。立即唤一次（收编器若已加载）；画布水合要几拍，
+// 收编器自带 500ms 重试（最多 40 拍），且 session.js 的水合钩子每次切画布都会再唤。
+try {
+  if (typeof _maybeReattachPendingGenerations === 'function') _maybeReattachPendingGenerations();
+} catch (e) { /* 收编只是兜底，不阻断启动 */ }
+setTimeout(function () {
+  try {
+    if (typeof _maybeReattachPendingGenerations === 'function') _maybeReattachPendingGenerations();
+  } catch (e) { /* 同上 */ }
+}, 1500);
 
 const GRAPH_NODE_ATTRIBUTES = {
   question: { key: 'question', label: '问题', color: 'var(--node-question)' },

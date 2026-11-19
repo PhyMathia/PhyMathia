@@ -55,6 +55,7 @@ import { run as _phi } from './frontend_smoke/phi.mjs';
 import { run as _contextmenu } from './frontend_smoke/contextmenu.mjs';
 import { run as _node_fs_toolbar } from './frontend_smoke/node-fs-toolbar.mjs';
 import { run as _canvas_text_scale } from './frontend_smoke/canvas-text-scale.mjs';
+import { run as _particle_glyph } from './frontend_smoke/particle-glyph.mjs';
 import { run as _hotkey_registry } from './frontend_smoke/hotkey-registry.mjs';
 import { run as _skills_ui } from './frontend_smoke/skills-ui.mjs';
 import { run as _skills_manage } from './frontend_smoke/skills-manage.mjs';
@@ -100,6 +101,7 @@ import { run as _graph_branch_workflow } from './frontend_smoke/graph-branch-wor
 import { run as _graph_scope_confirm } from './frontend_smoke/graph-scope-confirm.mjs';
 import { run as _graph_cv_lazy } from './frontend_smoke/graph-cv-lazy.mjs';
 import { run as _graph_reflow_guards } from './frontend_smoke/graph-reflow-guards.mjs';
+import { run as _generation_resume } from './frontend_smoke/generation-resume.mjs';
 import { run as _harness_health } from './frontend_smoke/harness-health.mjs';
 import { run as _workshop } from './frontend_smoke/workshop.mjs';
 import { run as _serial_source_input } from './frontend_smoke/serial-source-input.mjs';
@@ -109,6 +111,7 @@ _phi();
 _contextmenu();
 _node_fs_toolbar(); // 划词快捷工具（2026-10-25）：按语义插在 contextmenu 之后，纯同步静态契约
 _canvas_text_scale(); // 画布字号档（2026-11-15）：同属画布工具条，纯同步（行为断言换 documentElement 记录桩）
+_particle_glyph(); // 进度胶囊「工作中」粒子图标（2026-11-18）：纯同步（DOM 断言自带 createElementNS 记录桩）
 _hotkey_registry(); // 快捷键注册表（2026-11-15，#468/#469）：纯同步，接画布工具条域之后
 _skills_ui(); // 技能界面（2026-11-16 第 4 步）：分析卡标签＋设置页按节点分组，纯同步
 _skills_manage(); // 技能管理面（2026-11-16 第 5 版）：开关/导入/删除，纯同步
@@ -156,6 +159,7 @@ await _graph_branch_workflow();
 _graph_scope_confirm();
 await _graph_cv_lazy();
 await _graph_reflow_guards();
+_generation_resume(); // 484 生成断点续跑（2026-11-19）：续跑接线静态契约＋清扫暂缓/取消口行为，纯同步
 // Φ 主动体检芯片（2026-10-26）：自带收口线（行为链用例换 fetch/getElementById 桩、
 // 用毕即还原），紧挨 workshop 之前——workshop 也换全局桩，两域整体 await 不交叠。
 await _harness_health();

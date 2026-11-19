@@ -30,7 +30,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export async function startIsolatedServer({ port, label = 'phymathia-test', copyDataDirs = [] }) {
+export async function startIsolatedServer({ port, label = 'phymathia-test', copyDataDirs = [], env = {} }) {
   if (!port) throw new Error('startIsolatedServer：必须显式给 port');
   const base = `http://127.0.0.1:${port}`;
   let occupied = false;
@@ -52,7 +52,11 @@ export async function startIsolatedServer({ port, label = 'phymathia-test', copy
     if (existsSync(from)) cpSync(from, join(workDir, 'data', d), { recursive: true });
   }
 
-  const proc = spawn('python3', ['src/main.py', '-p', String(port)], { cwd: workDir, stdio: ['ignore', 'pipe', 'pipe'] });
+  const proc = spawn('python3', ['src/main.py', '-p', String(port)], {
+    cwd: workDir, stdio: ['ignore', 'pipe', 'pipe'],
+    // env：给用例调服务端常量用（如 484 的宽限/清扫间隔 env 覆盖），叠加在真实环境上
+    env: { ...process.env, ...env },
+  });
   let log = '';
   proc.stdout.on('data', (d) => { log += d; });
   proc.stderr.on('data', (d) => { log += d; });

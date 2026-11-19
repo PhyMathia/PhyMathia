@@ -74,6 +74,28 @@ function _readStreamChunk(reader) {
   });
 }
 
+// ===== 484 生成断点续跑：服务端后台任务的取消口（2026-11-19）=====
+// 订阅断开≠取消：用户「停止生成」时必须 DELETE 后台任务，否则服务端 reader 会把
+// 上游读到底（宽限到点才自动停）。fire-and-forget：结果没人看，失败不重试，
+// 宽限兜底总在。页面卸载中 fetch 可能发不出去——无害，宽限口径接得住。
+function _cancelServerGeneration(genTaskId) {
+  const id = String(genTaskId || '');
+  if (!id || typeof fetch !== 'function') return;
+  try {
+    fetch('/api/generations/' + encodeURIComponent(id), { method: 'DELETE' }).catch(() => {});
+  } catch (e) { /* 发不出去就算了：宽限自动停兜底 */ }
+}
+
+// 扫当前画布上所有 busy 且带任务 id 的节点，逐个取消后台任务（总闸停止用）。
+// 不另维持登记簿——busy 节点集合就是「正在生成」的唯一事实源，扫图最不会漏
+// （分析卡与模块卡都走 busy+genTaskId 这对标记）。
+function _cancelBusyNodesServerGenerations() {
+  if (typeof graphView === 'undefined' || !graphView || !Array.isArray(graphView.nodes)) return;
+  graphView.nodes.forEach(function (node) {
+    if (node && node.busy && node.genTaskId) _cancelServerGeneration(node.genTaskId);
+  });
+}
+
 // 每 4 帧让出一次事件循环：流式期间合成 DOM 渲染有帧预算，别让读流饿死它。
 // （让出的时机从「渲染前」挪到了「渲染后」——两者都是每 4 帧喘一次，语义等价。）
 async function* _sseContentFrames(resp) {

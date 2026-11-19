@@ -743,10 +743,11 @@
 
     // T359：水合结算中断生成（草稿入账/旧版兜回）。清洗助手在 graph.js（typeof 守卫：
     // 它是启动清扫的同一份口径），本地赢、服务端赢两条路都要过——两边都可能是上次
-    // 关页时留下的「生成中」残留。
-    function _healHydratedGraphState(state) {
+    // 关页时留下的「生成中」残留。484：带 genTaskId 的残留暂缓结算（第三参），
+    // 等收编器探活服务端任务后再定去向。
+    function _healHydratedGraphState(state, sid) {
       if (!state || typeof _sanitizeStaleBusyCustomNodes !== 'function') return state;
-      const fixed = _sanitizeStaleBusyCustomNodes(state.customNodes);
+      const fixed = _sanitizeStaleBusyCustomNodes(state.customNodes, sid || '', true);
       if (fixed === state.customNodes) return state;
       return _normalizeGraphState({ ...state, customNodes: fixed });
     }
@@ -767,7 +768,7 @@
         const local = getGraphState(sid);
         const useServer = !local.updatedAt || !serverState.updatedAt || serverState.updatedAt >= local.updatedAt;
         const effective = useServer ? _normalizeGraphState({ ...local, ...serverState }) : local;
-        const healed = _healHydratedGraphState(effective);
+        const healed = _healHydratedGraphState(effective, sid);
         if (useServer) {
           _graphStateMemCache.set(sid, healed);
           safeLocalStorageSet('phymathia_graph_' + sid, JSON.stringify(healed));
@@ -782,6 +783,12 @@
         }
       } catch (err) {
         console.warn('[GraphState] Failed to load server state:', err);
+      } finally {
+        // 484（2026-11-19）：水合收口后收编本会话的暂缓中断生成——探活服务端任务，
+        // 活着就重接流，不在了才按旧口径结算。无登记时零开销直通。
+        if (typeof _maybeReattachPendingGenerations === 'function') {
+          try { _maybeReattachPendingGenerations(sid); } catch (e) { /* 兜底不阻断 */ }
+        }
       }
     }
 

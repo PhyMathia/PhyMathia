@@ -20,7 +20,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
-from . import accounts, concept, context, http_client, llm_common, profile, skill_refs, skill_registry, usage_stats, viz_style
+from . import accounts, concept, context, generation_tasks, http_client, llm_common, profile, skill_refs, skill_registry, usage_stats, viz_style
 from .config import AI_PROVIDERS, LEVEL_PROMPTS, STRICT_MODULE_MAX_TOKENS, validate_model_target
 from .context import (
     _branch_context_instruction,
@@ -720,6 +720,94 @@ async def api_models_chat(request: Request):
             except (TypeError, ValueError):
                 pass
         return Response(content=raw, media_type="application/json")
+
+    # ===== 484 生成断点续跑（2026-11-19）：带 gen_task_id 的流式请求转「服务端持任务」 =====
+    # 上游由后台 reader 读进任务帧缓冲，HTTP 请求只是第一个订阅者——页面刷新/断连只摘
+    # 订阅，任务继续跑完；重接凭 GET /api/generations/{id}/stream（重放＋实时）。
+    # id 非法 / 同 id 活任务撞车 → gen_task 为 None，走下方旧透传路径（484 前行为逐字节一致）。
+    gen_task = (generation_tasks.register_generation_task(
+        generation_tasks.normalize_gen_task_id(payload.get("gen_task_id") or ""), account)
+        if stream else None)
+
+    if gen_task is not None:
+        async def _generation_reader():
+            # proxy_stream 同一套读帧/记账，只是落点从 HTTP 响应换成任务缓冲——
+            # 断连后 usage/苏格拉底状态照样收尾（旧透传路径断连即丢，这里顺带补上）。
+            try:
+                streamed_content = []
+                streamed_len = 0
+                last_usage = None
+                bad_frame_count = 0
+                bad_frame_logged = False
+                # 注入快照先于正文下发（与旧路径同帧序）：角标在正文渲染前就能拿到
+                if profile_usage is not None:
+                    await gen_task.append_frame(f"data: {json.dumps({'profile_usage': profile_usage}, ensure_ascii=False)}\n\n")
+                async for line in resp.aiter_lines():
+                    if line.startswith("data: "):
+                        data_str = line[6:].strip()
+                        if data_str != "[DONE]":
+                            try:
+                                data = json.loads(data_str)
+                                if data.get("usage"):
+                                    last_usage = data["usage"]
+                                delta = data.get("choices", [{}])[0].get("delta", {})
+                                delta_text = delta.get("content")
+                                if not delta_text:
+                                    delta_text = delta.get("reasoning_content") or ""
+                                if delta_text and streamed_len < 200_000:
+                                    streamed_content.append(delta_text)
+                                    streamed_len += len(delta_text)
+                            except Exception as e:
+                                # 解析失败照常透传原帧，仅补可观测：每条流最多一条
+                                # warning（含截断样本），避免坏帧刷屏/泄露完整回复
+                                bad_frame_count += 1
+                                if not bad_frame_logged:
+                                    bad_frame_logged = True
+                                    logger.warning(
+                                        f"AI proxy: 上游返回了无法解析的 SSE 帧 "
+                                        f"provider={provider} model={model_name} "
+                                        f"data={data_str[:80]!r} error={type(e).__name__}")
+                    await gen_task.append_frame(line + "\n\n")
+                if bad_frame_count > 1:
+                    logger.warning(f"AI proxy stream: 本次流共 {bad_frame_count} 个坏帧 "
+                                   f"provider={provider} model={model_name}")
+                if last_usage:
+                    logger.info(f"AI proxy usage: {last_usage}")
+                    usage_stats.record_usage(provider, model_name,
+                                             "chat" if prompt else "legacy",
+                                             session_id or session_bucket, last_usage,
+                                             duration_ms=usage_stats.elapsed_ms(call_t0), wf=wf_stats)
+                    _log_cache_hit_rate(last_usage)
+                _update_socratic_state_from_content("".join(streamed_content), socratic_ref, account)
+                await gen_task.finish("done")
+            except asyncio.CancelledError:
+                # 宽限到点无人订阅 / 前端停止生成 DELETE：掐上游、缓冲保留供迟到重放
+                logger.info(f"AI proxy generation task cancelled: id={gen_task.id}")
+                await gen_task.finish("interrupted")
+            except Exception as e:
+                logger.error(f"AI proxy error: {e}")
+                usage_stats.record_failure(provider, model_name, "chat" if prompt else "legacy",
+                                           session_id or session_bucket, f"流中断: {e}",
+                                           usage_stats.elapsed_ms(call_t0), wf=wf_stats)
+                await gen_task.append_frame(f"data: {json.dumps({'error': 500, 'detail': str(e)})}\n\n")
+                await gen_task.finish("error")
+            finally:
+                await resp.aclose()
+
+        gen_task.attach_upstream(asyncio.create_task(_generation_reader()))
+
+        async def _relay_from_task():
+            sub = gen_task.subscribe()
+            try:
+                async for frame in sub:
+                    yield frame
+            finally:
+                # 客户端断开时 Starlette 只 aclose 外层 generator——async for 不传播
+                # close，内层订阅的 finally（订阅计数归零 → 宽限自动停的计时起点）
+                # 永不跑，subscribers 永远停在 1。必须显式 aclose 内层。
+                await sub.aclose()
+
+        return StreamingResponse(_relay_from_task(), media_type="text/event-stream")
 
     async def proxy_stream():
         try:

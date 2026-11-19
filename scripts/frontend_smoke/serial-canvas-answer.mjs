@@ -1155,6 +1155,37 @@ check('带要求重生成：按钮弹面板＋留空直发＋修订内核＋rege
   if (modRegenBody.includes('用户没看懂：') || !modRegenBody.includes('用户的反馈或要求')) {
     throw new Error('消息模块面板路 prompt 没泛化成「按反馈/要求修订」');
   }
+  // ⑨ 面板输入框回车发送（2026-11-18）：Enter 直发、Shift+Enter 换行、输入法组字放行——
+  // 过去 textarea 没挂 onkeydown，按回车只换行，用户以为发了其实字还在框里。
+  if (!giSrc.includes('onkeydown="return regenerateInputKeydown(event')) {
+    throw new Error('重生成面板 textarea 没挂回车发送（onkeydown/regenerateInputKeydown）');
+  }
+  const keyOut = JSON.parse(vm.runInContext(`
+    (() => {
+      const prev = submitRegenerateNode;
+      const calls = [];
+      submitRegenerateNode = function (id) { calls.push(String(id)); };
+      const ev = (extra) => Object.assign({
+        key: 'Enter', shiftKey: false, isComposing: false, keyCode: 13, prevented: 0,
+        preventDefault() { this.prevented++; },
+      }, extra);
+      const enter = ev({});
+      regenerateInputKeydown(enter, 'regen-enter');
+      const shift = ev({ shiftKey: true });
+      regenerateInputKeydown(shift, 'regen-shift');
+      const ime = ev({ isComposing: true });
+      regenerateInputKeydown(ime, 'regen-ime');
+      const ime229 = ev({ keyCode: 229 });
+      regenerateInputKeydown(ime229, 'regen-ime229');
+      submitRegenerateNode = prev;
+      return JSON.stringify({
+        calls,
+        prevented: [enter.prevented, shift.prevented, ime.prevented, ime229.prevented],
+      });
+    })()
+  `, sandbox));
+  if (keyOut.calls.join(',') !== 'regen-enter') throw new Error('只有无修饰 Enter 该发送，实际：' + JSON.stringify(keyOut.calls));
+  if (keyOut.prevented.join(',') !== '1,0,0,0') throw new Error('Enter 应 preventDefault（防插换行），Shift/组字放行：' + JSON.stringify(keyOut.prevented));
 });
 
 // 静态契约（2026-10-15 T338）：播放三角「从头生成」——有内容工作流节点在循环箭头旁
@@ -1265,12 +1296,19 @@ check('节点版本历史：旧版保留＋‹›切换＋删版（2026-10-15 T3
   if (actionsBody.lastIndexOf('_nodeVersionNavHtml') > actionsBody.indexOf("_iconRegenButton('graphOpenRegenerate")) {
     throw new Error('版本导航排到了循环箭头之后（T339）');
   }
-  // 三个生成口的挂点：开跑收账清空、成功收新账、失败/中止兜回
+  // 三个生成口的挂点：开跑收账清空、成功收新账、失败/中止兜回。
+  // 484（2026-11-19）：结算块抽成共享函数 _finishCustomNodeGeneration（调度路与
+  // 续跑路同一把尺子）——开跑收账仍在 _generateCustomNode，成功收账/兜回旧版
+  // 跟着搬进共享结算，两处一起断。
   const genBody = extract(gwGenSrc, '_generateCustomNode');
+  const settleBody = extract(gwGenSrc, '_finishCustomNodeGeneration');
   if (genBody === null || !genBody.includes('_beginWorkflowNodeVersionCycle(node);')
-      || !genBody.includes('_commitWorkflowNodeVersion(live);')
-      || !genBody.includes('_restoreWorkflowNodeVersion(live);')) {
-    throw new Error('_generateCustomNode 缺版本账挂点（T339）');
+      || !genBody.includes('_finishCustomNodeGeneration(node,')) {
+    throw new Error('_generateCustomNode 缺版本账挂点/共享结算调用（T339/484）');
+  }
+  if (settleBody === null || !settleBody.includes('_commitWorkflowNodeVersion(live);')
+      || !settleBody.includes('_restoreWorkflowNodeVersion(live);')) {
+    throw new Error('_finishCustomNodeGeneration 缺版本账挂点（T339/484）');
   }
   // 空白节点（2026-10-24 T403）：旧独立流式路已并入 _generateCustomNode /
   // _streamCustomNodeResponse——版本账三项由上面对 genBody 的断言统一覆盖；这里钉死

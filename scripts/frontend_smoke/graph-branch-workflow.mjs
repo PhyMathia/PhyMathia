@@ -404,8 +404,10 @@ export async function run() {
       const quick = _body(_read('render.js'), '_submitBranchQuickButton');
       if (!quick || quick.indexOf('startQuestionWorkflow') < 0) throw new Error('方向钮没走工作流链路');
       const gen = _body(_read('graph-workflow-generate.js'), '_generateCustomNode');
-      if (!gen || gen.indexOf('socraticMeta') < 0 || gen.indexOf('_materializeSocraticFollowup') < 0) {
-        throw new Error('苏格拉底反馈节点的生成口径没接上（socraticMeta / 派生追问）');
+      // 484：派生追问随结算块搬进共享结算 _finishCustomNodeGeneration，跟着挪断言
+      const settleFn = _body(_read('graph-workflow-generate.js'), '_finishCustomNodeGeneration');
+      if (!gen || gen.indexOf('socraticMeta') < 0 || !settleFn || settleFn.indexOf('_materializeSocraticFollowup') < 0) {
+        throw new Error('苏格拉底反馈节点的生成口径没接上（socraticMeta / 派生追问，484 起派生在共享结算里）');
       }
       const renderNode = _body(_read('graph-render.js'), '_renderCustomNodeContentHtml');
       if (!renderNode || renderNode.indexOf('_graphStripSuggestedFollowups') < 0) {

@@ -48,6 +48,10 @@ async function _generateAnalysis(node, nodeSignal) {
   }
   node.busy = true;
   node.status = 'running';
+  // 484：开跑先落任务 id（随 _saveCustomNodes 进盘）——刷新后清扫凭它探活续跑，
+  // kind 告诉收编器这条流该喂给分析结算还是正文结算
+  node.genTaskId = _newGenTaskId();
+  node.genTaskKind = 'analysis';
   _saveCustomNodes();
   if (workflowRunActive) _refreshWorkflowNodeUi(node);
   else renderGraphCanvas();
@@ -86,15 +90,20 @@ async function _generateAnalysis(node, nodeSignal) {
         // 都先过这里），上游素材篮的图随分析请求一起给模型——图与分析依据同源，
         // 否则模型只能对着「图片未转写」的占位猜
         const images = await _workflowImageDataUrls(node);
-        resp = await _sendWithImagesFallback(images, imgs => proxyChat(
-          prompt,
-          typeof currentLevel !== 'undefined' ? currentLevel : 'university',
-          _workflowSessionId(),
-          true,
-          signal,
-          branchMeta,
-          imgs ? { images: imgs } : {}
-        ));
+        // 484：gen_task_id 随请求入册（proxyChat 经 ...extra 透传进 body）
+        resp = await _sendWithImagesFallback(images, imgs => {
+          const extra = { gen_task_id: node.genTaskId };
+          if (imgs) extra.images = imgs;
+          return proxyChat(
+            prompt,
+            typeof currentLevel !== 'undefined' ? currentLevel : 'university',
+            _workflowSessionId(),
+            true,
+            signal,
+            branchMeta,
+            extra
+          );
+        });
       }
     }
     if (!resp) {
@@ -106,6 +115,8 @@ async function _generateAnalysis(node, nodeSignal) {
     }
     await _streamAnalysisResponse(resp, node, question);
   } catch (err) {
+    // 484：连接死亡（刷新/断网掐死 fetch）不结算，延时探活收编
+    if (_maybeDeferOnConnectionDeath(node, err)) return;
     const live = _findGraphNodeTail(node.id);
     if (live) {
       live.busy = false;
@@ -119,6 +130,30 @@ async function _generateAnalysis(node, nodeSignal) {
     // T341：生成链整条收尾（流落帐/异常结清）后才放行等这颗节点的排队修订
     if (typeof _nodeGenEnd === 'function') _nodeGenEnd(node.id);
   }
+}
+
+// 484：连接死亡 ≠ 生成失败。页面刷新/导航会掐死在途 fetch（Chrome 抛 TypeError
+// 「Failed to fetch」，不是 AbortError），断网同理——但服务端任务还活着（拍板：
+// 后台跑完）。此刻若照旧 catch 结算（busy=false＋status='error'＋落盘），刷新后
+// 水合看到的就不是 busy 残留而是 error，收编器永远轮不上。改法：带 genTaskId 的
+// 连接死亡不结算——busy 原样留盘，登记延时探活；任务在 → 原地重接续流（断网恢复
+// 也吃到这个红利），任务不在（没发出去/服务重启）→ 延时后按旧口径结算，行为只是
+// 慢 3 秒。返回 true＝已接管，调用方直接 return。
+function _maybeDeferOnConnectionDeath(node, err) {
+  if (!err || err.name !== 'TypeError' || !node || !node.genTaskId) return false;
+  const live = (typeof _findGraphNodeTail === 'function') ? _findGraphNodeTail(node.id) : null;
+  if (!live || !live.busy) return false;
+  const sid = (typeof _workflowSessionId === 'function' && _workflowSessionId())
+    || (typeof window.getCurrentSessionId === 'function' && window.getCurrentSessionId()) || '';
+  _recordPendingGenerationReattach(sid, live);
+  // 延时 3 秒：真刷新时本页面随死无所谓（busy 已留盘，新页面水合收编）；本页断网
+  // 场景给网络一个恢复窗口，探活失败才按旧口径结算。
+  setTimeout(function () {
+    try {
+      if (typeof _maybeReattachPendingGenerations === 'function') _maybeReattachPendingGenerations(sid);
+    } catch (e) { /* 兜底不阻断 */ }
+  }, 3000);
+  return true;
 }
 
 function _slotCallForWorkflowNode(node) {
@@ -238,6 +273,9 @@ async function _generateCustomNode(node, nodeSignal) {
   _beginWorkflowNodeVersionCycle(node);
   node.busy = true;
   node.status = 'running';
+  // 484：开跑先落任务 id（随 _saveCustomNodes 进盘）——刷新后清扫凭它探活续跑
+  node.genTaskId = _newGenTaskId();
+  node.genTaskKind = 'content';
   _saveCustomNodes();
   if (workflowRunActive) _refreshWorkflowNodeUi(node);
   else renderGraphCanvas();
@@ -289,6 +327,7 @@ async function _generateCustomNode(node, nodeSignal) {
         session_id: _workflowSessionId(),
         stream: true,
         thinking: getSlotThinkingForRole(slotCall.role),
+        gen_task_id: node.genTaskId,
         parent_id: branchMeta.parentId,
         source_module: branchMeta.sourceModule,
         branch_type: branchMeta.branchType,
@@ -316,6 +355,11 @@ async function _generateCustomNode(node, nodeSignal) {
       await _streamCustomNodeResponse(resp, node);
     } catch (err) {
       streamError = err;
+      // 484：连接死亡（刷新/导航掐死 fetch 抛 TypeError）直通外层统一处理——
+      // 这里的 failedLive 处置会剥 busy 清 content，把「服务端还在跑的任务」提前
+      // 结算成失败，刷新后的收编器就永远轮不上了。用户主动停（AbortError）与
+      // 看门狗超时（TimeoutError）各有自己的口径，不经这条路。
+      if (err && err.name === 'TypeError' && node.genTaskId) throw err;
       console.warn('Viz module direct stream failed, will try fallback:', err);
       const failedLive = _findGraphNodeTail(node.id);
       const vizCarrier = (node.kind === 'module' && node.moduleKey === 'viz')
@@ -343,98 +387,12 @@ async function _generateCustomNode(node, nodeSignal) {
       }
     }
 
-    // T419：成功/归一/重试各收口同样按生成收尾寻址结算
-    const live = _findGraphNodeTail(node.id);
-    // viz 式收口（官方交互可视化＋P2 配方 html_iframe 载体）：内容必须归一成完整
-    // HTML 代码块；不合格时按配方声明的重试预算（on_incomplete.max_retries，官方 1 次）
-    // 与重试提示词（retry_prompt）走独立 HTML 生成通道重试
-    const vizLike = live && ((node.kind === 'module' && node.moduleKey === 'viz') || (recipe && recipe.content_kind === 'html_iframe'));
-    if (vizLike) {
-      let normalized = _normalizeWorkflowVizContent(live.content || '');
-      let vizRetryMessage = streamError && streamError.message ? streamError.message : '';
-      const maxRetries = recipe && recipe.generate && recipe.generate.on_incomplete
-        ? Math.max(0, Math.min(2, Number(recipe.generate.on_incomplete.max_retries) || 0))
-        : 1;
-      const retryHint = recipe && recipe.generate && recipe.generate.retry_prompt
-        ? recipe.generate.retry_prompt
-        : '上一次尝试没有返回完整 HTML。请务必只输出从 <!DOCTYPE html> 到 </html> 的完整页面。';
-      if (!normalized && typeof _requestVisualizationHtml === 'function') {
-        // 自动重试：改用更严格的独立 HTML 生成提示词，减少“节点为空/只有文字”的情况。
-        const sourceText = [
-          workflowContext.question,
-          workflowContext.analysis,
-          ...(workflowContext.upstream || []).map(item => item.label + '：' + (item.summary || item.content || '')),
-        ].filter(Boolean).join('\n\n').slice(0, 12000);
-        for (let attempt = 0; attempt < maxRetries && !normalized; attempt++) {
-          try {
-            const retryHtml = await _requestVisualizationHtml(sourceText || prompt, signal, retryHint);
-            normalized = '```html\n' + retryHtml + '\n```';
-          } catch (retryErr) {
-            vizRetryMessage = retryErr && retryErr.message ? retryErr.message : String(retryErr || '');
-            console.warn('Viz module automatic retry failed:', retryErr);
-          }
-        }
-      }
-      if (!normalized) {
-        const wasAborted = _workflowNodeAborted(nodeSignal);
-        live.content = '';
-        live.summary = '';
-        live.status = wasAborted ? 'waiting' : 'error';
-        live.busy = false;
-        // 版本账（T339）：这轮没产出可用内容，兜回上一版（账上有版本时旧内容原样回来）
-        _restoreWorkflowNodeVersion(live);
-        _saveGraphNodeTail(live);
-        if (workflowRunActive) _refreshWorkflowNodeUi(live);
-        else renderGraphCanvas();
-        if (!wasAborted && typeof showToast === 'function') {
-          showToast('可视化生成失败：' + (vizRetryMessage || '点击节点重试'));
-        }
-        return;
-      }
-      live.content = normalized;
-      live.summary = _graphSummary(normalized);
-      live.status = 'done';
-      live.busy = false;
-      // 版本账（T339）：归一后的整页 HTML 收作新版本
-      _commitWorkflowNodeVersion(live);
-      _saveGraphNodeTail(live);
-      if (workflowRunActive) _refreshWorkflowNodeUi(live);
-      else renderGraphCanvas();
-      if (recipe && recipe.on_generated) _recipeAfterGenerated(live);
-      return;
-    }
-    // mermaid 载体归一（P2）：模型没按代码块围栏输出时补一层 ```mermaid，
-    // 渲染层就能走官方知识图谱同一条路（renderMarkdown → renderMermaidInElement）
-    if (live && recipe && recipe.content_kind === 'mermaid' && !streamError) {
-      const raw = String(live.content || '').trim();
-      if (raw && raw.indexOf('```mermaid') < 0) {
-        const bare = raw.replace(/^```[a-zA-Z]*\s*\n?/, '').replace(/```\s*$/, '').trim();
-        live.content = '```mermaid\n' + bare + '\n```';
-        live.summary = _graphSummary(live.content);
-      }
-    }
-    if (streamError) throw streamError;
-    if (live && !(live.content || '').trim()) {
-      live.status = 'error';
-      live.busy = false;
-      // 版本账（T339）：空内容不算新版本，兜回上一版
-      _restoreWorkflowNodeVersion(live);
-      _saveGraphNodeTail(live);
-      _refreshWorkflowNodeStatusUi(live);
-      if (typeof showToast === 'function') showToast('生成失败：模型返回了空内容，请点击该节点重试');
-      return;
-    }
-    // 版本账（T339）：成功收账（放在 mermaid 归一之后——归一改写过的 content 才是落定的版本）
-    _commitWorkflowNodeVersion(live);
-    // 收账后立刻落盘（T419 顺带）：过去成功路只由流尾那发保存盖住，账本条目在内存里
-    // 等下一次任意保存才落盘——人切走画布时（收尾走兜底）下一发不知何时，刷新即丢
-    if (live) _saveGraphNodeTail(live);
-    // on_generated 编排钩子（P2）：生成成功后按声明自动建链（进阶学习四步链的数据版）
-    if (live && recipe && recipe.on_generated) _recipeAfterGenerated(live);
-    // T361：苏格拉底反馈落地后把回复里的建议追问抽成派生「苏格拉底追问」节点
-    // （闭环下一题），并结算本轮（profile 记账＋闭环结束复位）
-    if (live && live.socraticMeta) _materializeSocraticFollowup(live);
+    // T419：成功/归一/重试各收口按生成收尾寻址结算（484：结算块抽成共享函数，
+    // 调度路与续跑路共用同一把尺子，防两处口径漂移）
+    await _finishCustomNodeGeneration(node, { streamError, workflowContext, recipe, prompt, signal, nodeSignal });
   } catch (err) {
+    // 484：连接死亡（刷新/断网掐死 fetch）不结算，延时探活收编
+    if (_maybeDeferOnConnectionDeath(node, err)) return;
     const live = _findGraphNodeTail(node.id);
     if (live) {
       live.busy = false;
@@ -449,6 +407,244 @@ async function _generateCustomNode(node, nodeSignal) {
     // T341：流末尾 busy 已落 false，但 viz 归一/重试/版本收账还在跑——排队修订
     // 要等整条生成链收尾才放行，否则仍会与收尾写入并发。
     if (typeof _nodeGenEnd === 'function') _nodeGenEnd(node.id);
+  }
+}
+
+// ===== 生成收尾结算（484：自 _generateCustomNode 抽出，调度路与续跑路共用）=====
+// viz 归一/mermaid 补栏/版本收账/on_generated/苏格拉底派生全在这里——正文流的
+// 收口只有这一把尺子。ctx: { streamError, workflowContext, recipe, prompt, signal, nodeSignal }
+async function _finishCustomNodeGeneration(node, ctx) {
+  const streamError = ctx.streamError || null;
+  const workflowContext = ctx.workflowContext || {};
+  const recipe = ctx.recipe || null;
+  const prompt = ctx.prompt || '';
+  const signal = ctx.signal || null;
+  const nodeSignal = ctx.nodeSignal || null;
+  const live = _findGraphNodeTail(node.id);
+  // viz 式收口（官方交互可视化＋P2 配方 html_iframe 载体）：内容必须归一成完整
+  // HTML 代码块；不合格时按配方声明的重试预算（on_incomplete.max_retries，官方 1 次）
+  // 与重试提示词（retry_prompt）走独立 HTML 生成通道重试
+  const vizLike = live && ((node.kind === 'module' && node.moduleKey === 'viz') || (recipe && recipe.content_kind === 'html_iframe'));
+  if (vizLike) {
+    let normalized = _normalizeWorkflowVizContent(live.content || '');
+    let vizRetryMessage = streamError && streamError.message ? streamError.message : '';
+    const maxRetries = recipe && recipe.generate && recipe.generate.on_incomplete
+      ? Math.max(0, Math.min(2, Number(recipe.generate.on_incomplete.max_retries) || 0))
+      : 1;
+    const retryHint = recipe && recipe.generate && recipe.generate.retry_prompt
+      ? recipe.generate.retry_prompt
+      : '上一次尝试没有返回完整 HTML。请务必只输出从 <!DOCTYPE html> 到 </html> 的完整页面。';
+    if (!normalized && typeof _requestVisualizationHtml === 'function') {
+      // 自动重试：改用更严格的独立 HTML 生成提示词，减少“节点为空/只有文字”的情况。
+      const sourceText = [
+        workflowContext.question,
+        workflowContext.analysis,
+        ...(workflowContext.upstream || []).map(item => item.label + '：' + (item.summary || item.content || '')),
+      ].filter(Boolean).join('\n\n').slice(0, 12000);
+      for (let attempt = 0; attempt < maxRetries && !normalized; attempt++) {
+        try {
+          const retryHtml = await _requestVisualizationHtml(sourceText || prompt, signal, retryHint);
+          normalized = '```html\n' + retryHtml + '\n```';
+        } catch (retryErr) {
+          vizRetryMessage = retryErr && retryErr.message ? retryErr.message : String(retryErr || '');
+          console.warn('Viz module automatic retry failed:', retryErr);
+        }
+      }
+    }
+    if (!normalized) {
+      const wasAborted = _workflowNodeAborted(nodeSignal);
+      live.content = '';
+      live.summary = '';
+      live.status = wasAborted ? 'waiting' : 'error';
+      live.busy = false;
+      // 版本账（T339）：这轮没产出可用内容，兜回上一版（账上有版本时旧内容原样回来）
+      _restoreWorkflowNodeVersion(live);
+      _saveGraphNodeTail(live);
+      if (workflowRunActive) _refreshWorkflowNodeUi(live);
+      else renderGraphCanvas();
+      if (!wasAborted && typeof showToast === 'function') {
+        showToast('可视化生成失败：' + (vizRetryMessage || '点击节点重试'));
+      }
+      return;
+    }
+    live.content = normalized;
+    live.summary = _graphSummary(normalized);
+    live.status = 'done';
+    live.busy = false;
+    // 版本账（T339）：归一后的整页 HTML 收作新版本
+    _commitWorkflowNodeVersion(live);
+    _saveGraphNodeTail(live);
+    if (workflowRunActive) _refreshWorkflowNodeUi(live);
+    else renderGraphCanvas();
+    if (recipe && recipe.on_generated) _recipeAfterGenerated(live);
+    return;
+  }
+  // mermaid 载体归一（P2）：模型没按代码块围栏输出时补一层 ```mermaid，
+  // 渲染层就能走官方知识图谱同一条路（renderMarkdown → renderMermaidInElement）
+  if (live && recipe && recipe.content_kind === 'mermaid' && !streamError) {
+    const raw = String(live.content || '').trim();
+    if (raw && raw.indexOf('```mermaid') < 0) {
+      const bare = raw.replace(/^```[a-zA-Z]*\s*\n?/, '').replace(/```\s*$/, '').trim();
+      live.content = '```mermaid\n' + bare + '\n```';
+      live.summary = _graphSummary(live.content);
+    }
+  }
+  if (streamError) throw streamError;
+  if (live && !(live.content || '').trim()) {
+    live.status = 'error';
+    live.busy = false;
+    // 版本账（T339）：空内容不算新版本，兜回上一版
+    _restoreWorkflowNodeVersion(live);
+    _saveGraphNodeTail(live);
+    _refreshWorkflowNodeStatusUi(live);
+    if (typeof showToast === 'function') showToast('生成失败：模型返回了空内容，请点击该节点重试');
+    return;
+  }
+  // 版本账（T339）：成功收账（放在 mermaid 归一之后——归一改写过的 content 才是落定的版本）
+  _commitWorkflowNodeVersion(live);
+  // 收账后立刻落盘（T419 顺带）：过去成功路只由流尾那发保存盖住，账本条目在内存里
+  // 等下一次任意保存才落盘——人切走画布时（收尾走兜底）下一发不知何时，刷新即丢
+  if (live) _saveGraphNodeTail(live);
+  // on_generated 编排钩子（P2）：生成成功后按声明自动建链（进阶学习四步链的数据版）
+  if (live && recipe && recipe.on_generated) _recipeAfterGenerated(live);
+  // T361：苏格拉底反馈落地后把回复里的建议追问抽成派生「苏格拉底追问」节点
+  // （闭环下一题），并结算本轮（profile 记账＋闭环结束复位）
+  if (live && live.socraticMeta) _materializeSocraticFollowup(live);
+}
+
+// ===== 484 生成断点续跑（2026-11-19）：探活＋重接流 =====
+// 拍板口径：后台跑完＋限时自动停。刷新回来水合时清扫把带 genTaskId 的中断生成
+// 暂缓登记（graph.js 的 _recordPendingGenerationReattach），这里探活服务端任务：
+// 任务不在（重启/过期回收）→ 旧中断结算口径就地落地；还在（running/done，含已被
+// 宽限掐掉的 interrupted/error）→ GET 重接流，喂给与调度路同一套流式函数与结算块——
+// interrupted/error 的缓冲重放把内容补到最新，流尾终帧抛错走旧口径结算（草稿不丢）。
+function _newGenTaskId() {
+  if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+    return window.crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
+async function _reattachOneNode(node, entry) {
+  // 探活：服务端任务还在吗
+  let status = null;
+  try {
+    const probe = await fetch('/api/generations/' + encodeURIComponent(entry.genTaskId), { cache: 'no-cache' });
+    if (probe.ok) status = await probe.json();
+  } catch (e) { /* 服务端不在/断网：按 missing 处理 */ }
+  const live = (typeof _findGraphNodeTail === 'function' ? _findGraphNodeTail(node.id) : null) || node;
+  if (!live || !live.busy || live.genTaskId !== entry.genTaskId) return; // 期间已被别的路结算
+  if (!status) {
+    // 任务不在（服务重启/过期回收）：盘上草稿按旧中断结算口径落地（T275/T359）
+    const settled = _settleInterruptedCustomNode(live);
+    Object.assign(live, settled);
+    _saveGraphNodeTail(live);
+    _refreshWorkflowNodeStatusUi(live);
+    return;
+  }
+  // running/done 照常重接收尾；interrupted/error 也重接——重放缓冲把「屏幕上见过
+  // 的字」补到最新（盘上 400ms 拍总落后于服务端缓冲），流尾的 499 终帧让流抛错，
+  // 落到下方 catch 的旧口径结算：内容已是最新，草稿一字不丢。
+  // 只有还活着/刚跑完的任务才把面板行翻回「进行中」；重放已终态的不翻（假续跑）
+  if ((status.state === 'running' || status.state === 'done')
+      && typeof _taskResumeGenerationForNode === 'function') _taskResumeGenerationForNode(node.id);
+  const controller = new AbortController();
+  if (typeof workflowInFlightControllers !== 'undefined') workflowInFlightControllers.add(controller);
+  try {
+    const resp = await fetch('/api/generations/' + encodeURIComponent(entry.genTaskId) + '/stream', {
+      signal: controller.signal,
+      cache: 'no-cache',
+    });
+    if (!resp.ok || !resp.body) throw new Error('重接流失败 HTTP ' + resp.status);
+    if (entry.kind === 'analysis') {
+      const question = (typeof _findQuestionContentUpstream === 'function') ? _findQuestionContentUpstream(live) : '';
+      await _streamAnalysisResponse(resp, live, question || ' ');
+    } else {
+      await _streamCustomNodeResponse(resp, live);
+      // 共享收口：viz 归一/版本收账/on_generated/苏格拉底派生——与调度路同一把尺子
+      const socratic = live.socraticMeta && typeof live.socraticMeta === 'object' ? live.socraticMeta : null;
+      const recipe = live.recipeId && live.recipe ? live.recipe : null;
+      const workflowContext = socratic ? {} : _buildWorkflowContextForNode(live);
+      const prompt = socratic ? String(socratic.prompt || '') : _workflowPromptForNode(live, workflowContext);
+      await _finishCustomNodeGeneration(live, {
+        streamError: null, workflowContext, recipe, prompt,
+        signal: controller.signal, nodeSignal: controller.signal,
+      });
+    }
+    if (typeof _taskResumeSettleForNode === 'function') _taskResumeSettleForNode(node.id, true);
+  } catch (err) {
+    const cur = (typeof _findGraphNodeTail === 'function' ? _findGraphNodeTail(live.id) : null) || live;
+    // 重放补的内容先落进节点：interrupted/error 任务的缓冲是毫秒级重放完的，
+    // live.content 由 250ms 节流渲染器写——抛错时定时器还没跑，盘上/内存里还是
+    // 旧草稿。streamPartial 是本次重放收到的全文，比它长就采用（终态缓冲 ≥ 盘上）。
+    const partial = (err && typeof err === 'object') ? String(err.streamPartial || '') : '';
+    if (cur && partial.length > String(cur.content || '').length) cur.content = partial;
+    if (cur && cur.busy) {
+      if (err && err.name === 'AbortError') {
+        // 用户主动停（重接中点「停止生成」）：与调度路的 abort 口径一致——
+        // 回等待态、兜回上一版，不标失败
+        cur.busy = false;
+        cur.status = 'waiting';
+        if (typeof _restoreWorkflowNodeVersion === 'function') _restoreWorkflowNodeVersion(cur);
+        _saveGraphNodeTail(cur);
+        _refreshWorkflowNodeStatusUi(cur);
+      } else {
+        // 断流/终态重放结束（宽限到点被掐/服务重启/网络）：按旧中断结算口径落地
+        // （草稿入账＋标失败；首生成无账本时 status 归空串——T275 既有口径）
+        const settled = _settleInterruptedCustomNode(cur);
+        Object.assign(cur, settled);
+        _saveGraphNodeTail(cur);
+        _refreshWorkflowNodeStatusUi(cur);
+        if (typeof showToast === 'function') showToast('后台生成中断，已保留内容，可重试');
+      }
+    }
+    if (typeof _taskResumeSettleForNode === 'function') _taskResumeSettleForNode(node.id, false);
+  } finally {
+    if (typeof workflowInFlightControllers !== 'undefined') workflowInFlightControllers.delete(controller);
+  }
+}
+
+// 收编器：取当前会话名下的暂缓登记，节点就位一颗收编一颗。节点还没水合就位的
+// 留待 500ms 后整批再试（最多 40 拍）；已被结算/换任务 id 的就地作废。别的会话
+// 的登记压在队列里，等切过去时由水合钩子再唤（_loadGraphStateFromServer finally）。
+function _maybeReattachPendingGenerations(sidOverride) {
+  const sid = String(sidOverride
+    || (typeof window.getCurrentSessionId === 'function' ? window.getCurrentSessionId() : '')
+    || '');
+  const mine = [];
+  for (let i = _pendingGenerationReattach.length - 1; i >= 0; i--) {
+    if (sid && _pendingGenerationReattach[i].sid === sid) {
+      mine.unshift(_pendingGenerationReattach.splice(i, 1)[0]);
+    }
+  }
+  if (!mine.length) return;
+  const waiting = [];
+  for (let i = 0; i < mine.length; i++) {
+    const entry = mine[i];
+    const ready = typeof _reattachOneNode === 'function' && typeof _findGraphNode === 'function';
+    const node = ready ? _findGraphNode(entry.nodeId) : null;
+    if (!ready || !node) { waiting.push(entry); continue; }
+    if (node.busy && node.genTaskId === entry.genTaskId) {
+      if (_reattachInFlightNodes.has(entry.nodeId)) continue;
+      _reattachInFlightNodes.add(entry.nodeId);
+      try {
+        Promise.resolve(_reattachOneNode(node, entry))
+          .catch(() => {})
+          .finally(() => { _reattachInFlightNodes.delete(entry.nodeId); });
+      } catch (e) {
+        _reattachInFlightNodes.delete(entry.nodeId);
+      }
+      continue;
+    }
+    // 节点不再 busy / 已换新任务：这轮生成已被旧结算路径或新一轮生成接管，作废
+  }
+  if (waiting.length && _reattachPumpRetries < 40) {
+    _reattachPumpRetries++;
+    for (let i = waiting.length - 1; i >= 0; i--) _pendingGenerationReattach.unshift(waiting[i]);
+    setTimeout(_maybeReattachPendingGenerations, 500);
   }
 }
 

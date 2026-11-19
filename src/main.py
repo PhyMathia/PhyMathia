@@ -49,6 +49,7 @@ from server.knowledge import *
 from server.prompts import *
 from server.storage import *
 from server.context_preview import router as context_preview_router  # 开发调试用，正式版可删
+from server.generation_tasks import router as generation_tasks_router  # noqa: F401  484 生成断点续跑：探活/重接流/取消
 
 # ====== 兼容再出口（T163 拆分后 tests/回归脚本仍从 main 命名空间取这些名字）======
 # 只再出口「tests/脚本直取/直调」的符号；打桩类名字（get_http_client/
@@ -367,6 +368,8 @@ async def health_check():
 # serve_static_file 的 catch-all 必须留在所有 API 路由之后（见其节头注释）。
 from server import input_routes, knowledge_routes, models_routes, profile_routes, session_routes, skills_routes  # noqa: E402
 app.include_router(models_routes.router)
+# 生成任务（484 断点续跑）：服务端持任务，GET 探活/重接流、DELETE 取消
+app.include_router(generation_tasks_router)
 app.include_router(session_routes.router)
 app.include_router(knowledge_routes.router)
 # 输入节点素材摄取（2026-10-22 重做）：机械转写通道（documents/parse 已退役，T383）
