@@ -456,12 +456,12 @@ function deleteCustomNode(nodeId, pushUndo = true) {
 // 上游料现取自 _collectUpstreamPath——与 AI 总结生成时看到的是同一份，进编辑器即最新。
 // 此前形态是小弹窗＋纯 textarea（我的总结内联框只在空内容时出现），看不到上游。
 function _notebookEditableKind(node) {
-  return !!node && (node.kind === 'summary' || node.kind === 'note' || (node.kind === 'answer' && node.manual));
+  return !!node && (node.kind === 'summary' || node.kind === 'note' || node.kind === 'direct' || (node.kind === 'answer' && node.manual));
 }
 
 // 笔记本编辑的历史摘要：品类名＋用户刚起的标题，历史面板里认得出改的是哪一颗
 function _notebookEditLabel(node, nextTitle) {
-  const kindLabel = node.kind === 'summary' ? 'AI 总结' : node.kind === 'note' ? '我的总结' : '我的回答';
+  const kindLabel = node.kind === 'summary' ? 'AI 总结' : node.kind === 'note' ? '我的总结' : node.kind === 'direct' ? '直接回答' : '我的回答';
   const title = String(nextTitle || node.title || '').trim();
   return title ? kindLabel + '「' + title + '」' : kindLabel;
 }
@@ -471,6 +471,7 @@ function _notebookSourceLabel(item) {
   if (item.kind === 'user') return '问题';
   if (item.kind === 'note') return item.title || '我的总结';
   if (item.kind === 'summary') return 'AI 总结';
+  if (item.kind === 'direct') return item.title || '直接回答';
   if (item.kind === 'relation') return '知识联系';
   if (item.kind === 'source') return '输入';
   if (item.kind === 'answer') return item.manual ? (item.title || '我的回答') : '问题分析';
@@ -511,7 +512,7 @@ function editCustomNodeContent(nodeId) {
   const node = _findGraphNode(nodeId);
   if (!node || node.messageIndex >= 0 || !_notebookEditableKind(node)) return;
   closeModuleNodeModal();
-  const title = node.kind === 'summary' ? '编辑：AI 总结' : node.kind === 'note' ? '编辑：我的总结' : '编辑：我的回答';
+  const title = node.kind === 'summary' ? '编辑：AI 总结' : node.kind === 'note' ? '编辑：我的总结' : node.kind === 'direct' ? '编辑：直接回答' : '编辑：我的回答';
   // 剔除节点自身：_collectUpstreamPath 的生成语义含自身（重生成要能看到上一版，
   // backlog T5 拍板保留），参考列只看「接进来的」上游
   const upstream = (typeof _collectUpstreamPath === 'function' ? _collectUpstreamPath(node) : [])

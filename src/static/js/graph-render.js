@@ -1565,7 +1565,7 @@ function _renderNodeHtml(node, messages, state) {
   const fsBtnsHtml = typeof _nodeFsTogglesHtml === 'function' ? _nodeFsTogglesHtml(node, message) : '';
   const editBtn = node.kind === 'module'
     ? '<button class="graph-node-edit-toggle" onclick="editModuleNode(\'' + node.id + '\')" title="人工编辑模块"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>'
-    : (((node.kind === 'summary' || node.kind === 'note' || (node.kind === 'answer' && node.manual)) && !(node.messageIndex >= 0))
+    : (((node.kind === 'summary' || node.kind === 'note' || node.kind === 'direct' || (node.kind === 'answer' && node.manual)) && !(node.messageIndex >= 0))
       ? '<button class="graph-node-edit-toggle" onclick="editCustomNodeContent(\'' + node.id + '\')" title="编辑内容（笔记本模式：左侧看上游原文）"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>'
       : '');
   const deleteAction = node.messageIndex < 0

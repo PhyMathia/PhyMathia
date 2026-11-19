@@ -2678,10 +2678,20 @@ check('笔记本编辑模式（2026-10-10 ①）：总结类编辑升级全屏�
     sandbox.editCustomNodeContent('ma1');
     if (vm.runInContext('moduleNodeModalOverlay', sandbox) == null) throw new Error('我的回答应可进笔记本编辑');
     sandbox.closeModuleNodeModal();
+    // 3b. 直接回答（direct）也进笔记本（2026-11-19）：messageIndex<0 放行，弹层标题用品类名
+    const directNode = { id: 'dr1', kind: 'direct', moduleKey: 'direct', messageIndex: -1, timestamp: 6, content: '' };
+    vm.runInContext('graphView.nodes.push(' + JSON.stringify(directNode) + '); graphView.nodeById.dr1 = graphView.nodes[graphView.nodes.length - 1];', sandbox);
+    sandbox.editCustomNodeContent('dr1');
+    const drOverlay = vm.runInContext('moduleNodeModalOverlay', sandbox);
+    if (drOverlay == null) throw new Error('直接回答应可进笔记本编辑');
+    if (!String(drOverlay.innerHTML).includes('编辑：直接回答')) throw new Error('直答编辑层标题应为「编辑：直接回答」');
+    sandbox.closeModuleNodeModal();
     // 4. 标签词表：有标题用标题（与喂料标签同源）
     if (sandbox._notebookSourceLabel({ kind: 'note', title: '光学' }) !== '光学') throw new Error('参考条目标签应优先标题');
     if (sandbox._notebookSourceLabel({ kind: 'user' }) !== '问题') throw new Error('user 条目标签应为「问题」');
     if (sandbox._notebookSourceLabel({ kind: 'answer', manual: true }) !== '我的回答') throw new Error('manual answer 条目应回落品类名');
+    if (sandbox._notebookSourceLabel({ kind: 'direct', title: '速答' }) !== '速答') throw new Error('direct 条目应优先标题');
+    if (sandbox._notebookSourceLabel({ kind: 'direct' }) !== '直接回答') throw new Error('direct 条目无标题应回落品类名');
     // 5. 静态契约：浮层必须自带文字色——body 默认色是黑（应用各组件各自上色），
     //    参考正文是原生 markdown 元素不挂组件类，漏了 text-primary 整片黑字不可读
     const cssSrc = fs.readFileSync('src/static/css/graph-override.css', 'utf8');

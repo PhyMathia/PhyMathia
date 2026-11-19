@@ -510,7 +510,7 @@ function _workflowUpstreamEntry(item, sourceId, portMeta, typeLabels, feedbackFu
             : item.kind === 'answer'
               ? (item.manual ? (item.title || '我的回答') : (item.socraticFeedback ? '苏格拉底反馈' : '问题分析'))
               : item.kind === 'direct'
-                ? '直接回答'
+                ? (item.title || '直接回答')
                 : ((GRAPH_MODULE_META[item.module] || {}).label || item.module || '上游节点'),
     summary: isFull ? '' : _stripSocraticAnswerMarker(item.summary || ''),
     analysis: item.analysis || '',
@@ -743,7 +743,7 @@ function _buildWorkflowContextForNode(node) {
     : node.kind === 'answer'
       ? { label: node.manual ? (node.title || '我的回答') : '问题分析' }
       : node.kind === 'direct'
-        ? { label: '直接回答' }
+        ? { label: node.title || '直接回答' }
         : node.kind === 'hub'
         ? { label: '汇聚' }
         : node.kind === 'junction'
