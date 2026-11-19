@@ -341,7 +341,7 @@
     }
 
     // 可靠地保存到服务端（返回 Promise，可 await）
-    async function _postToServer(url, body) {
+    async function _postToServer(url, body, opts) {
       if (!(await _checkServer())) return false;
       try {
         const resp = await fetch(url, {
@@ -355,6 +355,17 @@
         if (!resp.ok) {
           console.error('[Storage] Server save failed:', url, resp.status);
           return false;
+        }
+        // T-new（2026-11-19）：消息保存要看服务端「是否真握着这份内容」。
+        // stored 走 X-Phy-Stored 响应头（body 形状是冻结契约，不能加字段）。
+        // 返回 { ok, data, stored }，调用方按 stored 决定记不记「已推送」签名。
+        if (opts && opts.wantJson) {
+          let data = null;
+          try { data = await resp.json(); } catch (e) { data = null; }
+          // 冒烟桩是 {ok,json} 形状、没有 headers：取不到头时按「旧服务端」处理
+          const stored = (resp.headers && typeof resp.headers.get === 'function')
+            ? resp.headers.get('X-Phy-Stored') : null;
+          return { ok: true, data: data, stored: stored };
         }
         return true;
       } catch (e) {
@@ -400,9 +411,21 @@
     let _sessionDeletionBusy = false;
     async function _saveMessagesToServer(sessionId, msgs) {
       const msgsJson = JSON.stringify(msgs || []);
-      const ok = await _postToServer(`/api/sessions/${sessionId}/messages`, { messages: msgs || [] });
-      if (ok) _lastPushedMsgsSig.set(sessionId, msgsJson);
-      return ok;
+      const res = await _postToServer(`/api/sessions/${sessionId}/messages`,
+        { messages: msgs || [] }, { wantJson: true });
+      // 2026-11-19：200 不等于已存。服务端 stored=false（空推送/墓碑/服务端还没有
+      // 这份内容）时不当成功、也不记「已推送」签名——否则缺口会话的本地副本会被
+      // 签名挡住，15 秒同步不再重推，服务端永远缺文件（本机 48/53 就是这么来的）。
+      // stored 走 X-Phy-Stored 响应头；没有该头（旧服务端/冒烟桩）时退回「200 即成功」。
+      let stored = false;
+      if (res === true) stored = true;
+      else if (res && typeof res === 'object') {
+        if (res.stored === '0') stored = false;
+        else stored = true; // '1' 或缺失（旧服务端/桩）：按成功处理
+      }
+      if (stored) _lastPushedMsgsSig.set(sessionId, msgsJson);
+      else _lastPushedMsgsSig.delete(sessionId);
+      return stored;
     }
 
     // 保存知识条目到服务端

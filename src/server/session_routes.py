@@ -12,7 +12,7 @@ import logging
 import time
 import uuid
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 
 from . import accounts, continent, context, graph_merge, profile, storage, trash
 from .context import _delete_socratic_state, _graph_message_summary, merge_message_lists
@@ -323,6 +323,9 @@ def _delete_session_sync(paths, account, session_id, msgs_path) -> None:
                 stale.unlink()
         except OSError as e:
             logger.warning(f"delete session: unlink {stale.name} failed: {e}")
+    # 可读归档同步清（2026-11-19）：留着就成了「删不掉的第二份历史」，
+    # 与回收站口径也不一致（回收站管恢复，归档管可读副本）。
+    storage.remove_message_archive(session_id, account)
 
     def updater(data):
         existed = session_id in data
@@ -466,6 +469,13 @@ async def api_trash_restore(item_id: str, request: Request = None):
         raise HTTPException(status_code=404, detail="回收站里没有这个条目")
     except trash.TrashConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    # 恢复带回消息文件时重建可读归档（删除/清空都会清归档，恢复不能只回一半）
+    try:
+        restored_path = _get_messages_path(sid, paths.account)
+        if restored_path.exists():
+            storage.write_message_archive(sid, _read_json(restored_path, []), paths.account)
+    except (ValueError, OSError) as e:
+        logger.warning(f"trash restore: rebuild archive for {sid} failed: {e}")
     return {"ok": True, "sessionId": sid}
 
 
@@ -576,7 +586,7 @@ async def api_get_messages(session_id: str, request: Request = None):
 
 
 @router.post("/api/sessions/{session_id}/messages")
-async def api_save_messages(session_id: str, request: Request):
+async def api_save_messages(session_id: str, request: Request, response: Response):
     try:
         payload = await request.json()
     except json.JSONDecodeError:
@@ -605,9 +615,14 @@ async def api_save_messages(session_id: str, request: Request):
 
     tombstoned_msgs = False
     wrote_msgs = False
+    # stored＝服务端此刻是否握有「这次推上来的这份内容」。written 只说「本轮写没写」，
+    # 无增量（合并后与现有逐字相同）时 written=False 但 stored=True；前端据此决定
+    # 要不要记「已推送」签名（T203 稳态零推送）——2026-11-19 修的正是把 stored=False
+    # 的 200 也当成功，导致缺口会话的本地副本被签名挡住、再也不重推。
+    stored_msgs = False
 
     def msgs_updater(existing):
-        nonlocal tombstoned_msgs, wrote_msgs
+        nonlocal tombstoned_msgs, wrote_msgs, stored_msgs
         # T271 墓碑闸门：已删会话的消息推送静默不落盘（不建孤儿消息文件）。
         # 与删除登记同持全局 _JSON_LOCK，无竞窗；响应仍 ok（信标/同步调用方
         # 只看 resp.ok，静默跳过防重试风暴）。
@@ -621,20 +636,34 @@ async def api_save_messages(session_id: str, request: Request):
         # 路由），空列表清空服务端唯一副本（09-20 修复，不许回退）。
         if not isinstance(existing, list):
             wrote_msgs = True
+            stored_msgs = bool(messages)
             return messages
         if not messages:
             return None
         merged = merge_message_lists(existing, messages)
         if merged == existing:
+            stored_msgs = True
             return None  # 没有任何新东西：不写盘
         wrote_msgs = True
+        stored_msgs = True
         return merged
 
     # T201：读并+合并+写盘挪 to_thread，长会话保存不再卡流式下发
     # （storage._JSON_LOCK 是 threading.RLock，跨线程照常串行，语义不变）
-    await asyncio.to_thread(_mutate_json, msgs_path, msgs_updater, default=[])
+    final_msgs = await asyncio.to_thread(_mutate_json, msgs_path, msgs_updater, default=[])
+    # 可读归档（2026-11-19）：每次真切写就把整份历史刷到 data/history/<账号>/。
+    # 写失败只告警——消息本体已落盘，归档是派生副本，不许反过来让保存失败。
+    if not tombstoned_msgs and wrote_msgs and isinstance(final_msgs, list) and final_msgs:
+        try:
+            await asyncio.to_thread(storage.write_message_archive, session_id, final_msgs, account)
+        except Exception as e:  # noqa: BLE001 - 归档失败不影响保存语义
+            logger.warning(f"message archive failed ({session_id}): {e}")
     # T356：written＝这轮真落盘了没有。200 从此不等于「已存」——空推送/无增量/
     # 墓碑窗口都如实回报，调用方与日志能看出「推送了但没写」这件事。
+    # stored 走响应头而不是响应体：body 形状是 test_review_stage1_http 钉死的
+    # 契约（{'ok','count','written'} 逐键相等），2026-11-19 加字段当场把契约测试打红。
+    # 头对旧客户端透明，前端 _postToServer 只在消息保存这条链上读它。
+    response.headers["X-Phy-Stored"] = "1" if stored_msgs else "0"
     if tombstoned_msgs:
         return {"ok": True, "count": 0, "tombstoned": True, "written": False}
     return {"ok": True, "count": len(messages), "written": wrote_msgs}
@@ -662,6 +691,8 @@ async def api_clear_messages(session_id: str, request: Request = None):
     _delete_items_by_session(paths.formulas_path, session_id)  # T146: sessionIds 感知删除
     _purge_dangling_continent_edges(session_id, account)
     _delete_socratic_state(session_id, account)
+    # 清空消息＝用户主动抹掉内容，可读归档跟着清（同一份数据不许留后门）
+    storage.remove_message_archive(session_id, account)
     return {"ok": True}
 
 # ====== 键值存储 API ======

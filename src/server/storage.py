@@ -1,5 +1,6 @@
 """JSON 文件持久化工具与会话消息路径解析。"""
 
+import datetime
 import json
 import logging
 import os
@@ -8,7 +9,7 @@ import threading
 import uuid
 from pathlib import Path
 
-from . import accounts
+from . import accounts, config
 from .accounts import DEFAULT_ACCOUNT
 
 logger = logging.getLogger(__name__)
@@ -118,6 +119,112 @@ def _resolve_messages_path(session_id: str, account: str = DEFAULT_ACCOUNT) -> P
     if direct is not None:
         return direct
     raise ValueError(f"invalid session id: {session_id!r}")
+
+
+# ====== 会话消息的可读归档（2026-11-19）======
+# 机器读的消息在 data/users/<账号>/messages/<sid>.json，用户看不见；这里同时
+# 在 data/history/<账号>/<标题>-<sid后8>.md 写一份人可读的 Markdown，摆在项目
+# 文件夹里，不依赖浏览器。
+#
+# 为什么必须有这一层：浏览器 localStorage 的 phymathia_msgs_ 只是读取缓存
+# （session.js SESSION_LOCAL_CACHE_KEEP=5，启动/切会话/同步时 LRU 回收），
+# 2026-11-19 实测本机 53 个会话里 48 个连服务端消息文件都不存在——本地缓存被
+# 挤掉、服务端又从没落过盘，历史就是永久丢失。归档是纯派生副本：删了可由
+# 消息文件重建（scripts/backfill_history_archive.py），不参与任何读写决策。
+
+_HISTORY_ROLE_LABEL = {"user": "我", "assistant": "AI", "system": "系统"}
+_HISTORY_ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_HISTORY_TITLE_MAX = 40
+
+
+def history_dir(account: str = DEFAULT_ACCOUNT) -> Path:
+    """归档目录：data/history/<账号>/（跟随 config.DATA_DIR，测试可整体重定向）。"""
+    return Path(config.DATA_DIR) / "history" / (account or DEFAULT_ACCOUNT)
+
+
+def _session_title(session_id: str, account: str) -> str:
+    try:
+        sessions = _read_json(accounts.resolve_paths(account).sessions_path, {})
+    except Exception:
+        return ""
+    entry = sessions.get(session_id) if isinstance(sessions, dict) else None
+    return str(entry.get("title") or "") if isinstance(entry, dict) else ""
+
+
+def _archive_name(session_id: str, title: str) -> str:
+    safe = _HISTORY_ILLEGAL.sub("_", title or "").strip(" .")[:_HISTORY_TITLE_MAX]
+    return f"{safe or '未命名画布'}-{session_id[-8:]}.md"
+
+
+def _fmt_ms(ts) -> str:
+    try:
+        return datetime.datetime.fromtimestamp(float(ts) / 1000).strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError, OSError, OverflowError):
+        return ""
+
+
+def message_archive_markdown(session_id: str, messages: list, title: str = "") -> str:
+    lines = [
+        f"# {title or '未命名画布'}", "",
+        f"- 会话 ID：`{session_id}`",
+        f"- 消息数：{len(messages)}",
+        f"- 导出时间：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}", "", "---", "",
+    ]
+    n = 0
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        role = str(msg.get("role") or "")
+        if role == "system":
+            continue
+        n += 1
+        label = _HISTORY_ROLE_LABEL.get(role, role or "记录")
+        when = _fmt_ms(msg.get("timestamp"))
+        lines.append(f"## {n}. {label}{(' · ' + when) if when else ''}")
+        lines.append("")
+        lines.append(str(msg.get("content") or "").strip())
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def write_message_archive(session_id: str, messages: list, account: str = DEFAULT_ACCOUNT):
+    """把一份消息列表写成可读 Markdown；空列表视为「没有可归档内容」直接返回 None。
+
+    返回归档路径。写失败由调用方吞掉——归档是副本，不许影响消息本体的保存。
+    """
+    if not isinstance(messages, list) or not messages:
+        return None
+    title = _session_title(session_id, account)
+    target_dir = history_dir(account)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / _archive_name(session_id, title)
+    # 标题改过：同会话旧文件名（按 sid 后 8 位认，只在本账号目录内）一并清掉
+    for old in target_dir.glob(f"*-{session_id[-8:]}.md"):
+        if old.name != target.name:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+    content = message_archive_markdown(session_id, messages, title)
+    tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+    tmp.write_text(content, encoding="utf-8")
+    os.replace(tmp, target)
+    return target
+
+
+def remove_message_archive(session_id: str, account: str = DEFAULT_ACCOUNT) -> int:
+    """删除会话/清空消息时同步清归档，避免归档变成删不掉的第二份历史。"""
+    target_dir = history_dir(account)
+    if not target_dir.is_dir():
+        return 0
+    removed = 0
+    for old in target_dir.glob(f"*-{session_id[-8:]}.md"):
+        try:
+            old.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return removed
 
 
 # ====== KV 键值存储：拆分路由（三层落点） ======
@@ -430,6 +537,7 @@ __all__ = [
     "_read_json", "_write_json", "_mutate_json",
     "_read_json_cached", "_invalidate_json_cache",
     "_get_messages_path", "_resolve_messages_path",
+    "history_dir", "write_message_archive", "remove_message_archive",
     "kv_read", "kv_write", "kv_delete", "kv_all_data",
     "kv_migrate_split_keys", "kv_restore_bulk",
 ]
