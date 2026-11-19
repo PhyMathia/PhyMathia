@@ -441,7 +441,7 @@ function _settingsPageModel() {
       '<div class="settings-model-card-title">' + _settingsEsc(_settingsModelName(cur)) +
         '<span class="settings-model-count">' + rows.length + ' 个模型</span></div>' +
       '<div class="settings-model-card-ops">' +
-        '<label class="settings-model-switch settings-model-pswitch" title="供应商总开关：关掉后聊天模型列表不再显示该供应商，各模型自己的开关保持不变">' +
+        '<label class="settings-model-switch settings-model-pswitch" title="供应商总开关">' +
           '<input type="checkbox" role="switch" aria-label="启用该供应商"' + (providerOn ? ' checked' : '') + (ro ? ' disabled' : '') +
           ' onchange="settingsModelAction(\'toggleProvider\', \'' + jsCur + '\', this.checked)">' +
           '<span class="settings-switch-track"><span class="settings-switch-knob"></span></span>' +
@@ -452,7 +452,7 @@ function _settingsPageModel() {
     '<div class="settings-model-card-meta">' +
       '<span class="settings-model-badge ' + (hasKey ? 'ok' : 'warn') + '">' + (hasKey ? '密钥已配置' : '密钥未配置') + '</span>' +
       (base ? '<span class="settings-model-baseurl" title="' + _settingsEsc(base) + '">' + _settingsEsc(base) + '</span>' : '') +
-      (providerOn ? '' : '<span class="settings-model-offnote">已停用：聊天模型列表不显示该供应商的任何模型</span>') +
+      (providerOn ? '' : '<span class="settings-model-offnote">已停用</span>') +
     '</div></div>';
   detail += '<div class="settings-model-subhead"><span>模型列表</span>' +
     '<button type="button" class="settings-model-mini" onclick="settingsModelToggleAdd()" title="添加到当前供应商">' + (_settingsModelAddOpen ? '收起' : '手动添加模型') + '</button></div>';
