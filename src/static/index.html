@@ -267,7 +267,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/dist/app.js?v=910751ff" defer></script>
+  <script src="/dist/app.js?v=3c9eeadb" defer></script>
   <script>
     // app.js 改 defer 后本脚本先于它执行，而 APP_VERSION 是 config.js 的顶层
     // const——内联脚本无法加 defer，只能等 DOMContentLoaded：所有 defer 脚本
@@ -824,6 +824,14 @@
         <input type="file" id="utopiaImportFileInput" accept=".pmu" style="display:none;" onchange="if(this.files&&this.files[0])importUtopiaSnapshotFile(this.files[0])">
       </div>
       <div id="dataStats" style="margin-top:12px;font-size:12px;color:var(--text-secondary);"></div>
+      <!-- 本机历史备份（2026-11-19）：浏览器 msgs_ 只是 LRU 缓存，这里显示还剩多少、
+           一键推回服务端并写进项目文件夹 data/history/。统计与备份在 ui-backup.js。 -->
+      <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">
+        <div style="font-size:11px;color:var(--text-secondary);">本机历史备份</div>
+        <div id="historyBackupStats" style="font-size:12px;color:var(--text-secondary);margin-top:4px;">正在统计…</div>
+        <button type="button" onclick="backupLocalHistories()" id="historyBackupBtn"
+          style="width:100%;margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--surface-container);color:var(--text-primary);cursor:pointer;font-size:13px;">备份到项目文件夹</button>
+      </div>
       <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">
         <!-- T449（2026-11-16）：逐条键名清单是开发向内容，默认收成一行总占用，
              点「查看明细」才展开；updateStorageDebug/toggleStorageDebug 在 ui-backup.js。 -->

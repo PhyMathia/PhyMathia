@@ -26,7 +26,65 @@ function updateDataStats() {
     el.innerHTML = `当前存储：${sessionCount} 张画布 · ${msgCount} 条消息 · ${knowledgeCount} 条知识点 · ${formulaCount} 条公式 · ${graphCount} 个探索网 · ${quizCount} 个检测主题`;
   }
   updateStorageDebug();
+  updateHistoryBackupStats();
 }
+
+// ====== 本机历史备份（2026-11-19）======
+// 浏览器 phymathia_msgs_ 只是 LRU 缓存（只留最近 5 个会话），权威副本在服务端
+// data/users/<账号>/messages/，可读副本在 data/history/。这里让用户看见本机还剩
+// 多少条，并能一键推回服务端——保存接口落盘后会同步刷可读归档。
+function _localHistoryEntries() {
+  const out = [];
+  lsKeys().forEach(key => {
+    if (!key.startsWith('phymathia_msgs_')) return;
+    const sid = key.slice('phymathia_msgs_'.length);
+    const msgs = _safeParseJSON(localStorage.getItem(key), []);
+    if (sid && Array.isArray(msgs) && msgs.length) out.push({ sid: sid, count: msgs.length });
+  });
+  return out.sort(function (a, b) { return b.count - a.count; });
+}
+
+function updateHistoryBackupStats() {
+  const el = document.getElementById('historyBackupStats');
+  if (!el) return;
+  const entries = _localHistoryEntries();
+  const total = entries.reduce(function (a, x) { return a + x.count; }, 0);
+  el.textContent = entries.length
+    ? ('本机缓存 ' + entries.length + ' 个会话 · ' + total + ' 条消息')
+    : '本机缓存没有消息（服务端是唯一副本）';
+}
+
+async function backupLocalHistories() {
+  const entries = _localHistoryEntries();
+  if (!entries.length) {
+    if (typeof showToast === 'function') showToast('本机没有可备份的消息');
+    return;
+  }
+  const btn = document.getElementById('historyBackupBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '备份中…'; }
+  let ok = 0, fail = 0;
+  for (const item of entries) {
+    const msgs = _safeParseJSON(localStorage.getItem('phymathia_msgs_' + item.sid), []);
+    if (!Array.isArray(msgs) || !msgs.length) continue;
+    try {
+      // account_id 由 config.js 的 fetch 包装自动补，此处不必手拼
+      const resp = await fetch('/api/sessions/' + encodeURIComponent(item.sid) + '/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: msgs }),
+        signal: AbortSignal.timeout(10000)
+      });
+      if (resp.ok) ok++; else fail++;
+    } catch (e) { fail++; }
+  }
+  if (btn) { btn.disabled = false; btn.textContent = '备份到项目文件夹'; }
+  updateHistoryBackupStats();
+  if (typeof showToast === 'function') {
+    showToast(fail ? ('已备份 ' + ok + ' 个会话，' + fail + ' 个失败') : ('已备份 ' + ok + ' 个会话到项目文件夹'));
+  }
+}
+window.updateHistoryBackupStats = updateHistoryBackupStats;
+window.backupLocalHistories = backupLocalHistories;
 
 function _safeParseJSON(raw, fallback) {
   try {
