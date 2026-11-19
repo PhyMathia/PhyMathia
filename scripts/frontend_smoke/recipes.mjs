@@ -2761,19 +2761,26 @@ check('节点全屏阅读（2026-10-10 ⑦）：内容节点头部纯图标双�
     // 4. 无内容不挂钮；viz 模块不重复挂（卡片工具栏自带全屏）
     if (sandbox._nodeFsTogglesHtml({ id: 'e1', kind: 'note', messageIndex: -1, content: '' }) !== '') throw new Error('无内容节点不应挂全屏钮');
     if (sandbox._nodeFsTogglesHtml({ id: 'v1', kind: 'module', moduleKey: 'viz', messageIndex: -1, content: 'x' }) !== '') throw new Error('viz 模块不应重复挂全屏钮');
-    // 5. 新窗口：sessionStorage 交接＋打开 /content-preview.html
+    // 5. 新窗口：sessionStorage 交接按 token 分键＋打开 /content-preview.html?t=<token>（486 串窗）
     sandbox.openNodeNewWindow('nt9');
-    const page = ssStore['phymathia_content_preview'] || '';
-    if (openedUrl !== '/content-preview.html') throw new Error('新窗口应打开 /content-preview.html，实际 ' + openedUrl);
+    const mOpen = String(openedUrl).match(/^\/content-preview\.html\?t=([A-Za-z0-9%_-]+)$/);
+    if (!mOpen) throw new Error('新窗口应打开 /content-preview.html?t=<token>，实际 ' + openedUrl);
+    const handoffToken = decodeURIComponent(mOpen[1]);
+    if (!handoffToken) throw new Error('交接 token 为空');
+    const page = ssStore['phymathia_content_preview_' + handoffToken] || '';
+    if (!ssStore['phymathia_content_preview_theme_' + handoffToken]) throw new Error('主题交接键缺 token 后缀');
+    if ('phymathia_content_preview' in ssStore || 'phymathia_content_preview_theme' in ssStore) {
+      throw new Error('仍在写静态单键（486：快速连开两扇必串窗）');
+    }
     if (!page.includes('<!DOCTYPE html>') || !page.includes('角动量守恒的直观理解') || !page.includes('/vendor/katex/katex.min.css')) throw new Error('预览文档缺内容/katex 样式链');
     // 6. CSS 契约：全屏层必须自带 text-primary 文字色（同笔记本，深色下黑字不可读的教训）
     const cssSrc = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
     if (!/\.graph-node-fs-overlay\s*\{[^}]*color:\s*var\(--text-primary\)/s.test(cssSrc)) {
       throw new Error('节点全屏层未自带 text-primary 文字色');
     }
-    // 7. 预览页：读交接键＋sandbox iframe（安全模型与 viz-preview 同款）
+    // 7. 预览页：按 URL 上的 token 认自己的交接键＋sandbox iframe（安全模型与 viz-preview 同款）
     const cpSrc = fs.readFileSync('src/static/content-preview.html', 'utf8');
-    if (!cpSrc.includes('phymathia_content_preview') || !cpSrc.includes('sandbox="allow-scripts"')) throw new Error('content-preview.html 缺交接键或沙箱 iframe');
+    if (!cpSrc.includes('location.search') || !cpSrc.includes("'phymathia_content_preview_' + t") || !cpSrc.includes('sandbox="allow-scripts"')) throw new Error('content-preview.html 缺按 token 分键的读取或沙箱 iframe');
   } finally {
     sandbox.document = realDoc;
     sandbox.escapeHtml = realEsc;

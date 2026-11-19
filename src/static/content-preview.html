@@ -32,14 +32,22 @@
 // 交接）只进入 sandbox iframe 展示，不与本页 origin 交互。
 // 注意勿退回 Blob URL 直开：Blob 文档继承主站 origin（viz-preview.md 同款结论）。
 try {
+  // 交接键按 token 分键（486 串窗）：静态单键在「快速连开两扇」时会被后开的覆盖，
+  // 先开的标签页可能拿到后一份内容（跨标签 sessionStorage 复制时机各浏览器不一致，
+  // utopia.js 有实测），页里烤着的 token/nodeId 跟着错。token 由主应用开窗时写在
+  // URL 上（?t=），本页只认自己那一枚键。token 是主应用自造的 nfs_/cp_ 串，白名单
+  // 过滤后再拼键，别让 location.search 里的东西直接进键名。
+  var t = '';
+  try { t = decodeURIComponent(String((location.search.match(/[?&]t=([^&]+)/) || [])[1] || '')); } catch (eT) { t = ''; }
+  t = t.replace(/[^A-Za-z0-9_-]/g, '');
   // 首帧底色跟随主应用明暗（2026-11-14）：主应用开窗前把主题写进同域 sessionStorage，
   // 这里先换色再塞 srcdoc，浅色主题不会先闪一版深底
-  if (sessionStorage.getItem('phymathia_content_preview_theme') === 'light') {
+  if (t && sessionStorage.getItem('phymathia_content_preview_theme_' + t) === 'light') {
     document.documentElement.setAttribute('data-theme', 'light');
   }
-  sessionStorage.removeItem('phymathia_content_preview_theme');
-  var page = sessionStorage.getItem('phymathia_content_preview');
-  sessionStorage.removeItem('phymathia_content_preview');
+  if (t) sessionStorage.removeItem('phymathia_content_preview_theme_' + t);
+  var page = t ? sessionStorage.getItem('phymathia_content_preview_' + t) : '';
+  if (t) sessionStorage.removeItem('phymathia_content_preview_' + t);
   if (page) {
     document.getElementById('contentFrame').srcdoc = page;
     document.getElementById('hint').style.display = 'none';

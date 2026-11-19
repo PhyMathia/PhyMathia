@@ -13,6 +13,8 @@ const SID = 'sess_history_ai';
 const HIST_KEY = 'phymathia_graph_history_' + SID;
 const EXIT_KEY = 'phymathia_graph_history_exit_' + SID;
 const SWEEP_KEY = 'phymathia_graph_history_sweep';
+// 500 双标签守卫：活标签页在场登记（tabId≠本页的他牌，本页自己的牌由 vm 内部写、读侧自排除）
+const TAB_OTHER_KEY = 'phymathia_open_tab_tab_other';
 const OTHER_SID = 'sess_history_other';
 const OTHER_HIST_KEY = 'phymathia_graph_history_' + OTHER_SID;
 const OTHER_EXIT_KEY = 'phymathia_graph_history_exit_' + OTHER_SID;
@@ -49,6 +51,7 @@ export async function run() {
   const prevReadonly = sandbox.window.PHYMATHIA_READONLY;
   const prevHist = storageData[HIST_KEY], prevExit = storageData[EXIT_KEY];
   const prevSweep = storageData[SWEEP_KEY], prevOtherH = storageData[OTHER_HIST_KEY], prevOtherE = storageData[OTHER_EXIT_KEY];
+  const prevTabOther = storageData[TAB_OTHER_KEY];
   const prevStock = STOCK_HIST_KEYS.map(k => storageData[k]);
   const prevStockExit = STOCK_EXIT_KEYS.map(k => storageData[k]);
   delete storageData[HIST_KEY];
@@ -56,6 +59,7 @@ export async function run() {
   delete storageData[SWEEP_KEY];
   delete storageData[OTHER_HIST_KEY];
   delete storageData[OTHER_EXIT_KEY];
+  delete storageData[TAB_OTHER_KEY];
   STOCK_HIST_KEYS.forEach(k => { delete storageData[k]; });
   STOCK_EXIT_KEYS.forEach(k => { delete storageData[k]; });
   let mem = _state([]);
@@ -387,6 +391,64 @@ export async function run() {
       return true;
     }]);
 
+    serial.push(['2026-11-18 双标签守卫（backlog 500）：另一标签页正开着的画布批量不清、名单保留；残牌 TTL 过期照清', async () => {
+      seed(2);
+      runCtx('_persistGraphHistory();'); // 当前画布 HIST_KEY 保留
+      const liveSid = STOCK_SIDS[2], liveKey = STOCK_HIST_KEYS[2];
+      storageData[liveKey] = JSON.stringify({ v: 2, e: [], c: 0, t: Date.now() });
+      // 另一个标签页（tabId≠本页）刚续过牌：正开着 liveSid——双开时一边退出、这边启动的形状
+      storageData[TAB_OTHER_KEY] = JSON.stringify({ sid: liveSid, at: Date.now() });
+      runCtx('_graphHistorySweepWrite(["' + SID + '"]);');
+      sandbox.performance.getEntriesByType = () => [{ type: 'navigate' }];
+      await runCtx('settleGraphHistoryBatchOnOpen()');
+      if (!storageData[liveKey]) throw new Error('另一标签页正开着的画布历史被批量清了（编辑过能自愈，没编辑就丢）');
+      if (runCtx('_graphHistorySweepRead().length') === 0) throw new Error('有跳过却消费了名单（那些画布关了就再也扫不到）');
+      // 残牌按 TTL 判活：过期（崩溃/强杀没摘牌的残渣）不该把批量清挡死
+      storageData[TAB_OTHER_KEY] = JSON.stringify({ sid: liveSid, at: Date.now() - 11 * 60 * 1000 });
+      await runCtx('settleGraphHistoryBatchOnOpen()');
+      if (storageData[liveKey]) throw new Error('TTL 过期的残牌把批量清挡死了');
+      if (runCtx('_graphHistorySweepRead().length') !== 0) throw new Error('无可跳过且全清成功后名单没消费');
+      return true;
+    }]);
+
+    serial.push(['2026-11-18 双标签守卫（backlog 500）：同画布双开，另一边没编辑指纹也对得上——开着就不结算；自牌不挡自己', async () => {
+      seed(3);
+      runCtx('_persistGraphHistory(); markGraphHistoryCleanExit();');
+      storageData[TAB_OTHER_KEY] = JSON.stringify({ sid: SID, at: Date.now() }); // 另一标签页开着同一张
+      sandbox.performance.getEntriesByType = () => [{ type: 'navigate' }];
+      await runCtx('settleGraphHistoryOnOpen()');
+      if (runCtx('graphUndoStack.length') !== 3) throw new Error('另一标签页开着这张画布却清了历史');
+      if (!storageData[EXIT_KEY]) throw new Error('守卫跳过却把退出标记吃了（下次指纹就对不上了）');
+      // 他牌退场后，本页自己的登记不该挡自己的结算（读侧按 tabId 自排除）
+      delete storageData[TAB_OTHER_KEY];
+      runCtx('_graphHistoryTabsRegister();');
+      await runCtx('settleGraphHistoryOnOpen()');
+      if (runCtx('graphUndoStack.length') !== 0) throw new Error('自己的在场牌把自己的结算挡住了');
+      if (storageData[EXIT_KEY]) throw new Error('结算后标记没清');
+      return true;
+    }]);
+
+    serial.push(['2026-11-18 502 兜底也认双标签守卫：配额满绕名单清时，另一标签页正开着的画布保留', async () => {
+      seed(2);
+      runCtx('_persistGraphHistory();');
+      const liveSid = STOCK_SIDS[3], liveKey = STOCK_HIST_KEYS[3];
+      storageData[liveKey] = JSON.stringify({ v: 2, e: [], c: 0, t: Date.now() });
+      storageData[TAB_OTHER_KEY] = JSON.stringify({ sid: liveSid, at: Date.now() });
+      runCtx('_graphHistorySweepWrite([]);'); // 配额满退出名单写失败的形状
+      sandbox.performance.getEntriesByType = () => [{ type: 'navigate' }];
+      const prevSet = sandbox.localStorage.setItem;
+      sandbox.localStorage.setItem = () => { throw new Error('QuotaExceededError'); };
+      try {
+        await runCtx('settleGraphHistoryBatchOnOpen()');
+        if (!storageData[liveKey]) throw new Error('502 兜底把另一标签页正开着的画布清了');
+        // 残牌过期 → 照常兜底清（解锁优先的拍板只让给「正被看着」）
+        storageData[TAB_OTHER_KEY] = JSON.stringify({ sid: liveSid, at: Date.now() - 11 * 60 * 1000 });
+        await runCtx('settleGraphHistoryBatchOnOpen()');
+        if (storageData[liveKey]) throw new Error('残牌过期后兜底没清（解锁被幽灵牌挡死）');
+      } finally { sandbox.localStorage.setItem = prevSet; }
+      return true;
+    }]);
+
     serial.push(['面板手动口：清空历史内核只清历史，不动当前图（直接调内核，绕过武装）', async () => {
       seed(3);
       els.graphHistoryList = _mkEl('div');
@@ -451,6 +513,7 @@ export async function run() {
     if (prevSweep === undefined) delete storageData[SWEEP_KEY]; else storageData[SWEEP_KEY] = prevSweep;
     if (prevOtherH === undefined) delete storageData[OTHER_HIST_KEY]; else storageData[OTHER_HIST_KEY] = prevOtherH;
     if (prevOtherE === undefined) delete storageData[OTHER_EXIT_KEY]; else storageData[OTHER_EXIT_KEY] = prevOtherE;
+    if (prevTabOther === undefined) delete storageData[TAB_OTHER_KEY]; else storageData[TAB_OTHER_KEY] = prevTabOther;
     STOCK_HIST_KEYS.forEach((k, i) => { if (prevStock[i] === undefined) delete storageData[k]; else storageData[k] = prevStock[i]; });
     STOCK_EXIT_KEYS.forEach((k, i) => { if (prevStockExit[i] === undefined) delete storageData[k]; else storageData[k] = prevStockExit[i]; });
   }

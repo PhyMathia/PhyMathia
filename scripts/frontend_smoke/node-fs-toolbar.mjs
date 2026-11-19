@@ -88,6 +88,91 @@ export function run() {
     return true;
   });
 
+  check('node-fs-toolbar: 加粗定位拒绝二义——上下文在手还同分就如实拒绝，不猜第一处（485）', () => {
+    const locate = sandbox._nodeFsBoldLocate;
+    if (typeof locate !== 'function') throw new Error('加粗定位 API 未挂出');
+    // 真二义：两处上下文完全对称 → {ambiguous:true}，绝不再「同分取第一处」
+    const amb = locate('甲句重点。乙句重点。', '重点', { before: '句', after: '。' });
+    if (!amb || amb.ambiguous !== true || amb.start != null) throw new Error('同分没拒绝：' + JSON.stringify(amb));
+    // 拿不到上下文（before/after 全空）保持老口径：取第一处
+    const noCtx = locate('甲句重点。乙句重点。', '重点', {});
+    if (!noCtx || noCtx.start !== 2) throw new Error('无上下文不该拒绝：' + JSON.stringify(noCtx));
+    // 能分清时不误伤：前文不同 → 照旧挑中那一处
+    const clear = locate('甲句重点。乙句重点。', '重点', { before: '乙句', after: '' });
+    if (!clear || clear.start !== 7) throw new Error('能分清却被拒：' + JSON.stringify(clear));
+    return true;
+  });
+
+  check('node-fs-toolbar: 加粗定位顶住 KaTeX 双份文本污染——被污染的上下文宁可拒绝也不加粗错字（485）', () => {
+    const locate = sandbox._nodeFsBoldLocate;
+    // 原文：同一短语紧挨两条公式各出现一次，用户选的是第二处
+    const src = '甲 $E$ 的句子，乙 $E$ 的句子';
+    // 修复前 DOM 上下文＝渲染字形×2（KaTeX 的 MathML+HTML 双份），没有 $ 锚——
+    // 两处全打 0 分打平，旧逻辑取第一处＝加粗错字；现在必须拒绝
+    const polluted = locate(src, '的句子', { before: '甲EE的句子乙EE', after: '' });
+    if (!polluted || polluted.ambiguous !== true) throw new Error('污染上下文没拒绝：' + JSON.stringify(polluted));
+    // 修复后上下文按选区同款口径折 $tex$，与原文索引同形——正确挑中第二处
+    const folded = locate(src, '的句子', { before: '甲$E$的句子，乙$E$', after: '' });
+    if (!folded || folded.ambiguous) throw new Error('折 $ 上下文反而拒绝：' + JSON.stringify(folded));
+    if (folded.start !== 16 || src.slice(folded.start, folded.end) !== '的句子') {
+      throw new Error('折 $ 后没挑中第二处：' + JSON.stringify(folded));
+    }
+    return true;
+  });
+
+  check('node-fs-toolbar: 加粗上下文取文过公式——.katex 折 $tex$，双份文本不进 12 字窗口（485）', () => {
+    const ctx = sandbox._nodeFsBoldContext;
+    const fold = sandbox._nodeFsBoldFold;
+    if (typeof ctx !== 'function' || typeof fold !== 'function') throw new Error('加粗上下文 API 未挂出');
+    const realCreate = sandbox.document.createRange;
+    const realCreateTextNode = sandbox.document.createTextNode;
+    sandbox.document.createTextNode = (v) => ({ textContent: String(v) });
+    // 假片段＝「前文＋公式双份文本＋后文」，replaceWith 只把占位那段换成折好的 $tex$
+    const mkFrag = (k, naive, marker) => {
+      const f = {
+        _text: naive,
+        get textContent() { return f._text; },
+        querySelectorAll: () => [k],
+        querySelector: () => k,
+      };
+      // 替换串走函数形态：'$' 在 replacement 里是转义符，display 公式的 $$ 会被吃掉
+      k.replaceWith = (tn) => { f._text = String(f._text).replace(marker, () => String(tn && tn.textContent != null ? tn.textContent : '')); };
+      return f;
+    };
+    const k1 = fakeKatex('a^2', false);
+    const preFrag = mkFrag(k1, '有 a2a^2 重点甲', 'a2a^2');    // MathML+HTML 双份的污染态
+    const k2 = fakeKatex('F=ma', true);
+    const postFrag = mkFrag(k2, 'F=maF=ma重点乙收', 'F=maF=ma');
+    // 两次 createRange 按实现顺序＝pre（选区前）→ post（选区后）
+    const queue = [
+      { selectNodeContents() {}, setEnd() {}, cloneContents: () => preFrag, toString: () => preFrag._text },
+      { selectNodeContents() {}, setStart() {}, cloneContents: () => postFrag, toString: () => postFrag._text },
+    ];
+    sandbox.document.createRange = () => queue.shift();
+    try {
+      const got = ctx({}, { startContainer: {}, startOffset: 0, endContainer: {}, endOffset: 0 });
+      if (got.before !== '有$a^2$重点甲') throw new Error('前文没折公式（双份文本还在）：' + JSON.stringify(got));
+      if (got.after !== '$$F=ma$$重点乙收') throw new Error('后文没折公式：' + JSON.stringify(got));
+      // 掉底兜底：cloneContents 拿不到时退回 toString 老口径
+      const boom = { cloneContents: () => { throw new Error('x'); }, toString: () => '普通  文字' };
+      if (fold(boom) !== '普通  文字') throw new Error('兜底口径变了');
+      return true;
+    } finally {
+      sandbox.document.createRange = realCreate;
+      sandbox.document.createTextNode = realCreateTextNode;
+    }
+  });
+
+  check('node-fs-toolbar: 二义拒绝双端接线——本页浮条与预览桥各给如实文案，内嵌定位同源拒绝（485）', () => {
+    const src = readSrc('src/static/js/node-fs-toolbar.js');
+    if (!src.includes("span && span.ambiguous")) return false;
+    if (!src.includes('这段出现多处，分不清是哪一处——多选几个字再试')) return false;
+    const script = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
+    if (!script.includes('function boldFold(r)')) return false;   // 内嵌上下文也走折公式
+    if (!script.includes('return {ambiguous:true}')) return false; // 内嵌定位同源拒绝
+    return true;
+  });
+
   check('node-fs-toolbar: 加粗拒绝口径——挨着已有格式/跨空行/代码里都不插 **（宁可拒绝不制造半对）', () => {
     const locate = sandbox._nodeFsBoldLocate;
     const blocked = sandbox._nodeFsBoldBlockedReason;
@@ -378,6 +463,43 @@ export function run() {
     if (!src.includes('_buildContentPreviewPage(title, contentHtml, ctx)')) return false;
     if (!src.includes('_nodeFsMintPreviewToken()')) return false;
     if (!src.includes('typeof _nodeFsHideBar === \'function\'')) return false;
+    return true;
+  });
+
+  check('node-fs-toolbar: 开窗补绑按 token 认槽（486：连开两扇，后登记的先开窗不绑错）', () => {
+    const set = sandbox._setNodeFsPreviewCtx;
+    const attach = sandbox._attachNodeFsPreviewWin;
+    const find = sandbox._nodeFsPreviewCtxFor;
+    if (typeof set !== 'function' || typeof attach !== 'function' || typeof find !== 'function') throw new Error('上下文 API 未挂出');
+    // 真实时序：A 先登记（渲染 await 里），B 插队登记并先开窗——旧「第一个空槽」口径会把
+    // A 的窗绑到 B 的槽上，加粗/追问跟着落到别的节点
+    set({ token: 'tk486A', nodeId: 'nA', sessionId: 'sA', title: 'A' });
+    set({ token: 'tk486B', nodeId: 'nB', sessionId: 'sB', title: 'B' });
+    const winA = { closed: false, tag: 'A' };
+    const winB = { closed: false, tag: 'B' };
+    attach(winA, 'tk486A');
+    attach(winB, 'tk486B');
+    if (!find('tk486A', winA)) throw new Error('A 窗没绑到 A 槽（旧口径会绑去 B）');
+    if (!find('tk486B', winB)) throw new Error('B 窗没绑到 B 槽');
+    if (find('tk486A', winB) || find('tk486B', winA)) throw new Error('窗和槽交叉串绑');
+    // 收尾：弹掉本次两条，别漏给后面的用例
+    set(null); set(null);
+    return true;
+  });
+
+  check('node-fs-toolbar: 新窗口交接键按 token 分键（486：静态单键连开两扇必串窗）', () => {
+    const gc = readSrc('src/static/js/graph-custom.js');
+    // 键带 token 后缀；token 走 URL（window.open 那一刻唯一可靠的逐窗通道）
+    if (!gc.includes("'phymathia_content_preview_' + handoffToken")) return false;
+    if (!gc.includes("'phymathia_content_preview_theme_' + handoffToken")) return false;
+    if (!gc.includes("'/content-preview.html?t='")) return false;
+    if (!gc.includes('_attachNodeFsPreviewWin(win, ctx && ctx.token)')) return false;
+    // 写键失败/弹窗被拦两条路径都收自己的键，不给同标签页留孤儿键吃配额
+    if (!gc.includes('sessionStorage.removeItem(handoffKey)')) return false;
+    const shell = readSrc('src/static/content-preview.html');
+    if (!shell.includes("location.search.match(/[?&]t=([^&]+)/)")) return false;
+    if (!shell.includes("'phymathia_content_preview_' + t")) return false;
+    if (!shell.includes('A-Za-z0-9_-]')) return false; // token 白名单过滤后才拼键
     return true;
   });
 

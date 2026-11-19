@@ -49,7 +49,13 @@ function _adoptGraphHistoryPayload(parsed) {
 function _ensureGraphHistory() {
   const sid = _currentSessionId();
   if (graphHistorySession === sid && graphUndoStack.length) return;
-  if (graphHistorySession !== sid) _flushGraphHistoryMirror();
+  if (graphHistorySession !== sid) {
+    _flushGraphHistoryMirror();
+    // 换画布即续牌（2026-11-18 双标签守卫，backlog 500）：登记表在
+    // graph-history-panel.js（加载顺序在本文件之后，探活再调）——20s 心跳的空窗里
+    // 别的标签页启动结算，会把刚切过来的画布当成没人开着。
+    if (typeof _graphHistoryTabsRegister === "function") _graphHistoryTabsRegister();
+  }
   graphHistorySession = sid;
   graphUndoStack = [];
   graphHistoryCursor = 0;

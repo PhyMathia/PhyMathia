@@ -521,6 +521,95 @@ function _graphHistorySweepClear() {
   try { localStorage.removeItem(GRAPH_HISTORY_SWEEP_KEY); } catch (e) { /* best effort */ }
 }
 
+// ===== 双标签守卫（2026-11-18，backlog 500）：活标签页在场登记 =====
+// 批量结算/单画布结算都是「清别的画布的历史」，但它们分不清哪些画布此刻正开在别的
+// 标签页里——双开时一边退出、再开任一标签页，另一边正看着的画布历史就被清了
+// （编辑过能靠下次落盘自愈，没编辑刷新即丢）。这里给每个标签页发一块小牌子：键
+// phymathia_open_tab_<tabId>（刻意避开 phymathia_graph_ 前缀——启动 busy 清扫和
+// 历史批量扫描都不认它），值 {sid, at}；20s 心跳续期、回归前台续期、换画布即续
+// （graph-history.js _ensureGraphHistory）。卸载不摘牌：摘牌在 F5/reload 的加载
+// 空窗里漏保护自己，宁可让关掉的画布多受一会保护——牌子只按 TTL 判活，心跳被
+// 后台节流最密也就一分钟一跳，10 分钟 TTL 富余；崩溃/强杀的残牌由登记时的顺手
+// GC 摘掉。牌子 ~100B，配额满时小写入通常仍放得进（1MB 探测失败≠小写入失败），
+// 守卫恰好在 502 兜底场景里也成立。键走 localStorage 垫片，多账号天然隔离。
+const GRAPH_HISTORY_TAB_KEY_PREFIX = "phymathia_open_tab_";
+const GRAPH_HISTORY_TAB_LIVE_MS = 10 * 60 * 1000;
+const GRAPH_HISTORY_TAB_BEAT_MS = 20000;
+
+let _graphHistoryTabIdCache = "";
+function _graphHistoryTabId() {
+  if (_graphHistoryTabIdCache) return _graphHistoryTabIdCache;
+  let id = "";
+  try { id = sessionStorage.getItem("phymathia_tab_id") || ""; } catch (e) { id = ""; }
+  if (!id) {
+    id = "tab_" + (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID() : String(Math.random()).slice(2) + String(Date.now()));
+    // sessionStorage 按标签页实例隔离且刷新存活：reload 覆写自己的牌子不留幽灵；
+    // 拿不到（隐私模式/沙箱）退化为每次加载新 id，旧牌等 TTL 自然过期，正确性不变
+    try { sessionStorage.setItem("phymathia_tab_id", id); } catch (e) { /* 同上 */ }
+  }
+  _graphHistoryTabIdCache = id;
+  return id;
+}
+
+// 登记自己「此刻正打开的画布」。sid 空（启动早期/异常）不写：旧牌原地留到 TTL，
+// 不主动摘——摘了会在切换空窗漏保护自己。
+function _graphHistoryTabsRegister() {
+  const sid = _currentSessionId();
+  if (!sid) return false;
+  try {
+    localStorage.setItem(GRAPH_HISTORY_TAB_KEY_PREFIX + _graphHistoryTabId(),
+      JSON.stringify({ sid: String(sid), at: Date.now() }));
+  } catch (e) { return false; } // 配额满连 100B 都放不进：守卫退化为「看不见我」，可接受
+  _graphHistoryTabGc();
+  return true;
+}
+
+// 顺手 GC（登记时节流触发）：摘掉超过 TTL 的死标签页残牌（崩溃/强杀不摘牌的残渣）。
+let _graphHistoryTabGcAt = 0;
+function _graphHistoryTabGc() {
+  const now = Date.now();
+  if (now - _graphHistoryTabGcAt < 5 * 60 * 1000) return;
+  _graphHistoryTabGcAt = now;
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (!key || key.indexOf(GRAPH_HISTORY_TAB_KEY_PREFIX) !== 0) continue;
+      let entry = null;
+      try { entry = JSON.parse(localStorage.getItem(key) || "null"); } catch (e) { entry = null; }
+      if (!entry || !Number.isFinite(entry.at) || now - entry.at > GRAPH_HISTORY_TAB_LIVE_MS) {
+        try { localStorage.removeItem(key); } catch (e) { /* best effort */ }
+      }
+    }
+  } catch (e) { /* best effort */ }
+}
+
+// 其他活标签页（TTL 内续过牌的）此刻正打开的画布集合。枚举失败抛给调用方——
+// 「在场名单读不到」必须按不清处理（宁可留着），悄悄当空集等于没守卫。
+function _graphHistorySidsOpenInOtherTabs() {
+  const selfId = _graphHistoryTabId();
+  const now = Date.now();
+  const out = new Set();
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || key.indexOf(GRAPH_HISTORY_TAB_KEY_PREFIX) !== 0) continue;
+    if (key.slice(GRAPH_HISTORY_TAB_KEY_PREFIX.length) === selfId) continue;
+    let entry = null;
+    try { entry = JSON.parse(localStorage.getItem(key) || "null"); } catch (e) { entry = null; }
+    if (!entry || !entry.sid || !Number.isFinite(entry.at)) continue;
+    if (now - entry.at > GRAPH_HISTORY_TAB_LIVE_MS) continue;
+    out.add(String(entry.sid));
+  }
+  return out;
+}
+
+// 心跳＋回归前台即续牌（模块级一次性装好；冒烟沙箱里 setInterval 是哑桩、document
+// 是宽松代理，都不产生副作用）。
+setInterval(_graphHistoryTabsRegister, GRAPH_HISTORY_TAB_BEAT_MS);
+document.addEventListener("visibilitychange", function () {
+  if (document.visibilityState === "visible") _graphHistoryTabsRegister();
+});
+
 // 502 兜底用（2026-11-18）：探测 localStorage 还放不放得下「大块写入」。v1 用 1 字节
 // 探测太宽松——存储剩一丝缝隙时 1 字节能过、几百 KB 的缓存写入照样失败弹「空间已满」，
 // 兜底永远不触发（用户实测实锤）。v2 改写 1MB 测试载荷（与真实失败的大写入同量级），
@@ -630,6 +719,13 @@ async function settleGraphHistoryOnOpen() {
     try { localStorage.removeItem(_graphHistoryExitKeyFor(sid)); } catch (e) { /* best effort */ }
     return false;
   }
+  // 500 双标签守卫（2026-11-18）：这张画布正开在另一个活标签页里 → 本轮不结算，
+  // 标记原样保留（等那边退出后的下次打开再清）。同画布双开时另一边没编辑、指纹就
+  // 对得上，原指纹守卫拦不住这种「开着但没动」；在场名单读不到也一并不清。
+  _graphHistoryTabsRegister();
+  let liveSids = null;
+  try { liveSids = _graphHistorySidsOpenInOtherTabs(); } catch (e) { liveSids = null; }
+  if (liveSids === null || liveSids.has(sid)) return false;
   if (marker) {
     if (marker.sid && marker.sid !== sid) return false;
     if (marker.fp !== _graphHistoryExitFingerprint()) {
@@ -664,7 +760,10 @@ async function settleGraphHistoryOnOpen() {
 //   · 配额满自锁兜底（502，2026-11-18）：写入探测失败（1MB 放不进）→ 绕过名单全量清
 //     （无视名单有无、连 F5 也清，牺牲 F5 守卫已拍板——解锁比守卫重要，清一次下次即恢复）；
 //   · 只读态：不清且不消费名单（免得查阅态把别人的清理标记吃掉）；
-//   · 当前画布：跳过，留给 settleGraphHistoryOnOpen 做指纹校验的精细结算。
+//   · 当前画布：跳过，留给 settleGraphHistoryOnOpen 做指纹校验的精细结算；
+//   · 双标签守卫（2026-11-18，backlog 500）：另一标签页正打开的画布也不清（在场
+//     登记表见上）——双开时一边退出、这边启动，别把那边正看着的画布历史端了；
+//     有跳过就保留名单，等那些画布关闭后的下次启动再清。
 // 名单消费（2026-11-18 复审修正）：不再无条件先清空。内核 _batchDiscardGraphHistories
 // 只有 DELETE 成功才删本地键（失败则原样保留），这里据此决定是否消费名单——全部删成功
 // 才清空；有失败就保留名单，下次启动的全量扫描会把残留的键再纳入重试，避免"删失败+
@@ -695,14 +794,23 @@ async function settleGraphHistoryBatchOnOpen() {
   // 直接绕过名单全量清（无视名单有无与 F5 守卫——清一次即解锁，下次恢复）。v1 只在名单
   // 空时兜底，被「1 字节探测太宽松」架空（存储剩一丝缝隙时探测恒通过、兜底恒不触发）；
   // v2 探测改 1MB 同量级＋兜底不看名单，任何「大写入已放不下」的状态启动即自愈。
+  // 兜底同样认双标签守卫（2026-11-18，backlog 500）：解锁再急也不端别的标签页正看着
+  // 的画布——通常其余存量已够解锁；真被活画布占满时牌子还在，那边关了下次即解。
   const bypassList = !probeOk;
   if (bypassList) _logStorageTopKeys("配额已满（1MB 探测失败），绕名单全量清撤销历史，其余大户见下表");
   if (nav === "reload" && !bypassList) { _graphHistorySweepClear(); return 0; }
   if (!sids.length && !bypassList) return 0; // 名单为空＝上次非正常退出，什么都不清
   const current = _currentSessionId();
   if (!current) return 0; // 503：排除集失效，宁可不清（纯理论边界）
+  // 500 双标签守卫：先给自己续牌，再读其他活标签页正打开的画布。名单读不到＝
+  // 守卫失效，宁可整轮不清（绝不把「读不到」当「没人开着」）。
+  _graphHistoryTabsRegister();
+  let liveSids = null;
+  try { liveSids = _graphHistorySidsOpenInOtherTabs(); } catch (e) { liveSids = null; }
+  if (liveSids === null) return 0;
   const HIST_PREFIX = "phymathia_graph_history_";
   const targets = [];
+  let liveHeld = 0;
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
@@ -711,16 +819,22 @@ async function settleGraphHistoryBatchOnOpen() {
       if (key.indexOf(GRAPH_HISTORY_EXIT_KEY) === 0 || key === GRAPH_HISTORY_SWEEP_KEY) continue;
       const sid = key.slice(HIST_PREFIX.length);
       if (!sid || sid === current) continue;
+      // 500：别的标签页正开着这张画布（在场登记 TTL 内）→ 本轮不动，名单保留
+      if (liveSids.has(sid)) { liveHeld++; continue; }
       targets.push(sid);
     }
   } catch (e) { return 0; } // 枚举失败：宁可不清，保留名单待下次重试，绝不误伤
-  if (!targets.length) { _graphHistorySweepClear(); return 0; } // 无可清键＝任务完成，消费名单
+  if (!targets.length) {
+    if (liveHeld) return 0; // 有别的标签页开着的画布：名单保留，等它们关闭后再结算
+    _graphHistorySweepClear(); return 0; // 无可清键＝任务完成，消费名单
+  }
   if (typeof window._batchDiscardGraphHistories !== "function") return 0; // 内核缺席：保留名单
   let cleared = 0;
   try { cleared = await window._batchDiscardGraphHistories(targets); }
   catch (e) { return 0; } // 执行异常：保留名单待下次重试
-  if (cleared >= targets.length) _graphHistorySweepClear(); // 全删成功才消费；有失败则保留重试
+  if (cleared >= targets.length && !liveHeld) _graphHistorySweepClear(); // 全删成功且无跳过才消费；有失败/有跳过则保留重试
   console.log("[history-sweep] 批量结算完成：目标 " + targets.length + " 张，已清 " + cleared + " 张"
+    + (liveHeld ? "，跳过其他标签页正开着 " + liveHeld + " 张" : "")
     + (cleared >= targets.length ? "" : "（有删失败，本地键保留待下次重试）"));
   if (bypassList && cleared < targets.length) _logStorageTopKeys("兜底清后有残留");
   return cleared;
@@ -941,6 +1055,9 @@ window.settleGraphHistoryBatchOnOpen = settleGraphHistoryBatchOnOpen;
 window._graphHistorySweepRead = _graphHistorySweepRead;
 window._graphHistorySweepWrite = _graphHistorySweepWrite;
 window._graphHistorySweepClear = _graphHistorySweepClear;
+// 2026-11-18 双标签守卫：在场登记与探询（排障可从控制台直接查「哪些画布正被别的标签页开着」）
+window._graphHistoryTabsRegister = _graphHistoryTabsRegister;
+window._graphHistorySidsOpenInOtherTabs = _graphHistorySidsOpenInOtherTabs;
 window.getGraphHistoryFingerprint = _graphHistoryExitFingerprint;
 window.graphHistoryLiveEventDone = _graphHistoryLiveEventDone;
 window.graphEventText = function (text) { return _graphShorten(String(text || ""), 30); };

@@ -269,7 +269,9 @@ function _nodeFsBoldCommonPrefix(a, b) {
   return n;
 }
 
-// 同一段文字可能出现多次：用选区前后的可见文字挑最像的那一处（拿不到上下文就取第一处）
+// 同一段文字可能出现多次：用选区前后的可见文字挑最像的那一处（拿不到上下文就取第一处）。
+// 上下文在手还打平＝分不出是哪一处——如实拒绝（{ambiguous:true}），猜第一处会加粗
+// 错字（485）：公式旁的选区曾被 KaTeX 双份文本污染上下文，两处打平后落在了前一处。
 function _nodeFsBoldLocate(src, selText, ctx) {
   const index = _nodeFsBoldScan(src);
   const q = _nodeFsBoldScan(selText).text.replace(/^ | $/g, '');
@@ -287,11 +289,14 @@ function _nodeFsBoldLocate(src, selText, ctx) {
   const after = String((ctx && ctx.after) || '').replace(/\s+/g, '');
   let best = hits[0];
   let bestScore = -1;
+  let tied = false;
   hits.forEach(at => {
     const score = _nodeFsBoldCommonSuffix(before, index.text.slice(0, at).replace(/ /g, ''))
       + _nodeFsBoldCommonPrefix(after, index.text.slice(at + q.length).replace(/ /g, ''));
-    if (score > bestScore) { bestScore = score; best = at; }
+    if (score > bestScore) { bestScore = score; best = at; tied = false; }
+    else if (score === bestScore) tied = true;
   });
+  if (tied && (before || after)) return { ambiguous: true };
   const start = index.map[best];
   const end = index.map[best + q.length - 1] + 1;
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
@@ -438,6 +443,18 @@ function _nodeFsBoldRangeGuard(range) {
   return '';
 }
 
+// 上下文取文也过公式这关（485）：.katex 里 MathML/HTML 各带一份正文，Range.toString()
+// 会把公式文字翻倍——紧邻公式的选区上下文被污染，与原文索引（公式折 $tex$）对不上，
+// 12 字窗口被废字吃光，同分时又取第一处就可能加粗错字。按选区提取同款口径折 $tex$/$$tex$$。
+function _nodeFsBoldFold(r) {
+  let frag = null;
+  try { frag = r.cloneContents(); } catch (e) { frag = null; }
+  if (frag && typeof _nodeFsKatexFragmentText === 'function') {
+    try { return String(_nodeFsKatexFragmentText(frag, true) || ''); } catch (e) { /* 掉到底下 */ }
+  }
+  return String(r.toString() || '');
+}
+
 // 选区前后的可见文字（夹在容器内），给多命中挑位置用
 function _nodeFsBoldContext(container, range) {
   const out = { before: '', after: '' };
@@ -445,11 +462,11 @@ function _nodeFsBoldContext(container, range) {
     const pre = document.createRange();
     pre.selectNodeContents(container);
     pre.setEnd(range.startContainer, range.startOffset);
-    out.before = String(pre.toString() || '').replace(/\s+/g, '').slice(-NODE_FS_BOLD_CTX);
+    out.before = _nodeFsBoldFold(pre).replace(/\s+/g, '').slice(-NODE_FS_BOLD_CTX);
     const post = document.createRange();
     post.selectNodeContents(container);
     post.setStart(range.endContainer, range.endOffset);
-    out.after = String(post.toString() || '').replace(/\s+/g, '').slice(0, NODE_FS_BOLD_CTX);
+    out.after = _nodeFsBoldFold(post).replace(/\s+/g, '').slice(0, NODE_FS_BOLD_CTX);
   } catch (e) { /* 拿不到就按首个命中 */ }
   return out;
 }
@@ -492,6 +509,7 @@ function _nodeFsBoldInPage(picked) {
   const message = node.messageIndex >= 0 ? messages[node.messageIndex] : null;
   const src = _nodeFsSourceText(node, message);
   const span = _nodeFsBoldLocate(src, String(range.toString() || ''), _nodeFsBoldContext(st.container, range));
+  if (span && span.ambiguous) { if (typeof showToast === 'function') showToast('这段出现多处，分不清是哪一处——多选几个字再试'); return; }
   if (!span) { if (typeof showToast === 'function') showToast('没能在原文里找到这段，换个范围再试'); return; }
   // 插入位置按真原文算（493）：answer 展示文本剥过 <extend>/建议追问，拿展示偏移
   // 写回会把剥后版存成节点正文。原文里找不中（同一套上下文定位）宁可拒绝。
@@ -516,6 +534,7 @@ function _nodeFsBoldFromBridge(node, text, before, after) {
   const message = node.messageIndex >= 0 ? messages[node.messageIndex] : null;
   const src = _nodeFsSourceText(node, message);
   const span = _nodeFsBoldLocate(src, text, { before, after });
+  if (span && span.ambiguous) return { ok: false, message: '这段出现多处，分不清是哪一处——多选几个字再试' };
   if (!span) return { ok: false, message: '没能在原文里找到这段，换个范围再试' };
   // 插入位置按真原文算（493，同 _nodeFsBoldInPage）
   const raw = _nodeFsSourceTextRaw(node, message);
@@ -813,8 +832,16 @@ function _setNodeFsPreviewCtx(ctx) {
   _nodeFsPersistPreviewCtx();
 }
 
-function _attachNodeFsPreviewWin(win) {
-  const target = _nfsPreviewCtxs.find(c => !c.win) || _nfsPreviewCtxs[0];
+function _attachNodeFsPreviewWin(win, token) {
+  // 486 连开两扇：登记与开窗各是一段异步，「第一个没绑窗的槽」不一定是这扇窗的——
+  // 后登记的先开窗时，窗会绑到别人的槽上，加粗/追问跟着落到别的节点。带 token 时
+  // 只认自己那条（prevToken 也认，与 _nodeFsPreviewCtxFor 同口径）；实在认不出
+  // （快照被刷新重建等极端情形）才退回旧口径，别让窗从此失联。
+  let target = null;
+  if (typeof token === 'string' && token) {
+    target = _nfsPreviewCtxs.find(c => c.token === token || c.prevToken === token) || null;
+  }
+  if (!target) target = _nfsPreviewCtxs.find(c => !c.win) || _nfsPreviewCtxs[0] || null;
   if (target) target.win = win || null;
 }
 
@@ -1153,11 +1180,12 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'if(!hits.length)return null;'
     + 'var before=String((ctx&&ctx.before)||"").replace(/\\s+/g,""),'
     + 'after=String((ctx&&ctx.after)||"").replace(/\\s+/g,"");'
-    + 'var best=hits[0],bestScore=-1;'
+    + 'var best=hits[0],bestScore=-1,tied=false;'
     + 'for(var i=0;i<hits.length;i++){var a=hits[i];'
     + 'var hb=index.text.slice(0,a).replace(/ /g,""),ha=index.text.slice(a+q.length).replace(/ /g,"");'
     + 'var score=commonSuffix(before,hb)+commonPrefix(after,ha);'
-    + 'if(score>bestScore){bestScore=score;best=a;}}'
+    + 'if(score>bestScore){bestScore=score;best=a;tied=false;}else if(score===bestScore)tied=true;}'
+    + 'if(tied&&(before||after))return {ambiguous:true};'
     + 'var start=index.map[best],end=index.map[best+q.length-1]+1;'
     + 'if(!(end>start))return null;return {start:start,end:end};}'
     + 'function boldBlocked(src,span){var s=String(src||""),start=span.start,end=span.end;'
@@ -1179,13 +1207,16 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'if(!a||!b||a!==b)return "一次只加粗一段，请只选一段再试";'
     + 'if(/^PRE$/.test(String(a.tagName||"").toUpperCase()))return "代码里不加粗";'
     + 'if(a.closest&&a.closest("pre, code"))return "代码里不加粗";return "";}'
+    + 'function boldFold(r){var frag=null;try{frag=r.cloneContents();}catch(e){}'
+    + 'if(frag){try{return String(fragText(frag,true)||"");}catch(e){}}'
+    + 'return String(r.toString?r.toString()||"":"");}'
     + 'function boldContext(container,range){var out={before:"",after:""};'
     + 'try{var pre=document.createRange();pre.selectNodeContents(container);'
     + 'pre.setEnd(range.startContainer,range.startOffset);'
-    + 'out.before=String(pre.toString()||"").replace(/\\s+/g,"").slice(-12);'
+    + 'out.before=boldFold(pre).replace(/\\s+/g,"").slice(-12);'
     + 'var post=document.createRange();post.selectNodeContents(container);'
     + 'post.setStart(range.endContainer,range.endOffset);'
-    + 'out.after=String(post.toString()||"").replace(/\\s+/g,"").slice(0,12);}catch(e){}return out;}'
+    + 'out.after=boldFold(post).replace(/\\s+/g,"").slice(0,12);}catch(e){}return out;}'
     + 'function wrapBold(range){try{var strong=document.createElement("strong");'
     + 'strong.appendChild(range.extractContents());range.insertNode(strong);'
     + 'var after=document.createRange();after.selectNodeContents(strong);'

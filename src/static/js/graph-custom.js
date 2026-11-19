@@ -863,11 +863,24 @@ async function openNodeNewWindow(nodeId) {
     }
     return;
   }
+  // 交接键按 token 分键（486 串窗）：渲染管线有 await 点，快速连开两扇时后开的
+  // setItem 会覆盖先开的还没被读走的静态单键——跨标签 sessionStorage 复制时机各
+  // 浏览器又不一致（utopia.js 同款实测），先开的标签页可能拿到后一份内容，页里
+  // 烤着的 token/nodeId 跟着错，加粗/追问全落到别的节点。每窗一枚键 + token 写在
+  // URL 上（window.open 那一刻唯一可靠的逐窗通道），两扇窗各读各的，物理上串不了。
+  // 没桥的环境（viewer 家族）也照样分键：本地现造一枚即可，只求唯一不求可回查。
+  const handoffToken = (ctx && typeof ctx.token === 'string' && ctx.token)
+    ? ctx.token
+    : 'cp_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+  const handoffKey = 'phymathia_content_preview_' + handoffToken;
+  const handoffThemeKey = 'phymathia_content_preview_theme_' + handoffToken;
   try {
-    sessionStorage.setItem('phymathia_content_preview', page);
+    sessionStorage.setItem(handoffKey, page);
     // 外壳 content-preview.html 先于 srcdoc 绘制，靠这枚键决定首帧底色（避免浅色主题闪一下深底）
-    sessionStorage.setItem('phymathia_content_preview_theme', theme);
+    sessionStorage.setItem(handoffThemeKey, theme);
   } catch (e) {
+    // 内容/主题两枚键都可能落了一半：进分支就一起收掉，别给同标签页留孤儿键吃配额
+    try { sessionStorage.removeItem(handoffKey); sessionStorage.removeItem(handoffThemeKey); } catch (e2) {}
     if (typeof showToast === 'function') showToast('内容过大，无法在新窗口打开');
     return;
   }
@@ -881,13 +894,15 @@ async function openNodeNewWindow(nodeId) {
       win: null,
     });
   }
-  const win = window.open('/content-preview.html', '_blank');
+  const win = window.open('/content-preview.html?t=' + encodeURIComponent(handoffToken), '_blank');
   if (!win) {
     if (typeof _setNodeFsPreviewCtx === 'function') _setNodeFsPreviewCtx(null);
-    try { sessionStorage.removeItem('phymathia_content_preview'); sessionStorage.removeItem('phymathia_content_preview_theme'); } catch (e2) {}
+    try { sessionStorage.removeItem(handoffKey); sessionStorage.removeItem(handoffThemeKey); } catch (e2) {}
     if (typeof showToast === 'function') showToast('浏览器拦截了弹出窗口，请允许弹窗后重试');
   } else if (typeof _attachNodeFsPreviewWin === 'function') {
-    _attachNodeFsPreviewWin(win);
+    // 补绑带上 token：连开两扇时「第一个没绑窗的槽」可能是别人的（后登记的先开窗），
+    // 按 token 认自己的槽，窗绑错槽后动作照样串（2026-11-19）
+    _attachNodeFsPreviewWin(win, ctx && ctx.token);
   }
 }
 
