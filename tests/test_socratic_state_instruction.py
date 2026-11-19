@@ -47,6 +47,34 @@ class SocraticStateInstructionTest(RouteTestBase):
         self.assertIn("本轮闭环已问答 2 轮", text)
         self.assertIn("【讲解】", text)
 
+    # ── 脏值兜底（backlog 499，2026-11-19）──
+
+    def test_dirty_counters_do_not_crash_instruction(self):
+        """状态文件被外部写脏（"2次"/{}）时提示词装配回落 0，不再整轮 500。"""
+        context._write_socratic_state("refDirty", {
+            "active": True, "level": "basic", "question": "q",
+            "correctStreak": "2次", "answeredCount": {},
+        })
+        text = context._socratic_state_instruction("refDirty", "answer")
+        self.assertIn("已连续答对 0 次", text)
+        self.assertIn("已问答 0 轮", text)
+
+    def test_dirty_counters_do_not_crash_meta_update(self):
+        """<socratic_meta> 更新链路同口径：脏计数按 0 起算、正常递增写回。"""
+        context._write_socratic_state("refDirty2", {
+            "active": True, "level": "basic", "question": "q",
+            "correctStreak": "2次", "answeredCount": "3轮",
+        })
+        context._update_socratic_state_from_content(
+            '<socratic_meta correct="correct" />', "refDirty2")
+        state = context._read_socratic_state("refDirty2")
+        self.assertEqual(state.get("correctStreak"), 1)
+        self.assertEqual(state.get("answeredCount"), 1)
+        # 连对闸也吃脏值：答错清零、done 结束都不得抛
+        context._update_socratic_state_from_content(
+            '<socratic_meta correct="wrong" done="true" />', "refDirty2")
+        self.assertIsNone(context._read_socratic_state("refDirty2"))
+
     # ── 路由层：指令确实拼进了上游请求 ──
 
     def _upstream_blob_for(self, prompt):

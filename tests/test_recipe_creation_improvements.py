@@ -344,7 +344,12 @@ class RecipeToolArgsTest(unittest.TestCase):
 
 
 class RecipeUndoGuardTest(unittest.TestCase):
-    """review_graph：混合配方批次的撤销守卫——不调模型、整批走 checkpoint 路径。"""
+    """review_graph：混合配方批次的撤销守卫——不调模型、整批走 checkpoint 路径。
+
+    488（2026-11-19）：确定性撤销在 preset/chat/forge 已整体关闸（「撤销」在模式
+    相位指模式产物不是画布），守卫只在还会走确定性撤销的相位（normal 等）有意义，
+    用例改用 normal——守卫逻辑本身在 _try_deterministic_undo 内、与相位无关。
+    """
 
     def test_mixed_recipe_undo_returns_no_ops_without_model_call(self):
         from harness import review as review_mod
@@ -365,7 +370,7 @@ class RecipeUndoGuardTest(unittest.TestCase):
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             blocked = asyncio.run(review_mod.review_graph(
                 snapshot, "撤销刚才的修改，恢复原样",
-                model=MODEL, phase="preset", mode="tools", self_check="off",
+                model=MODEL, phase="normal", mode="tools", self_check="off",
                 previous_snapshot=previous,
                 previous_ops=[
                     {"op": "update_node", "id": "A", "patch": {"content": "新"}, "reason": "改"},
@@ -391,7 +396,7 @@ class RecipeUndoGuardTest(unittest.TestCase):
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             plain = asyncio.run(review_mod.review_graph(
                 snapshot, "撤销刚才的修改，恢复原样",
-                model=MODEL, phase="preset", mode="tools", self_check="off",
+                model=MODEL, phase="normal", mode="tools", self_check="off",
                 previous_snapshot=previous,
                 previous_ops=[{"op": "update_node", "id": "A", "patch": {"content": "新"}, "reason": "改"}],
             ))

@@ -202,3 +202,67 @@ def test_forge_loop_queries_previews_and_installs(monkeypatch):
     assert any(token in text for text in tool_payloads(2))
     assert any('"installed"' in text or '"ok": true' in text for text in tool_payloads(3))
     assert "受力图先行" in str(result.get("summary") or "")
+
+
+# ====== 494/499 余项修复（2026-11-19）======
+
+def test_read_skill_returns_full_body():
+    """499a：read_skill 不再自设 3000 字截断——读截短于写上限＝改一处装回即丢尾。
+
+    正文超 3000 字（写上限内）的技能装进去再读回来，body 必须是整篇：chars 与
+    len(body) 一致、无 bodyTruncated、结尾一段原样在场（旧实现 3000 字处被切）。
+    """
+    tail = "\n## 红线\n最后一条红线：输出前必须复读本段再回答。\n"
+    body = GOOD_BODY + "\n补充段。\n" + "更。" * 1500 + tail
+    assert len(body) > 3000, "用例正文必须真的超过旧 READ_BODY_CHARS(3000)"
+    assert len(body) <= skill_registry.LIMITS["body"]
+    draft = _draft(body=body)
+    preview = skill_forge.execute_skill_tool("preview_skill", {"skill": draft}, "default")
+    assert preview["ok"] is True
+    out = skill_forge.execute_skill_tool(
+        "install_skill", {"skill": draft, "token": preview["draftToken"]}, "default")
+    assert out["ok"] is True
+    read = skill_forge.execute_skill_tool("read_skill", {"id": "force-frame"}, "default")
+    assert "error" not in read
+    assert len(read["body"]) == read["chars"]
+    assert "bodyTruncated" not in read
+    assert read["body"].endswith("最后一条红线：输出前必须复读本段再回答。")
+
+
+def test_build_tools_forge_gated_on_available(monkeypatch):
+    """494c：skill_forge.available() 在装配点兑现——registry 不可用时 forge 工具表
+    整表不给（模型不该拿着每次都回「技能系统不可用」的工具表）。"""
+    monkeypatch.setattr(skill_forge, "available", lambda: False)
+    assert build_tools("forge") == []
+    monkeypatch.setattr(skill_forge, "available", lambda: True)
+    names = [tool["function"]["name"] for tool in build_tools("forge")]
+    assert names == list(skill_forge.SKILL_TOOL_NAMES)
+
+
+def test_tool_step_limit_notice_matches_forge_context():
+    """494b：步数上限通告按相位给——forge 版不再把模型往「编辑类工具调用/最终
+    JSON」上引（那套语境在技能工坊不存在，且到顶后技能工具也已收起）。"""
+    from harness.review import _tool_step_limit_notice
+    forge = _tool_step_limit_notice("forge")
+    assert "技能工具都已收起" in forge
+    assert "编辑类工具调用" not in forge
+    assert _tool_step_limit_notice("normal") != forge
+    assert "答疑模式直接用文字回答" in _tool_step_limit_notice("chat")
+
+
+def test_forge_empty_summary_fallback_is_skill_context():
+    """494a：forge 空 summary 回落「本次未提出技能修改」，不再用画布语境的
+    「本次未提出图修改建议」（forge 的图操作本就被保险丝恒清空，这句恒现）。"""
+    import asyncio
+    from harness.review import _assemble_result_with_selfchecks
+
+    async def _run(phase):
+        result, retry_errors = await _assemble_result_with_selfchecks(
+            dict(SNAPSHOT), [], "", phase, "", None, [], [], [],
+            0, 0, False, dict(MODEL), {}, None, (lambda event: None),
+        )
+        assert retry_errors == []
+        return result
+
+    assert asyncio.run(_run("forge"))["summary"] == "本次未提出技能修改"
+    assert asyncio.run(_run("normal"))["summary"] == "本次未提出图修改建议"

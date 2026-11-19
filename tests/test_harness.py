@@ -2705,6 +2705,20 @@ class HarnessUndoShortInstructionGateTest(unittest.TestCase):
                 self.assertEqual(result["status"], "undo")
                 self.assertEqual(result["next_snapshot"]["nodes"][0]["content"], "原")
 
+    def test_mode_phases_never_roll_back_deterministically(self):
+        """模式相位不吃确定性撤销短路（488：forge 2026-11-18，chat/preset 2026-11-19）。
+
+        答疑/创造/技能工坊都是显式锁定的模式通道，用户在里面说「撤销/不要了」指的是
+        本模式产物（聊到的内容/草稿/技能稿），不是画布上那批图操作——短路会把上一批
+        编辑误回滚。三个相位都必须到达模型路径（called ≥ 1）且不产生 undo 结果。
+        """
+        for phase in ("chat", "preset", "forge"):
+            with self.subTest(phase=phase):
+                result, called = self._run("撤销", phase=phase)
+                self.assertGreaterEqual(called["n"], 1, f"{phase} 相位应交给模型，不做确定性回滚")
+                self.assertNotEqual(result["status"], "undo")
+                self.assertNotEqual(result.get("phase"), "undo")
+
     def test_composer_button_instruction_stays_deterministic(self):
         """前端「↩ 撤销上一条」按钮实发文案（harness-run.js undoLastHarnessEdit）：
 
@@ -4142,8 +4156,13 @@ class HarnessChatPhaseTest(unittest.TestCase):
             "答疑模式清空操作后不应再报「没提出操作」",
         )
 
-    def test_undo_still_deterministic_under_locked_phases(self):
-        # 确定性撤销在相位分派之前、不看相位——锁定 preset/chat 下「↩撤销上一条」照常工作
+    def test_undo_in_locked_phases_goes_to_model(self):
+        # 488（2026-11-19 翻案）：chat/preset 是显式锁定的模式通道，「撤销/不要了」
+        # 指的是本模式产物（聊到的内容/创造中的稿子），不是画布图操作——确定性
+        # 回滚会误撤上一批编辑。即使是指令完全命中的「↩撤销上一条」按钮文案，
+        # 在锁定相位也必须交给模型（按钮本身固定发 phase=normal，见
+        # harness-run.js runGraphHarnessWithText；按钮契约由
+        # HarnessUndoShortInstructionGateTest.test_composer_button_instruction_stays_deterministic 钉住）
         import asyncio
         import unittest.mock
         from harness import review as review_mod
@@ -4172,13 +4191,14 @@ class HarnessChatPhaseTest(unittest.TestCase):
                         previous_snapshot=previous,
                         previous_ops=[{"op": "update_node", "id": "A", "patch": {"content": "新"}, "reason": "修改"}],
                     ))
-                self.assertEqual(called["n"], 0, "锁定相位下撤销也必须走确定性路径、不调模型")
-                self.assertEqual(result["status"], "undo")
-                self.assertEqual(result["next_snapshot"]["nodes"][0]["content"], "原")
+                self.assertGreaterEqual(called["n"], 1, "锁定相位下撤销必须交给模型")
+                self.assertNotEqual(result["status"], "undo")
+                self.assertEqual(result["next_snapshot"]["nodes"][0]["content"], "新",
+                                 "画布不得被确定性回滚")
 
     def test_forge_phase_skips_deterministic_undo(self):
         # forge 里「撤销/重来」指的是技能草稿，不是画布——不得短路回滚上一批图操作
-        # （2026-11-18；preset/chat 的确定性撤销保留，见上一条用例）
+        # （2026-11-18；488 于 2026-11-19 把同口径扩到 preset/chat，见上一条用例）
         import asyncio
         import unittest.mock
         from harness import review as review_mod
@@ -4348,3 +4368,49 @@ class RecipeDescPayloadMismatchTest(unittest.TestCase):
                 {"nodes": [], "edges": [], "user_recipes": []},
                 [{"op": "create_recipe", "recipe": recipe, "reason": "建好苏格拉底式配方，带三档等级标签"}],
             )
+
+
+class ToolResultClipTest(unittest.TestCase):
+    """499b：工具结果回灌截断按结构截——模型收到的永远是合法 JSON，不再有半截。
+
+    旧实现 `text[:4000] + "…（结果过长已截断）"` 把 json.dumps 的产物从中间切断，
+    模型侧拿到的 tool 消息语法已断（read_skill 的半截 JSON 即此病）。修法：先试按
+    结构截（列表丢尾条/字符串掐尾/字典递归分预算），截不动才退回老硬切。
+    """
+
+    def test_long_list_drops_tail_items_keeps_valid_json(self):
+        import json
+        from harness.review import _clip_tool_result_text, _TOOL_RESULT_CHARS
+        payload = json.dumps(
+            {"matches": [{"title": f"条目{i}", "excerpt": "内容" * 30} for i in range(200)],
+             "count": 200, "total": 200}, ensure_ascii=False)
+        assert len(payload) > _TOOL_RESULT_CHARS
+        out = _clip_tool_result_text(payload, _TOOL_RESULT_CHARS)
+        self.assertLessEqual(len(out), _TOOL_RESULT_CHARS)
+        data = json.loads(out)  # 语法完整，能解析
+        self.assertLess(len(data["matches"]), 200)
+        self.assertIn("已截断", str(data["matches"][-1]))
+
+    def test_long_string_field_clipped_with_marker(self):
+        import json
+        from harness.review import _clip_tool_result_text, _SKILL_TOOL_RESULT_CHARS
+        payload = json.dumps({"ok": True, "chars": 50000, "body": "很" * 50000}, ensure_ascii=False)
+        out = _clip_tool_result_text(payload, _SKILL_TOOL_RESULT_CHARS)
+        self.assertLessEqual(len(out), _SKILL_TOOL_RESULT_CHARS)
+        data = json.loads(out)
+        self.assertTrue(data["ok"])  # 信封字段原样保留
+        self.assertIn("已截断", data["body"])
+        self.assertLess(len(data["body"]), 50000)
+
+    def test_short_result_untouched(self):
+        from harness.review import _clip_tool_result_text, _TOOL_RESULT_CHARS
+        text = '{"ok": true}'
+        self.assertEqual(_clip_tool_result_text(text, _TOOL_RESULT_CHARS), text)
+
+    def test_non_json_falls_back_to_hard_cut(self):
+        from harness.review import _clip_tool_result_text, _TOOL_RESULT_CHARS
+        text = "x" * (_TOOL_RESULT_CHARS + 500)
+        out = _clip_tool_result_text(text, _TOOL_RESULT_CHARS)
+        self.assertTrue(out.startswith("x" * 10))
+        self.assertIn("结果过长已截断", out)
+        self.assertLessEqual(len(out), _TOOL_RESULT_CHARS + 20)

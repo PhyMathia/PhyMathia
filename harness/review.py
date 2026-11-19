@@ -238,6 +238,95 @@ def _clarify_result_payload(
     return result
 # 单条查询结果回灌的字符上限（超长截断打标，护住上下文预算）
 _TOOL_RESULT_CHARS = 4000
+# 技能工坊四工具的回灌上限（499）：read_skill 必须把整篇正文给模型——此前 4000 总闸
+# 配合 skill_forge 的 3000 读截，正文超 3000 字的技能被模型改一处再装回即永久丢尾。
+# 正文硬上限是 skill_registry.LIMITS["body"]（20000），放宽到「整篇正文＋字段信封」
+# 装得下的量级；其余相位不受影响（read_node/检索结果仍按 _TOOL_RESULT_CHARS 收）。
+_SKILL_TOOL_RESULT_CHARS = 24000
+_TOOL_CLIP_MARKER = "…（已截断）"
+
+
+def _clip_json_value(value, budget: int):
+    """把超预算的 JSON 值按结构截到 budget 字符内（499）。
+
+    列表丢尾条、字符串掐尾、字典按子值占比分预算递归——产出永远是合法 JSON，
+    截断处就地打 _TOOL_CLIP_MARKER 标，模型不再收到半截（语法已断）的 JSON。
+    截不动（单值连标记都装不下 / 占比分完仍超）返回 None，调用方退回老硬切。
+    只读返回新容器，不动入参。"""
+    def ser(v) -> str:
+        return json.dumps(v, ensure_ascii=False)
+
+    if len(ser(value)) <= budget:
+        return value
+    if isinstance(value, str):
+        keep = budget - len(ser(_TOOL_CLIP_MARKER)) - 2  # 减去包裹引号
+        if keep <= 0:
+            return None
+        return value[:keep] + _TOOL_CLIP_MARKER
+    if isinstance(value, list):
+        for k in range(len(value), 0, -1):
+            cand = value[:k] + ([_TOOL_CLIP_MARKER] if k < len(value) else [])
+            if len(ser(cand)) <= budget:
+                return cand
+        return [_TOOL_CLIP_MARKER] if len(ser([_TOOL_CLIP_MARKER])) <= budget else None
+    if isinstance(value, dict):
+        marker_len = len(ser(_TOOL_CLIP_MARKER))
+        # 第一遍：装得下的原样保留；超预算值按占比分预算递归截
+        sizes = {key: len(ser(sub)) for key, sub in value.items()}
+        total = max(1, sum(sizes.values()))
+        out = {}
+        flexible = []  # 已截过、还能再收紧的键
+        for key, sub in value.items():
+            share = max(marker_len + 16, int(budget * sizes[key] / total))
+            if sizes[key] <= share:
+                out[key] = sub
+            else:
+                clipped = _clip_json_value(sub, share)
+                if clipped is None:
+                    return None
+                out[key] = clipped
+                flexible.append(key)
+        # 第二遍：小键的结构开销累积超支时，收紧最大的可压缩键补差——
+        # 不丢键（丢最大键＝丢掉刚截出来的正文，信封字段反而全保留）
+        for _ in range(16):
+            over = len(ser(out)) - budget
+            if over <= 0 or not flexible:
+                break
+            biggest = max(flexible, key=lambda k: len(ser(out[k])))
+            target = max(marker_len + 16, len(ser(out[biggest])) - over - 8)
+            clipped = _clip_json_value(value[biggest], target)
+            if clipped is None or len(ser(clipped)) >= len(ser(out[biggest])):
+                flexible.remove(biggest)
+                continue
+            out[biggest] = clipped
+        if len(ser(out)) <= budget:
+            return out
+        # 仍超（键多而碎、全部贴地）：丢信息量最小的短值键打标兜底
+        dropped = False
+        for key in sorted(list(out.keys()), key=lambda k: len(ser(out.get(k)))):
+            if len(ser(out)) <= budget or len(out) <= 2:
+                break
+            out.pop(key)
+            dropped = True
+        if dropped:
+            out.setdefault(_TOOL_CLIP_MARKER, _TOOL_CLIP_MARKER)
+        return out if len(ser(out)) <= budget else None
+    return None
+
+
+def _clip_tool_result_text(text: str, limit: int) -> str:
+    """工具结果回灌截断入口（499）：结果都是 json.dumps 的产物，先试按结构截成
+    仍合法的 JSON；解析失败（非 JSON 保险丝）或结构截不动才退回老硬切。"""
+    if len(text) <= limit:
+        return text
+    try:
+        data = json.loads(text)
+    except Exception:
+        return text[:limit] + "…（结果过长已截断）"
+    clipped = _clip_json_value(data, limit)
+    if clipped is None:
+        return text[:limit] + "…（结果过长已截断）"
+    return json.dumps(clipped, ensure_ascii=False)
 # 同批混入的编辑类调用统一延迟到最终方案，不执行（一次批次只处理查询）
 _DEFERRED_TOOL_RESULT = {
     "deferred": True,
@@ -247,6 +336,17 @@ _TOOL_STEP_LIMIT_NOTICE = (
     f"查询步数已达上限（{MAX_TOOL_STEPS} 步），请基于已获得的信息直接给出最终答案"
     "（编辑类工具调用或最终 JSON；答疑模式直接用文字回答），不要再查询。"
 )
+# forge 变体（494）：技能工坊里没有「编辑类工具调用／最终 JSON」那套语境——步数到顶
+# 后连技能工具也一并收起，能做的只剩给结论文字，通告别再把模型往工具调用上引
+_TOOL_STEP_LIMIT_NOTICE_FORGE = (
+    f"查询步数已达上限（{MAX_TOOL_STEPS} 步），查询与技能工具都已收起——"
+    "请基于已读到的格式说明与现役技能直接给出结论文字（这条技能怎么改、要不要装），"
+    "不要再查询。"
+)
+
+
+def _tool_step_limit_notice(phase: str) -> str:
+    return _TOOL_STEP_LIMIT_NOTICE_FORGE if str(phase or "") == "forge" else _TOOL_STEP_LIMIT_NOTICE
 
 
 # ---- T94（评审路线 #9）上下文预算与自动压缩 ----
@@ -1440,14 +1540,15 @@ async def _run_readonly_query_loop(
     resolved_model: Dict[str, Any], max_tokens: int,
     last_raw: str, reasoning_only_seen: bool,
     counted_call, consume_model_output, emit,
-    instruction: str = "", focus_node_ids=None,
+    instruction: str = "", focus_node_ids=None, phase: str = "",
 ) -> tuple:
     """执行阶段：T93 只读查询回灌循环——模型先查图，看完了再决定改哪。
 
-    仅当工具表含只读工具（normal/expand/apply/preset）时启用（readonly_enabled
-    由调用方判定）；查询轮不走 tools→json 降级链（对话已建立，中途降级无意义），
-    HarnessError 直接抛给外层换模型候选链接住。messages 原表 append（T150 只增
-    不减）；返回 (raw, last_raw, reasoning_only_seen)，循环未触发时原样返回入参。"""
+    仅当工具表含只读或技能工具（normal/expand/apply/preset/forge）时启用
+    （readonly_enabled 由调用方判定）；查询轮不走 tools→json 降级链（对话已建立，
+    中途降级无意义），HarnessError 直接抛给外层换模型候选链接住。messages 原表
+    append（T150 只增不减）；返回 (raw, last_raw, reasoning_only_seen)，
+    循环未触发时原样返回入参。"""
     tool_steps = 0
     # 试改轮数（方向 1）：与步数上限独立计数——步数管所有查询，轮数只管 dry_run
     dry_rounds = 0
@@ -1500,7 +1601,7 @@ async def _run_readonly_query_loop(
                 text = json.dumps(output, ensure_ascii=False)
                 ok = not (isinstance(output, dict) and output.get("error"))
                 if len(text) > _TOOL_RESULT_CHARS:
-                    text = text[:_TOOL_RESULT_CHARS] + "…（结果过长已截断）"
+                    text = _clip_tool_result_text(text, _TOOL_RESULT_CHARS)
             elif name == DRY_RUN_TOOL_NAME:
                 # 试改自检（方向 1）：与只读查询同环执行，结果含逐条错误/范围
                 # 预演；轮数超闸后明示收口，不再消耗步数做无效试改
@@ -1523,7 +1624,7 @@ async def _run_readonly_query_loop(
                 text = json.dumps(output, ensure_ascii=False)
                 ok = not (isinstance(output, dict) and output.get("error"))
                 if len(text) > _TOOL_RESULT_CHARS:
-                    text = text[:_TOOL_RESULT_CHARS] + "…（结果过长已截断）"
+                    text = _clip_tool_result_text(text, _TOOL_RESULT_CHARS)
             elif name in SKILL_TOOL_NAMES:
                 # 技能工坊（2026-11-17）：查/验/装都在服务端执行，草稿全文随参数来、
                 # 服务端零状态。install 会真写盘，所以提示词要求「用户明确同意后才调」，
@@ -1539,8 +1640,8 @@ async def _run_readonly_query_loop(
                 output = execute_skill_tool(name, args, account)
                 text = json.dumps(output, ensure_ascii=False)
                 ok = not (isinstance(output, dict) and (output.get("error") or output.get("ok") is False))
-                if len(text) > _TOOL_RESULT_CHARS:
-                    text = text[:_TOOL_RESULT_CHARS] + "…（结果过长已截断）"
+                if len(text) > _SKILL_TOOL_RESULT_CHARS:
+                    text = _clip_tool_result_text(text, _SKILL_TOOL_RESULT_CHARS)
             else:
                 # 同批混入的编辑类调用：统一下发「已暂存」结果，绝不执行；
                 # 模型须在看完查询结果后单独重发编辑方案
@@ -1576,7 +1677,7 @@ async def _run_readonly_query_loop(
                 and schema.get("function", {}).get("name") != DRY_RUN_TOOL_NAME
             ] or None
             current_choice = tool_choice if current_tools else None
-            messages.append({"role": "user", "content": _TOOL_STEP_LIMIT_NOTICE})
+            messages.append({"role": "user", "content": _tool_step_limit_notice(phase)})
         emit({
             "type": "status",
             "stage": "model",
@@ -1912,7 +2013,12 @@ async def _assemble_result_with_selfchecks(
     `continue`），此时 result 为 None。"""
     result = build_next_snapshot(current, raw_ops)
     ops_for_summary = result.get("operations") or []
-    result["summary"] = summary or _fallback_summary(ops_for_summary) or ("本次未提出图修改建议" if not ops_for_summary else "")
+    # 空 summary 兜底按相位给（494）：forge 说的是技能不是图，而且 forge 的图操作
+    # 本就被保险丝恒清空——「未提出图修改建议」在技能工坊语境里误导
+    result["summary"] = summary or _fallback_summary(ops_for_summary) or (
+        "本次未提出技能修改" if phase == "forge" and not ops_for_summary
+        else ("本次未提出图修改建议" if not ops_for_summary else "")
+    )
     result["raw_has_ops"] = bool(raw_ops)
     # T236：末次放行的失败 tool_calls 在这里降级——warnings 有可见出口
     # （前端 harness-run.js:1009 渲染成 ⚠️ 行、:641 随条目存历史），用户
@@ -2264,12 +2370,18 @@ async def review_graph(
 
     mode = str(mode or "auto").strip().lower()
     # ---- 澄清阶段：确定性撤销前置短路（T396 拆分，不调模型直接回滚）----
-    # forge 例外（2026-11-18）：技能工坊里「重来/不要了」指的是技能草稿，
-    # 不是画布——短路回滚会误撤上一批图操作，交给模型按 forge 语境处理
-    undo_result = None if phase == "forge" else _try_deterministic_undo(
-        instruction, focus_node_ids, previous_ops, all_previous_ops,
-        previous_snapshot, initial_snapshot, snapshot, current,
-        call_counter, _emit,
+    # 模式相位例外（488：2026-11-18 forge，2026-11-19 补 chat/preset）：三个都是显式
+    # 锁定的模式通道——「撤销/重来/不要了」说的是本模式的产物（技能草稿／答疑里聊的
+    # 内容／创造中的稿子），不是画布上那批图操作；短路回滚会误撤上一批编辑。chat
+    # 还背着只读承诺（工具表纯只读），绕过模型去回滚画布更名不正言不顺。交给模型
+    # 按各自语境处理。
+    undo_result = (
+        None if phase in ("forge", "chat", "preset")
+        else _try_deterministic_undo(
+            instruction, focus_node_ids, previous_ops, all_previous_ops,
+            previous_snapshot, initial_snapshot, snapshot, current,
+            call_counter, _emit,
+        )
     )
     if undo_result is not None:
         return undo_result
@@ -2507,7 +2619,7 @@ async def review_graph(
                     current_tools, tool_choice, model_kwargs, attempt, journal,
                     attempt_model, max_tokens, last_raw, reasoning_only_seen,
                     _counted_call, _consume_model_output, _emit,
-                    instruction, focus_node_ids,
+                    instruction, focus_node_ids, phase,
                 )
 
                 # ---- 执行阶段：解析模型输出（T396 拆分，见 _parse_plan_output）----

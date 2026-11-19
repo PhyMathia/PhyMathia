@@ -29,8 +29,10 @@ SKILL_TOOL_NAMES = ("skill_spec", "read_skill", "preview_skill", "install_skill"
 DRAFT_TOKEN_LEN = 12
 # 试跑最多几条问题（一次 3 条够判断，多了烧步数）
 MAX_TEST_QUESTIONS = 3
-# read_skill 回给模型的正文字符上限（工具结果总闸 4000，留出字段余量）
-READ_BODY_CHARS = 3000
+# read_skill 不再自设 3000 字截断（499，2026-11-19）：install 要整篇正文、也没有
+# 第二个接口可取尾部——读截短于写上限＝正文超限的技能被模型改一处再装回即永久丢尾。
+# 上限直接跟 skill_registry.LIMITS["body"]（写侧同一把尺）走；工具结果回灌另有
+# review.py 的技能族总闸（_SKILL_TOOL_RESULT_CHARS）放宽兜着。
 
 # 本宿主做不到的动作（HOST_GUARD 同源口径）：正文里要求这些步骤，模型会编造「已执行」
 HOST_IMPOSSIBLE_HINTS = (
@@ -161,6 +163,9 @@ def _read_skill(account: Any, skill_id: str) -> Dict[str, Any]:
         ids = [row["id"] for row in reg.capabilities(account).get("existing") or []]
         return {"error": f"没有这条技能：{skill_id}", "existing": ids}
     body = str(item.get("body") or "")
+    # 上限跟写侧同一把尺（LIMITS["body"]，499）：validate_skill 既有硬闸，
+    # 正常到不了截断分支；bodyTruncated 留作belt（LIMITS 口径将来收紧时仍诚实）
+    body_cap = int(reg.LIMITS.get("body", 20000))
     out = {
         "id": item["id"],
         "name": item["name"],
@@ -171,9 +176,9 @@ def _read_skill(account: Any, skill_id: str) -> Dict[str, Any]:
         "builtin": bool(item.get("builtin")),
         "writable": (item.get("layout") or "file") == "file",
         "chars": len(body),
-        "body": body[:READ_BODY_CHARS],
+        "body": body[:body_cap],
     }
-    if len(body) > READ_BODY_CHARS:
+    if len(body) > body_cap:
         out["bodyTruncated"] = True
     if out["layout"] != "file":
         out["writableNote"] = "目录型技能不能经接口改：请让用户直接编辑它目录里的 phymathia.md"
