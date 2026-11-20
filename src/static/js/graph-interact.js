@@ -2587,6 +2587,7 @@ function _endPointerDrag(event) {
             state.layerOf = state.layerOf || {};
             state.layerOf[node.id] = snap.depth;
             _updateNodeTransforms([node.id]);
+            _squeezeLayersRightForNode(node); // 宽节点挤进窄层：右侧各层连锁右移让位（只往右推，2026-11-20）
           }
         }
       }

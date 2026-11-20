@@ -387,6 +387,8 @@ function _resolveLayoutRectOverlaps(blocks, maxPasses) {
 // 这里只负责「读位置画背景」，不改任何节点坐标；吸附与整理在各自的链路里做。
 // 层号覆盖：用户手动拖进某一层后，以用户的意图为准（否则下次整理又把人拉回原层）。
 // 存在 state.layerOf[nodeId]＝层号；越界值夹到 [0, maxDepth+1]，免出孤儿列。
+const GRAPH_LAYER_BAND_PADX = 56;   // 层带左右呼吸边（px），让位算法（_squeezeLayersRightForNode）同源共用
+const GRAPH_LAYER_BAND_MINW = 320;  // 层带最小宽度（px）：单节点层也要有像样的一条
 function _graphLayerOverrides() {
   const state = _graphState();
   return (state && state.layerOf) || {};
@@ -491,7 +493,7 @@ function _graphLayerBands() {
   const nodes = (graphView.nodes || []).filter(n => n.kind !== 'draft');
   if (!nodes.length) return [];
   const layerOf = _graphLayerIndexMap(nodes, graphView.edges || [], _graphLayerOverrides());
-  const padX = 56;
+  const padX = GRAPH_LAYER_BAND_PADX;
   const padY = 96;
   const groups = {};
   nodes.forEach(n => {
@@ -514,7 +516,7 @@ function _graphLayerBands() {
     .sort((a, b) => a.depth - b.depth)
     .map(g => {
       const cx = (g.minX + g.maxX) / 2;
-      const width = Math.max(320, g.maxX - g.minX + padX * 2);
+      const width = Math.max(GRAPH_LAYER_BAND_MINW, g.maxX - g.minX + padX * 2);
       return {
         depth: g.depth,
         left: Math.round(cx - width / 2),
@@ -549,6 +551,64 @@ function _scheduleGraphLayerBands() {
     _graphLayerBandsRaf = 0;
     _renderGraphLayerBands();
   });
+}
+
+// ====== 宽节点让位（2026-11-20，用户拍板「只往右推」）======
+// 宽节点松手归层成功后，若它让本层色带右缘「长宽了」，右侧各层整列连锁右移给它让位：
+// 首个邻层推移量＝色带右缘生长量＋富余（把被吃掉的空间还回去再多让一点），
+// 后面各层依次传导——前层挪走后自己还有富余的层少挪甚至不挪。
+// 窄节点加入（色带右缘没生长）不动任何人；墙左边的层绝不推（用户拍板：左侧宁可贴着）。
+// 只推 x：列内相对位置、y、层号都不动；钉住节点的 fixedX 同步平移，下次存盘不失忆。
+// 组框不跟着挪——与单节点普通拖拽同口径（组框只在整理/拉伸时重算），下次整理归位。
+const GRAPH_LAYER_PUSH_MARGIN = 24; // 让位时比「被吃掉的空间」额外多让的富余（px）
+const GRAPH_LAYER_BAND_GAP = 8;     // 连锁传导时相邻层带间至少留的缝（px），防色带粘连
+function _squeezeLayersRightForNode(node) {
+  if (!node || !graphView.nodes || graphView.nodes.length < 2) return;
+  const nodes = graphView.nodes.filter(n => n.kind !== 'draft');
+  if (nodes.length < 2) return;
+  const layerOf = _graphLayerIndexMap(nodes, graphView.edges || [], _graphLayerOverrides());
+  const depth = layerOf[node.id];
+  if (depth == null) return;
+  const bands = _graphLayerBands();
+  const wall = bands.find(b => b.depth === depth);
+  if (!wall) return;
+  // 这颗节点进来之前本层色带的右缘：把它摘出去单独算一遍——拖动中它的 x 已实时变更，
+  // 不摘会把拖动途中压过去的距离当成「原本就有的拥挤」。算法与 _graphLayerBands 全同。
+  let preMinX = Infinity;
+  let preMaxX = -Infinity;
+  nodes.forEach(n => {
+    if (n !== node && layerOf[n.id] === depth) {
+      const s = _layoutNodeSize(n);
+      preMinX = Math.min(preMinX, n.x - s.w / 2);
+      preMaxX = Math.max(preMaxX, n.x + s.w / 2);
+    }
+  });
+  let growth;
+  if (preMinX === Infinity) {
+    growth = wall.width; // 本层原本没有别人（兜底；正常吸附路径锚点必来自同层成员）
+  } else {
+    const preW = Math.max(GRAPH_LAYER_BAND_MINW, (preMaxX - preMinX) + GRAPH_LAYER_BAND_PADX * 2);
+    growth = (wall.left + wall.width) - ((preMinX + preMaxX) / 2 + preW / 2);
+  }
+  if (growth <= 0) return;
+  let minLeft = wall.left + wall.width + growth + GRAPH_LAYER_PUSH_MARGIN + GRAPH_LAYER_BAND_GAP;
+  const shifted = [];
+  bands.forEach(b => {
+    if (b.depth <= depth || b.left <= wall.left) return; // 只推「确实在墙右边」的层
+    const shift = Math.max(0, minLeft - b.left);
+    if (shift > 0) {
+      nodes.forEach(n => {
+        if (layerOf[n.id] !== b.depth) return;
+        n.x += shift;
+        if (n.pinned && n.fixedX != null) n.fixedX += shift;
+        shifted.push(n.id);
+      });
+    }
+    minLeft = (b.left + shift) + b.width + GRAPH_LAYER_BAND_GAP;
+  });
+  if (!shifted.length) return;
+  _updateNodeTransforms(shifted);
+  _redrawEdges(); // 被挪的不是被拖节点：松手前最后一次画线不含它们的新位置，这里补齐
 }
 
 function autoArrangeGraph(preservePinned) {
