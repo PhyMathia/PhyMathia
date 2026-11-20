@@ -231,6 +231,9 @@ function renderGraphCanvas(streaming) {
       if (aligned && aligned.moved.length) {
         if (needsFit && typeof fitGraph === 'function') fitGraph();
         if (typeof _savePositions === 'function') _savePositions();
+        // needsFit 路径的 transform 已随 _runLayout 写到力学模拟位：静默落列心后必须
+        // 补一次全量刷新，否则首帧 DOM 与模型/存档脱节上千像素（下次重建整排跳位）。
+        if (needsFit) _updateNodeTransforms();
       }
     }
     if (!needsFit) {
@@ -2641,11 +2644,13 @@ function _endPointerDrag(event) {
             if (col) node.x = col.cx;
             node.y = Math.round(node.y / GRAPH_LAYER_ROW_STEP) * GRAPH_LAYER_ROW_STEP;
             _realignGraphColumns({ layerMap: targetMap, force: true });
-            if (_settleNodeIntoLayer(node, assigned.layer, targetMap)) {
-              _updateNodeTransforms([node.id]);
-              _redrawEdges();
-              if (typeof _fitAllGroupsToMembers === 'function') _fitAllGroupsToMembers();
-            }
+            // 落座与否都得把松手坐标刷进 DOM：列心吸附/行槽取整只发生在模型上，
+            // settle 返回 false（落点行没邻居，最常见情形）时曾整段跳过刷新——
+            // 卡片和连线停在拖放原点，存档却已是列心坐标，下次重渲卡片「自己跳位」。
+            const settled = _settleNodeIntoLayer(node, assigned.layer, targetMap);
+            _updateNodeTransforms([node.id]);
+            _redrawEdges();
+            if (settled && typeof _fitAllGroupsToMembers === 'function') _fitAllGroupsToMembers();
           } else {
             // 多选/整组：成员各自落回所在列心；自由节点留在落点。
             _realignGraphColumns({ force: true });

@@ -384,6 +384,135 @@ check('归属提交: 单卡框内归列、Alt 自由、多选框外自由、落�
   } finally { restore(prev); }
 });
 
+check('重建收尾: needsFit 静默落列心后必须补刷 transform（首帧 DOM 不脱节）', () => {
+  // renderGraphCanvas 的 rAF 收尾：needsFit（无存档坐标，新会话首渲必走）时
+  // _runLayout(true) 先把 transform 写到力学模拟位，随后 realign 静默把模型
+  // 挪到列心——挪了就必须有 transform 调用跟在后面，否则首帧 DOM 停在模拟位、
+  // 模型/存档在列心，实测脱节 1200px+，fitGraph 还按模型坐标取景。
+  const prev = capture();
+  const prevCanvas = vm.runInContext('typeof graphCanvas !== "undefined" ? graphCanvas : null', sandbox);
+  const prevRaf = vm.runInContext('requestAnimationFrame', sandbox);
+  const prevMarked = vm.runInContext('typeof marked !== "undefined" ? marked : null', sandbox);
+  const prevPurify = vm.runInContext('typeof DOMPurify !== "undefined" ? DOMPurify : null', sandbox);
+  const prevKatexPass = vm.runInContext('typeof _graphKatexVisiblePass !== "undefined" ? _graphKatexVisiblePass : null', sandbox);
+  const prevVizInit = vm.runInContext('typeof _initVizIframes !== "undefined" ? _initVizIframes : null', sandbox);
+  try {
+    seed({
+      nodes: [],
+      layerOf: {},
+      freeNodes: {},
+    });
+    vm.runInContext([
+      'var __raf = []; requestAnimationFrame = function(cb){ __raf.push(cb); return __raf.length; };',
+      // vendor 库不在沙箱里（页面由 index.html 另行加载），给中性桩让真实渲染链跑通
+      'marked = { parse: function(s){ return String(s == null ? "" : s); } };',
+      'DOMPurify = { sanitize: function(s){ return String(s == null ? "" : s); } };',
+      '__gcState.customNodes = [',
+      '  { id: "n1", kind: "blank", x: 12, y: -8, content: "甲" },',
+      '  { id: "n2", kind: "blank", x: 30, y: 5, content: "乙" },',
+      '  { id: "n3", kind: "blank", x: 8, y: 20, content: "丙" }];',
+      '__gcState.positions = {}; __gcState.layoutVersion = 1;',
+      '__gcState.layerOf = { n1: 0, n2: 1, n3: 2 };',
+      // seed 的字面量缺渲染链要读的字段（_applyGraphTransform 读 pan/zoom 等）
+      '__gcState.pan = { x: 0, y: 0 }; __gcState.zoom = 1;',
+      '__gcState.removedEdges = []; __gcState.collapsed = {}; __gcState.hidden = {};',
+      '__gcState.connections = null; __gcState.portCounts = {}; __gcState.inputPortCounts = {};',
+      '__gcState.harnessDeleted = {}; __gcState.harnessCheckpoint = null;',
+      '__gcSnaps = [];',
+      '_updateNodeTransforms = function(ids){ __gcSnaps.push(graphView.nodes.map(function(n){ return [n.id, n.x, n.y]; })); };',
+      '_graphKatexVisiblePass = function(){};',
+      '_initVizIframes = function(){};',
+      'renderGraphCanvas();',
+      '__raf.splice(0).forEach(function(cb){ cb(); });',
+    ].join('\n'), sandbox);
+    const r = JSON.parse(vm.runInContext([
+      'JSON.stringify({ snaps: __gcSnaps.length,',
+      '  last: __gcSnaps[__gcSnaps.length - 1],',
+      '  model: graphView.nodes.map(function(n){ return [n.id, n.x, n.y]; }),',
+      '  saved: __gcState.positions })',
+    ].join('\n'), sandbox));
+    // 模型/存档必须是列心：三列各宽 120+80，列心 100/332/564
+    const cx = Object.fromEntries(r.model.map(([id, x]) => [id, x]));
+    if (cx.n1 !== 100 || cx.n2 !== 332 || cx.n3 !== 564) {
+      throw new Error('模型应落列心 100/332/564：' + JSON.stringify(r.model));
+    }
+    if (r.saved.n1.x !== 100 || r.saved.n2.x !== 332 || r.saved.n3.x !== 564) {
+      throw new Error('存档应记列心坐标：' + JSON.stringify(r.saved));
+    }
+    // 回归核心：最后一次 transform 写入的坐标必须等于最终模型坐标
+    if (r.snaps < 2) throw new Error('静默落列心后必须有 transform 补刷（实测仅 ' + r.snaps + ' 次写入）');
+    if (JSON.stringify(r.last) !== JSON.stringify(r.model)) {
+      throw new Error('DOM 最后快照与模型脱节：' + JSON.stringify({ last: r.last, model: r.model }));
+    }
+    return true;
+  } finally {
+    vm.runInContext([
+      'requestAnimationFrame = __gcPrevRaf;',
+      // marked/DOMPurify 本就未定义（vendor 不进沙箱）：还原成 null 会让后续
+      // typeof 守卫误判「在场」，必须 delete 回到未定义原状
+      'if (__gcPrevMarked) marked = __gcPrevMarked; else delete marked;',
+      'if (__gcPrevPurify) DOMPurify = __gcPrevPurify; else delete DOMPurify;',
+      '_graphKatexVisiblePass = __gcPrevKatexPass;',
+      '_initVizIframes = __gcPrevVizInit;',
+      'graphCanvas = __gcPrevCanvas;',
+      'graphView.selectedNodeIds = new Set(); graphView.boxSelect = null;',
+    ].join('\n'), Object.assign(sandbox, {
+      __gcPrevRaf: prevRaf, __gcPrevMarked: prevMarked, __gcPrevPurify: prevPurify,
+      __gcPrevKatexPass: prevKatexPass, __gcPrevVizInit: prevVizInit, __gcPrevCanvas: prevCanvas,
+    }));
+    restore(prev);
+  }
+});
+
+check('落座刷新: 单卡拖进列、落点行没邻居也要刷 transform/补画线', () => {
+  const prev = capture();
+  let prevSync;
+  try {
+    const nodes = seed();
+    vm.runInContext('_realignGraphColumns({ force: true })', sandbox);
+    vm.runInContext('__gcUpdates.length = 0;', sandbox);
+    // 把 a 拖进列2框内、落在没邻居的行（d 在 y=0）——settle 返回 false 的最常见情形
+    nodes[0].x = 800;
+    nodes[0].y = 400;
+    prevSync = vm.runInContext('_syncGraphSelectionClasses', sandbox);
+    vm.runInContext([
+      '_syncGraphSelectionClasses = function(){};',
+      'graphView.dragNodeId = "a";',
+      'graphView.dragStartPositions = { a: { x: 140, y: 0 } };',
+      'graphView.pointerId = 7; graphView.moved = true; graphView.dragWasSelected = true;',
+      'graphView.dragModifier = false; graphView.altFree = false;',
+      'graphView.selectedNodeIds = new Set(["a"]);',
+      'graphView.linkDrag = null; graphView.boxSelect = null;',
+      'graphView.resizeNodeId = null; graphView.resizeGroupId = null;',
+      'graphView.paintRaf = 0; graphView.paintPending = false; graphView.symbolsPausedForDrag = false;',
+      '_endPointerDrag({ pointerId: 7, target: null });',
+    ].join('\n'), sandbox);
+    if (vm.runInContext('__gcState.layerOf.a', sandbox) !== 2) {
+      throw new Error('a 应归列2：' + JSON.stringify(vm.runInContext('__gcState.layerOf', sandbox)));
+    }
+    if (nodes[0].x !== 562) throw new Error('a 应吸到与 d 同列的列心 562：' + nodes[0].x);
+    // 曾在此整段缺失：模型/存档已是列心坐标，DOM 的 transform 与连线却停在拖放原点
+    const updates = JSON.parse(vm.runInContext('JSON.stringify(__gcUpdates)', sandbox));
+    if (!updates.some(u => u.indexOf('a') !== -1)) {
+      throw new Error('被拖卡片的 transform 刷新缺失：' + JSON.stringify(updates));
+    }
+    if (vm.runInContext('__gcRedraws', sandbox) < 1) throw new Error('连线必须补画');
+    const saved = vm.runInContext('__gcSavedState', sandbox);
+    if (!saved || !saved.positions || saved.positions.a.x !== 562 || saved.positions.a.y !== 400) {
+      throw new Error('存档应记列心坐标：' + JSON.stringify(saved && saved.positions && saved.positions.a));
+    }
+    return true;
+  } finally {
+    vm.runInContext([
+      '_syncGraphSelectionClasses = __gcPrevSync;',
+      'graphView.dragStartPositions = {}; graphView.dragWasSelected = false;',
+      'graphView.dragModifier = false; graphView.altFree = false;',
+      'graphView.pointerId = null; graphView.moved = false; graphView.selectedNodeIds = new Set();',
+    ].join('\n'), Object.assign(sandbox, { __gcPrevSync: prevSync }));
+    restore(prev);
+  }
+});
+
 check('持久化: _normalizeGraphState 保留 layerOf/freeNodes；存盘清理已删节点残留', () => {
   const prev = capture();
   try {
