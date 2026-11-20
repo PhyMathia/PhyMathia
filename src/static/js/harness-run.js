@@ -1,5 +1,9 @@
 // ===== PhyMathia 图编辑 harness：评审运行与澄清 =====
 
+// 本轮运行序号（2026-11-20）：只用于收尾时判断「忙态还归不归我清」。停止后立刻
+// 重发时，旧请求的 finally 可能晚于新请求起跑；没有这道守卫，旧收尾会把新请求的
+// harnessBusy/harnessAbortController 一并清掉（队列提前放行、停止键失灵）。
+var _harnessRunSeq = 0;
 
   function _capOpPatch(patch) {
     if (patch === undefined || patch === null) return undefined;
@@ -401,6 +405,17 @@
     // 解耦后：未绑定/绑了别的画布的会话一律按纯问答走（空快照），不碰当前画布。
     const pureQuestion = harnessPhase === 'chat' || !canvasReady || _isHarnessPureQuestion(instruction);
     requestIsPureChat = pureQuestion;
+    // 运行序号与忙态清理（2026-11-20）：从这一刻起本请求才可能置忙（下面 414/454/520
+    // 三处），所以序号也在这里认领——更早的同步校验早退没有忙态可清，不会误伤在跑的
+    // 上一轮。清理只归最新一轮所有，避免停止后立刻重发时旧 finally 清新请求的状态。
+    const requestRunId = ++_harnessRunSeq;
+    const clearHarnessBusy = () => {
+      if (requestRunId !== _harnessRunSeq) return false;
+      _setHarnessBusy(false);
+      harnessSingleEvalId = null;
+      harnessAbortController = null;
+      return true;
+    };
     if (presetFocusIds) {
       focusIds = presetFocusIds;
     } else if (harnessPhase !== 'preset' && !harnessSingleEvalId && !pureQuestion) {
@@ -416,7 +431,9 @@
         let resolved = null;
         try {
           resolved = await _resolveHarnessFocus(candidateFocusIds, instruction);
-          if (!stillCurrent()) return;
+          // 切画布/切 Φ 会话后这里会早退：忙态必须先归位。早退只该跳过后续请求，
+          // 不能把复位一起跳过——否则 harnessBusy 永久为 true，发送队列全员卡死。
+          if (!stillCurrent()) { clearHarnessBusy(); return; }
         } catch (err) {
           resolved = null;
           focusIds = [];
@@ -454,8 +471,13 @@
     _setHarnessBusy(true);
     // 大陆共享点只对「绑定且打开中」的画布有意义；纯问答不拉（60s 缓存、失败静默）
     const continentData = canvasReady ? await _harnessFetchContinent() : null;
-    if (!stillCurrent()) return;
-    _setHarnessBusy(false);
+    // 同 419：忙态先复位再判断 stillCurrent，切画布早退不再把发送队列锁死。
+    // 这里不能清 harnessSingleEvalId——正常路径还要给下面的快照用；只有真早退时才清。
+    if (requestRunId === _harnessRunSeq) _setHarnessBusy(false);
+    if (!stillCurrent()) {
+      if (requestRunId === _harnessRunSeq) harnessSingleEvalId = null;
+      return;
+    }
     let snapshot = canvasReady
       ? buildHarnessSnapshot(harnessPhase === 'evaluate', focusIds, harnessSingleEvalId,
           harnessPhase === 'normal' ? continentData : null,
@@ -768,17 +790,25 @@
       }
     } finally {
       if (streamTimer) { clearTimeout(streamTimer); streamTimer = null; }
-      _harnessRemoveLiveBubble();
-      // T106：先停表再复位 busy（间隔回调自查 harnessBusy，顺序反了会在同一秒
-      // 边界上先跑一次「无数据停表」，丢掉调用数/token 摘要）
-      if (typeof _harnessStopProgressTick === 'function') _harnessStopProgressTick(resultData);
+      // 旧请求被新请求取代（停止后立刻重发）时，实时气泡与进度表归新请求所有，
+      // 这里只清本请求自己的定时器；其余全局 UI 清理交给仍持有最新序号的那一轮。
+      const ownsRun = requestRunId === _harnessRunSeq;
+      if (ownsRun) {
+        _harnessRemoveLiveBubble();
+        // T106：先停表再复位 busy（间隔回调自查 harnessBusy，顺序反了会在同一秒
+        // 边界上先跑一次「无数据停表」，丢掉调用数/token 摘要）
+        if (typeof _harnessStopProgressTick === 'function') _harnessStopProgressTick(resultData);
+      }
+      // 2026-11-20：忙态/控制器/单节点目标必须在 stillCurrent 早退之前复位。切画布会
+      // 让 stillCurrent 变 false，旧实现把复位放在早退之后，harnessBusy 永久停在 true，
+      // 主聊天/分支/Φ 全被 send-queue 当成「AI 仍在生成」，只能点停止按钮才恢复。
+      // 早退只该跳过 flush 与状态渲染（T90 的既定语义），不该跳过清理。
+      clearHarnessBusy();
       if (!stillCurrent()) return;
-      _setHarnessBusy(false);
-      harnessSingleEvalId = null;
-      harnessAbortController = null;
+      if (!ownsRun) return;
       // T90：本轮结束放行排队消息（排队时收下的 Φ 指令）。放在 busy 归位与状态清理
       // 之后——不 await，与主聊天外层 finally 的用法一致；排队那条在本调用栈返回后的
-      // 微任务里才真正开跑，不会撞上上面这两行清理。会话已切换时上面的早退已经挡住：
+      // 微任务里才真正开跑，不会撞上上面的清理。会话已切换时上面的早退已经挡住：
       // 那是刻意的，新会话的视图不该被旧指令继续刷。
       if (typeof _flushSendQueue === 'function') { try { _flushSendQueue(); } catch (e) {} }
       // 兜底：任何“进行中”状态都必须落定，避免一直显示“审阅中...”

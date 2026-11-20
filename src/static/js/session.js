@@ -990,6 +990,11 @@
       if (typeof window.resetSocraticBranch === 'function') window.resetSocraticBranch();
       if (typeof window.clearBranchAnchor === 'function') window.clearBranchAnchor();
       chatHistory = loadSessionMessages(id);
+      // 2026-11-20：本次切换的内容快照。下面的图状态加载是真实网络请求（最长 10s），
+      // 期间用户可切到另一张画布，那次 switchToSession 会把模块级 chatHistory 改成
+      // 后一张画布的消息。补传（T356）只能写「点击这一瞬间属于 id 的本地历史」——
+      // 读回全局就会把后一张画布的对话写进这张的服务端存档，再随 15 秒并集同步扩散。
+      const msgsSnapshot = chatHistory.slice();
       SESSION_ID = sessions[id].sessionId;
       // T348：本地消息缓存可能已被 LRU 清掉——切回旧画布时按需从服务端补一次
       // （与画布状态拉取并行，不额外拖慢切换），否则侧栏点进去先看到空画布。
@@ -1012,9 +1017,14 @@
       // 维护）——打开即补传，「换机前把要带的画布逐个打开一遍」从此自动化。
       // 火后不管：失败由同步循环的缺口补传兜底；缺口名单本轮不清，多推一次只是
       // 服务端合并空转。
-      if (chatHistory.length && _serverMsgGapSids.has(id)
-        && !(sessions[id] && sessions[id].provisional) && !_tombstonedSids.has(id)) {
-        _saveMessagesToServer(id, chatHistory).catch(function (e) {
+      // 2026-11-20：与上方 needMsgFetch 分支同口径——await 期间已切走
+      // （currentSessionId !== id）就放弃本次补传，交给 15 秒同步按会话逐个兜底；
+      // 写入内容只认切换瞬间的快照，绝不读回可能已被后一次切换改写的全局 chatHistory
+      // （否则后一张画布的对话会落进这张画布的服务端存档并跨设备扩散）。
+      if (msgsSnapshot.length && _serverMsgGapSids.has(id)
+        && !(sessions[id] && sessions[id].provisional) && !_tombstonedSids.has(id)
+        && currentSessionId === id) {
+        _saveMessagesToServer(id, msgsSnapshot).catch(function (e) {
           console.warn('[Storage] 打开画布补传消息失败:', e);
         });
       }
