@@ -830,11 +830,26 @@ async function openNodeNewWindow(nodeId) {
   // T375 视口门控同步落定，否则预览页里 viz 全是空壳
   if (typeof _initVizIframes === 'function') { try { _initVizIframes(holder, { force: true }); } catch (e) { /* 静态兜底 */ } }
   const contentHtml = holder.innerHTML;
-  holder.remove();
   // 划词工具桥（2026-10-25）：同源预览页带一次性 token，追问/收藏公式/查找过桥回
   // 主应用执行；file:// 单文件（blob 直开，无同源 shell 中转）只留复制与复制为引用。
   // 没编进 node-fs-toolbar.js 的环境（viewer 家族）ctx 不造，页面与旧行为完全一致
   const isFile = typeof location !== 'undefined' && location.protocol === 'file:';
+  // 渲染态编辑（2026-11-20）：桥在、资格闸过、且序列化器对这篇内容能原样拼回，才给铅笔。
+  // 入场往返校验就在这份离屏 holder 上跑——它和预览页 .cp-body 是同一份 innerHTML，签名
+  // 等价；srcSig 是开窗时原文指纹，保存时过桥对账，开窗后原文变过就拒整篇覆盖。
+  // typeof 守卫：没编进编辑模块的环境（viewer 家族/老调用）铅笔自然缺席
+  let editable = false;
+  let srcSig = '';
+  if (!isFile
+    && typeof _nodeFsEditAvailable === 'function' && _nodeFsEditAvailable(node)
+    && typeof _nodeFsSerializeContent === 'function'
+    && typeof _nodeFsEditRoundTripDiff === 'function'
+    && !_nodeFsEditRoundTripDiff(text, _nodeFsSerializeContent(holder))
+    && typeof _nodeFsEditSrcSig === 'function') {
+    editable = true;
+    srcSig = _nodeFsEditSrcSig(text);
+  }
+  holder.remove();
   // readonly 随快照带进预览页：查阅模式下预览浮条不亮「追问」（startQuestionWorkflow
   // 在主应用侧还会再拦一道，双保险）
   const ro = typeof phyIsReadonly === 'function' && phyIsReadonly();
@@ -845,7 +860,7 @@ async function openNodeNewWindow(nodeId) {
   if (typeof _buildNodeFsPreviewScript === 'function') {
     ctx = isFile
       ? { nodeId: String(node.id || ''), title: String(title || ''), bridge: false, readonly: ro, theme: theme }
-      : { nodeId: String(node.id || ''), title: String(title || ''), bridge: true, token: _nodeFsMintPreviewToken(), readonly: ro, theme: theme };
+      : { nodeId: String(node.id || ''), title: String(title || ''), bridge: true, token: _nodeFsMintPreviewToken(), readonly: ro, theme: theme, editable: editable, srcSig: srcSig };
   } else {
     // 没编进桥模块的环境（老调用）：仍要把主题带过去，页面着色才对
     ctx = { theme: theme };
@@ -1226,6 +1241,14 @@ const CONTENT_PREVIEW_BOOT = `
     var n=String(body.textContent||'').replace(/\\s+/g,'').length;
     if(n>=240) meta.textContent=n+' 字 · 约 '+Math.max(1,Math.round(n/380))+' 分钟';
   }
+  /* 渲染态编辑保存后重算字数（2026-11-20，node-fs-toolbar 内嵌脚本调用）：
+     编辑正文会变，头部那枚字数/时长胶囊要跟着走；<240 字时清空＝CSS :empty 隐藏 */
+  function recalcMeta(){
+    if(!meta||!body) return;
+    var n2=String(body.textContent||'').replace(/\\s+/g,'').length;
+    meta.textContent=n2>=240?(n2+' 字 · 约 '+Math.max(1,Math.round(n2/380))+' 分钟'):'';
+  }
+  window.recalcMeta=recalcMeta;
   if(topBtn){
     topBtn.addEventListener('click',function(){
       try{ window.scrollTo({top:0,behavior:'smooth'}); }catch(e){ window.scrollTo(0,0); }

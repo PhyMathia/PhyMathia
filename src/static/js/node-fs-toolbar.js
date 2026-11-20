@@ -9,8 +9,10 @@
 // 收窄，收藏公式与复制为引用已删；浏览器不允许后台页抢焦点——新窗口的追问输入行
 // 落回预览页本地展开，拼好整句再过桥直发，不再假装「跳转回主应用」）。
 
-// bold 过桥（2026-11-17）：预览窗是快照页，改原文只能回主应用写；复制/加粗的显示仍在页内完成
-const NODE_FS_BRIDGE_ACTIONS = ['followup', 'search', 'bold'];
+// bold 过桥（2026-11-17）：预览窗是快照页，改原文只能回主应用写；复制/加粗的显示仍在页内完成。
+// edit 过桥（2026-11-20）：渲染态编辑整篇写回——预览页只交编辑后的 DOM（innerHTML），
+// 序列化/自检/写回全在主应用（node-fs-edit.js _nodeFsEditFromBridge），ack 带回成品 HTML
+const NODE_FS_BRIDGE_ACTIONS = ['followup', 'search', 'bold', 'edit'];
 const NODE_FS_FOLLOWUP_DEFAULT = '请把这段再展开讲讲';
 const NODE_FS_EXCERPT_MAX = 2000;   // 追问引文截断（超出标注「已取前 2000 字」）
 const NODE_FS_EXCERPT_LINES = 3;    // 引文最多带 3 行
@@ -971,6 +973,14 @@ window.addEventListener('message', ev => {
   _nodeFsRestorePreviewCtx(); // 刷新后的第一发：从 sessionStorage 把窗认回来
   const ctx = _nodeFsPreviewCtxFor(d.token, ev.source);
   if (!ctx) return; // 认不出这扇窗：不执行、不应答（预览侧会提示重开窗口）
+  _nodeFsPreviewAction(d, ev.source, ctx);
+});
+
+// 桥动作执行＋应答收口（2026-11-20 从监听器拆出）：渲染态编辑（edit）要在主应用重渲
+// 公式/mermaid/viz 再把成品 HTML 带回预览页，是异步的；其余动作零 await 立即落账。
+// token 轮换与 ack 都收在这一处——异步分支 await 完照常走，预览窗中途关掉时
+// postMessage 会抛、catch 吞掉即可。
+async function _nodeFsPreviewAction(d, source, ctx) {
   const text = String(d.text || '').slice(0, NODE_FS_BRIDGE_TEXT_MAX);
   // 预览页选的回答方式：白名单外的值一律当没选（老预览窗的脚本根本不带这字段，
   // 那种情况回落到主应用这边记住的那一档）
@@ -980,6 +990,7 @@ window.addEventListener('message', ev => {
   let ok = true;
   let message = '';
   let undo = false; // 取消加粗时带回预览页：那边要拆 <strong> 而不是再包一层（T507）
+  let html = null;  // 渲染态编辑专用：写回后按成品重渲的正文（预览页零渲染逻辑，直接换）
   if (!node) { ok = false; message = '源节点已不在画布上'; }
   else if (String(ctx.sessionId || '') !== String((typeof currentSessionId !== 'undefined' && currentSessionId) || '')) {
     ok = false; message = '请先切回原画布再继续'; // 不跨会话建点
@@ -1000,6 +1011,17 @@ window.addEventListener('message', ev => {
         message = res.message || '';
         undo = !!res.undo;
       }
+      else if (d.action === 'edit') {
+        // 整篇写回：校验＋写回全在主应用（同步段，node-fs-edit.js），ok 后成品重渲随 ack 回
+        if (typeof _nodeFsEditFromBridge === 'function') {
+          const res = _nodeFsEditFromBridge(node, d.html, d.srcSig);
+          ok = !!res.ok;
+          message = res.message || '';
+          if (res.ok && typeof _nodeFsEditRenderFresh === 'function') {
+            html = await _nodeFsEditRenderFresh(node, res.src);
+          }
+        } else { ok = false; message = '主应用执行失败'; }
+      }
     } catch (e) { ok = false; message = '主应用执行失败'; }
   }
   // token 轮换：本轮消费掉，随 ack 发新的一枚；上一枚留作 prevToken 兜底
@@ -1009,14 +1031,15 @@ window.addEventListener('message', ev => {
   ctx.token = nextToken;
   _nodeFsPersistPreviewCtx();
   try {
-    ev.source.postMessage(
+    source.postMessage(
       // seq 原样回显：预览侧按序号认领自己的 ack，并发动作不再串台（2026-11-18）；
-      // undo＝这次是取消加粗（T507），预览页好就地拆 <strong> 而不是再包一层
-      { kind: 'node-fs-ack', __phymathia: 1, token: d.token, seq: d.seq, ok, message, undo, nextToken },
+      // undo＝这次是取消加粗（T507），预览页好就地拆 <strong> 而不是再包一层；
+      // html＝edit 的成品正文（其余动作恒 null）
+      { kind: 'node-fs-ack', __phymathia: 1, token: d.token, seq: d.seq, ok, message, undo, nextToken, html },
       location.origin,
     );
   } catch (e2) { /* 预览窗已关，无从应答 */ }
-});
+}
 
 // 桥上追问：预览页里已把「问题＋【聚焦选段】引文」拼成整句送来——浏览器不允许后台
 // 页抢焦点（「跳转回主应用」真机实测做不到，2026-10-25），追问输入行因此落回预览页
@@ -1151,6 +1174,10 @@ function _buildNodeFsPreviewScript(cfg) {
     // 不回写——回写会落到无前缀的裸键上，与主应用那份对不上，反而像「没记住」
     route: (cfg && typeof cfg.route === 'string' && cfg.route) ? String(cfg.route) : _nodeFsRouteCurrent(),
     auto: _nodeFsRouteAutoEnabled(),
+    // 渲染态编辑（2026-11-20）：资格闸＋入场往返校验都在主应用开窗时算好（openNodeNewWindow），
+    // 真值才给铅笔；srcSig＝开窗时原文指纹，保存时随消息过桥对账，开窗后原文变过就拒整篇覆盖
+    editable: !!(cfg && cfg.editable),
+    srcSig: String((cfg && cfg.srcSig) || ''),
   };
   const json = JSON.stringify(conf).replace(/<\//g, '<\\/'); // 防标题带 </script> 提前闭合
   return '(function(){'
@@ -1165,6 +1192,8 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'var ROUTE=(CFG.route==="direct"||CFG.route==="analysis"||(CFG.route==="auto"&&CFG.auto))?CFG.route:(CFG.auto?"auto":"analysis");'
     + 'var ROUTE_AUTO=!!CFG.auto;'
     + 'var bar=null,picked=null,state=null,selTimer=0;'
+    // 渲染态编辑会话（2026-11-20）：哑编辑面只管 DOM 与收发，序列化/自检/写回全在主应用
+    + 'var EDITING=false,EDITDIRTY=false,EDITBUSY=false,EDITORIG="",EDITHANDS=[],PENCIL=null;'
     + 'var style=document.createElement("style");'
     + 'style.textContent=".cp-nfs-bar{position:fixed;z-index:60;display:flex;align-items:center;gap:2px;padding:4px;'
     + 'border-radius:999px;background:rgba(15,21,48,.92);border:1px solid rgba(139,147,184,.28);'
@@ -1223,6 +1252,28 @@ function _buildNodeFsPreviewScript(cfg) {
     + '.cp-nfs-route-btn:focus-visible{outline:2px solid var(--cp-focus,rgba(139,147,184,.7));outline-offset:1px;}'
     + '.cp-nfs-toast{background:var(--cp-bar-bg,rgba(15,21,48,.95));border-color:var(--cp-line,rgba(139,147,184,.3));'
     + 'color:var(--cp-ink-strong,#e6ebff);}'
+    // 渲染态编辑态样式（2026-11-20）：与全屏层 graph-override.css 的编辑面同观感，吃 --cp-* 令牌。
+    // 追加规则必须在收尾的 "; 之前（手册明令，生成脚本才编译得过）
+    + '.cp-edit-btn{flex:none;width:30px;height:30px;display:grid;place-items:center;'
+    + 'border:1px solid var(--cp-line,rgba(139,147,184,.28));border-radius:8px;background:transparent;'
+    + 'color:var(--cp-mute,#8b93b8);cursor:pointer;font-family:inherit;}'
+    + '.cp-edit-btn:hover{color:var(--cp-ink-strong,#e6ebff);border-color:var(--cp-primary,#8b93b8);}'
+    + '.cp-edit-btn svg{width:15px;height:15px;display:block;}'
+    + '.cp-edit-btn--action{width:auto;height:28px;padding:0 12px;display:inline-flex;align-items:center;'
+    + 'border-radius:999px;font-size:12.5px;}'
+    + '.cp-edit-btn--action:disabled{opacity:.55;cursor:default;}'
+    + '.cp-edit-btn--save{color:#fff;background:var(--cp-primary,#0e74e9);border-color:var(--cp-primary,#0e74e9);}'
+    + '.cp-edit-btn--save:hover{color:#fff;background:var(--cp-primary-hover,#2b86f2);}'
+    + '.cp-edit-btn--cancel{color:var(--cp-ink-2,#a7b0d6);}'
+    + '.cp-edit-hint{font-size:12px;color:var(--cp-mute,#8b93b8);max-width:var(--cp-measure,748px);'
+    + 'margin:0 auto 10px;padding:7px 12px;border:1px dashed var(--cp-line,rgba(139,147,184,.3));'
+    + 'border-radius:10px;}'
+    + ".cp-body[data-editing='1']{outline:2px dashed var(--cp-focus,rgba(139,147,184,.5));"
+    + 'outline-offset:10px;border-radius:14px;}'
+    + ".cp-body[data-editing='1'] .katex:hover,.cp-body[data-editing='1'] .katex-display:hover,"
+    + ".cp-body[data-editing='1'] .mermaid-container:hover,.cp-body[data-editing='1'] .viz-card:hover,"
+    + ".cp-body[data-editing='1'] pre:hover{outline:1px solid var(--cp-focus,rgba(139,147,184,.55));"
+    + 'outline-offset:2px;border-radius:6px;}'
     + '";'
     + 'document.head.appendChild(style);'
     + 'function toast(msg){var t=document.getElementById("cp-nfs-toast");'
@@ -1447,6 +1498,71 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'if(navigator.clipboard&&navigator.clipboard.writeText){'
     + 'navigator.clipboard.writeText(String(text||"")).then(function(){done(true);},function(){done(fallback());});}'
     + 'else done(fallback());}'
+    // ---------- 渲染态编辑（2026-11-20）：哑编辑面，序列化/自检/写回全在主应用 ----------
+    // 铅笔（资格闸在主应用开窗时算好，CFG.editable 才注入）：插进 .cp-head、明暗钮之前
+    + 'if(CFG.editable&&BRIDGE&&!READONLY){var cpHead=document.querySelector(".cp-head");'
+    + 'var cpThemeBtn=document.getElementById("cpTheme");'
+    + 'if(cpHead){PENCIL=document.createElement("button");PENCIL.id="cpEdit";PENCIL.type="button";'
+    + 'PENCIL.className="cp-edit-btn";PENCIL.title="编辑正文";PENCIL.setAttribute("aria-label","编辑正文");'
+    + 'PENCIL.innerHTML="<svg viewBox=\\"0 0 24 24\\" fill=\\"none\\" stroke=\\"currentColor\\" stroke-width=\\"1.6\\" stroke-linecap=\\"round\\" stroke-linejoin=\\"round\\" aria-hidden=\\"true\\"><path d=\\"M4 20l4.2-1.2L19.5 7.5a2 2 0 0 0-2.8-2.8L5.4 16 4 20z\\"/><path d=\\"M14.5 6.5l3 3\\"/></svg>";'
+    + 'cpHead.insertBefore(PENCIL,cpThemeBtn&&cpThemeBtn.parentNode===cpHead?cpThemeBtn:null);'
+    + 'PENCIL.addEventListener("click",function(){enterEdit();});}}'
+    + 'function editContainer(){return document.querySelector(".cp-body");}'
+    + 'function setEditBusy(on){var s=document.getElementById("cpEditSave"),c=document.getElementById("cpEditCancel");'
+    + 'if(s){s.disabled=!!on;s.textContent=on?"保存中…":"✓ 保存";}if(c){c.disabled=!!on;}}'
+    // 进编辑：hint 插在 .cp-body 外面（序列化只认 .cp-body 的子节点，hint 混进去会写回正文）、
+    // 头部加保存/取消、原子块锁编辑。EDITORIG 留快照，取消时整份还原
+    + 'function enterEdit(){if(EDITING||EDITBUSY)return;'
+    + 'if(!BRIDGE){toast("此窗口未连接主应用，只能复制");return;}'
+    + 'var container=editContainer();if(!container)return;'
+    + 'hideBar();EDITORIG=String(container.innerHTML||"");EDITDIRTY=false;'
+    + 'container.setAttribute("contenteditable","true");container.setAttribute("data-editing","1");'
+    + 'var atoms=container.querySelectorAll(".katex, .katex-display, .mermaid-container, .viz-card, pre, img, input");'
+    + 'for(var i=0;i<atoms.length;i++){try{atoms[i].setAttribute("contenteditable","false");}catch(e){}}'
+    + 'var hint=document.createElement("div");hint.className="cp-edit-hint";'
+    + 'hint.textContent="直接改正文，公式与图整块保留；改完点「保存」写回节点";'
+    + 'if(container.parentNode)container.parentNode.insertBefore(hint,container);'
+    + 'if(PENCIL)PENCIL.style.display="none";'
+    + 'var head=document.querySelector(".cp-head");var themeBtn=document.getElementById("cpTheme");'
+    + 'if(head){var save=document.createElement("button");save.id="cpEditSave";save.type="button";'
+    + 'save.className="cp-edit-btn cp-edit-btn--action cp-edit-btn--save";save.textContent="✓ 保存";'
+    + 'save.title="保存并写回节点";save.addEventListener("click",function(){saveEdit();});'
+    + 'var cancel=document.createElement("button");cancel.id="cpEditCancel";cancel.type="button";'
+    + 'cancel.className="cp-edit-btn cp-edit-btn--action cp-edit-btn--cancel";cancel.textContent="× 取消";'
+    + 'cancel.title="放弃这次改动";cancel.addEventListener("click",function(){cancelEdit();});'
+    + 'head.insertBefore(save,themeBtn&&themeBtn.parentNode===head?themeBtn:null);'
+    + 'head.insertBefore(cancel,save);}'
+    + 'var onInput=function(){EDITDIRTY=true;};'
+    + 'var onPaste=function(ev){var text="";try{text=ev.clipboardData?String(ev.clipboardData.getData("text/plain")||""):"";}catch(e){text="";}'
+    + 'if(ev&&ev.preventDefault)ev.preventDefault();if(!text)return;'
+    + 'try{if(document.execCommand)document.execCommand("insertText",false,text);else throw new Error("no execCommand");}catch(e){'
+    + 'try{var sel=window.getSelection?window.getSelection():null;if(sel&&sel.rangeCount){var r=sel.getRangeAt(0);r.deleteContents();r.insertNode(document.createTextNode(text));r.collapse(false);}}catch(e2){}}'
+    + 'EDITDIRTY=true;};'
+    + 'var onClick=function(ev){var a=ev&&ev.target&&ev.target.closest?ev.target.closest("a"):null;'
+    + 'if(a&&container.contains(a)&&ev&&ev.preventDefault)ev.preventDefault();};'
+    + 'EDITHANDS=[[container,"input",onInput],[container,"paste",onPaste],[container,"click",onClick]];'
+    + 'for(var j=0;j<EDITHANDS.length;j++){try{EDITHANDS[j][0].addEventListener(EDITHANDS[j][1],EDITHANDS[j][2]);}catch(e){}}'
+    + 'EDITING=true;try{container.focus();}catch(e){}}'
+    // 退编辑：收监听/摘标记/去 hint/还原头部；reStore＝把开窗快照整份放回（取消路）。
+    // 保存成功路传 false——正文刚被 ack 的成品 HTML 换过，不再回快照
+    + 'function exitEdit(reStore){if(!EDITING)return;EDITING=false;'
+    + 'for(var i=0;i<EDITHANDS.length;i++){try{EDITHANDS[i][0].removeEventListener(EDITHANDS[i][1],EDITHANDS[i][2]);}catch(e){}}'
+    + 'EDITHANDS=[];var container=editContainer();'
+    + 'if(container){try{container.removeAttribute("contenteditable");container.removeAttribute("data-editing");}catch(e){}}'
+    + 'var hint=document.querySelector(".cp-edit-hint");if(hint&&hint.parentNode)hint.parentNode.removeChild(hint);'
+    + 'var s=document.getElementById("cpEditSave"),c=document.getElementById("cpEditCancel");'
+    + 'if(s&&s.parentNode)s.parentNode.removeChild(s);if(c&&c.parentNode)c.parentNode.removeChild(c);'
+    + 'if(PENCIL)PENCIL.style.display="";EDITDIRTY=false;EDITBUSY=false;'
+    + 'if(reStore&&container&&EDITORIG){try{container.innerHTML=EDITORIG;}catch(e){}}EDITORIG="";}'
+    + 'function saveEdit(){if(!EDITING||EDITBUSY)return;var container=editContainer();if(!container)return;'
+    + 'EDITBUSY=true;setEditBusy(true);'
+    + 'postAction("edit","","",{html:String(container.innerHTML||""),srcSig:CFG.srcSig||""},'
+    + 'function(ok,msg,undo,ack){EDITBUSY=false;setEditBusy(false);'
+    + 'if(ok){var fresh=ack&&ack.html?String(ack.html):null;'
+    + 'if(fresh){try{container.innerHTML=fresh;}catch(e){}}'
+    + 'exitEdit(false);try{recalcMeta();}catch(e0){}toast(msg||"已保存，并写回节点");}'
+    + 'else{toast(msg||"保存失败，还停在编辑态");}});}'
+    + 'function cancelEdit(){if(!EDITING||EDITBUSY)return;exitEdit(true);toast("已取消编辑，改动已还原");}'
     + 'function postAction(action,text,route,extra,onDone){'
     + 'if(!BRIDGE){toast("此窗口未连接主应用，只能复制");return;}'
     + 'var msg={kind:"node-fs-action",__phymathia:1,token:TOKEN,seq:++SEQ,action:action,'
@@ -1455,7 +1571,11 @@ function _buildNodeFsPreviewScript(cfg) {
     // DOM 判定（选段整体在一个粗体元素里＋元素可见文字），主应用信这个 flag 定向
     + 'before:String((extra&&extra.before)||""),after:String((extra&&extra.after)||""),'
     + 'inBold:!!(extra&&extra.inBold),bt:String((extra&&extra.bt)||"")};'
-    + 'var notified=false;'
+    // edit 专用的整篇 DOM 与原文指纹：文本上限那条（MAX_TEXT）只管 text，这里不截——
+    // innerHTML 截断＝静默损坏，主应用侧有 NODE_FS_EDIT_HTML_MAX 硬拒
+    + 'if(extra&&extra.html!=null)msg.html=String(extra.html);'
+    + 'if(extra&&extra.srcSig)msg.srcSig=String(extra.srcSig);'
+    + 'var notified=false;var TMO=action==="edit"?10000:2500;'
     + 'var onAck=function(ev){var d=ev.data;'
     + 'if(!d||d.__phymathia!==1||d.kind!=="node-fs-ack")return;'
     + 'if(d.nextToken)TOKEN=d.nextToken;'
@@ -1468,12 +1588,12 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'notified=true;window.removeEventListener("message",onAck);'
     // 带回调的动作（加粗）自己决定怎么说话：写回成败要说清，别让页面粗了但没存；
     // undo＝这次是取消加粗（ack 原样带回，T507），预览页好就地拆 <strong>
-    + 'if(typeof onDone==="function"){onDone(!!d.ok,d.message||"",d.undo===true);return;}'
+    + 'if(typeof onDone==="function"){onDone(!!d.ok,d.message||"",d.undo===true,d);return;}'
     + 'toast(d.ok?(d.message||"已发送到主应用"):(d.message||"主应用未能执行该操作"));};'
     + 'window.addEventListener("message",onAck);'
     + 'try{window.parent.postMessage(msg,"*");}catch(e){notified=true;toast("发送失败");}'
     + 'setTimeout(function(){if(notified)return;notified=true;'
-    + 'toast("主应用没回应，再点一次发送");},2500);}'
+    + 'toast("主应用没回应，再点一次发送");},TMO);}'
     + 'function runAction(act){'
     + 'if(!state)return;'
     + 'if(act==="followup"){expandInput();return;}'
@@ -1493,7 +1613,12 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'var btn=t&&t.closest?t.closest("[data-act]"):null;'
     + 'if(btn&&bar.contains(btn)){ev.preventDefault();runAction(btn.getAttribute("data-act"));}});'
     + 'document.addEventListener("keydown",function(ev){'
-    + 'if(ev.key!=="Escape"||!bar)return;ev.preventDefault();ev.stopPropagation();hideBar();},true);'
+    + 'if(ev.key!=="Escape")return;'
+    // 渲染态编辑中 Esc 先管编辑（与全屏层同文案）：有改动拦下指路，干净退出编辑
+    + 'if(EDITING){ev.preventDefault();ev.stopPropagation();'
+    + 'if(EDITDIRTY){toast("有未保存的修改——点「保存」写回或「取消」放弃");return;}'
+    + 'exitEdit(true);toast("已退出编辑");return;}'
+    + 'if(!bar)return;ev.preventDefault();ev.stopPropagation();hideBar();},true);'
     // 浮条内部滚动（输入框字符超宽后光标跟随横滚）不收，口径同主应用侧
     + 'document.addEventListener("scroll",function(ev){if(!bar)return;var t=ev.target;'
     + 'if(t&&t.nodeType===1&&bar.contains(t))return;hideBar();},true);'
@@ -1501,7 +1626,8 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'window.addEventListener("resize",function(){if(!bar)return;'
     + 'if(state&&state.expanded){placeBar(picked?picked.rect:null);return;}hideBar();});'
     + 'document.addEventListener("selectionchange",function(){clearTimeout(selTimer);'
-    + 'selTimer=setTimeout(function(){if(state&&state.expanded)return;var pk=pickSelection();'
+    // 渲染态编辑中浮条收声（口径同主应用 _nodeFsOnSelectionSettled 的 _nodeFsEditActive 守卫）
+    + 'selTimer=setTimeout(function(){if(EDITING)return;if(state&&state.expanded)return;var pk=pickSelection();'
     + 'if(pk)showBar(pk);else hideBar();},180);});'
     + '})();';
 }

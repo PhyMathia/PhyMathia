@@ -111,12 +111,15 @@ window.addEventListener('message', function (ev) {
     return;
   }
   // 兜底比 iframe 自己那枚（2500ms）晚一拍：正常情况下由它先说话，这里只防
-  // 「沙箱页定时器被节流」的极端情形，别让同一件事弹两次
+  // 「沙箱页定时器被节流」的极端情形，别让同一件事弹两次。
+  // 渲染态编辑（edit，2026-11-20）要等主应用重渲公式/mermaid/viz 再回成品，兜底放宽：
+  // 外壳 11s（内嵌侧 10s），别让大页面的保存被合成失败应答截胡
+  var tmo = d.action === 'edit' ? 11000 : 3200;
   setTimeout(function () {
     if (settled) return;
     window.removeEventListener('message', onAck);
     fail('主应用没回应，再点一次发送');
-  }, 3200);
+  }, tmo);
 });
 </script>
 </body>

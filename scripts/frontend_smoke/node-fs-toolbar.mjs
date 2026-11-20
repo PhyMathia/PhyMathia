@@ -53,9 +53,9 @@ export function run() {
     return true;
   });
 
-  check('node-fs-toolbar: 桥上白名单＝追问/查找/加粗三枚；收藏公式/复制为引用/解释/摘录不许回潮', () => {
+  check('node-fs-toolbar: 桥上白名单＝追问/查找/加粗/整篇编辑四枚；收藏公式/复制为引用/解释/摘录不许回潮', () => {
     const src = readSrc('src/static/js/node-fs-toolbar.js');
-    if (!/NODE_FS_BRIDGE_ACTIONS\s*=\s*\['followup',\s*'search',\s*'bold'\]/.test(src)) return false;
+    if (!/NODE_FS_BRIDGE_ACTIONS\s*=\s*\['followup',\s*'search',\s*'bold',\s*'edit'\]/.test(src)) return false; // edit＝渲染态编辑过桥（2026-11-20）
     // 只拦动作字符串字面量（'delquote' 之类的普通命名不算回潮）
     if (/'(collectFormula|quote|explain|excerpt)'/.test(src)) return false;
     if (src.includes("'收藏公式'") || src.includes("'复制为引用'")) return false;
@@ -212,7 +212,7 @@ export function run() {
     if (!script.includes('postAction("bold",text,"",{before:ctx.before,after:ctx.after')) return false;
     if (!script.includes('inBold:stEl?true:false') || !script.includes('unwrapBold(stEl)')) return false;
     if (!script.includes('wrapBold(range)')) return false;
-    if (!script.includes('onDone(!!d.ok,d.message||"",d.undo===true)')) return false;
+    if (!script.includes('onDone(!!d.ok,d.message||"",d.undo===true,d)')) return false; // 2026-11-20 起第 4 参＝完整 ack（edit 拿成品 html）
     // file:// 单文件（无桥）不给这颗钮：写不回原文的粗体是假的
     if (!script.includes('if(BRIDGE&&!READONLY)html+="<button type=\\"button\\" class=\\"cp-nfs-btn\\" data-act=\\"bold\\"')) return false;
     return true;
@@ -721,7 +721,7 @@ export function run() {
 
   check('node-fs-edit: 资格闸——blank 直接拒绝；API 挂出；保存走加粗同一条写回链路（换文案不换机制）', () => {
     const avail = sandbox._nodeFsEditAvailable;
-    for (const fn of ['_nodeFsEditAvailable', '_nodeFsEditActive', '_nodeFsEditCloseGuard', '_nodeFsEditRoundTripDiff', 'openNodeFsEdit', 'saveNodeFsEdit', 'cancelNodeFsEdit', '_nodeFsEditDomVisibleText']) {
+    for (const fn of ['_nodeFsEditAvailable', '_nodeFsEditActive', '_nodeFsEditCloseGuard', '_nodeFsEditRoundTripDiff', 'openNodeFsEdit', 'saveNodeFsEdit', 'cancelNodeFsEdit', '_nodeFsEditVisibleFacts']) {
       if (typeof sandbox[fn] !== 'function') throw new Error(fn + ' 未暴露');
     }
     if (avail(null) !== false) return false;
@@ -729,8 +729,8 @@ export function run() {
     const src = readSrc('src/static/js/node-fs-edit.js');
     if (!src.includes('_nodeFsBoldAvailable(node)')) return false;       // 与划词加粗同闸
     if (!src.includes("summary: '渲染态编辑'")) return false;
-    // 可见文本自检用加粗那套同管归一；入场往返校验过 renderMarkdown 管道
-    if (!src.includes('_nodeFsBoldScan(String(next || \'\')).text')) return false;
+    // 可见文本自检（2026-11-20 真机重写）：两边都取「渲染后的可见文字」按加粗同管归一对撞；入场往返校验过 renderMarkdown 管道
+    if (!src.includes("_nodeFsBoldScan(left.text).text") || !src.includes("_nodeFsBoldScan(right.text).text")) return false;
     if (!src.includes('_nodeFsEditSignature(src)') || !src.includes('_nodeFsEditSignature(domMd)')) return false;
     // 人工定稿（T355）＋自有节点落盘，双 typeof 守卫
     if (!src.includes("_markNodeHumanFinalized(node)") || !src.includes('_saveCustomNodes()')) return false;
@@ -921,5 +921,110 @@ export function run() {
     // 老主应用不回显 seq 时照旧放行（typeof 守卫）——刷新后的旧预览窗向后兼容
     if (!script.includes('typeof d.seq==="number"')) return false;
     return true;
+  });
+
+  // ---------- 渲染态编辑过桥（新窗口预览页，2026-11-20）----------
+
+  check('node-fs-edit 新窗口: 桥收口——edit 进动作表，接收端异步收口带成品 html，壳兜底放宽', () => {
+    const src = readSrc('src/static/js/node-fs-toolbar.js');
+    if (!src.includes("const NODE_FS_BRIDGE_ACTIONS = ['followup', 'search', 'bold', 'edit']")) return false;
+    if (!src.includes('async function _nodeFsPreviewAction(d, source, ctx)')) return false; // 收口拆出（edit 要等成品重渲）
+    if (!src.includes('await _nodeFsEditRenderFresh(node, res.src)')) return false;
+    // ack 里 nextToken 仍紧跟 undo（既有 seq 断言认这个串），成品 html 排在其后
+    if (!src.includes('undo, nextToken, html }')) return false;
+    // 校验/写回（同步段）＋重渲（异步段）分居 node-fs-edit.js，五件套全暴露
+    const edit = readSrc('src/static/js/node-fs-edit.js');
+    for (const fn of ['_nodeFsEditSrcSig', '_nodeFsEditParseProbe', '_nodeFsEditFromBridge', '_nodeFsEditRenderFresh', '_nodeFsEditRefreshOverlayBody']) {
+      if (!edit.includes('function ' + fn)) throw new Error(fn + ' 未定义');
+      if (typeof sandbox[fn] !== 'function') throw new Error(fn + ' 未暴露');
+    }
+    if (!edit.includes('NODE_FS_EDIT_HTML_MAX = 2000000')) return false; // innerHTML 不截断，超限硬拒
+    if (!edit.includes("summary: '渲染态编辑（新窗口）'")) return false;
+    const shell = readSrc('src/static/content-preview.html');
+    if (!shell.includes("d.action === 'edit' ? 11000 : 3200")) return false;
+    return true;
+  });
+
+  check('node-fs-edit 新窗口: 内嵌编辑面——铅笔/保存取消/Esc 守卫/浮条收声/html 过桥', () => {
+    const script = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T', editable: true, srcSig: 'sig1' });
+    if (!script.includes('"editable":true') || !script.includes('"srcSig":"sig1"')) return false; // conf 带过去
+    const scriptOff = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
+    if (!scriptOff.includes('"editable":false')) return false; // 没传就缺省 false＝铅笔缺席
+    new Function(script); new Function(scriptOff); // 坏拼接当场炸
+    for (const s of ['id="cpEdit"', 'cpEditSave', 'cpEditCancel', 'cp-edit-hint', 'function enterEdit()', 'function saveEdit()', 'function cancelEdit()', 'msg.html=String(extra.html)', 'var TMO=action==="edit"?10000:2500', 'if(EDITING)return;if(state&&state.expanded)return']) {
+      if (!script.includes(s)) throw new Error('生成脚本缺：' + s);
+    }
+    // 编辑中 Esc 先管编辑（文案与全屏层同款）；onDone 第 4 参拿完整 ack（成品 html 在上面）
+    if (!script.includes('if(EDITING){ev.preventDefault();ev.stopPropagation();')) return false;
+    if (!script.includes('onDone(!!d.ok,d.message||"",d.undo===true,d)')) return false;
+    // 开窗侧接线：资格闸＋入场往返校验＋原文指纹，boot 暴露 recalcMeta
+    const gc = readSrc('src/static/js/graph-custom.js');
+    if (!gc.includes('!_nodeFsEditRoundTripDiff(text, _nodeFsSerializeContent(holder))')) return false;
+    if (!gc.includes('srcSig = _nodeFsEditSrcSig(text)')) return false;
+    if (!gc.includes('window.recalcMeta=recalcMeta')) return false;
+    return true;
+  });
+
+  check('node-fs-edit 新窗口: 桥上保存行为——custom 轨写回＋人工定稿＋全屏刷新；指纹变过/全屏冲突拒', () => {
+    const realState = sandbox._graphState;
+    const realHistory = sandbox._getChatHistory;
+    const realUndo = sandbox._pushGraphUndo;
+    const realSave = sandbox._saveGraphState;
+    const realRender = sandbox.renderGraphCanvas;
+    const realReadonly = sandbox.phyIsReadonly;
+    const realFinalize = sandbox._markNodeHumanFinalized;
+    const realSaveCustom = sandbox._saveCustomNodes;
+    const realFresh = sandbox._nodeFsEditRenderFresh;
+    const realOverlay = sandbox._nodeFsEditRefreshOverlayBody;
+    const state = {
+      nodes: [{ id: 'n_cp', kind: 'summary', messageIndex: -1, busy: false, content: '原始正文' }],
+      customNodes: [{ id: 'n_cp', kind: 'summary', content: '原始正文' }],
+      harnessNodeOverrides: {},
+    };
+    let finalized = 0; let savedCustom = 0; const overlayRefresh = [];
+    try {
+      sandbox._graphState = () => state;
+      sandbox._getChatHistory = () => [];
+      sandbox._pushGraphUndo = () => {};
+      sandbox._saveGraphState = () => {};
+      sandbox.renderGraphCanvas = () => {};
+      sandbox.phyIsReadonly = () => false;
+      sandbox._markNodeHumanFinalized = () => { finalized++; };
+      sandbox._saveCustomNodes = () => { savedCustom++; };
+      sandbox._nodeFsEditRenderFresh = () => null;   // 异步重渲段不进本用例（域文件只写同步用例）
+      sandbox._nodeFsEditRefreshOverlayBody = (id) => { overlayRefresh.push(id); };
+      // probe 根用假 DOM 最小面；textContent 要给真值——可见文本自检读的是它
+      const probe = editEl('DIV', [editEl('P', [editT('改过的正文')])], { textContent: '改过的正文' });
+      const sig = sandbox._nodeFsEditSrcSig('原始正文');
+      // 指纹不对（开窗后原文被更新过）：拒绝且不写
+      const stale = sandbox._nodeFsEditFromBridge(state.nodes[0], '<p>x</p>', 'bad_sig', probe);
+      if (stale.ok || !String(stale.message).includes('更新')) throw new Error('指纹对账没拦住: ' + stale.message);
+      if (state.customNodes[0].content !== '原始正文') throw new Error('拒绝却动了正文');
+      // 本页全屏层正在编辑同一节点：拒绝（否则桥上写回会被那边的旧 DOM 保存整篇冲掉）
+      vm.runInContext('_nodeFsEditSession = { nodeId: "n_cp", dirty: true }', sandbox);
+      const conflict = sandbox._nodeFsEditFromBridge(state.nodes[0], '<p>x</p>', sig, probe);
+      if (conflict.ok || !String(conflict.message).includes('全屏')) throw new Error('全屏冲突没拦住');
+      vm.runInContext('_nodeFsEditSession = null', sandbox);
+      // 正常路：写回 custom 轨＋人工定稿＋落盘钩子＋全屏刷新都被调
+      const ok = sandbox._nodeFsEditFromBridge(state.nodes[0], '<p>x</p>', sig, probe);
+      if (!ok.ok) throw new Error('正常保存被拒：' + ok.message);
+      if (state.customNodes[0].content !== '改过的正文') throw new Error('正文没写进 custom 轨');
+      if (state.nodes[0].content !== '改过的正文') throw new Error('节点 content 没跟上');
+      if (!finalized || !savedCustom) throw new Error('人工定稿/落盘钩子没走');
+      if (overlayRefresh[overlayRefresh.length - 1] !== 'n_cp') throw new Error('全屏层刷新没调');
+      return true;
+    } finally {
+      sandbox._graphState = realState;
+      sandbox._getChatHistory = realHistory;
+      sandbox._pushGraphUndo = realUndo;
+      sandbox._saveGraphState = realSave;
+      sandbox.renderGraphCanvas = realRender;
+      sandbox.phyIsReadonly = realReadonly;
+      sandbox._markNodeHumanFinalized = realFinalize;
+      sandbox._saveCustomNodes = realSaveCustom;
+      sandbox._nodeFsEditRenderFresh = realFresh;
+      sandbox._nodeFsEditRefreshOverlayBody = realOverlay;
+      vm.runInContext('_nodeFsEditSession = null', sandbox);
+    }
   });
 }

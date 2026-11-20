@@ -6,9 +6,11 @@
 // 与加粗的根本区别：加粗是「在原文里定位一小段插 **」，需要字符级偏移映射；整篇编辑
 // 不需要定位——退出时从 DOM 单向遍历重新生成全文。原文在编辑期间全程不动，DOM 就是
 // 活编辑面（打字/删除/中文输入法/Ctrl+Z 全是浏览器原生行为，无逐键重渲染、无光标跳动）。
-// 口径（2026-11-18 用户拍板）：只做本页全屏层（画布卡片与新窗口预览页不做）；显式按钮
-// 切换；公式/mermaid/viz 是原子块（contenteditable=false：进不去、删就整删，TeX/源码从
-// annotation 与 data-mermaid-src、_vizStore 还原——与加粗的拒绝口径一脉相承）。
+// 口径（2026-11-18 用户拍板，2026-11-20 补全）：本页全屏层（11-18）＋新窗口预览页
+// （11-20，见文件尾「新窗口渲染态编辑」节——预览窗是哑编辑面，序列化/自检/写回全在
+// 主应用，action:'edit' 过桥）；画布卡片不做。显式按钮切换；公式/mermaid/viz 是原子块
+// （contenteditable=false：进不去、删就整删，TeX/源码从 annotation 与 data-mermaid-src、
+// _vizStore 还原——与加粗的拒绝口径一脉相承）。
 // 加载期零副作用（只挂 Esc capture 一个监听）；画布函数运行期 typeof 守卫调用。
 
 let _nodeFsEditSession = null;
@@ -337,18 +339,52 @@ function _nodeFsEditRoundTripDiff(src, domMd) {
   return a === b ? '' : 'round-trip';
 }
 
-// ②保存可见文本自检：编辑后 DOM 与拼回的 markdown 各按加粗那套同管归一（去强调符、
-// 压空白、公式折 $），必须同形——防序列化静默丢块。不一致就拒存、留在编辑态自己改
-function _nodeFsEditDomVisibleText(container) {
-  let frag = null;
-  try { frag = container.cloneContents ? container.cloneContents() : null; } catch (e) { frag = null; }
-  if (!frag || typeof _nodeFsKatexFragmentText !== 'function') return String((container && container.textContent) || '');
-  return String(_nodeFsKatexFragmentText(frag, true) || '');
+// ②保存可见文本自检：防序列化静默丢块。两边都取「渲染后的可见文字」再按加粗那套
+// 同管归一比对——左边＝拼回的 markdown 重渲一遍（renderMath 落定后折公式），右边＝
+// 编辑后 DOM 克隆（同管处理）。md 语法记号（#/-/>/表格管道）只活在左边原文里，拿原文
+// 直接撞 DOM 纯文本会把含结构的保存整批拒掉（真机实锤 2026-11-20：本页全屏与新窗口
+// 同病，标题/列表/引用/公式一进自检就「有内容没能对上」）；KaTeX 不折的话 MathML×2＋
+// 视觉层三份文本也永远对不上。原子块（mermaid/viz/pre/img）文本两边同摘、家数单独
+// 比对——序列化把整块弄丢时家数先现形。渲染器缺席放行（宁宽进严出，同入场口径）。
+// 不一致就拒存、留在编辑态自己改
+function _nodeFsEditAtomicCounts(el) {
+  const c = (sel) => { try { return el.querySelectorAll(sel).length; } catch (e) { return 0; } };
+  return [c('.mermaid-container'), c('.viz-card'), c('pre'), c('img')].join('/');
 }
 
-function _nodeFsEditVisibleMismatch(next, domVis) {
-  if (typeof _nodeFsBoldScan !== 'function') return false;
-  return _nodeFsBoldScan(String(next || '')).text !== _nodeFsBoldScan(String(domVis || '')).text;
+// 右侧/左侧共用的取文管：整树克隆由调用方负责（本函数吃克隆，绝不碰活 DOM）——
+// 折公式成 $tex$/$$tex$$，摘掉 mermaid/viz/pre/img/svg/input/button 的渲染字形，取 textContent
+function _nodeFsEditFoldVisible(clone) {
+  if (typeof _nodeFsKatexFragmentText === 'function') _nodeFsKatexFragmentText(clone, true);
+  const nodes = clone.querySelectorAll('.mermaid-container, .viz-card, pre, img, input, svg, button');
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    try { if (nodes[i].parentNode) nodes[i].parentNode.removeChild(nodes[i]); } catch (e) { /* 沙箱兜底 */ }
+  }
+  return String(clone.textContent || '');
+}
+
+function _nodeFsEditVisibleFacts(container) {
+  if (!container || typeof container.cloneNode !== 'function' || typeof _nodeFsKatexFragmentText !== 'function') return null;
+  let clone = null;
+  try { clone = container.cloneNode(true); } catch (e) { return null; }
+  let text = '';
+  try { text = _nodeFsEditFoldVisible(clone); } catch (e) { text = ''; }
+  return { text, counts: _nodeFsEditAtomicCounts(clone) };
+}
+
+function _nodeFsEditVisibleMismatch(next, domContainer) {
+  if (typeof _nodeFsBoldScan !== 'function' || typeof renderMarkdown !== 'function' || typeof renderMath !== 'function') return false;
+  let left = null;
+  try {
+    const holder = document.createElement('div');
+    holder.innerHTML = renderMarkdown(String(next || ''), {});
+    try { renderMath(holder); } catch (e0) { /* 公式折不动：放行，宁宽进严出 */ }
+    left = _nodeFsEditVisibleFacts(holder);
+  } catch (e) { return false; }
+  const right = _nodeFsEditVisibleFacts(domContainer);
+  if (!left || !right) return false;
+  return left.counts !== right.counts
+    || _nodeFsBoldScan(left.text).text !== _nodeFsBoldScan(right.text).text;
 }
 
 // ---------- 编辑会话 ----------
@@ -490,8 +526,8 @@ function saveNodeFsEdit() {
   const message = node.messageIndex >= 0 ? messages[node.messageIndex] : null;
   const next = _nodeFsSerializeContent(session.container);
   if (!String(next || '').trim()) { _nodeFsEditToast('正文全空就不保存了——要删节点请在画布上操作'); return; }
-  // 可见文本自检：拼回的 markdown 与编辑后 DOM 同形才放行（防静默丢块）
-  if (_nodeFsEditVisibleMismatch(next, _nodeFsEditDomVisibleText(session.container))) {
+  // 可见文本自检：拼回的 markdown 重渲与编辑后 DOM 同形才放行（防静默丢块）
+  if (_nodeFsEditVisibleMismatch(next, session.container)) {
     _nodeFsEditToast('这次改动保存不了：有内容没能对上，检查刚改的部分');
     return;
   }
@@ -535,3 +571,121 @@ document.addEventListener('keydown', (ev) => {
   _nodeFsEditExit(true);
   _nodeFsEditToast('已退出编辑');
 }, true);
+
+// ---------- 新窗口渲染态编辑（2026-11-20，2026-11-18 三拍的第三块）----------
+// 预览页只有快照 DOM（无渲染器、无主应用函数），分工与全屏层不同：预览窗＝哑编辑面
+// （contenteditable＋原子块＋纯文本粘贴＋Esc 守卫，全在 node-fs-toolbar.js 的内嵌脚本里），
+// 这里＝全部脑子。交接面：预览页把编辑后的容器 innerHTML 过桥（action:'edit'），本端
+// 解析成离散 DOM 后走全屏保存同款四步（空检查→可见文本自检→_nodeFsBoldWrite→人工
+// 定稿＋落盘）；成功后 ack 带回成品 HTML（_nodeFsEditRenderFresh 离屏重渲），预览页
+// 直接换上＝所见即所存，预览页零渲染逻辑的红线不破。
+// 校验段刻意做成同步函数（冒烟只写同步用例的域约束）：异步的只有成品重渲，由接收端
+// （node-fs-toolbar.js _nodeFsPreviewAction）在 ok 时另调。
+
+// 开窗时对原文打的指纹（djb2＋长度）：整篇写回没有加粗那套「在现原文里定位」的
+// 自校准，开窗后原文若被更新过（重新生成／另一处已保存），旧窗整篇覆盖会静默冲掉
+// 新内容——签名对不上就拒绝，让用户关窗重开。
+function _nodeFsEditSrcSig(src) {
+  const s = String(src || '');
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((((h << 5) + h) + s.charCodeAt(i)) >>> 0);
+  return h.toString(36) + '_' + s.length.toString(36);
+}
+
+// 桥来的 HTML 只在主应用解析一次、只读不回注（序列化器与自检全部只读遍历）。
+// 收口成独立函数：真浏览器真解析，冒烟换桩给假根（域文件只写同步用例、无 HTML 解析器）
+function _nodeFsEditParseProbe(html) {
+  const probe = document.createElement('div');
+  probe.innerHTML = String(html || '');
+  return probe;
+}
+
+// 预览页整篇写回上限：innerHTML 带 KaTeX 渲染产物，比 markdown 肥一个量级——
+// 截断＝静默损坏，这里不截、超限直接拒（正常节点远够不着；file:// 场景无桥本就不给编辑）
+const NODE_FS_EDIT_HTML_MAX = 2000000;
+
+// 桥上保存（同步段）：资格闸重查（开窗后可能进了查阅/生成）→ 开窗后原文指纹对账 →
+// 全屏层同节点编辑冲突拒 → 序列化 → 空检查 → 可见文本自检 → _nodeFsBoldWrite →
+// 人工定稿＋自有节点落盘 → 全屏层开着同一节点就重渲。与 saveNodeFsEdit 同一把尺，
+// 仅差「DOM 来自桥上解析」与指纹对账两处。
+function _nodeFsEditFromBridge(node, html, srcSig, probeRoot) {
+  if (typeof _nodeFsBoldWrite !== 'function' || typeof _nodeFsSerializeContent !== 'function') {
+    return { ok: false, message: '写回链路不可用' };
+  }
+  if (!_nodeFsEditAvailable(node)) return { ok: false, message: '这个节点不支持渲染态编辑' };
+  if (String(html || '').length > NODE_FS_EDIT_HTML_MAX) return { ok: false, message: '内容过大，保存不了' };
+  const messages = typeof _getChatHistory === 'function' ? _getChatHistory() : [];
+  const message = node.messageIndex >= 0 ? messages[node.messageIndex] : null;
+  // 开窗后原文被更新过（重新生成／另一处已保存）：旧窗整篇覆盖＝冲掉新内容，拒绝
+  const srcNow = typeof _nodeFsSourceText === 'function' ? String(_nodeFsSourceText(node, message) || '') : '';
+  if (!srcSig || String(srcSig) !== _nodeFsEditSrcSig(srcNow)) {
+    return { ok: false, message: '节点内容在开窗后有更新，请关掉这个窗口重新打开再编辑' };
+  }
+  // 本页全屏层正在编辑同一节点：桥上写回会让那边基于旧 DOM 的保存把这次改动整篇冲掉
+  if (_nodeFsEditSession && String(_nodeFsEditSession.nodeId || '') === String(node.id)) {
+    return { ok: false, message: '本页全屏层正在编辑这个节点：先在那边保存或取消' };
+  }
+  const probe = probeRoot || _nodeFsEditParseProbe(html);
+  const next = _nodeFsSerializeContent(probe);
+  if (!String(next || '').trim()) return { ok: false, message: '正文全空就不保存了——要删节点请在画布上操作' };
+  // 可见文本自检与全屏保存同一把尺（序列化器不认识桥来的构造时在这里现形）
+  if (_nodeFsEditVisibleMismatch(next, probe)) {
+    return { ok: false, message: '这次改动保存不了：有内容没能对上，检查刚改的部分' };
+  }
+  const result = _nodeFsBoldWrite(node, message, next, { summary: '渲染态编辑（新窗口）', okMessage: '已保存，并写回节点', verb: '编辑' });
+  if (!result || !result.ok) return { ok: false, message: (result && result.message) || '保存失败' };
+  // 人工定稿（T355 口径）＋自有节点落盘——与全屏保存同款双守卫
+  if (typeof _markNodeHumanFinalized === 'function') { try { _markNodeHumanFinalized(node); } catch (e) { /* 标记失败不挡保存 */ } }
+  if (typeof _saveCustomNodes === 'function') { try { _saveCustomNodes(); } catch (e) { /* 落盘失败不挡保存 */ } }
+  _nodeFsEditRefreshOverlayBody(node.id);
+  return { ok: true, message: result.message || '已保存，并写回节点', src: next };
+}
+
+// 成品重渲（ok 后给 ack 用）：离屏 holder 走 openNodeNewWindow 同一条管线
+// （renderMath／mermaid promise／viz force 全部落定）。渲染器缺席返回 null——
+// 预览页保持编辑后的 DOM（降级可接受：正文语义已落盘，重开窗口即成品）
+async function _nodeFsEditRenderFresh(node, src) {
+  if (typeof _nodeFsRenderedHtml !== 'function') return null;
+  const messages = typeof _getChatHistory === 'function' ? _getChatHistory() : [];
+  const message = node && node.messageIndex >= 0 ? messages[node.messageIndex] : null;
+  const holder = document.createElement('div');
+  holder.className = 'graph-node-fs-offscreen';
+  holder.innerHTML = _nodeFsRenderedHtml(src, { parentId: String((message && message.timestamp) || (node && node.timestamp) || ''), sourceModule: node.moduleKey || '' });
+  document.body.appendChild(holder);
+  let out = '';
+  try {
+    if (typeof renderMath === 'function') { try { renderMath(holder); } catch (e) { /* 静态兜底 */ } }
+    if (typeof renderMermaidInElement === 'function') { try { await renderMermaidInElement(holder); } catch (e) { /* 静态兜底 */ } }
+    if (typeof _initVizIframes === 'function') { try { _initVizIframes(holder, { force: true }); } catch (e) { /* 静态兜底 */ } }
+    out = String(holder.innerHTML || '');
+  } catch (e) { out = ''; }
+  try { holder.remove(); } catch (e2) { /* 沙箱兜底 */ }
+  return out || null;
+}
+
+// 全屏层正开着同一节点时的就地重渲（桥上保存后那边还是开屏快照）：与 _nodeFsEditExit
+// 的重渲段同款——滚动位置留住，meta 跟着新原文走。编辑中不动（入口已拒，这里双保险）
+function _nodeFsEditRefreshOverlayBody(nodeId) {
+  const overlay = document.querySelector('.graph-node-fs-overlay');
+  if (!overlay || !overlay.querySelector) return;
+  if (String((overlay.dataset && overlay.dataset.nodeFsId) || '') !== String(nodeId)) return;
+  if (_nodeFsEditSession) return;
+  const node = typeof _findGraphNode === 'function' ? _findGraphNode(nodeId) : null;
+  if (!node || typeof _nodeFsRenderedHtml !== 'function') return;
+  const messages = typeof _getChatHistory === 'function' ? _getChatHistory() : [];
+  const message = node.messageIndex >= 0 ? messages[node.messageIndex] : null;
+  const src = typeof _nodeFsSourceText === 'function' ? String(_nodeFsSourceText(node, message) || '') : '';
+  const container = overlay.querySelector('.graph-node-fs-content');
+  if (!container) return;
+  const scroller = overlay.querySelector('.graph-node-fs-body');
+  const keep = scroller ? scroller.scrollTop : 0;
+  try {
+    container.innerHTML = _nodeFsRenderedHtml(src, { parentId: String((message && message.timestamp) || node.timestamp || ''), sourceModule: node.moduleKey || '' });
+  } catch (e) { return; }
+  try {
+    const meta = overlay.querySelector('.graph-node-fs-meta');
+    if (meta && typeof _nodeFsReadingMeta === 'function') meta.textContent = _nodeFsReadingMeta(src);
+  } catch (e) { /* 沙箱兜底 */ }
+  if (scroller) { try { scroller.scrollTop = keep; } catch (e) {} }
+  if (typeof _renderNotebookRich === 'function') { try { _renderNotebookRich(container); } catch (e) {} }
+}
