@@ -197,6 +197,42 @@ export async function run() {
       return true;
     });
 
+    check('T508 派生追问认删除墓碑：用户删过的 sq 节点不随反馈重结算复活（与消息链同一枚 harnessDeleted）', () => {
+      const fx = _seed();
+      sandbox.window.recordSocraticAnswer = () => {};
+      const answer = {
+        id: 'a-soc-t', kind: 'answer', messageIndex: -1, timestamp: 902, x: 100, y: 200, depth: 2, status: 'done',
+        content: '答得不错。\n\n1. [基础] 下一题甲\n<socratic_meta correct="correct" done="false" />',
+        socraticMeta: { prompt: '[苏格拉底回答]', mode: 'answer', question: '甲题', level: 'basic', branchId: 'br_x' },
+      };
+      vm.runInContext('graphView.nodes.push(' + JSON.stringify(answer) + '); graphView.nodeById["a-soc-t"] = graphView.nodes[graphView.nodes.length - 1];', sandbox);
+      fx.mem.harnessDeleted['sq-a-soc-t'] = true;
+      vm.runInContext('_materializeSocraticFollowup(graphView.nodeById["a-soc-t"]);', sandbox);
+      if ((fx.mem.customNodes || []).some(cn => cn.sqAuto)) throw new Error('墓碑没拦住：删过的派生追问复活了');
+      if ((fx.mem.connections || []).some(e => String(e.to) === 'sq-a-soc-t')) throw new Error('墓碑没拦住：连线也长回来了');
+      return true;
+    });
+
+    check('T508 源码契约：链上守卫排在 socraticMeta 重生成之前＋shouldForce 白名单补反馈节点＋墓碑在 push 之前', () => {
+      const runSrc = _read('graph-workflow-run.js');
+      const chainBody = _body(runSrc, '_processWorkflowChainItem');
+      const socAt = chainBody.indexOf('if (current.socraticMeta) {');
+      const guardAt = chainBody.indexOf("if (!force && (current.content || '').trim()) return true;");
+      const genAt = chainBody.indexOf('await _generateCustomNode(current, nodeSignal);');
+      if (socAt < 0 || guardAt < 0 || genAt < 0 || guardAt < socAt || genAt < guardAt) {
+        throw new Error('socraticMeta 分支的链上守卫缺失或没排在重生成之前');
+      }
+      const concBody = _body(runSrc, '_runWorkflowNodeConcurrent');
+      if (!concBody || concBody.indexOf("(node.kind === 'answer' && !!node.socraticMeta)") < 0) {
+        throw new Error('shouldForce 白名单没补闭环反馈节点（显式重试会对反馈节点空转）');
+      }
+      const matBody = _body(_read('graph-workflow-generate.js'), '_materializeSocraticFollowup');
+      const tombAt = matBody.indexOf('harnessDeleted');
+      const pushAt = matBody.indexOf('state.customNodes.push(sqNode);');
+      if (tombAt < 0 || pushAt < 0 || tombAt > pushAt) throw new Error('派生追问的墓碑检查缺失或排到了 push 之后');
+      return true;
+    });
+
     check('T361 闭环结束：<socratic_meta done="true"> 复位内存里的闭环指针', () => {
       _seed();
       sandbox.window.recordSocraticAnswer = () => {};
@@ -1049,6 +1085,32 @@ export async function run() {
         sandbox.localStorage.removeItem('phymathia_current_session');
       }
 
+      return true;
+    });
+
+    // T508（2026-11-20）：闭环反馈节点被整链当上游依赖圈进子图时不重跑——
+    // 复刻用户实测场景（删追问→补空追问节点→生成，反思连带重写）。与 graph-human-finalize
+    // 的 T355 链上护栏同款测法：沙箱内桩 _generateCustomNode 计数。节点引用钉进
+    // __node508：本域 async 合串段在微任务阶段会重置 graphView，await 之后不能再重读
+    // graphView.nodeById（异步收口线的跨用例串扰，README「同文件混排」节）。
+    check('T508 闭环反馈链上不重跑：有内容即跳过；显式 force（任务重试）才走闭环重生成', async () => {
+      _seedSocraticLoop();
+      const fbRef = vm.runInContext('graphView.nodeById["a-fb"]', sandbox);
+      sandbox.__node508 = fbRef;
+      vm.runInContext('window.__origGen508 = _generateCustomNode; window.__genCalls508 = 0;'
+        + '_generateCustomNode = async function () { window.__genCalls508++; return true; };', sandbox);
+      try {
+        const skipped = await vm.runInContext('_processWorkflowChainItem(__node508, false, null)', sandbox);
+        if (skipped !== true) throw new Error('已完成的反馈节点在链上没被跳过');
+        if (vm.runInContext('window.__genCalls508', sandbox) !== 0) throw new Error('链上仍触发了闭环重生成');
+        if (String(fbRef.content || '').indexOf('判定：正确') !== 0) throw new Error('链上跑动把反馈正文改了');
+        await vm.runInContext('_processWorkflowChainItem(__node508, true, null)', sandbox);
+        if (vm.runInContext('window.__genCalls508', sandbox) !== 1) throw new Error('显式 force 没放行闭环重生成（任务重试会空转）');
+      } finally {
+        vm.runInContext('_generateCustomNode = window.__origGen508;', sandbox);
+        vm.runInContext('delete window.__origGen508; delete window.__genCalls508;', sandbox);
+        sandbox.__node508 = null;
+      }
       return true;
     });
 

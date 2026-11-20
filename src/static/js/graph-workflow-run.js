@@ -23,7 +23,13 @@ async function _processWorkflowChainItem(current, force, nodeSignal) {
   if (current.kind === 'answer' && !current.manual) {
     // T361：苏格拉底反馈节点重生成走闭环口径（_generateCustomNode 的 socratic 分支），
     // 不是问题分析——否则点「重新生成」会把闭环反馈换成一张问题分析。
+    // 2026-11-20：闭环 prompt 是提交瞬间定稿的（socraticMeta.prompt），输出不随上游变
+    // ——已完成的反馈节点被整链当上游依赖圈进子图时不再重跑（与下方 hash 短路同口径；
+    // 2026-10-02「force 不许传染」拍板靠的就是这条短路）。没这道闸时，下游追问节点
+    // 一点生成，反馈就连带重写一篇、派生追问还会顶掉用户删过的墓碑。force＝本轮显式
+    // 点名这颗（任务重试/重生成面板），照旧走闭环重生成。
     if (current.socraticMeta) {
+      if (!force && (current.content || '').trim()) return true;
       await _generateCustomNode(current, nodeSignal);
       return !_workflowNodeAborted(nodeSignal);
     }
@@ -156,7 +162,11 @@ async function _runWorkflowNodeConcurrent(node, subgraph, force, processed, fail
   // 完成/进度都由在途请求自己的 worker 收尾，两次记账不会互相覆盖。正常路径
   // _workflowReadyNodes/入口 busy 门挡在前面，这里是双保险
   if (node.busy) return;
-  const shouldForce = force && (node.kind === 'module' || node.kind === 'summary' || node.kind === 'blank');
+  // shouldForce 白名单（2026-11-20）：补进闭环反馈节点（answer＋socraticMeta）——
+  // _processWorkflowChainItem 的 socraticMeta 分支靠 force 区分「显式点名重跑」与
+  // 「被整链当上游依赖圈进来」，不扩名单的话任务重试/重生成面板对反馈节点会静默空转
+  const shouldForce = force && (node.kind === 'module' || node.kind === 'summary' || node.kind === 'blank'
+    || (node.kind === 'answer' && !!node.socraticMeta));
   const shouldCount = _workflowItemNeedsProgress(node) || shouldForce;
   const taskId = runtime ? runtime.taskId : null;
   if (shouldCount) _markWorkflowCurrentNode(node);

@@ -717,6 +717,11 @@ function _materializeSocraticFollowup(answerNode) {
     return;
   }
   const sqId = 'sq-' + live.id;
+  // 用户删过的派生追问不复活：deleteCustomNode 记的 harnessDeleted 墓碑（消息链
+  // graph-data.js 的派生认同一枚）在反馈节点重生成时同样要认——不然反馈一重结算、
+  // 刚删的追问又原地长回来（2026-11-20 实测：删追问→补空追问节点→生成，旧追问连着
+  // 反思一起回来）。
+  if ((state.harnessDeleted || {})[sqId]) return;
   const savedPos = (state.positions || {})[sqId];
   const sqNode = {
     id: sqId,
