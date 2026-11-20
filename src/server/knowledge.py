@@ -895,6 +895,16 @@ def _add_formulas_from_items(items: list, session_id: str, descriptions: dict = 
 
     def updater(data):
         nonlocal count, changed
+        # 公式库可能被人工/外部写进 value 非 dict 的脏条目（JSON 语法合法，
+        # 但 value 是 null/字符串/数字/数组）。下面的 v.get 会抛 AttributeError，
+        # updater 一抛异常 _mutate_json 就不写回，坏条目永久滞留、每次 AI 入库
+        # 都 500 且不自愈。入口复用 POST /api/formulas 的 _dedupe_formula_map
+        # 全量重写（跳过非 dict 条目），三条写路径同口径；清洗造成的差异也要
+        # 计入 changed，否则本轮没有新公式入库时坏条目仍不会落盘清除。
+        cleaned = _dedupe_formula_map(data)
+        if cleaned != data:
+            data = cleaned
+            changed = True
         for it in items:
             title = it.get("title", "")
             summary = it.get("summary", "")
@@ -906,7 +916,8 @@ def _add_formulas_from_items(items: list, session_id: str, descriptions: dict = 
                 if not latex or not _looks_like_formula(latex):
                     continue
                 existing = next((v for v in data.values()
-                                 if _formula_key(v.get("latex")) == _formula_key(latex)), None)
+                                 if isinstance(v, dict)
+                                 and _formula_key(v.get("latex")) == _formula_key(latex)), None)
                 if existing:
                     # 快速本地提取可能先写入摘要，后续描述模型返回时只更新说明。
                     # T146：同公式跨会话不再各建一条——归属并入 sessionIds。

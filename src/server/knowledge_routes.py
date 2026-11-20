@@ -503,14 +503,24 @@ async def api_delete_formulas_by_session(session_id: str = "", request: Request 
 
     def updater(data):
         nonlocal removed
+        # 与 POST /api/formulas、AI 提取入库同口径：入口先全量重写，跳过
+        # value 非 dict 的坏条目（null/字符串/数字/数组）。否则下面裸 v.get
+        # 抛 AttributeError → updater 不写回 → 坏数据永久滞留，删画布清公式
+        # 每次都 500 且不自愈。清洗造成的变化单独记账：即便本会话没有命中
+        # 任何条目，也要把清洗结果落盘。GET 只读视图不回写的口径不变。
+        cleaned = _dedupe_formula_map(data)
+        sanitized = cleaned != data
+        if sanitized:
+            data = cleaned
         if session_id:
-            removed = [k for k, v in data.items() if v.get("sessionId") == session_id]
+            removed = [k for k, v in data.items()
+                       if isinstance(v, dict) and v.get("sessionId") == session_id]
             for k in removed:
                 data.pop(k, None)
         else:
             removed = list(data.keys())
             data.clear()
-        return data if removed else None
+        return data if (removed or sanitized) else None
 
     await asyncio.to_thread(_mutate_json, _account_paths(request).formulas_path, updater)
     return {"ok": True, "count": len(removed)}
