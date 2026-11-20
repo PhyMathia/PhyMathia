@@ -41,6 +41,29 @@ if (!fs.existsSync(summaryFile)) {
     if (monthIdx < 0 || monthIdx > dayIdx) {
       fail(`「## ${date}」不在当月「## ${date.slice(0, 7)}」分组下（跨月第一天要新开月分组，见摘要文件头说明）`);
     }
+    // 511 防复发（2026-11-20）：docs 提交 958da7e 一次失败 Edit 把契约节删到只剩 4 条 bullet、
+    // 并把一条摘要行插在契约节尾（不在任何日期块内），本脚本只查当天块故历次自检无感。两条断言：
+    // ①摘要行（带「→ 当日日志」锚）必须落在「## 日期」块内——孤儿行当场红；
+    // ②契约节关键词哨兵——契约被截断/删节当场红（回捞全文：git -C docs show 958da7e^:日志/日志摘要.md）。
+    const isDateBlock = s => /^\d{4}-\d{2}-\d{2}$/.test(s);
+    let section = '';
+    const orphans = [];
+    for (const l of lines) {
+      const h = l.trim().match(/^## (.+)$/);
+      if (h) section = h[1];
+      else if (l.includes('当日日志「') && !isDateBlock(section)) orphans.push(l.trim().slice(0, 30));
+    }
+    if (orphans.length) fail(`日志摘要.md 有 ${orphans.length} 行摘要落在日期块外（孤儿行——摘要只能写在「## 日期」块内）：${orphans[0]}…`);
+    const cIdx = lines.findIndex(l => l.trim().startsWith('## 维护契约'));
+    if (cIdx < 0) {
+      fail('日志摘要.md 缺「维护契约」节（契约是硬规则 5 的落法，被删要回捞）');
+    } else {
+      const cNext = lines.findIndex((l, i) => i > cIdx && l.trim().startsWith('## '));
+      const contract = lines.slice(cIdx, cNext === -1 ? lines.length : cNext).join('\n');
+      const missing = ['块序是新的在前', '省掉锚', '别整份', '收尾自检', '配额闸门', '当天块 ≤ 6k', '为什么是这套契约']
+        .filter(k => !contract.includes(k));
+      if (missing.length) fail(`「维护契约」节缺关键词哨兵（疑似被截断/删节，回捞方法见 2026-11-20 日志 511 节）：${missing.join('、')}`);
+    }
   }
 }
 
