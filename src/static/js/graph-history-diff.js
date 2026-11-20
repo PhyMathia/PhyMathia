@@ -299,6 +299,8 @@ function _graphState() {
     collapsed: {},
     hidden: {},
     positions: {},
+    layerOf: {},
+    freeNodes: {},
     pinned: {},
     sizes: {},
     pan: { x: 80, y: 80 },
@@ -346,6 +348,9 @@ function _graphHistoryTruncateOnEdit(state) {
 
 function _saveGraphState(state, opts) {
   if (_graphProjQuiet > 0) return; // 投影构建只读：派生节点的存盘副作用掐掉
+  // 列归属/自由标记是持久事实，节点删了必须跟着清：否则两张表只涨不消，
+  // 跨设备合并时还会被当成「对端还有这颗节点」的残留。统一在存盘漏斗里 prune。
+  if (typeof _pruneGraphNodeMarks === 'function') _pruneGraphNodeMarks(state);
   // T219 补刀（2026-10-28）：布局类存盘（opts.layout——位置/尺寸/视口/折叠展开，口径
   // 对齐撤销层的 _pushGraphUndo(false,{layout:true})）不置脏、不触发截断。它们的投影
   // 差异本来就是 layoutOnly、进不了「当前状态」行；没有这道闸，面板常开时拖一下/

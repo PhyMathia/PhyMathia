@@ -224,7 +224,16 @@ function renderGraphCanvas(streaming) {
     if (typeof _initVizIframes === 'function') _initVizIframes(graphInner);
     _measureNodes();
     if (needsFit) _runLayout(true);
-    else {
+    // 旧档的 x 是按老口径存的；列几何改了之后每次重建都先落回列心，
+    // 否则层带在 0..N、节点还散在旧坐标，看起来像分列彻底失灵。
+    if (typeof _realignGraphColumns === 'function') {
+      const aligned = _realignGraphColumns({ force: true, silentUpdate: true, silentEdges: true });
+      if (aligned && aligned.moved.length) {
+        if (needsFit && typeof fitGraph === 'function') fitGraph();
+        if (typeof _savePositions === 'function') _savePositions();
+      }
+    }
+    if (!needsFit) {
       _updateNodeTransforms();
       if (typeof _scheduleGraphLayerBands === 'function') _scheduleGraphLayerBands();
     }
@@ -2150,6 +2159,18 @@ function _startNodeResize(event, nodeEl) {
   graphView.moved = false;
 }
 
+// 整组/多选落点收尾：只把「成员全在拖动集合里」的组框贴合成员，再按包含关系减成员。
+// 多选只拖了组里一部分时贴框会把留在原地的成员也圈进来，组框被撑大还可能吞进旁边节点。
+function _fitDraggedGroups(ids) {
+  const set = new Set(ids || []);
+  if (!set.size) return;
+  (graphView.groups || []).forEach(group => {
+    const members = group.nodeIds || [];
+    if (!members.length || !members.every(id => set.has(id))) return;
+    if (typeof _fitGroupToMembers === 'function') _fitGroupToMembers(group);
+  });
+}
+
 function _startNodeDrag(event, nodeEl) {
   const node = _findGraphNode(nodeEl.dataset.nodeId);
   if (!node) return;
@@ -2171,9 +2192,9 @@ function _startNodeDrag(event, nodeEl) {
   graphView.dragModifier = modifier;
   graphView.altFree = !!event.altKey;
   graphView.dragTargetLayer = null;
-  // 列锚点只在起手时算一次：拖动中每帧重算要走一遍 BFS + 排序，而拖动期间
-  // 其它节点都不动，锚点根本不会变（被拖的节点本来就被排除）。
-  graphView.dragLayerAnchors = moveIds.size === 1 ? _graphLayerAnchors(new Set(moveIds)) : null;
+  graphView.dragColumnTarget = null;
+  // 列框/列缝判定每帧按当前落点算；不再缓存中线锚点——拖动中不再实时吸中线，
+  // 指针要能停在缝里看到插列提示。
   graphView.dragStartPositions = {};
   moveIds.forEach(id => {
     const n = _findGraphNode(id);
@@ -2200,6 +2221,7 @@ function _startGroupDrag(event, groupEl) {
     const node = _findGraphNode(id);
     if (node) graphView.dragGroupNodeStartPositions[id] = { x: node.x, y: node.y };
   });
+  graphView.altFree = !!event.altKey;
   graphView.pointerId = event.pointerId;
   graphView.startX = event.clientX;
   graphView.startY = event.clientY;
@@ -2334,10 +2356,17 @@ function _applyPointerDrag(clientX, clientY) {
       const startCy = Number.isFinite(graphView.resizeStartNodeY) ? graphView.resizeStartNodeY : node.y;
       node.x = startCx + (node.customWidth - graphView.resizeStartW) / 2;
       node.y = startCy + (node.customHeight - graphView.resizeStartH) / 2;
-      _updateNodeTransforms([node.id]);
+      // 宽度每帧都在变：列宽实时重算，右侧整排跟着右移；缩回比别人窄时再回移。
+      let movedIds = [node.id];
+      if (typeof _realignGraphColumns === 'function') {
+        const aligned = _realignGraphColumns({ force: true, silentUpdate: true, silentEdges: true });
+        if (aligned && aligned.moved.length) movedIds = aligned.moved;
+      }
+      _updateNodeTransforms(movedIds);
       if (node.kind === 'ai_eval') _updateAiEvalZigzag(node);
       // resize 帧走边的增量快速路径（只改涉及边的 d/标签），整层重建退居后备
-      if (!_refreshEdgeGeometry(_edgesTouchingNodeIds([node.id]))) _redrawEdges();
+      if (!_refreshEdgeGeometry(_edgesTouchingNodeIds(movedIds))) _redrawEdges();
+      if (typeof _scheduleGraphLayerBands === 'function') _scheduleGraphLayerBands();
     }
     return;
   }
@@ -2379,35 +2408,25 @@ function _applyPointerDrag(clientX, clientY) {
     const ids = Object.keys(graphView.dragStartPositions || {});
     const offsetX = dx / (graphView.zoom || 1);
     const offsetY = dy / (graphView.zoom || 1);
-    // 拖动中吸列（Alt 临时脱离）：只对单节点生效——多选要保持相对位置，
-    // 各自吸到不同列会把一组拆散。阈值内横向吸到该列中线，纵向始终跟手。
-    let snapX = 0;
-    let targetLayer = null;
-    if (ids.length === 1 && !graphView.altFree) {
-      const start = graphView.dragStartPositions[ids[0]];
-      if (start) {
-        const anchors = graphView.dragLayerAnchors || [];
-        let best = null;
-        for (const a of anchors) {
-          const dist = Math.abs(a.cx - (start.x + offsetX));
-          if (!best || dist < best.dist) best = { dist, a };
-        }
-        if (best && best.dist <= GRAPH_LAYER_SNAP_X) {
-          snapX = best.a.cx - (start.x + offsetX);
-          targetLayer = best.a.depth;
-        }
-      }
-    }
+    // 拖动中不再实时吸中线：卡片要能停在列缝里，才能看到「在这里插列」的提示。
+    // 横向完全跟手，落点判定留给松手；多选仍保持相对位置不参与判定。
     for (const id of ids) {
       const n = _findGraphNode(id);
       const start = graphView.dragStartPositions[id];
       if (n && start) {
-        n.x = start.x + offsetX + snapX;
+        n.x = start.x + offsetX;
         n.y = start.y + offsetY;
       }
     }
-    graphView.dragTargetLayer = targetLayer;
-    _highlightGraphLayer(targetLayer);
+    let target = null;
+    if (ids.length === 1 && !graphView.altFree) {
+      const dragged = _findGraphNode(ids[0]);
+      if (dragged && typeof _graphColumnTargetForNode === 'function') target = _graphColumnTargetForNode(dragged);
+    }
+    graphView.dragColumnTarget = target;
+    graphView.dragTargetLayer = target && !target.newCol ? target.layer : null;
+    if (typeof _highlightGraphColumnTarget === 'function') _highlightGraphColumnTarget(target);
+    else if (typeof _highlightGraphLayer === 'function') _highlightGraphLayer(graphView.dragTargetLayer);
     _updateNodeTransforms(ids);
     if (!_refreshEdgeGeometry(_edgesTouchingNodeIds(ids))) _redrawEdges();
   } else if (graphView.panning) {
@@ -2497,8 +2516,8 @@ function _endPointerDrag(event) {
       // 钉住的节点存盘读 fixedX/fixedY（不是 x/y）：改尺寸挪了中心就顺手同步，否则下次重载失忆
       if (node.pinned) { node.fixedX = node.x; node.fixedY = node.y; }
       _syncGroupMembersByContainment();
-      // 宽出去的这段同样要别人让位（旧实现只在拖拽归层时让位，改尺寸把右邻列压住却不动）
-      _squeezeLayersRightForNode(node, { preX: graphView.resizeStartNodeX, preW: graphView.resizeStartW });
+      // 收尾再落一次整排：变宽右移、变窄回移、最宽节点换人也回收列宽。
+      if (typeof _realignGraphColumns === 'function') _realignGraphColumns({ force: true });
       _savePositions();
       if (typeof _scheduleGraphLayerBands === 'function') _scheduleGraphLayerBands();
     }
@@ -2535,12 +2554,22 @@ function _endPointerDrag(event) {
     const group = _graphGroupById(graphView.dragGroupId);
     if (group && graphView.moved) {
       _pushGraphUndo(false, { layout: true });
+      const movedIds = Object.keys(graphView.dragGroupNodeStartPositions || {});
+      // 归属提交：整组按各自落点中心落进既有列框，框外/缝里＝自由；Alt＝全部自由。
+      if (typeof _commitGraphNodeOwnership === 'function') {
+        _commitGraphNodeOwnership(movedIds.map(_findGraphNode).filter(Boolean),
+          { mode: 'multi', forceFree: !!graphView.altFree });
+      }
+      // 成员回列心（自由节点原地不动），组框随后贴合成员再按包含关系减成员，
+      // 否则整列重算挪动成员后旧框不再包含它们，会整批掉组。
+      if (typeof _realignGraphColumns === 'function') _realignGraphColumns({ force: true });
+      _fitDraggedGroups(movedIds);
       _syncGroupMembersByContainment();
       const state = _graphState();
       state.groups = graphView.groups.map(item => ({ ...item }));
       state.positions = state.positions || {};
       state.pinned = state.pinned || {};
-      for (const [id, start] of Object.entries(graphView.dragGroupNodeStartPositions || {})) {
+      for (const id of movedIds) {
         const node = _findGraphNode(id);
         if (!node) continue;
         node.pinned = true;
@@ -2559,6 +2588,7 @@ function _endPointerDrag(event) {
     graphView.dragGroupStartX = 0;
     graphView.dragGroupStartY = 0;
     graphView.dragGroupNodeStartPositions = {};
+    graphView.altFree = false;
     graphView.pointerId = null;
     graphView.panning = false;
     graphView.moved = false;
@@ -2593,38 +2623,43 @@ function _endPointerDrag(event) {
       }
       _pushGraphUndo(false, { layout: true });
       const state = _graphState();
-      // 落点归层（Alt 松手＝自由坐标，不归层）：单节点拖动时 x 对齐列中线、
-      // y 对齐行槽，并把层归属写进 state.layerOf——自动整理以用户落点为准，
-      // 不会下一次整理又把节点拉回自动推导的原层。
-      // 2026-11-20 晚：不再因为「这颗节点事先已被点选」就跳过归层——先点一下再拖是
-      // 最常见的手势，跳过会让吸附/落座/让位全部静默失效（用户实测「列变宽了但节点没动」
-      // 就出在这条）。多选拖动仍不吸：moveIds 里有多颗，下面的 length===1 闸自然挡住。
-      if (!graphView.altFree) {
-        const dragged = Object.keys(graphView.dragStartPositions || {});
-        if (dragged.length === 1 && node) {
-          const snap = _snapGraphNodeToLayer(node, new Set(dragged));
-          if (snap) {
-            // 落座：吸附只对齐列中线与行槽，同一行可能已经站着同列邻居（两张卡会完全重叠）。
-            // 只挪被拖的这颗到最近的空行槽，邻居不动。
-            const layerOfBefore = _graphLayerIndexMap(
+      const draggedIds = Object.keys(graphView.dragStartPositions || {});
+      // 归属提交（2026-11-20 用户拍板）：Alt 松手＝全部自由、保留坐标；单卡走
+      // 框内/缝里/两端判定（可插列/建列）；多选只认既有列框，框外一律自由。
+      if (typeof _commitGraphNodeOwnership === 'function') {
+        const committed = _commitGraphNodeOwnership(
+          draggedIds.map(_findGraphNode).filter(Boolean),
+          { mode: draggedIds.length === 1 ? 'single' : 'multi', forceFree: !!graphView.altFree });
+        if (committed.assigned.length) {
+          if (draggedIds.length === 1) {
+            // 单卡落座：先把全排列到新几何（同列邻居落座时才在真正的列心上；
+            // 最宽节点换人后列宽/列距由这里一并回收）。
+            const assigned = committed.assigned[0];
+            const targetMap = _graphLayerIndexMap(
               graphView.nodes.filter(n => n.kind !== 'draft'), graphView.edges || [], _graphLayerOverrides());
-            const wasInLayer = layerOfBefore[node.id] === snap.depth;
-            node.x = snap.x;
-            node.y = snap.y;
-            _settleNodeIntoLayer(node, snap.depth, layerOfBefore);
-            state.layerOf = state.layerOf || {};
-            state.layerOf[node.id] = snap.depth;
-            _updateNodeTransforms([node.id]);
-            // 让位只认「这一层因为这张卡变宽了」：原本就在本层拖回来的，按起手几何算 pre，
-            // 不会每次松手都把右邻列再推一遍；从别层拖入的 pre 为空＝它新占了空间。
-            const startX = (graphView.dragStartPositions[node.id] || {}).x;
-            _squeezeLayersRightForNode(node, { preX: wasInLayer ? startX : null }); // 宽节点挤进窄层：右侧各层连锁右移让位（只往右推，2026-11-20）
+            const col = _graphColumns({ layerMap: targetMap }).find(c => c.layer === assigned.layer);
+            if (col) node.x = col.cx;
+            node.y = Math.round(node.y / GRAPH_LAYER_ROW_STEP) * GRAPH_LAYER_ROW_STEP;
+            _realignGraphColumns({ layerMap: targetMap, force: true });
+            if (_settleNodeIntoLayer(node, assigned.layer, targetMap)) {
+              _updateNodeTransforms([node.id]);
+              _redrawEdges();
+              if (typeof _fitAllGroupsToMembers === 'function') _fitAllGroupsToMembers();
+            }
+          } else {
+            // 多选/整组：成员各自落回所在列心；自由节点留在落点。
+            _realignGraphColumns({ force: true });
           }
+        } else if (committed.freed.length) {
+          // 全部自由：其他列成员可能因列宽回收而回移，自由节点原地不动。
+          _realignGraphColumns({ force: true });
         }
       }
+      // 只贴「成员全在拖动集合里」的组框，再按包含关系减成员，避免整列重算后成员掉组。
+      _fitDraggedGroups(draggedIds);
       state.positions = state.positions || {};
       state.pinned = state.pinned || {};
-      for (const id of Object.keys(graphView.dragStartPositions || {})) {
+      for (const id of draggedIds) {
         const n = _findGraphNode(id);
         if (!n) continue;
         n.pinned = true;
@@ -2657,9 +2692,10 @@ function _endPointerDrag(event) {
       if (hitGroup) droppedIntoGroup = _addNodeIdsToGroup(hitGroup.id, draggedIds);
     }
     graphInner?.querySelectorAll('.graph-node.dragging').forEach(el => el.classList.remove('dragging'));
-    _highlightGraphLayer(null);
+    if (typeof _highlightGraphColumnTarget === 'function') _highlightGraphColumnTarget(null);
+    else _highlightGraphLayer(null);
     graphView.dragTargetLayer = null;
-    graphView.dragLayerAnchors = null;
+    graphView.dragColumnTarget = null;
     graphView.altFree = false;
     graphView.dragNodeId = null;
     graphView.dragStartPositions = {};

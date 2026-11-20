@@ -254,6 +254,10 @@ function _buildExampleGraphDemoState() {
     collapsed: {},
     hidden: {},
     positions,
+    // 列归属：进阶学习/苏格拉底是问题分析右侧的独立一列（2.5 层），
+    // 不跟物理/数学/图谱/可视化挤同一列；自由节点表把素材与总结钉在右侧。
+    layerOf: { 'demo-learn': 2.5, 'demo-socratic': 2.5 },
+    freeNodes: { 'demo-summary': 1, 'demo-source': 1, 'demo-knowledge': 1, 'demo-note': 1 },
     pinned: {},
     sizes: {},
     pan: { x: 140, y: 60 },
@@ -412,6 +416,13 @@ function _exampleGuideSpotRect(step) {
 function _compactDemoMaterialNodes() {
   const state = typeof window.getGraphState === 'function' ? window.getGraphState() : null;
   if (!state || !state.positions) return;
+  // 素材/总结节点是自由卡：显式摘掉列归属并打上自由标记，之后自动整理一根手指都不碰它们。
+  state.freeNodes = state.freeNodes || {};
+  state.layerOf = state.layerOf || {};
+  ['demo-summary', 'demo-source', 'demo-knowledge', 'demo-note'].forEach(id => {
+    state.freeNodes[id] = 1;
+    delete state.layerOf[id];
+  });
   const treeIds = ['demo-question', 'demo-answer', 'demo-physics', 'demo-math', 'demo-graph', 'demo-viz', 'demo-learn', 'demo-socratic', 'demo-summary', 'demo-human', 'demo-blank'];
   let maxX = -Infinity;
   treeIds.forEach(id => {

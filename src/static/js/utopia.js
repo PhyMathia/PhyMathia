@@ -138,6 +138,10 @@ function _utopiaGraphState() {
     pan: st.pan || { x: 80, y: 80 },
     zoom: (typeof st.zoom === 'number' && isFinite(st.zoom)) ? st.zoom : 0.9,
     positions: st.positions || {},
+    // 列归属/自由标记是画布几何的持久事实：不带进 .pmu，查看器和拖回主应用都会
+    // 按「无覆盖」重算分层，列顺序与原图对不上（2026-11-20）。
+    layerOf: st.layerOf || {},
+    freeNodes: st.freeNodes || {},
     pinned: st.pinned || {},
     sizes: st.sizes || {},
     collapsed: st.collapsed || {},

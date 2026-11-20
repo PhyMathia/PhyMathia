@@ -1701,7 +1701,10 @@ function _scheduleEdgeResync() {
     _nodeGeomPending.clear();
     if (!ids.length || !graphInner) return;
     _measureNodes();
+    // 卡真身尺寸到位（KaTeX/图片等）也可能改变最宽节点：列宽跟着重算。
+    if (typeof _realignGraphColumns === 'function') _realignGraphColumns({ silentUpdate: true, silentEdges: true });
     _updateNodeTransforms();
+    if (typeof _scheduleGraphLayerBands === 'function') _scheduleGraphLayerBands();
     const keys = _edgesTouchingNodeIds(ids);
     if (!keys.length || !_refreshEdgeGeometry(keys)) _redrawEdges();
   });

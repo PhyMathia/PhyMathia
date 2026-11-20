@@ -2032,6 +2032,43 @@ html[data-theme="light"][data-wallpaper="night"] {
     rgba(30, 64, 120, 0) 100%);
 }
 
+/* 拖动中的插列提示（2026-11-20）：缝里松手＝在这里插一列。
+   竖线挂在 graphInner 上而不是 .graph-layers 里，才能盖过被拖卡片本身。 */
+.graph-col-insert {
+  display: none;
+  position: absolute;
+  width: 3px;
+  z-index: 6;
+  pointer-events: none;
+  background: linear-gradient(180deg,
+    rgba(52, 211, 153, 0) 0%, rgba(52, 211, 153, 0.95) 8%,
+    rgba(52, 211, 153, 0.95) 92%, rgba(52, 211, 153, 0) 100%);
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.5);
+}
+
+/* 两端外侧的幽灵列框：提示松手会新建一列 */
+.graph-col-ghost {
+  display: none;
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  border: 1px dashed rgba(52, 211, 153, 0.75);
+  background: rgba(52, 211, 153, 0.08);
+  border-radius: var(--r-lg);
+}
+
+[data-theme="light"] .graph-col-insert {
+  background: linear-gradient(180deg,
+    rgba(16, 145, 105, 0) 0%, rgba(16, 145, 105, 0.9) 8%,
+    rgba(16, 145, 105, 0.9) 92%, rgba(16, 145, 105, 0) 100%);
+  box-shadow: 0 0 8px rgba(16, 145, 105, 0.35);
+}
+
+[data-theme="light"] .graph-col-ghost {
+  border-color: rgba(16, 145, 105, 0.65);
+  background: rgba(16, 145, 105, 0.06);
+}
+
 /* ---------- 15. ComfyUI 风格分组 ---------- */
 .graph-node {
   z-index: 1;

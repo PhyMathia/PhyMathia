@@ -605,6 +605,10 @@
         collapsed: p.collapsed || {},
         hidden: p.hidden || {},
         positions: p.positions || {},
+        // 列归属与自由标记是持久事实（2026-11-20 用户拍板）：刷新/切设备/.pmu 往返
+        // 都必须带回来，否则列系统只活在当前页面的内存里。
+        layerOf: p.layerOf || {},
+        freeNodes: p.freeNodes || {},
         pinned: p.pinned || {},
         sizes: p.sizes || {},
         pan: p.pan || { x: 80, y: 80 },
