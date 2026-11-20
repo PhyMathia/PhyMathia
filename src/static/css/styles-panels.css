@@ -412,11 +412,20 @@
       z-index: var(--z-guide);
       pointer-events: none;
       opacity: 0;
-      transition: opacity 0.4s ease;
+      /* 静止态彻底不绘制（2026-11-20 屏闪）：本层内 .onboarding-spotlight 用
+         9999px 扩散阴影铺满屏，层的绘制边界被撑到 20000×20000（Chrome 层上限，
+         实测 CDP LayerTree 两个 400 MP 的层常驻）。opacity:0 只让合成器省掉像素，
+         层的几何与动画（spotlight::after 的 onboard-pulse 无限呼吸）照样每帧跑；
+         画布元素一多、显存一紧就丢层重合成，观感是整屏闪一下、偶发顶栏文字空白。
+         visibility 参与过渡但要延迟到淡出结束再落，入场仍是即时可见。 */
+      visibility: hidden;
+      transition: opacity 0.4s ease, visibility 0s linear 0.4s;
     }
     .onboarding-overlay.active {
       opacity: 1;
       pointer-events: auto;
+      visibility: visible;
+      transition: opacity 0.4s ease, visibility 0s linear 0s;
     }
     .onboarding-backdrop {
       position: absolute;
@@ -424,11 +433,14 @@
       background: var(--onboarding-backdrop);
       transition: background 0.4s ease;
     }
-    /* 聚光灯切口 - 通过 box-shadow 实现透明高亮区 */
+    /* 聚光灯切口 - 通过 box-shadow 实现透明高亮区。
+       spread 从 9999px 收到 150vmax（2026-11-20 屏闪）：元素在视口任意位置到对角的
+       最远距离 ≤ 1.42×vmax，150vmax 足够盖住整个视口且留余量；而 9999px 在 1080p 上
+       会把绘制边界撑到两万像素见方＝400 MP 的层，每次切步/重绘都要按这个面积分配 tile。 */
     .onboarding-spotlight {
       position: absolute;
       border-radius: var(--r-lg);
-      box-shadow: 0 0 0 9999px var(--onboarding-spotlight);
+      box-shadow: 0 0 0 150vmax var(--onboarding-spotlight);
       /* 只过渡四个几何量：`all` 会把描边/阴影也拉进补间，目标切换时闪一下 */
       transition: left 0.35s cubic-bezier(0.4, 0, 0.2, 1),
                   top 0.35s cubic-bezier(0.4, 0, 0.2, 1),
@@ -740,7 +752,13 @@
       inset: 0;
       z-index: var(--z-guide-top);
       pointer-events: none;
+      /* 静止态彻底不绘制（2026-11-20 屏闪，与 .onboarding-overlay 同因）：
+         backdrop 恒 transparent、spotlight 恒 opacity:0，但层与 ::after 的
+         onboard-pulse 无限呼吸动画照样常驻，实测层边界 20000×20000＝400 MP。
+         引导关闭时它是纯开销，且每次画布重绘都要陪跑合成。 */
+      visibility: hidden;
     }
+    .example-guide-overlay.active { visibility: visible; }
     .example-guide-backdrop {
       position: absolute;
       inset: 0;
@@ -753,8 +771,11 @@
       pointer-events: none;
       border: 2px solid var(--accent);
       border-radius: var(--r-lg);
+      /* spread 9999px → 150vmax：同 .onboarding-spotlight（2026-11-20 屏闪），
+         这个元素在示例讲解里还会被 rAF 逐帧写 left/top/width/height，
+         400 MP 的绘制边界每帧重算一次＝屏闪最直白的来源。 */
       box-shadow:
-        0 0 0 9999px rgba(3, 7, 18, 0.16),
+        0 0 0 150vmax rgba(3, 7, 18, 0.16),
         0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent),
         0 18px 50px rgba(0,0,0,0.25);
       opacity: 0;
