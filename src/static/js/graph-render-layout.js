@@ -553,17 +553,80 @@ function _scheduleGraphLayerBands() {
   });
 }
 
-// ====== 宽节点让位（2026-11-20，用户拍板「只往右推」）======
-// 宽节点松手归层成功后，若它让本层色带右缘「长宽了」，右侧各层整列连锁右移给它让位：
-// 首个邻层推移量＝色带右缘生长量＋富余（把被吃掉的空间还回去再多让一点），
-// 后面各层依次传导——前层挪走后自己还有富余的层少挪甚至不挪。
-// 窄节点加入（色带右缘没生长）不动任何人；墙左边的层绝不推（用户拍板：左侧宁可贴着）。
+// ====== 宽节点让位（2026-11-20，用户拍板「只往右推」；当晚按实测重写几何口径）======
+// 宽节点松手归层成功后，若它让本层的节点右缘「长宽了」，右侧各层整列同量右移给它让位：
+// 只把首个邻层的节点缝补到「正常列距 48＋富余 24」，推多少右侧全体就跟着挪多少（相对间距不变）。
+// 窄节点加入（右缘没生长）/ 本来就够宽时不动任何人；墙左边的层绝不推（用户拍板：左侧宁可贴着）。
 // 只推 x：列内相对位置、y、层号都不动；钉住节点的 fixedX 同步平移，下次存盘不失忆。
-// 组框不跟着挪——与单节点普通拖拽同口径（组框只在整理/拉伸时重算），下次整理归位。
-const GRAPH_LAYER_PUSH_MARGIN = 24; // 让位时比「被吃掉的空间」额外多让的富余（px）
-const GRAPH_LAYER_BAND_GAP = 8;     // 连锁传导时相邻层带间至少留的缝（px），防色带粘连
-function _squeezeLayersRightForNode(node) {
+// 组框整块跟挪（成员动框不动会被包含同步踢出组）——与整理时「组是原子块」同口径。
+const GRAPH_LAYER_PUSH_MARGIN = 24;  // 让位后首个右邻层比正常列距多留的富余（px）
+const GRAPH_LAYER_NODE_GAP = 48;     // 横向正常节点缝（与 _arrangeTreeLayout 列宽公式里的 +48 同档）
+const GRAPH_LAYER_SETTLE_GAP = 48;   // 落进列里时与同列邻居保持的纵向缝（与整理 _resolveColumnVerticalSpacing 同档）
+
+// 落点归层后的纵向落座：吸附只对齐列中线与 40px 行槽，落点那一行可能已经站着同列邻居
+// （实测两张卡会完全重叠、下面那张整张看不见）。这里只挪被拖的这颗：按到落点的距离
+// 依次试每个邻居的上/下沿槽位，取最近的不重叠位；邻居本身一律不动（与「只往右推」同口径：
+// 不因为一颗新来的卡去重排别人）。
+function _settleNodeIntoLayer(node, depth, layerOf) {
+  if (!node || depth == null) return false;
+  const size = _layoutNodeSize(node);
+  const siblings = (graphView.nodes || []).filter(n => n !== node && n.kind !== 'draft' && layerOf[n.id] === depth);
+  if (!siblings.length) return false;
+  const overlaps = y => siblings.some(n => {
+    const s = _layoutNodeSize(n);
+    return Math.abs(n.y - y) < (s.h + size.h) / 2 + GRAPH_LAYER_SETTLE_GAP - 0.5
+      && Math.abs(n.x - node.x) < (s.w + size.w) / 2 + GRAPH_LAYER_SETTLE_GAP - 0.5;
+  });
+  if (!overlaps(node.y)) return false;
+  const startY = node.y;
+  const cands = [];
+  siblings.forEach(n => {
+    const s = _layoutNodeSize(n);
+    const dy = (s.h + size.h) / 2 + GRAPH_LAYER_SETTLE_GAP;
+    cands.push(n.y + dy, n.y - dy);
+  });
+  cands.sort((a, b) => Math.abs(a - startY) - Math.abs(b - startY));
+  const slots = [];
+  cands.forEach(y => {
+    const base = Math.round(y / GRAPH_LAYER_ROW_STEP) * GRAPH_LAYER_ROW_STEP;
+    // 行槽取整可能把候选压回邻居身上：上下各补一档
+    [base, base + GRAPH_LAYER_ROW_STEP, base - GRAPH_LAYER_ROW_STEP].forEach(v => slots.push(v));
+  });
+  for (const y of slots) {
+    if (!overlaps(y)) { node.y = y; return true; }
+  }
+  // 整列都排满（极密）：落到最低一颗下面，至少不再完全重叠
+  let bottom = -Infinity;
+  let lowest = null;
+  siblings.forEach(n => {
+    const s = _layoutNodeSize(n);
+    const b = n.y + s.h / 2;
+    if (b > bottom) { bottom = b; lowest = n; }
+  });
+  if (lowest) {
+    const s = _layoutNodeSize(lowest);
+    const y = lowest.y + (s.h + size.h) / 2 + GRAPH_LAYER_SETTLE_GAP;
+    node.y = Math.round(y / GRAPH_LAYER_ROW_STEP) * GRAPH_LAYER_ROW_STEP;
+    return true;
+  }
+  return false;
+}
+
+// 宽节点让位（2026-11-20，用户拍板「只往右推」；2026-11-20 晚重写几何口径）：
+// · 按节点真实边缘算，不按层带：色带左右各 56px 呼吸边，按带算会把空隙多算 112px，
+//   再把下游层逐列压到 8px 带缝——实测列距 48 被推成 72/120/120（越推越散）。
+// · preX/preW：这颗节点在本次改动前的几何。拖动归层时传它在本层内的起手 x（原本就在
+//   这一层），从别层拖入则不传（＝它本来就是新占的空间）。改尺寸时传起始中心与起始宽。
+//   不传且本层没有别的成员＝这层原本是空的，没有「被吃掉」的空间，一律不推。
+// · 触发：本层节点右缘真的长宽才推（growth>0）。
+// · 推移：只把首个右邻层的节点缝补到「正常列距 48＋富余 24」；它被推多少，右侧所有层
+//   整块平移同样距离——相对间距不变，不再出现逐列加码的楼梯。旧实现把 growth 算了两遍
+//   （wall.right 已含 growth 又加一次），拖入宽 60px 的卡能把右邻列推 156px、留上百像素空走廊。
+// · 组框整块跟挪：只挪成员不挪框，松手后 _syncGroupMembersByContainment 会把成员踢出组
+//   （实测组被清空）。组里任一成员被推，整组按所需最大位移一起走，框与成员不分家。
+function _squeezeLayersRightForNode(node, opts) {
   if (!node || !graphView.nodes || graphView.nodes.length < 2) return;
+  const options = opts || {};
   const nodes = graphView.nodes.filter(n => n.kind !== 'draft');
   if (nodes.length < 2) return;
   const layerOf = _graphLayerIndexMap(nodes, graphView.edges || [], _graphLayerOverrides());
@@ -572,39 +635,78 @@ function _squeezeLayersRightForNode(node) {
   const bands = _graphLayerBands();
   const wall = bands.find(b => b.depth === depth);
   if (!wall) return;
-  // 这颗节点进来之前本层色带的右缘：把它摘出去单独算一遍——拖动中它的 x 已实时变更，
-  // 不摘会把拖动途中压过去的距离当成「原本就有的拥挤」。算法与 _graphLayerBands 全同。
-  let preMinX = Infinity;
-  let preMaxX = -Infinity;
-  nodes.forEach(n => {
-    if (n !== node && layerOf[n.id] === depth) {
-      const s = _layoutNodeSize(n);
-      preMinX = Math.min(preMinX, n.x - s.w / 2);
-      preMaxX = Math.max(preMaxX, n.x + s.w / 2);
+  const size = _layoutNodeSize(node);
+  const preX = Number.isFinite(options.preX) ? Number(options.preX) : null;
+  const preNodeW = Number.isFinite(options.preW) ? Number(options.preW) : size.w;
+  const layerNodes = {};
+  nodes.forEach(n => { (layerNodes[layerOf[n.id]] = layerNodes[layerOf[n.id]] || []).push(n); });
+  // 本层右缘：现役（含这颗）vs 改动前（其它成员 + 这颗的 pre 几何）
+  let postRight = -Infinity;
+  let preRight = -Infinity;
+  (layerNodes[depth] || []).forEach(n => {
+    const s = _layoutNodeSize(n);
+    postRight = Math.max(postRight, n.x + s.w / 2);
+    if (n === node) {
+      if (preX != null) preRight = Math.max(preRight, preX + preNodeW / 2);
+    } else {
+      preRight = Math.max(preRight, n.x + s.w / 2);
     }
   });
-  let growth;
-  if (preMinX === Infinity) {
-    growth = wall.width; // 本层原本没有别人（兜底；正常吸附路径锚点必来自同层成员）
-  } else {
-    const preW = Math.max(GRAPH_LAYER_BAND_MINW, (preMaxX - preMinX) + GRAPH_LAYER_BAND_PADX * 2);
-    growth = (wall.left + wall.width) - ((preMinX + preMaxX) / 2 + preW / 2);
-  }
+  if (!Number.isFinite(preRight)) return; // 本层原本没有别人：没有「被吃掉」的空间
+  const growth = postRight - preRight;
   if (growth <= 0) return;
-  let minLeft = wall.left + wall.width + growth + GRAPH_LAYER_PUSH_MARGIN + GRAPH_LAYER_BAND_GAP;
+  const rightBands = bands.filter(b => b.depth > depth && b.left > wall.left); // 只推「确实在墙右边」的层
+  if (!rightBands.length) return;
+  const firstList = layerNodes[rightBands[0].depth] || [];
+  if (!firstList.length) return;
+  let firstLeft = Infinity;
+  firstList.forEach(n => {
+    const s = _layoutNodeSize(n);
+    firstLeft = Math.min(firstLeft, n.x - s.w / 2);
+  });
+  const shift = Math.max(0, GRAPH_LAYER_NODE_GAP + GRAPH_LAYER_PUSH_MARGIN - (firstLeft - postRight));
+  if (shift <= 0) return; // 本来就够宽：不动任何人
+  const nodeShift = {};
+  rightBands.forEach(b => {
+    (layerNodes[b.depth] || []).forEach(n => { nodeShift[n.id] = shift; });
+  });
+  if (!Object.keys(nodeShift).length) return;
+  // 组框整块走：组可能跨层，只要有一个成员在右移层里，整个组（含框）同量平移，
+  // 保持组内相对位置——只挪成员不挪框会被 _syncGroupMembersByContainment 踢出组。
+  const groupById = {};
+  const groupOf = {};
+  (graphView.groups || []).forEach(g => {
+    groupById[g.id] = g;
+    (g.nodeIds || []).forEach(id => { groupOf[id] = g; });
+  });
+  const groupShift = {};
+  Object.keys(nodeShift).forEach(id => {
+    const g = groupOf[id];
+    if (g) groupShift[g.id] = Math.max(groupShift[g.id] || 0, nodeShift[id]);
+  });
+  const moved = {};
   const shifted = [];
-  bands.forEach(b => {
-    if (b.depth <= depth || b.left <= wall.left) return; // 只推「确实在墙右边」的层
-    const shift = Math.max(0, minLeft - b.left);
-    if (shift > 0) {
-      nodes.forEach(n => {
-        if (layerOf[n.id] !== b.depth) return;
-        n.x += shift;
-        if (n.pinned && n.fixedX != null) n.fixedX += shift;
-        shifted.push(n.id);
-      });
-    }
-    minLeft = (b.left + shift) + b.width + GRAPH_LAYER_BAND_GAP;
+  Object.keys(groupShift).forEach(gid => {
+    const g = groupById[gid];
+    const shift = groupShift[gid];
+    if (!g || !shift) return;
+    g.x += shift;
+    if (typeof _updateGroupElement === 'function') _updateGroupElement(g);
+    (g.nodeIds || []).forEach(id => {
+      const n = graphView.nodeById[id] || nodes.find(item => item.id === id);
+      if (!n) return;
+      n.x += shift;
+      if (n.pinned && n.fixedX != null) n.fixedX += shift;
+      moved[id] = true;
+      shifted.push(id);
+    });
+  });
+  nodes.forEach(n => {
+    const shift = nodeShift[n.id];
+    if (!shift || moved[n.id]) return;
+    n.x += shift;
+    if (n.pinned && n.fixedX != null) n.fixedX += shift;
+    shifted.push(n.id);
   });
   if (!shifted.length) return;
   _updateNodeTransforms(shifted);

@@ -2143,6 +2143,10 @@ function _startNodeResize(event, nodeEl) {
   graphView.resizeStartY = event.clientY;
   graphView.resizeStartW = node.customWidth || node.w || 320;
   graphView.resizeStartH = node.customHeight || node.h || 120;
+  // 中心也记一份：拖手柄是「左下角不动、往右下长」——宽度每变 dx，中心只该走 dx/2。
+  // 不记这个就会让 node.x 停在旧中心，和真实卡片中心差半个增量（层带/吸附都按中心算）。
+  graphView.resizeStartNodeX = node.x;
+  graphView.resizeStartNodeY = node.y;
   graphView.moved = false;
 }
 
@@ -2324,6 +2328,13 @@ function _applyPointerDrag(clientX, clientY) {
       el.classList.add('resized');
       node.w = node.customWidth;
       node.h = el.getBoundingClientRect().height / (graphView.zoom || 1);
+      // 视觉上仍是「左上角钉住、往右下长」，但中心必须同步走一半：node.x/y 是卡片中心，
+      // 层带、列锚点、落盘全按它算；只改宽高不改中心会让书里的中心和真实卡片差半个增量。
+      const startCx = Number.isFinite(graphView.resizeStartNodeX) ? graphView.resizeStartNodeX : node.x;
+      const startCy = Number.isFinite(graphView.resizeStartNodeY) ? graphView.resizeStartNodeY : node.y;
+      node.x = startCx + (node.customWidth - graphView.resizeStartW) / 2;
+      node.y = startCy + (node.customHeight - graphView.resizeStartH) / 2;
+      _updateNodeTransforms([node.id]);
       if (node.kind === 'ai_eval') _updateAiEvalZigzag(node);
       // resize 帧走边的增量快速路径（只改涉及边的 d/标签），整层重建退居后备
       if (!_refreshEdgeGeometry(_edgesTouchingNodeIds([node.id]))) _redrawEdges();
@@ -2480,8 +2491,16 @@ function _endPointerDrag(event) {
     const node = _findGraphNode(graphView.resizeNodeId);
     if (node && graphView.moved) {
       _pushGraphUndo(false, { layout: true });
+      // 卡片变宽可能撑出组框：先把所属组框贴合成员，否则下面 _sync 会把这张卡踢出组
+      const group = (graphView.groups || []).find(g => (g.nodeIds || []).includes(node.id));
+      if (group) _fitGroupToMembers(group);
+      // 钉住的节点存盘读 fixedX/fixedY（不是 x/y）：改尺寸挪了中心就顺手同步，否则下次重载失忆
+      if (node.pinned) { node.fixedX = node.x; node.fixedY = node.y; }
       _syncGroupMembersByContainment();
+      // 宽出去的这段同样要别人让位（旧实现只在拖拽归层时让位，改尺寸把右邻列压住却不动）
+      _squeezeLayersRightForNode(node, { preX: graphView.resizeStartNodeX, preW: graphView.resizeStartW });
       _savePositions();
+      if (typeof _scheduleGraphLayerBands === 'function') _scheduleGraphLayerBands();
     }
     graphView.resizeNodeId = null;
     graphView.pointerId = null;
@@ -2577,17 +2596,29 @@ function _endPointerDrag(event) {
       // 落点归层（Alt 松手＝自由坐标，不归层）：单节点拖动时 x 对齐列中线、
       // y 对齐行槽，并把层归属写进 state.layerOf——自动整理以用户落点为准，
       // 不会下一次整理又把节点拉回自动推导的原层。
-      if (!graphView.altFree && !graphView.dragWasSelected) {
+      // 2026-11-20 晚：不再因为「这颗节点事先已被点选」就跳过归层——先点一下再拖是
+      // 最常见的手势，跳过会让吸附/落座/让位全部静默失效（用户实测「列变宽了但节点没动」
+      // 就出在这条）。多选拖动仍不吸：moveIds 里有多颗，下面的 length===1 闸自然挡住。
+      if (!graphView.altFree) {
         const dragged = Object.keys(graphView.dragStartPositions || {});
         if (dragged.length === 1 && node) {
           const snap = _snapGraphNodeToLayer(node, new Set(dragged));
           if (snap) {
+            // 落座：吸附只对齐列中线与行槽，同一行可能已经站着同列邻居（两张卡会完全重叠）。
+            // 只挪被拖的这颗到最近的空行槽，邻居不动。
+            const layerOfBefore = _graphLayerIndexMap(
+              graphView.nodes.filter(n => n.kind !== 'draft'), graphView.edges || [], _graphLayerOverrides());
+            const wasInLayer = layerOfBefore[node.id] === snap.depth;
             node.x = snap.x;
             node.y = snap.y;
+            _settleNodeIntoLayer(node, snap.depth, layerOfBefore);
             state.layerOf = state.layerOf || {};
             state.layerOf[node.id] = snap.depth;
             _updateNodeTransforms([node.id]);
-            _squeezeLayersRightForNode(node); // 宽节点挤进窄层：右侧各层连锁右移让位（只往右推，2026-11-20）
+            // 让位只认「这一层因为这张卡变宽了」：原本就在本层拖回来的，按起手几何算 pre，
+            // 不会每次松手都把右邻列再推一遍；从别层拖入的 pre 为空＝它新占了空间。
+            const startX = (graphView.dragStartPositions[node.id] || {}).x;
+            _squeezeLayersRightForNode(node, { preX: wasInLayer ? startX : null }); // 宽节点挤进窄层：右侧各层连锁右移让位（只往右推，2026-11-20）
           }
         }
       }
