@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import uuid
 
@@ -52,6 +53,10 @@ from .request_ctx import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# 模型配置整包保存的进程内互斥锁（2026-11-20）：读 auth.json → 合并 → 写 auth.json
+# → 写 models.json 整段串行。RLock 可重入，将来锁内再调本模块其他写入不会自锁死。
+_MODELS_CONFIG_LOCK = threading.RLock()
 
 
 @router.post("/v1/chat/completions")
@@ -1088,33 +1093,60 @@ def _split_model_keys(clean_models: list) -> dict:
 
 def _merge_auth_keys(account: str, clean_models: list, incoming_model_keys: dict,
                      incoming_group_keys: dict, clear_ids: set) -> tuple:
-    """整包上传的密钥合并（2026-10-24）：缺钥＝不知道，不等于删钥。
+    """整包上传的密钥合并（2026-10-24 立，2026-11-20 收紧残留窗口）：缺钥＝不知道，
+    不等于删钥；**删钥只认显式信号**。
 
-    旧实现拿本次 payload 重写整份 auth.json，于是每一次「客户端手里没有钥」的
-    整包上传都成了删钥操作：另一个标签页的整包覆盖、导入备份的替换模式（快照
-    按设计抹空 apiKey）、密码管理器把分组密钥框填/清成空……密钥是用户重打不出来
-    的东西，删掉即永久损失。合并规则：
-      · 条目仍在列表里、payload 没带钥 → 保留服务端原钥；
-      · 条目已从列表消失（删模型/整组删）→ 它的钥随之清理；
-      · 显式清空 → 只有 clearKeys 点名的 id 才删（前端只在人主动清空时发）。
-    分组密钥同口径：payload 显式给 '' 才算清空；没提到但组里还有条目 → 保留；
-    整组条目都没了 → 连带清理。返回 (model_keys, group_keys)。"""
+    10-24 的合并修掉了「payload 没带 apiKey 就重写整份 auth」的丢钥源，但仍按
+    `mid in present_ids` 过滤旧钥：于是「这个标签页的旧快照里还没有该模型」和
+    「用户真的删了模型」被当成同一件事——含新模型 M 的标签页先保存，另一个
+    创建 M 之前的旧快照后保存，M 刚填的钥被当孤儿清掉，下一次请求鉴权失败。
+
+    现行规则：
+      · payload 缺钥、条目根本不在 payload 里（旧标签页/导入替换）→ 保留原钥；
+      · clearKeys 点名的 id / provider → 才删（前端只在人主动清空时发）；
+      · 分组密钥 payload 显式给 '' → 清空该组；没提到 → 保留。
+    `clean_models` 保留作调用点形状兼容：条目/provider 的存在性**不再**参与删钥
+    决策。调用方必须持 _MODELS_CONFIG_LOCK 包住整段读-改-写，单独调用不保证
+    并发安全。返回 (model_keys, group_keys)。"""
     old = _read_models_auth(account)
-    present_ids = {str(m.get("id")) for m in clean_models
-                   if isinstance(m, dict) and m.get("id")}
-    providers = {str(m.get("provider")) for m in clean_models
-                 if isinstance(m, dict) and m.get("provider")}
     model_keys = {mid: key for mid, key in old["modelKeys"].items()
-                  if mid in present_ids and mid not in clear_ids}
+                  if mid not in clear_ids}
     model_keys.update(incoming_model_keys)
     group_keys = {p: key for p, key in old["groupKeys"].items()
-                  if (p in providers or p in incoming_group_keys) and p not in clear_ids}
+                  if p not in clear_ids}
     for provider, key in incoming_group_keys.items():
         if key:
             group_keys[provider] = key
         else:
             group_keys.pop(provider, None)  # 显式空串＝清空该组密钥
     return model_keys, group_keys
+
+
+def _commit_models_config(account: str, clean_models: list, incoming_model_keys: dict,
+                          incoming_group_keys: dict, clear_ids: set, blob: dict) -> tuple:
+    """一把进程锁包住配置保存的整段 read-modify-write（2026-11-20）。
+
+    读 auth.json（_merge_auth_keys）→ 写 auth.json → 写 models.json 全在同一线程、
+    同一把 RLock 内同步完成。拆成两个 `await asyncio.to_thread(...)` 会在让出点
+    交错：两个标签页各读一次旧 auth 再各写一次，后写者丢掉先写者刚填的钥——
+    accounts._write_json 的单文件 os.replace 只保证「一次写」原子，护不住读-改-写。
+    事件循环侧只做消毒与组包，不持锁、不把 await 带进临界区。"""
+    with _MODELS_CONFIG_LOCK:
+        # 戳在锁内打：让 updatedAt 的先后与落盘先后一致（组包在事件循环里做，
+        # 两个并发请求的锁获取顺序可能与组包时间戳顺序相反）
+        blob["updatedAt"] = time.time()
+        merged_model_keys, merged_group_keys = _merge_auth_keys(
+            account, clean_models, incoming_model_keys, incoming_group_keys, clear_ids)
+        auth_raw = json.dumps(
+            {"modelKeys": merged_model_keys, "groupKeys": merged_group_keys},
+            ensure_ascii=False)
+        if len(auth_raw.encode("utf-8")) > 256 * 1024:
+            raise HTTPException(status_code=400, detail="密钥体量异常（>256KB），拒绝写入")
+        # 先密钥后配置：两写之间崩溃最坏留「新钥＋旧配置」，GET 回填与前端本地
+        # 镜像都会推下一次 POST 收敛，不存在密钥丢失窗口
+        _write_models_auth(account, merged_model_keys, merged_group_keys)
+        accounts._write_json(_models_config_path(account), blob)
+    return merged_model_keys, merged_group_keys
 
 
 def migrate_split_model_keys(account: str) -> bool:
@@ -1210,10 +1242,11 @@ async def api_models_config_get(request: Request):
 
 @router.post("/api/models/config")
 async def api_models_config_save(request: Request):
-    """整包写入当前账号的模型配置。前端「本地镜像即时写＋防抖整包上传」，配置
-    新盖旧；**密钥只合并不重写**（见 _merge_auth_keys，clearKeys 才是唯一删钥口）。
-    只读查阅态由 main 的 _readonly_browse_gate 拦（POST 不在白名单），这里不
-    重复设闸；已删账号由 _account_id 咽喉 404。"""
+    """整包写入当前账号的模型配置。前端「本地镜像即时写＋防抖整包上传」，非密钥
+    字段新盖旧；**密钥只合并不重写**（见 _merge_auth_keys，clearKeys 才是唯一删钥口），
+    整段读-改-写在进程内 RLock 里串行（见 _commit_models_config），旧标签页的整包
+    上传抹不掉先保存者刚填的钥。只读查阅态由 main 的 _readonly_browse_gate 拦
+    （POST 不在白名单），这里不重复设闸；已删账号由 _account_id 咽喉 404。"""
     payload = await _parse_json_object(request)
     account = _account_id(request, payload)
     user_models = payload.get("userModels")
@@ -1226,7 +1259,8 @@ async def api_models_config_save(request: Request):
     if not isinstance(group_keys, dict) or not isinstance(active_models, dict):
         raise HTTPException(status_code=400, detail="modelGroupKeys/activeModels 必须是对象")
     # 供应商停用表：旧客户端不传按空表整包覆盖——与 activeModels 同属「新盖旧」
-    # 整包语义（刻意接受的双标签页竞态）。值只收真布尔（前端只发 true），键长限幅防垃圾键
+    # 整包语义（非密钥字段仍是 last-write-wins；密钥不参与，由服务端合并且写侧加锁）。
+    # 值只收真布尔（前端只发 true），键长限幅防垃圾键
     if not isinstance(disabled_providers, dict):
         disabled_providers = {}
     disabled_providers = {str(k)[:128]: v for k, v in disabled_providers.items()
@@ -1261,17 +1295,12 @@ async def api_models_config_save(request: Request):
     raw = json.dumps(blob, ensure_ascii=False)
     if len(raw.encode("utf-8")) > _MODELS_CONFIG_MAX_BYTES:
         raise HTTPException(status_code=400, detail="模型配置体量异常（>512KB），拒绝写入")
-    merged_model_keys, merged_group_keys = _merge_auth_keys(
-        account, clean_models, model_keys, group_keys, clear_ids)
-    auth_raw = json.dumps({"modelKeys": merged_model_keys, "groupKeys": merged_group_keys},
-                          ensure_ascii=False)
-    if len(auth_raw.encode("utf-8")) > 256 * 1024:
-        raise HTTPException(status_code=400, detail="密钥体量异常（>256KB），拒绝写入")
     _account_paths(request, payload)  # ensure 目录（幂等；已删账号在此前已被 404 闸拦下）
-    # 先密钥后配置：两写之间崩溃最坏留「新钥＋旧配置」，GET 回填与前端本地镜像
-    # 都会推下一次 POST 收敛，不存在密钥丢失窗口
-    await asyncio.to_thread(_write_models_auth, account, merged_model_keys, merged_group_keys)
-    await asyncio.to_thread(accounts._write_json, _models_config_path(account), blob)
+    # 整段 read-modify-write 交给同一个线程、同一把锁同步完成。不能在事件循环里
+    # 先 merge 再两次 to_thread：那两个 await 的让出点正是并发丢钥窗口
+    merged_model_keys, merged_group_keys = await asyncio.to_thread(
+        _commit_models_config, account, clean_models, model_keys, group_keys,
+        clear_ids, blob)
     # 回传合并后的密钥（只补不删）：客户端手里本来就缺钥时（旧标签页/导入替换）
     # 当场补回本地镜像，免得下一次发送带着空钥出去 401
     return {"ok": True, "updatedAt": blob["updatedAt"],

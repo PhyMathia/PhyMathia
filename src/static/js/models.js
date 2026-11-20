@@ -500,17 +500,21 @@ function saveUserModels() {
 // 真相源＝服务端按账号落盘的 models.json（GET/POST /api/models/config，整包读写）；
 // localStorage 镜像只当缓存与离线兜底。此前配置只存浏览器——换端口/换主机名打开、
 // 清浏览器数据、无痕窗口、多账号切命名空间，任一事件都表现为「配置全丢」（用户实报）。
-// 冲突解决＝服务端 updatedAt 新盖旧（时间戳由服务端打，不信客户端时钟）。
-// 剩余已知竞态（刻意接受）：两个标签页同时编辑，后上传者整体覆盖——挂起未上传时
-// visibilitychange 拉取会跳过，正常「切走再切回」即对齐。
+// 冲突解决＝非密钥字段按服务端 updatedAt 新盖旧（时间戳由服务端打，不信客户端时钟）。
+// 密钥不吃这套：服务端按 id 合并，缺钥、条目从 payload 消失都只当旧快照、原钥保留，
+// 只有 clearKeys 点名才删；读写整段在服务端加锁串行，旧标签页的整包上传抹不掉
+// 新标签页刚填的钥。
+// 剩余已知竞态（刻意接受）：非密钥字段两标签页同时编辑，后上传者整包覆盖——
+// 挂起未上传时 visibilitychange 拉取会跳过，正常「切走再切回」即对齐。
 const MODELS_CONFIG_SYNC_PATH = '/api/models/config';
 const MODELS_SYNCED_AT_KEY = 'phymathia_models_synced_at';
 let _modelsSyncTimer = null;
 let _modelsSyncInflight = false;
 let _modelsDirtyAfterInflight = false;
 let _modelsSyncedAt = 0; // 服务端最后确认的 updatedAt（上传成功或采纳服务端时推进）
-// 显式清空清单（2026-10-24）：服务端整包上传的密钥是**合并**语义——缺钥＝不知道，
-// 保留原钥。所以「人主动把钥清空」必须单独点名，否则清不掉（且会被回包补回来）。
+// 显式清空清单（2026-10-24 立，2026-11-20 并发修复后口径不变）：服务端整包上传的
+// 密钥是**合并**语义——缺钥＝不知道，条目从 payload 消失也只当旧快照，原钥一律保留。
+// 所以「人主动把钥清空」必须单独点名，否则清不掉（且会被回包补回来）。
 // 这份清单随下一次整包上传发出，成功才销账（失败＝403 只读查阅/离线，留着下次）。
 let _pendingModelKeyClears = [];
 function _markModelKeyCleared(id) {
