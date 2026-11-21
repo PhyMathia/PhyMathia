@@ -262,6 +262,21 @@ export async function run() {
       return true;
     });
 
+    check('T510 派生追问落地洗净：内容完好但挂着历史失败徽标的 sqAuto 卡投影时复位 done；空内容不洗（徽标诚实）；busy 在途不动', () => {
+      const state = { positions: {}, sizes: {}, connections: [], harnessDeleted: {}, customNodes: [
+        { id: 'sqz-1', kind: 'module', moduleKey: 'socratic', sqAuto: true, content: '### 苏格拉底追问\n1. [基础] 甲', status: 'error', busy: false, timestamp: 530 },
+        { id: 'sqz-2', kind: 'module', moduleKey: 'socratic', sqAuto: true, content: '', status: 'error', busy: false, timestamp: 531 },
+        { id: 'sqz-3', kind: 'module', moduleKey: 'socratic', sqAuto: true, content: '### 苏格拉底追问\n1. [基础] 乙', status: 'running', busy: true, timestamp: 532 },
+      ] };
+      const out = sandbox._buildGraphData([{ role: 'user', content: '主问题', timestamp: 100 }], state);
+      const byId = {};
+      out.nodes.forEach(n => { byId[n.id] = n; });
+      if (byId['sqz-1'].status !== 'done') throw new Error('内容完好的派生追问失败徽标没洗净: ' + byId['sqz-1'].status);
+      if (byId['sqz-2'].status !== 'error') throw new Error('空内容派生追问不该洗（失败徽标要诚实）');
+      if (byId['sqz-3'].status !== 'running') throw new Error('busy 在途生成不该被改');
+      return true;
+    });
+
     check('T508 源码契约：链上守卫排在 socraticMeta 重生成之前＋shouldForce 白名单补反馈节点＋墓碑在 push 之前', () => {
       const runSrc = _read('graph-workflow-run.js');
       const chainBody = _body(runSrc, '_processWorkflowChainItem');

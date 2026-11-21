@@ -842,6 +842,10 @@ function _buildGraphData(messages, state) {
   // nodeById 已有同 id 时跳过（sq 块已在循环内实体化，避免双份）
   function materializeCustom(cn) {
     if (cn.kind === 'knowledge') _retireLegacyKnowledgeNode(cn);
+    // 派生追问（T510，2026-11-21）落地洗净：内容完好的 sqAuto 卡不该顶着历史失败/
+    // 中止徽标活着——它不是生成目标（链上守卫见 graph-workflow-run.js），永远没有
+    // 链上路过洗状态的机会，故在投影落地处直接复位 done。busy 的在途生成不动。
+    if (cn.sqAuto && cn.status !== 'done' && !cn.busy && (cn.content || '').trim()) cn.status = 'done';
     const saved = savedPositions[cn.id] || {};
     const size = savedSizes[cn.id] || {};
     const kind = GRAPH_CUSTOM_NODE_KINDS.includes(cn.kind) ? cn.kind : 'blank';
