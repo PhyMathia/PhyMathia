@@ -4248,11 +4248,29 @@
 .continent-legend-heat {
   border: 1px solid var(--accent);
   border-radius: var(--r-pill);
-  padding: 1px 8px;
+  padding: 1px 5px;
   font-size: var(--fs-2xs);
   color: var(--accent);
   cursor: pointer;
   background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+/* 灯键里的小灯泡：灭＝灰描边空泡，亮＝暖黄灌泡 + 外晕（与四颗灯的「看见灯」同一口径） */
+.continent-heat-bulb { width: 13px; height: 13px; }
+.continent-heat-bulb path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.continent-legend-heat.is-on { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 55%, transparent); }
+.continent-legend-heat.is-on .bulb-glass {
+  fill: color-mix(in srgb, var(--warn) 45%, transparent);
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--warn) 85%, transparent));
 }
 .continent-legend-heat:hover { background: color-mix(in srgb, var(--accent) 15%, transparent); }
 /* 辐条：城市 → 岛代表卡。两端被节点盖住，露出来的正是走廊那一段 */

@@ -137,11 +137,14 @@ function _continentRenderLegend(regionInfo, data) {
           '<span class="continent-lamp-key" title="掌握度 70–84%"><i class="continent-lamp is-medium" aria-hidden="true"></i>巩固</span>' +
           '<span class="continent-lamp-key" title="掌握度 &lt;70%"><i class="continent-lamp is-weak" aria-hidden="true"></i>薄弱</span>' +
           '<span class="continent-lamp-key" title="还没测过：灯座空着"><i class="continent-lamp is-none" aria-hidden="true"></i>未测</span>' +
-          // 钮面写状态不写动作（「灯开」＝现在亮着，点一下关）：这行已经被四颗灯锚定，
-          // 再加「掌握度灯：」纯属重复字
-          '<button class="continent-legend-heat" data-heat title="' +
-            (heatOn ? '关掉联运港的掌握度亮灯（只影响显示，不动数据）' : '打开联运港的掌握度亮灯') +
-            '">灯' + (heatOn ? '开' : '关') + '</button>' +
+          // 灯键：小灯泡图标，亮＝现在亮着（点一下关）。态靠灯泡亮灭表达，不再写「灯开/灯关」字
+          '<button class="continent-legend-heat' + (heatOn ? ' is-on' : '') +
+            '" data-heat title="掌握度亮灯开关" aria-label="掌握度亮灯开关">' +
+            '<svg class="continent-heat-bulb" viewBox="0 0 24 24" aria-hidden="true">' +
+              '<path class="bulb-glass" d="M12 2a6 6 0 0 0-3.5 10.9c.5.4.8 1 .9 1.6h5.2c.1-.6.4-1.2.9-1.6A6 6 0 0 0 12 2z"/>' +
+              '<path class="bulb-base" d="M9.8 17h4.4M10.5 19.5h3"/>' +
+            '</svg>' +
+          '</button>' +
           '<span class="continent-legend-lampsrc">掌握度灯 · 数据来自画布检测的答题记录</span>' +
         '</div>' +
       '</div>' +
