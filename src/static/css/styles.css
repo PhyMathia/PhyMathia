@@ -3317,16 +3317,9 @@
     }
 
     /* 装饰补齐（2026-11-20 提案落地，outputs/theme-directions.html「素纸·炭纸本」）：
-       朱印落款＋顶部双细线。印是整套唯一的暖色红点（提案「一个印」的装饰语法）；
-       双细线是稿本的栏线。印挂在 brand-title 落款位（封面署押），不挂面板角——
-       顶栏右上角是按钮簇，挂角必撞。 */
-    html[data-panel-skin="blueprint"] .brand-title::after {
-      content: "理"; display: inline-block; margin-left: 9px;
-      width: 17px; height: 17px; line-height: 17px; text-align: center;
-      background: #8c3a2b; color: #f2e3d0;
-      font-family: var(--font-serif); font-size: var(--fs-2xs); font-weight: 500;
-      border-radius: var(--r-xs); opacity: .88;
-    }
+       顶部双细线（稿本的栏线，1px＋box-shadow 做双线）。提案原本还有朱印落款
+       （brand-title 后 17px「理」字方印、朱红 #8c3a2b），2026-11-21 用户拍板去掉
+       ——印和版本徽标挤在同一行显乱。 */
     html[data-panel-skin="blueprint"] .aurora-glass--dialog::before,
     html[data-panel-skin="blueprint"] .aurora-glass--panel::before {
       content: ""; position: absolute; left: 16px; right: 16px; top: 9px; height: 1px;
