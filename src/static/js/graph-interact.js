@@ -2560,13 +2560,22 @@ function _endPointerDrag(event) {
       _pushGraphUndo(false, { layout: true });
       const movedIds = Object.keys(graphView.dragGroupNodeStartPositions || {});
       // 归属提交：整组按各自落点中心落进既有列框，框外/缝里＝自由；Alt＝全部自由。
+      let groupCommitted = null;
       if (typeof _commitGraphNodeOwnership === 'function') {
-        _commitGraphNodeOwnership(movedIds.map(_findGraphNode).filter(Boolean),
+        groupCommitted = _commitGraphNodeOwnership(movedIds.map(_findGraphNode).filter(Boolean),
           { mode: 'multi', forceFree: !!graphView.altFree });
       }
       // 成员回列心（自由节点原地不动），组框随后贴合成员再按包含关系减成员，
       // 否则整列重算挪动成员后旧框不再包含它们，会整批掉组。
       if (typeof _realignGraphColumns === 'function') _realignGraphColumns({ force: true });
+      // 整组落进列框后同样要纵向落座（2026-11-21 补，与多选同口径）。
+      const groupTouched = groupCommitted && typeof _settleAssignedNodesIntoColumns === 'function'
+        ? _settleAssignedNodesIntoColumns(groupCommitted) : [];
+      if (groupTouched.length) {
+        if (typeof _updateNodeTransforms === 'function') _updateNodeTransforms(groupTouched);
+        if (typeof _fitAllGroupsToMembers === 'function') _fitAllGroupsToMembers();
+        if (typeof _redrawEdges === 'function') _redrawEdges();
+      }
       _fitDraggedGroups(movedIds);
       _syncGroupMembersByContainment();
       const state = _graphState();
@@ -2648,13 +2657,23 @@ function _endPointerDrag(event) {
             // 落座与否都得把松手坐标刷进 DOM：列心吸附/行槽取整只发生在模型上，
             // settle 返回 false（落点行没邻居，最常见情形）时曾整段跳过刷新——
             // 卡片和连线停在拖放原点，存档却已是列心坐标，下次重渲卡片「自己跳位」。
-            const settled = _settleNodeIntoLayer(node, assigned.layer, targetMap);
-            _updateNodeTransforms([node.id]);
+            // 满列插入会让位下移同列邻居（settle 返回其 id 表），一并刷 transform。
+            const settledIds = _settleNodeIntoLayer(node, assigned.layer, targetMap);
+            _updateNodeTransforms(settledIds ? [node.id].concat(settledIds) : [node.id]);
             _redrawEdges();
-            if (settled && typeof _fitAllGroupsToMembers === 'function') _fitAllGroupsToMembers();
+            if (settledIds && typeof _fitAllGroupsToMembers === 'function') _fitAllGroupsToMembers();
           } else {
-            // 多选/整组：成员各自落回所在列心；自由节点留在落点。
+            // 多选/整组：成员各自落回所在列心；自由节点留在落点。随后逐颗纵向落座
+            // （2026-11-21 补）：x 吸列心后 y 还是松手原值，会与同列已有卡完全重叠
+            // （实测三卡叠成一摞、下面的整张看不见）。
             _realignGraphColumns({ force: true });
+            const touched = typeof _settleAssignedNodesIntoColumns === 'function'
+              ? _settleAssignedNodesIntoColumns(committed) : [];
+            if (touched.length) {
+              if (typeof _updateNodeTransforms === 'function') _updateNodeTransforms(touched);
+              if (typeof _fitAllGroupsToMembers === 'function') _fitAllGroupsToMembers();
+              if (typeof _redrawEdges === 'function') _redrawEdges();
+            }
           }
         } else if (committed.freed.length) {
           // 全部自由：其他列成员可能因列宽回收而回移，自由节点原地不动。

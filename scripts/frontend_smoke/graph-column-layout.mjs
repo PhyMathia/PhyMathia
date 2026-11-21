@@ -513,6 +513,173 @@ check('落座刷新: 单卡拖进列、落点行没邻居也要刷 transform/补
   }
 });
 
+check('落座插入: 满列下拖到 B 下方 → 插到 B 正下、下方卡让位，不再弹回旧位', () => {
+  const prev = capture();
+  try {
+    seed({
+      nodes: [
+        { id: 'a', x: 190, y: -548, w: 300, h: 500 },
+        { id: 'b', x: 190, y: 0, w: 300, h: 500 },
+        { id: 'c', x: 190, y: 548, w: 300, h: 500 },
+      ],
+      layerOf: { a: 1, b: 1, c: 1 },
+    });
+    // 与 _endPointerDrag 单卡分支同构：a 松手在 b 下方 100px（用户想要「a 到 b 下面」）。
+    // 修前实测：弹回 -560（自己腾出的旧位），c 不动——「能挪到 B 上面、挪不到 B 下面」。
+    const ret = JSON.parse(vm.runInContext(`
+      JSON.stringify((function(){
+        const node = graphView.nodeById['a'];
+        node.x = 190; node.y = 100;
+        const committed = _commitGraphNodeOwnership([node], { mode: 'single' });
+        const assigned = committed.assigned[0];
+        const targetMap = _graphLayerIndexMap(graphView.nodes.filter(n => n.kind !== 'draft'), graphView.edges || [], _graphLayerOverrides());
+        const col = _graphColumns({ layerMap: targetMap }).find(c => c.layer === assigned.layer);
+        if (col) node.x = col.cx;
+        node.y = Math.round(node.y / GRAPH_LAYER_ROW_STEP) * GRAPH_LAYER_ROW_STEP;
+        _realignGraphColumns({ layerMap: targetMap, force: true });
+        const movedIds = _settleNodeIntoLayer(node, assigned.layer, targetMap);
+        return { movedIds: movedIds, ys: graphView.nodes.reduce(function(ac,n){ ac[n.id]=n.y; return ac; }, {}) };
+      })())
+    `, sandbox));
+    if (JSON.stringify(ret.movedIds) !== '["c"]') throw new Error('应只有 c 让位：' + JSON.stringify(ret.movedIds));
+    if (ret.ys.b !== 0 || ret.ys.a !== 548 || ret.ys.c !== 1096) throw new Error('应插到 b 正下方、c 下移一条缝：' + JSON.stringify(ret.ys));
+    if (ret.ys.a - ret.ys.b !== 548 || ret.ys.c - ret.ys.a !== 548) throw new Error('让位后缝应保持 48：' + JSON.stringify(ret.ys));
+    return true;
+  } finally { restore(prev); }
+});
+
+check('落座插入: 满列上拖到 B 上方 → 镜像成立（b 让位下移）', () => {
+  const prev = capture();
+  try {
+    seed({
+      nodes: [
+        { id: 'a', x: 190, y: -548, w: 300, h: 500 },
+        { id: 'b', x: 190, y: 0, w: 300, h: 500 },
+        { id: 'c', x: 190, y: 548, w: 300, h: 500 },
+      ],
+      layerOf: { a: 1, b: 1, c: 1 },
+    });
+    const ret = JSON.parse(vm.runInContext(`
+      JSON.stringify((function(){
+        const node = graphView.nodeById['c'];
+        node.x = 190; node.y = -100;
+        const committed = _commitGraphNodeOwnership([node], { mode: 'single' });
+        const assigned = committed.assigned[0];
+        const targetMap = _graphLayerIndexMap(graphView.nodes.filter(n => n.kind !== 'draft'), graphView.edges || [], _graphLayerOverrides());
+        const col = _graphColumns({ layerMap: targetMap }).find(c => c.layer === assigned.layer);
+        if (col) node.x = col.cx;
+        node.y = Math.round(node.y / GRAPH_LAYER_ROW_STEP) * GRAPH_LAYER_ROW_STEP;
+        _realignGraphColumns({ layerMap: targetMap, force: true });
+        const movedIds = _settleNodeIntoLayer(node, assigned.layer, targetMap);
+        return { movedIds: movedIds, ys: graphView.nodes.reduce(function(ac,n){ ac[n.id]=n.y; return ac; }, {}) };
+      })())
+    `, sandbox));
+    if (JSON.stringify(ret.movedIds) !== '["b"]') throw new Error('应只有 b 让位：' + JSON.stringify(ret.movedIds));
+    if (!(ret.ys.a < ret.ys.c && ret.ys.c < ret.ys.b)) throw new Error('列内顺序应为 a、c、b：' + JSON.stringify(ret.ys));
+    return true;
+  } finally { restore(prev); }
+});
+
+check('落座插入: 空缝松手不落座；占到行但缝够 → 夹到窗沿、邻居一个不动', () => {
+  const prev = capture();
+  try {
+    seed({
+      nodes: [
+        { id: 'b', x: 190, y: 0, w: 300, h: 500 },
+        { id: 'c', x: 190, y: 1200, w: 300, h: 500 },
+      ],
+      layerOf: { b: 1, c: 1 },
+    });
+    const ret = JSON.parse(vm.runInContext(`
+      JSON.stringify((function(){
+        __gcState.layerOf.a = 1;
+        const node = { id: 'a', x: 190, y: 600, w: 300, h: 500 };
+        graphView.nodes.push(node);
+        graphView.nodeById['a'] = node;
+        const targetMap = _graphLayerIndexMap(graphView.nodes.filter(n => n.kind !== 'draft'), graphView.edges || [], _graphLayerOverrides());
+        // ① 落点在宽缝中央（距两张卡都超过 547.5 判距）＝没占到行：不落座、坐标原样
+        const r1 = _settleNodeIntoLayer(node, 1, targetMap);
+        const y1 = node.y;
+        // ② 落点压到 b 身上（|600-100|=500 < 547.5）：缝够 → 夹进窗沿 [548, 652.5]
+        node.y = 100;
+        const r2 = _settleNodeIntoLayer(node, 1, targetMap);
+        return { r1: r1, y1: y1, r2: r2, y2: node.y,
+          ys: graphView.nodes.reduce(function(ac,n){ ac[n.id]=n.y; return ac; }, {}) };
+      })())
+    `, sandbox));
+    if (ret.r1 !== false || ret.y1 !== 600) throw new Error('空缝松手不该落座：' + JSON.stringify(ret));
+    if (JSON.stringify(ret.r2) !== '[]') throw new Error('缝够时不应让位：' + JSON.stringify(ret.r2));
+    if (ret.y2 !== 548) throw new Error('占到行应夹到窗沿 548：' + ret.y2);
+    if (ret.ys.b !== 0 || ret.ys.c !== 1200) throw new Error('邻居不该动：' + JSON.stringify(ret.ys));
+    return true;
+  } finally { restore(prev); }
+});
+
+check('落座插入: 让位的钉住卡同步 fixedY（存档读 fixedY 不读 y）', () => {
+  const prev = capture();
+  try {
+    const nodes = seed({
+      nodes: [
+        { id: 'a', x: 190, y: -548, w: 300, h: 500 },
+        { id: 'b', x: 190, y: 0, w: 300, h: 500 },
+        { id: 'c', x: 190, y: 548, w: 300, h: 500 },
+      ],
+      layerOf: { a: 1, b: 1, c: 1 },
+    });
+    nodes[2].pinned = true;
+    nodes[2].fixedX = 190;
+    nodes[2].fixedY = 548;
+    const ys = JSON.parse(vm.runInContext(`
+      JSON.stringify((function(){
+        const node = graphView.nodeById['a'];
+        node.x = 190; node.y = 100;
+        const committed = _commitGraphNodeOwnership([node], { mode: 'single' });
+        const targetMap = _graphLayerIndexMap(graphView.nodes.filter(n => n.kind !== 'draft'), graphView.edges || [], _graphLayerOverrides());
+        const col = _graphColumns({ layerMap: targetMap }).find(c => c.layer === committed.assigned[0].layer);
+        if (col) node.x = col.cx;
+        node.y = Math.round(node.y / GRAPH_LAYER_ROW_STEP) * GRAPH_LAYER_ROW_STEP;
+        _realignGraphColumns({ layerMap: targetMap, force: true });
+        _settleNodeIntoLayer(node, committed.assigned[0].layer, targetMap);
+        return { y: graphView.nodeById['c'].y, fixedY: graphView.nodeById['c'].fixedY };
+      })())
+    `, sandbox));
+    if (ys.y !== 1096 || ys.fixedY !== 1096) throw new Error('钉住卡让位后 fixedY 必须同步：' + JSON.stringify(ys));
+    return true;
+  } finally { restore(prev); }
+});
+
+check('多选落座: 自由卡拖进有卡列逐颗落座，不再三卡叠一摞', () => {
+  const prev = capture();
+  try {
+    seed({
+      nodes: [
+        { id: 'b', x: 190, y: 0, w: 300, h: 500 },
+        { id: 'e1', x: 150, y: 100, w: 300, h: 500 },
+        { id: 'e2', x: 160, y: 200, w: 300, h: 500 },
+      ],
+      layerOf: { b: 1 },
+      freeNodes: { e1: 1, e2: 1 },
+    });
+    const ret = JSON.parse(vm.runInContext(`
+      JSON.stringify((function(){
+        const list = ['e1','e2'].map(function(id){ return graphView.nodeById[id]; });
+        const committed = _commitGraphNodeOwnership(list, { mode: 'multi', forceFree: false });
+        _realignGraphColumns({ force: true });
+        const touched = _settleAssignedNodesIntoColumns(committed);
+        const ns = graphView.nodes;
+        const minDy = Math.min.apply(null, ns.map(function(n, i){
+          return ns.filter(function(m){ return m !== n; }).map(function(m){ return Math.abs(m.y - n.y); });
+        }).reduce(function(a,b){ return a.concat(b); }, []));
+        return { touched: touched, ys: ns.reduce(function(ac,n){ ac[n.id]=n.y; return ac; }, {}), minDy: minDy };
+      })())
+    `, sandbox));
+    if (ret.minDy < (500 + 500) / 2 + 47.5) throw new Error('多选落进列后仍有重叠：' + JSON.stringify(ret));
+    if (ret.ys.b !== 0 || ret.ys.e1 !== 548 || ret.ys.e2 !== 1096) throw new Error('应按松手 y 逐颗让位排开：' + JSON.stringify(ret.ys));
+    if (!ret.touched || ret.touched.indexOf('e1') < 0 || ret.touched.indexOf('e2') < 0) throw new Error('落座卡 id 应返回供刷 transform：' + JSON.stringify(ret.touched));
+    return true;
+  } finally { restore(prev); }
+});
+
 check('持久化: _normalizeGraphState 保留 layerOf/freeNodes；存盘清理已删节点残留', () => {
   const prev = capture();
   try {
@@ -593,6 +760,13 @@ check('接线: 拖动/改尺寸/测量全接列重算；归属提交与持久化
     throw new Error('示例图素材/总结节点没标自由');
   }
   if (!css.includes('.graph-col-insert') || !css.includes('.graph-col-ghost')) throw new Error('插列竖线/幽灵列样式缺失');
+  // 落座插序（2026-11-21）：满列插入让位 + 多选/整组接线
+  if (!layout.includes('function _settleNodeIntoLayer(node, depth, layerOf)')) throw new Error('纵向落座函数缺失');
+  if (layout.includes('整列都排满') || layout.includes('const startY')) throw new Error('旧「弹回最近空槽/垫底」落座仍残留');
+  if (!layout.includes('function _settleAssignedNodesIntoColumns(committed)')) throw new Error('多选/整组落座口缺失');
+  if (!interact.includes('_settleAssignedNodesIntoColumns(committed)')) throw new Error('多选落点未接纵向落座');
+  if (!interact.includes('_settleAssignedNodesIntoColumns(groupCommitted)')) throw new Error('整组落点未接纵向落座');
+  if (!interact.includes('_updateNodeTransforms(settledIds ? [node.id].concat(settledIds) : [node.id])')) throw new Error('让位邻居的 transform 未随落座补刷');
   return true;
 });
 

@@ -536,10 +536,16 @@ function _scheduleGraphLayerBands() {
 // _realignGraphColumns 负责整排落位（见上）。这里只留纵向落座常量。
 const GRAPH_LAYER_SETTLE_GAP = 48;   // 落进列里时与同列邻居保持的纵向缝（与整理 _resolveColumnVerticalSpacing 同档）
 
-// 落点归层后的纵向落座：吸附只对齐列中线与 40px 行槽，落点那一行可能已经站着同列邻居
-// （实测两张卡会完全重叠、下面那张整张看不见）。这里只挪被拖的这颗：按到落点的距离
-// 依次试每个邻居的上/下沿槽位，取最近的不重叠位；邻居本身一律不动（与「只往右推」同口径：
-// 不因为一颗新来的卡去重排别人）。
+// 落点归层后的纵向落座（2026-11-21 重写为「按落点插序」）：落点行被同列邻居占住
+// ＝用户把卡瞄进了已有卡片的区域，落点 y 就是它想要的次序位置——按「落点上方有几颗
+// 同列邻居」推断插入序位，在该序位开槽：缝里放得下就夹进窗内落座（邻居不动）；缝不够
+// （整理后的满列 48 缝放不下第三张卡）就把插入序位以下的同列卡整体下移，刚好让出
+// 一条缝，钉住的让位卡同步 fixedY。旧行为「只挪自己、弹回最近空槽」在满列里永远插不进
+// 两卡之间：拖到 B 下面只会弹回 B 上面（自己腾出的旧位），看起来就是「能挪到某卡上面、
+// 挪不到它下面」（2026-11-21 用户报告，冒烟沙箱实测复现：落点距 B 心 100px 时终位
+// -560＝弹回旧位；落 B/C 缝中央则跳过 C 落到 1120＝窜过整列）。
+// 落座成功返回被让位邻居的 id 表（可能为空数组）；落点行没邻居返回 false。
+// 槽位不再取整 40px 网格：由邻卡实际尺寸推出，与整理的统一 48 缝同一美学。
 function _settleNodeIntoLayer(node, depth, layerOf) {
   if (!node || depth == null) return false;
   const size = _layoutNodeSize(node);
@@ -553,38 +559,51 @@ function _settleNodeIntoLayer(node, depth, layerOf) {
       && Math.abs(n.x - node.x) < (s.w + size.w) / 2 + GRAPH_LAYER_SETTLE_GAP - 0.5;
   });
   if (!overlaps(node.y)) return false;
-  const startY = node.y;
-  const cands = [];
-  siblings.forEach(n => {
+  const clearance = n => {
     const s = _layoutNodeSize(n);
-    const dy = (s.h + size.h) / 2 + GRAPH_LAYER_SETTLE_GAP;
-    cands.push(n.y + dy, n.y - dy);
-  });
-  cands.sort((a, b) => Math.abs(a - startY) - Math.abs(b - startY));
-  const slots = [];
-  cands.forEach(y => {
-    const base = Math.round(y / GRAPH_LAYER_ROW_STEP) * GRAPH_LAYER_ROW_STEP;
-    // 行槽取整可能把候选压回邻居身上：上下各补一档
-    [base, base + GRAPH_LAYER_ROW_STEP, base - GRAPH_LAYER_ROW_STEP].forEach(v => slots.push(v));
-  });
-  for (const y of slots) {
-    if (!overlaps(y)) { node.y = y; return true; }
+    return (s.h + size.h) / 2 + GRAPH_LAYER_SETTLE_GAP;
+  };
+  const above = siblings.filter(n => n.y < node.y).sort((a, b) => b.y - a.y);
+  const below = siblings.filter(n => n.y >= node.y).sort((a, b) => a.y - b.y);
+  const prev = above[0] || null; // 插入序位上方最近的邻居（null＝插到最顶）
+  const next = below[0] || null; // 插入序位下方最近的邻居
+  const lo = prev ? prev.y + clearance(prev) : -Infinity;
+  const hi = next ? next.y - clearance(next) : Infinity;
+  const moved = [];
+  if (lo <= hi) {
+    // 缝里放得下：落点夹进合法窗内，一个邻居都不动
+    node.y = Math.min(Math.max(node.y, lo), hi);
+  } else {
+    // 满列插入：插入序位以下的卡刚性下移 deficit（它们彼此的缝原样保留）
+    const deficit = lo - hi;
+    node.y = lo;
+    below.forEach(n => {
+      n.y += deficit;
+      if (n.pinned && n.fixedY != null) n.fixedY += deficit;
+      moved.push(n.id);
+    });
   }
-  // 整列都排满（极密）：落到最低一颗下面，至少不再完全重叠
-  let bottom = -Infinity;
-  let lowest = null;
-  siblings.forEach(n => {
-    const s = _layoutNodeSize(n);
-    const b = n.y + s.h / 2;
-    if (b > bottom) { bottom = b; lowest = n; }
-  });
-  if (lowest) {
-    const s = _layoutNodeSize(lowest);
-    const y = lowest.y + (s.h + size.h) / 2 + GRAPH_LAYER_SETTLE_GAP;
-    node.y = Math.round(y / GRAPH_LAYER_ROW_STEP) * GRAPH_LAYER_ROW_STEP;
-    return true;
-  }
-  return false;
+  return moved;
+}
+
+// 多选/整组落座口（2026-11-21 补）：x 吸列心后 y 仍是松手原值，会与同列已有卡完全
+// 重叠（实测三卡叠成一摞、下面的整张看不见）。按松手 y 从上到下逐颗落座，返回所有
+// 被动过的节点 id（含被让位下移的邻居），供调用方刷 transform/组框/连线。
+function _settleAssignedNodesIntoColumns(committed) {
+  if (!committed || !Array.isArray(committed.assigned) || !committed.assigned.length) return [];
+  const targetMap = _graphLayerIndexMap(
+    graphView.nodes.filter(n => n.kind !== 'draft'), graphView.edges || [], _graphLayerOverrides());
+  const touched = new Set();
+  committed.assigned
+    .map(item => ({ layer: item.layer, node: _findGraphNode(item.id) }))
+    .filter(entry => entry.node)
+    .sort((a, b) => a.node.y - b.node.y)
+    .forEach(entry => {
+      const moved = _settleNodeIntoLayer(entry.node, entry.layer, targetMap);
+      touched.add(entry.node.id);
+      if (Array.isArray(moved)) moved.forEach(id => touched.add(id));
+    });
+  return Array.from(touched);
 }
 
 // 旧名保留为兼容别名：语义已换成「整列重算」——最宽节点变宽右侧右移，
