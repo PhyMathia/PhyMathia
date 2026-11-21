@@ -3446,7 +3446,8 @@
     /* ---------- 家族：neon 霓虹夜光 ----------
      * 2026-11-20 提案落地（outputs/theme-directions.html「霓虹·夜城」，用户拍板「都做」）：
      *   材质＝近实底屏（backdrop-filter: none——提案原话「关掉模糊，硬边才像发光，模糊会把
-     *   光糊成一团」）＋青色硬描边（描边青、accent 紫，双色正是霓虹）；装饰＝大载体 16px
+     *   光糊成一团」）；2026-11-21 用户拍板：青色硬描边去掉（含浅色墨绿环），内线回到
+     *   家族原有淡紫 .20 高光，面板边缘由近实底明度差＋切角承担；装饰＝大载体 16px
      *   切角＋扫描线；几何＝全 0 圆角（--r-pill 有意不动——圆形徽章/步骤数字方了会破）；
      *   音色＝chrome 标题等宽字＋疏字距（正文不碰）。光斑漂移保留（霓虹的「活」就是光在走）；
      *   外投影只活在 compact 小件上——大载体被 clip-path 裁掉外影，正好是「屏贴在墙上」
@@ -3473,12 +3474,11 @@
       --aurora-3: rgba(109, 70, 220, 0.10);
       --glass-tint: rgba(4, 7, 15, 0.90);
       --glass-veil: linear-gradient(180deg, rgba(185, 126, 240, 0.05), rgba(1, 3, 8, 0.16) 84%);
-      --glass-inner-line: rgba(103, 232, 249, 0.38);
+      --glass-inner-line: rgba(185, 126, 240, 0.20);
       --glass-shadow: rgba(2, 4, 10, 0.50);
       box-shadow:
         0 18px 44px var(--glass-shadow),
-        inset 0 1px 0 var(--glass-inner-line),
-        inset 0 0 0 1px rgba(34, 211, 238, 0.62);
+        inset 0 1px 0 var(--glass-inner-line);
       -webkit-backdrop-filter: none;
       backdrop-filter: none;
     }
@@ -3492,8 +3492,7 @@
       --glass-shadow: rgba(70, 96, 104, 0.18);
       box-shadow:
         0 16px 36px var(--glass-shadow),
-        inset 0 1px 0 var(--glass-inner-line),
-        inset 0 0 0 1px rgba(8, 145, 178, 0.45);
+        inset 0 1px 0 var(--glass-inner-line);
       -webkit-backdrop-filter: none;
       backdrop-filter: none;
     }
