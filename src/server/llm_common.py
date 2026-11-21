@@ -195,9 +195,17 @@ def thinking_request_params(provider: str, level: str, model: str = "") -> dict:
     on 对 effort 族无意义（不存在「比默认更开」），不发参数。上游不认识注入
     字段而拒绝整个请求时，由调用方剥掉参数降级重试一次（主应用与 harness 各
     有一级）。Φ 的 T97 相位默认档已于 2026-11-13 退役，六个功能统一跟随槽位档位。
+
+    「floor」地板档（T510，2026-11-21）：strict module 这类小任务不吃思考预算——
+    不剥参数（书生 Sage 剥参后默认思考照跑，8000 tok 上限推理烧满正文仍空），改压到
+    各家可用的最低思考：effort 族压 low（none/minimal 有端点整请求 400，书生实测；
+    low 实测 170 tok 正文完整）、布尔开关族直接关。旧代智谱收 low 会开思考（布尔族
+    里特例），属已知边角、轻任务场景罕见。
     """
     p = (provider or "").strip().lower()
     level = (level or "").strip().lower()
+    if level == "floor":
+        level = "off" if p in ("qwen", "mimo", "ollama") else "low"
     boolean_on = level in ("low", "high", "max", "on")
     boolean_off = level == "off"
     if p == "qwen":

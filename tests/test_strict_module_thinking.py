@@ -1,9 +1,10 @@
-"""strict module（socratic/learn）生成请求不吃思考预算（T510，2026-11-21）。
+"""strict module（socratic/learn）生成请求压地板档思考（T510，2026-11-21 二改）。
 
 齿轮啮合会话实测：分支槽空回落主模型（书生 Sage）＋主槽思考 max，strict module 的
 STRICT_MODULE_MAX_TOKENS=1000 上限被思考预算整段吃光——每发恰 1000 tok、正文空、
-画布卡全败；同 run 非 strict 的 physics 6111 tok 成功。修法：strict module 不注入
-思考参数（与 _pick_skill_refs 的「80 上限不注入思考」同一课：轻任务不吃思考预算）。
+画布卡全败；同 run 非 strict 的 physics 6111 tok 成功。一改（剥参）实测否决：书生
+默认思考关不掉，剥参后 8000 tok 上限推理仍烧满正文仍空。二改：压「floor」地板档——
+effort 族 low（书生实测 170 tok 正文完整；none/minimal 该端点 400）、布尔开关族 off。
 """
 
 import json
@@ -27,7 +28,7 @@ from route_test_base import RouteTestBase  # noqa: E402
 
 
 class StrictModuleThinkingTest(RouteTestBase):
-    """strict module 剥思考参数、保留上限；非 strict 行为一字不变。"""
+    """strict module 思考压地板档、保留上限；非 strict 行为一字不变。"""
 
     def _post(self, module_key, thinking):
         seen = {}
@@ -52,9 +53,9 @@ class StrictModuleThinkingTest(RouteTestBase):
         self.assertEqual(resp.status_code, 200)
         return seen["body"]
 
-    def test_strict_module_strips_thinking_and_keeps_cap(self):
+    def test_strict_module_clamps_thinking_to_floor_and_keeps_cap(self):
         body = self._post("socratic", "max")
-        self.assertNotIn("reasoning_effort", body)
+        self.assertEqual(body.get("reasoning_effort"), "low")
         self.assertEqual(body.get("max_tokens"), STRICT_MODULE_MAX_TOKENS)
 
     def test_non_strict_module_keeps_thinking_and_no_cap(self):

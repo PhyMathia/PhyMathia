@@ -63,7 +63,12 @@ LEVEL_PROMPTS = {
     "research": "（用户是科研人员，请用学术深度讲解，可以使用高级数学工具和前沿研究视角，推导可以简略关键步骤，关注物理本质和数学结构的深层联系）",
 }
 
-STRICT_MODULE_MAX_TOKENS = 1000
+# socratic/learn 模块生成的输出上限（models_routes 的 is_strict_module 闸）。
+# T510（2026-11-21）：strict module 请求压「floor」地板档思考（见
+# llm_common.thinking_request_params）后 1000 仍会截断列表——真机实测 low 档推理
+# ~850 tok＋正文，157 字处被切；2000 覆盖推理＋完整追问列表。剥参（1000 也不够
+# 且正文恒空）与裸抬上限（8000 仍正文空）两案均实测否决。
+STRICT_MODULE_MAX_TOKENS = 2000
 
 # 地址唯一事实源在 llm_common.PROVIDER_BASE_URLS；这里保持
 # {"provider": {"base_url": url}} 的下游访问形状（harness 侧共享同一张表）
