@@ -8,6 +8,7 @@
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -22,7 +23,7 @@ for p in (ROOT, SRC):
 os.environ.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
 os.environ.setdefault("PHYMATHIA_EMBEDDING", "0")
 
-from server import accounts, storage, trash  # noqa: E402
+from server import accounts, session_routes, storage, trash  # noqa: E402
 from server import config as config_mod  # noqa: E402
 
 
@@ -749,6 +750,73 @@ def test_clear_all_registers_all_sessions(acc_env):
         assert r.json()["count"] == 0
         assert sorted(r.json()["rejected"]) == ["sess_aaa", "sess_bbb"]
         assert storage._read_json(_paths("alice").sessions_path, {}) == {}
+
+
+def test_clear_all_vs_concurrent_create(acc_env, monkeypatch):
+    """T524 清空×新建竞态：清空抹名单前一刻挤进来的新建不得无声蒸发——凡被
+    {} 抹掉的 id 必在墓碑登记表（修前「锁外读名单快照→登记→{} 抹盘」留窗，
+    窗内新建被抹且查无登记，兄弟标签页同步回写还能复活；修后登记与抹盘收进
+    同一 _mutate_json 临界区，竞窗消失）。
+
+    注入挂在「名单写盘那一刻」之前，两个钩子按实现命中其一、注入恰一次：
+    修后实现名单抹盘走 _mutate_json（融合临界区），racing_mutate 命中——
+    新建在持锁读到的 data 里，随名单一并如实登记后被清；racing_write 只认
+    盲写 {} 抹名单（修前实现的竞窗尾），修后该调用不复存在，留着钉死
+    「不许退回盲写 {}」。末尾闸门验证的 POST 已解除武装，不再注入。"""
+    _seed_session(account="alice")
+    _make("alice")
+    paths = _paths("alice")
+    pending_inject = [True]
+
+    def _race_create():
+        # 并发新建的确定性重演：与 POST /api/sessions 同一落盘原语（同锁同路径），
+        # 在清空的名单写盘前先把 sess_race 落盘（独立线程走真锁，不做同线程
+        # 再入——再入读到的是抹盘前的旧文件，不是生产里会发生的交错）
+        def _add(data):
+            data["sess_race"] = {"id": "sess_race", "title": "竞窗新建", "sessionId": "",
+                                 "createdAt": 1_700_000_000_001, "updatedAt": 1_700_000_000_001}
+            return data
+        t = threading.Thread(target=lambda: storage._mutate_json(paths.sessions_path, _add))
+        t.start()
+        t.join()
+
+    real_mutate = session_routes._mutate_json
+
+    def racing_mutate(path, updater, default=None):
+        if pending_inject[0] and path == paths.sessions_path:
+            pending_inject[0] = False
+            _race_create()
+        return real_mutate(path, updater, default=default)
+
+    real_write = session_routes._write_json
+
+    def racing_write(path, data):
+        if pending_inject[0] and path == paths.sessions_path and data == {}:
+            pending_inject[0] = False
+            _race_create()
+        return real_write(path, data)
+
+    monkeypatch.setattr(session_routes, "_mutate_json", racing_mutate)
+    monkeypatch.setattr(session_routes, "_write_json", racing_write)
+
+    with _client() as client:
+        assert client.delete("/api/sessions", params={"account_id": "alice"}).status_code == 200
+        # 被抹掉的 id 全部如实登记——竞窗新建也不例外（修前它被 {} 抹掉且不在
+        # 登记表，是本例要逮的形状）
+        deleted = client.get("/api/sessions/deleted-ids", params={"account_id": "alice"}).json()["deleted"]
+        assert set(deleted) >= {"sess_aaa", "sess_bbb", "sess_race"}
+        assert storage._read_json(paths.sessions_path, {}) == {}
+        # 墓碑闸门：竞窗新建的删前旧副本（updatedAt ≤ 登记时刻）回传被拒
+        r = client.post("/api/sessions",
+                        json={"id": "sess_race", "title": "复活失败", "updatedAt": deleted["sess_race"] - 1},
+                        params={"account_id": "alice"})
+        assert r.json()["rejected"] == ["sess_race"]
+        assert storage._read_json(paths.sessions_path, {}) == {}
+        # 闸门只挡旧副本：净新建（无 updatedAt）照常放行，清空不堵新会话通道
+        r = client.post("/api/sessions", json={"id": "sess_fresh", "title": "新建"},
+                        params={"account_id": "alice"})
+        assert r.json()["count"] == 1
+        assert set(storage._read_json(paths.sessions_path, {})) == {"sess_fresh"}
 
 
 def test_tombstone_registered_even_when_trash_disabled(acc_env):

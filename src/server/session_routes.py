@@ -376,17 +376,31 @@ async def api_clear_all_sessions(request: Request = None):
     except Exception as e:
         logger.warning(f"clear all: trash capture failed, abort: {e}")
         raise HTTPException(status_code=500, detail="回收站快照失败，已中止清空，请稍后重试")
-    # T271：清空前把现存 id 全部登记成墓碑（失败同样中止）——否则兄弟标签页
-    # 的卸载信标/同步竞态回传会把它们逐条写回，清空等于白清
+    context._clear_all_rolling_memory(account)  # 先失效在途摘要任务（代次 bump），必须先于一切 await
+
+    # T524：墓碑登记与清空写 {} 收进同一 _mutate_json 临界区（updater 内持锁
+    # 先取名单再登记、再置空）——修前「锁外读名单快照→登记→{} 抹盘」之间，
+    # 并发 POST 新建的会话会被 {} 抹掉且不在登记表（兄弟标签页同步回写还能
+    # 复活）。收进临界区后，新建要么赶在本次持锁前落盘（在 data 里→随名单
+    # 一并登记后被清）、要么排队到 {} 写盘之后（落在空表上→存活），
+    # 「被抹掉的 id 必已登记」不再有例外。与 POST/PUT/单删各路由「墓碑闸门/
+    # 登记进 updater」同一口径，也是 trash.tombstone_register docstring 写明
+    # 的调用契约。登记失败（异常穿出 updater，名单原样未写）照样中止：500，
+    # 消息/知识等一个都不动。
+    def _register_and_wipe_sessions():
+        def updater(data):
+            trash.tombstone_register(paths, list(data.keys()))
+            return {}
+
+        _mutate_json(paths.sessions_path, updater, default={})
+
     try:
-        trash.tombstone_register(paths, list(_read_json(paths.sessions_path, {}).keys()))
+        await asyncio.to_thread(_register_and_wipe_sessions)  # T201：名单重写离线程
     except Exception as e:
         logger.warning(f"clear all: tombstone register failed, abort: {e}")
         raise HTTPException(status_code=500, detail="删除登记失败，已中止清空，请稍后重试")
-    context._clear_all_rolling_memory(account)  # 先失效在途摘要任务（代次 bump），必须先于一切 await
 
     def _clear_all_io():
-        _write_json(paths.sessions_path, {})
         for f in paths.messages_dir.glob("*.json"):
             f.unlink()
         _write_json(paths.knowledge_path, {})
