@@ -267,7 +267,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/dist/app.js?v=ff4f25bb" defer></script>
+  <script src="/dist/app.js?v=08d00015" defer></script>
   <script>
     // app.js 改 defer 后本脚本先于它执行，而 APP_VERSION 是 config.js 的顶层
     // const——内联脚本无法加 defer，只能等 DOMContentLoaded：所有 defer 脚本
@@ -877,7 +877,7 @@
       <span class="viz-check-badge" id="vizFullscreenCheckBadge" style="display:none"></span>
       <button class="viz-fullscreen-close" aria-label="退出全屏" onclick="closeVizFullscreen()">✕ 退出全屏</button>
     </div>
-    <iframe class="viz-fullscreen-iframe" id="vizFullscreenIframe"></iframe>
+    <iframe class="viz-fullscreen-iframe" id="vizFullscreenIframe" sandbox="allow-scripts"></iframe>
   </div>
 
   <div class="onboarding-overlay" id="onboardingOverlay">

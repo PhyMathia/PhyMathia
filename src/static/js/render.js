@@ -580,7 +580,7 @@ function _ensureVizFullscreenOverlay() {
     + '<span class="viz-check-badge" id="vizFullscreenCheckBadge" style="display:none"></span>'
     + '<button class="viz-fullscreen-close" aria-label="退出全屏" onclick="closeVizFullscreen()">✕ 退出全屏</button>'
     + '</div>'
-    + '<iframe class="viz-fullscreen-iframe" id="vizFullscreenIframe"></iframe>';
+    + '<iframe class="viz-fullscreen-iframe" id="vizFullscreenIframe" sandbox="allow-scripts"></iframe>';
   document.body.appendChild(overlay);
   return overlay;
 }
