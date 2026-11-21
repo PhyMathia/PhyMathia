@@ -2414,11 +2414,23 @@ var _GRAPH_ACT_STOPPROP = {
 function _graphActBusHandler(e) {
   const t = e.target;
   if (!t || typeof t.closest !== 'function') return;
-  const el = t.closest('[data-act]');
-  if (!el) return;
   const table = _GRAPH_ACT_TABLE[e.type];
-  const fn = table ? table[el.dataset.act] : null;
-  if (!fn) return; // 该事件类型没登记这个动作（如 source-drop 只认 drop）→ 放行给既有委托
+  if (!table) return;
+  // 沿 data-act 祖先链向上找第一个在当前事件类型登记了的动作。
+  // 素材节点 source-drop 容器内部嵌着一批带 data-act 的子控件（source-paste 文本框、
+  // source-add 按钮、source-file 选择框、素材行 source-item-* 按钮等）。516 委托改造前
+  // ondrop 直接绑在容器 div 上、与落点是谁无关；改成容器委托后若只认最近的 data-act，
+  // 拖图片到「粘贴截图」输入框上就命中 source-paste（drop 表没登记）被 return 吞掉，
+  // 素材静默不入篮——aka「有时拖进去没反应」。向上遍历让落到任意子控件上都能命中外层
+  // source-drop；整条链都没登记才放行给既有委托（如点 checkbox 的 click 不误触发 drop）。
+  let el = t.closest('[data-act]');
+  let fn = el ? table[el.dataset.act] : null;
+  while (el && !fn) {
+    const parent = el.parentElement;
+    el = parent && typeof parent.closest === 'function' ? parent.closest('[data-act]') : null;
+    fn = el ? table[el.dataset.act] : null;
+  }
+  if (!fn) return; // 该事件类型没有任何祖先登记动作 → 放行给既有委托
   fn(el, e);
   if (_GRAPH_ACT_STOPPROP[el.dataset.act]) e.stopPropagation();
 }

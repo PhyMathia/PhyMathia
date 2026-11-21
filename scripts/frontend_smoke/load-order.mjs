@@ -6,7 +6,7 @@
 // 覆盖不到（沙箱不读 index.html、不跑浏览器），由 scripts/verify_load_defer.mjs
 // 真机验。
 // 不碰共享 localStorage 键；纯同步段，注册在薄壳尾部（token-usage 之后）。
-import { check, fs, code, bundleMap } from './_runner.mjs';
+import { check, fs, code, bundleMap, sandbox, vm } from './_runner.mjs';
 import { decodePosition } from '../decode_client_error.mjs';
 
 const readIndex = () => fs.readFileSync('src/static/index.html', 'utf8');
@@ -102,6 +102,53 @@ export function run() {
     if (icon.includes('event.currentTarget')) {
       throw new Error('toggleIconPicker 不得再用 event.currentTarget 定位图标元素');
     }
+    return true;
+  });
+
+  // 516 画布委托的同类回归：source-drop 容器内部嵌着带 data-act 的子控件（source-paste
+  // 等），drop 落到子控件上时最近的 data-act 不是容器。handler 必须沿祖先链向上找
+  // 第一个在当前事件类型登记了的动作，否则拖图片到「粘贴截图」框里静默不入篮。
+  check('516 画布委托：drop 落在 source-paste 子控件上仍命中外层 source-drop', () => {
+    vm.runInContext(`
+      (function () {
+        var calls = [];
+        var dropScript = 'drop';
+        var prevDrop = _GRAPH_ACT_TABLE[dropScript]['source-drop'];
+        _GRAPH_ACT_TABLE[dropScript]['source-drop'] = function (el) { calls.push(el.dataset.act); };
+        try {
+          // 模拟 e.target = textarea[data-act=source-paste]，其父是 div[data-act=source-drop]
+          var dropEl = { dataset: { act: 'source-drop', nodeId: 'n1' }, parentElement: null };
+          var pasteEl = {
+            dataset: { act: 'source-paste', nodeId: 'n1' },
+            parentElement: dropEl,
+            closest: function (sel) { return sel === '[data-act]' ? this : null; }
+          };
+          dropEl.closest = function (sel) { return sel === '[data-act]' ? this : null; };
+          _graphActBusHandler({ type: 'drop', target: pasteEl, stopPropagation: function () {} });
+
+          // 反例：source-paste 的 click 不在 click 表登记，整条链都没登记 → 不得误触发
+          var clickCalls = [];
+          var prevClick = _GRAPH_ACT_TABLE.click['source-add'];
+          _GRAPH_ACT_TABLE.click['source-add'] = function (el) { clickCalls.push(el.dataset.act); };
+          try {
+            _graphActBusHandler({ type: 'click', target: pasteEl, stopPropagation: function () {} });
+          } finally {
+            _GRAPH_ACT_TABLE.click['source-add'] = prevClick;
+          }
+          globalThis.__smoke516Drop = { calls: calls, clickCalls: clickCalls };
+        } finally {
+          _GRAPH_ACT_TABLE[dropScript]['source-drop'] = prevDrop;
+        }
+      })();
+    `, sandbox);
+    const r = JSON.parse(vm.runInContext('JSON.stringify(globalThis.__smoke516Drop)', sandbox));
+    if (r.calls.length !== 1 || r.calls[0] !== 'source-drop') {
+      throw new Error('drop 落在 source-paste 上应命中 source-drop 一次，实得 ' + JSON.stringify(r.calls));
+    }
+    if (r.clickCalls.length !== 0) {
+      throw new Error('source-paste 的 click 不该误触发任何登记动作，实得 ' + JSON.stringify(r.clickCalls));
+    }
+    vm.runInContext('delete globalThis.__smoke516Drop', sandbox);
     return true;
   });
 }
