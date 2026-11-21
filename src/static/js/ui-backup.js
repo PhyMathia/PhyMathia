@@ -219,20 +219,29 @@ function _normalizeBackup(data) {
   // 516（2026-11-21）：sessions 键＝session id，会进侧栏渲染的 data-sid 等属性——只放行
   // ^[A-Za-z0-9_-]+$（本地生成的 id 全落此字符集）；不合法键整条跳过不导入，脏数据不进
   // localStorage 也不上服务端（/api/backup/import 收到的已过滤）。渲染层另有委托总线兜底。
-  const SID_SAFE = /^[A-Za-z0-9_-]+$/;
+  const ID_SAFE = /^[A-Za-z0-9_-]+$/;
+  // 517（2026-11-21）：knowledge/formulas 键＝条目 id、值内 id 字段是面板渲染/定位用的
+  // 另一半——同 sessions 口径，键与值内 id 都只放行 ^[A-Za-z0-9_-]+$（ki_/f_+uuid 全落
+  // 此字符集），不合法整条跳过。在 normalize 这一处过滤＝直写 localStorage
+  // （_applyLocalBackup）与备用 POST（_pushBackupToExistingApis）同吃 normalize 后的
+  // data，两处同源兜住；渲染面另有 knowledge.js _kpBindDelegates 委托兜底。
+  const idMapFilter = map => Object.fromEntries(Object.entries(map).filter(([id, it]) =>
+    ID_SAFE.test(id) && !(it && typeof it === 'object' && 'id' in it && !ID_SAFE.test(String(it.id)))));
   result.sessions = result.sessions && typeof result.sessions === 'object' && !Array.isArray(result.sessions)
-    ? Object.fromEntries(Object.entries(result.sessions).filter(([id]) => SID_SAFE.test(id)))
+    ? Object.fromEntries(Object.entries(result.sessions).filter(([id]) => ID_SAFE.test(id)))
     : Array.isArray(result.sessions)
-      ? Object.fromEntries(result.sessions.map(item => [item.id, item]).filter(([id]) => id && SID_SAFE.test(id)))
+      ? Object.fromEntries(result.sessions.map(item => [item.id, item]).filter(([id]) => id && ID_SAFE.test(id)))
       : {};
   result.messages = result.messages && typeof result.messages === 'object' ? result.messages : {};
-  result.knowledge = result.knowledge && typeof result.knowledge === 'object' ? result.knowledge : {};
+  result.knowledge = result.knowledge && typeof result.knowledge === 'object' && !Array.isArray(result.knowledge)
+    ? idMapFilter(result.knowledge) : {};
   if (result.formulas && typeof result.formulas === 'object' && !Array.isArray(result.formulas) && result.formulas.items) {
     result.formulas = Array.isArray(result.formulas.items)
-      ? Object.fromEntries(result.formulas.items.map(item => [item.id, item]).filter(([id]) => id))
+      ? Object.fromEntries(result.formulas.items.map(item => [item.id, item]).filter(([id]) => id && ID_SAFE.test(id)))
       : result.formulas.items;
   }
-  result.formulas = result.formulas && typeof result.formulas === 'object' ? result.formulas : {};
+  result.formulas = result.formulas && typeof result.formulas === 'object' && !Array.isArray(result.formulas)
+    ? idMapFilter(result.formulas) : {};
   result.graphs = result.graphs && typeof result.graphs === 'object' ? result.graphs : {};
   result.quizStats = result.quizStats && typeof result.quizStats === 'object' ? result.quizStats : {};
   result.quizBank = result.quizBank && typeof result.quizBank === 'object' ? result.quizBank : null;

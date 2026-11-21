@@ -168,8 +168,8 @@ check('knowledge: P3 中断注册表接线（再次点击/Esc 两路径 + 循环
     'if (_knowledgeSummaryTaskRunning())',                            // 再次点击 = 中断（批量入口首行分流）
     'if (controller.signal.aborted) { aborted = true; break; } // 中止后不再发出后续请求',   // 循环每轮先查
     'if (controller.signal.aborted) { aborted = true; break; } // 用户中断不计为失败',       // 在途 fetch 拒绝后 break
-    "restatKnowledgeItemSummary('${item.id}')",                       // 卡片单条入口（渲染层接线）
-    "isLegacyCardSummaryItem(item) ? `<button class=\"kp-action-btn kp-btn-primary\" onclick=\"event.stopPropagation(); restatKnowledgeItemSummary", // 非目标条目不渲染入口
+    "else if (actEl.dataset.kact === 'restat-summary') restatKnowledgeItemSummary(id)", // 卡片单条入口（517 渲染层委托接线）
+    "isLegacyCardSummaryItem(item) ? `<button class=\"kp-action-btn kp-btn-primary\" data-kact=\"restat-summary\">重述摘要</button>` : ''", // 非目标条目不渲染入口（517 起 id 不再直插模板）
   ]) {
     if (!src.includes(frag)) throw new Error('knowledge.js 缺中断/入口接线: ' + frag);
   }
@@ -194,6 +194,66 @@ check('knowledge: P3 中断注册表接线（再次点击/Esc 两路径 + 循环
   }
   const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
   return css.includes('.kp-tool-btn');
+});
+
+// 517（2026-11-21）：item.id 是存储键，备份导入可能带脏 id——渲染面不得再有携带 id 的
+// 内联事件（JS 串上下文可执行、裸属性可逃逸），id 一律 escapeHtml 进 data-* 由容器委托读回。
+check('knowledge: 517 渲染面去内联事件（id 不进 onclick，data-kact/data-id/data-fid + 容器委托接线）', () => {
+  const src = fs.readFileSync('src/static/js/knowledge.js', 'utf8');
+  for (const bad of [
+    'onclick="toggleKpCard',
+    "goToKnowledgeNode('${", "restatKnowledgeItemSummary('${", "confirmDeleteKnowledge('${",
+    "locateFormulaNode('${", "confirmDeleteFormula('${",
+  ]) {
+    if (src.includes(bad)) throw new Error('knowledge.js 渲染面残留 id 内联事件（517）: ' + bad);
+  }
+  for (const frag of [
+    'data-id="${escapeHtml(item.id)}"',                       // 卡根 id 转义进属性
+    'data-kact="goto-node"', 'data-kact="restat-summary"', 'data-kact="delete-knowledge"',
+    'data-kact="locate-formula"', 'data-kact="delete-formula"', 'data-fid="${escapeHtml(it.id)}"',
+    'function _kpBindDelegates', "getElementById('kpTimeline')", "getElementById('kpFormulaList')",
+    'toggleKpCard(card)',                                     // 卡片开合也走委托
+  ]) {
+    if (!src.includes(frag)) throw new Error('knowledge.js 缺 517 委托接线: ' + frag);
+  }
+  // 定义 1 处 + 两个渲染函数各调 1 处 = 3 次（防 helper 写了没人调）
+  const bindRefs = src.split('_kpBindDelegates()').length - 1;
+  if (bindRefs !== 3) throw new Error('_kpBindDelegates 应为定义+两处渲染调用共 3 次，实际 ' + bindRefs);
+  return true;
+});
+
+check('knowledge: 517 备份导入 id 白名单（_normalizeBackup 滤脏键/脏值内 id，直写与 POST 同源）', () => {
+  const src = fs.readFileSync('src/static/js/ui-backup.js', 'utf8');
+  const norm = src.match(/function _normalizeBackup\(data\) \{[\s\S]*?\n\}/);
+  if (!norm) throw new Error('ui-backup.js 缺 _normalizeBackup');
+  for (const frag of ['idMapFilter', 'ID_SAFE.test(id)', 'ID_SAFE.test(String(it.id))']) {
+    if (!norm[0].includes(frag)) throw new Error('_normalizeBackup 缺 517 id 白名单: ' + frag);
+  }
+  // 行为口径（主沙箱已装整包）：脏键/脏值内 id 整条丢弃，合法 ki_/f_ 键原样通过
+  if (typeof sandbox._normalizeBackup !== 'function') throw new Error('主沙箱缺 _normalizeBackup（bundle 未装 ui-backup.js）');
+  const dirty = sandbox._normalizeBackup({
+    knowledge: {
+      'ki_good1': { id: 'ki_good1', title: 'ok' },
+      'ki_keyok': { id: 'bad");alert(1)', title: 'evil-value-id' },
+      "\"><img src=x onerror=alert(1)>": { title: 'evil-attr' },
+      "ki_evil');alert(1);//": { id: "ki_evil');alert(1);//", title: 'evil-js' },
+    },
+    formulas: {
+      'f_good1': { id: 'f_good1', latex: 'E=mc^2' },
+      "f_evil$':alert(1)": { id: "f_evil$':alert(1)", latex: 'x' },
+    },
+  });
+  const kKeys = Object.keys(dirty.knowledge), fKeys = Object.keys(dirty.formulas);
+  if (!(kKeys.length === 1 && kKeys[0] === 'ki_good1')) {
+    throw new Error('knowledge 脏键/脏值内 id 应整条丢弃: ' + JSON.stringify(kKeys));
+  }
+  if (!(fKeys.length === 1 && fKeys[0] === 'f_good1')) {
+    throw new Error('formulas 脏键应整条丢弃: ' + JSON.stringify(fKeys));
+  }
+  if (dirty.knowledge.ki_good1.title !== 'ok' || dirty.formulas.f_good1.latex !== 'E=mc^2') {
+    throw new Error('合法条目应原样保留');
+  }
+  return true;
 });
 
 check('knowledge: 导出 Markdown 接线（按钮/整库口径/两个 tab 构建器/Blob 下载/window 导出）', () => {

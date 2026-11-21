@@ -419,6 +419,7 @@ function clearKpFormulaSearch() {
 
 // Render
 function renderKnowledgePanel() {
+  _kpBindDelegates();
   const items = getKnowledgeItems();
   const arr = Object.values(items);
   const search = (document.getElementById('kpSearch')?.value || '').toLowerCase().trim();
@@ -520,7 +521,7 @@ function renderKnowledgePanel() {
       const isExpanded = _kpExpandedIds.has(item.id);
       const detailHtml = isExpanded ? _kpCardDetailHtml(item) : '';
       html += `
-        <div class="kp-card${isExpanded ? ' expanded' : ''}" data-id="${item.id}" onclick="toggleKpCard(this)">
+        <div class="kp-card${isExpanded ? ' expanded' : ''}" data-id="${escapeHtml(item.id)}">
           <div class="kp-card-header">
             <div class="kp-card-dot ${catClass}"></div>
             <div class="kp-card-info">
@@ -544,8 +545,9 @@ function renderKnowledgePanel() {
 
 // 单张知识卡的详情 HTML（纯函数：传 item 返回字符串）。折叠卡懒渲染后主循环不再
 // 调它，由 toggleKpCard 首次展开时调用；后续恢复展开态的会话同样复用。
-// 行为与旧内联版逐字等价：公式过滤/清洗/KaTeX 路径、三个按钮及其 onclick、
-// isLegacyCardSummaryItem 判定全部保持原样，仅 KaTeX 走缓存 helper。
+  // 行为与旧内联版逐字等价：公式过滤/清洗/KaTeX 路径、三个按钮（517 起改 data-kact
+  // 由 _kpBindDelegates 委托，id 从卡根 data-id 读回，不再直插本模板）、
+  // isLegacyCardSummaryItem 判定全部保持原样，仅 KaTeX 走缓存 helper。
 function _kpCardDetailHtml(item) {
   const formulasHtml = (item.formulas || [])
     .filter(f => _looksLikeFormula(_stripFormulaDelimiters(f)))
@@ -558,9 +560,9 @@ function _kpCardDetailHtml(item) {
     <div class="kp-card-detail-inner">
       ${formulasHtml ? `<div class="kp-formulas">${formulasHtml}</div>` : ''}
       <div class="kp-detail-actions">
-        <button class="kp-action-btn kp-btn-primary" onclick="event.stopPropagation(); goToKnowledgeNode('${item.id}')">跳转到节点</button>
-        ${isLegacyCardSummaryItem(item) ? `<button class="kp-action-btn kp-btn-primary" onclick="event.stopPropagation(); restatKnowledgeItemSummary('${item.id}')">重述摘要</button>` : ''}
-        <button class="kp-action-btn kp-btn-danger" onclick="event.stopPropagation(); confirmDeleteKnowledge('${item.id}')">删除</button>
+        <button class="kp-action-btn kp-btn-primary" data-kact="goto-node">跳转到节点</button>
+        ${isLegacyCardSummaryItem(item) ? `<button class="kp-action-btn kp-btn-primary" data-kact="restat-summary">重述摘要</button>` : ''}
+        <button class="kp-action-btn kp-btn-danger" data-kact="delete-knowledge">删除</button>
       </div>
     </div>`;
 }
@@ -583,6 +585,42 @@ function toggleKpCard(card) {
     _kpExpandedIds.delete(card.dataset.id);
   }
   card.classList.toggle('expanded');
+}
+
+// ===== 517（2026-11-21）：知识/公式面板渲染面去内联事件 =====
+// item.id 是存储键，备份导入链可能带脏 id（ui-backup.js 的白名单是入库第一道，
+// 这里是不依赖入库口径的渲染兜底）：卡根与动作按钮不再内联 onclick（id 曾直插
+// JS 串上下文可执行、data-id 曾裸插属性可逃逸），改 data-kact/data-fid + 容器级
+// 委托。id 经 escapeHtml 进属性，委托侧 dataset 读回的是浏览器解码后的原串，
+// 各动作函数收到的 id 与旧内联版逐字相同。容器是 index.html 静态元素，绑一次即可。
+function _kpBindDelegates() {
+  const timeline = document.getElementById('kpTimeline');
+  if (timeline && !timeline.dataset.kpDelegateBound) {
+    timeline.dataset.kpDelegateBound = '1';
+    timeline.addEventListener('click', (e) => {
+      const actEl = e.target.closest('[data-kact]');
+      if (actEl && actEl.closest('.kp-card')) {
+        e.stopPropagation(); // 复刻旧内联按钮的 stopPropagation：动作不触发卡片折叠
+        const id = actEl.closest('.kp-card').dataset.id;
+        if (actEl.dataset.kact === 'goto-node') goToKnowledgeNode(id);
+        else if (actEl.dataset.kact === 'restat-summary') restatKnowledgeItemSummary(id);
+        else if (actEl.dataset.kact === 'delete-knowledge') confirmDeleteKnowledge(id);
+        return;
+      }
+      const card = e.target.closest('.kp-card');
+      if (card) toggleKpCard(card);
+    });
+  }
+  const formulaList = document.getElementById('kpFormulaList');
+  if (formulaList && !formulaList.dataset.kpDelegateBound) {
+    formulaList.dataset.kpDelegateBound = '1';
+    formulaList.addEventListener('click', (e) => {
+      const el = e.target.closest('[data-kact]');
+      if (!el) return;
+      if (el.dataset.kact === 'locate-formula') locateFormulaNode(el.dataset.fid);
+      else if (el.dataset.kact === 'delete-formula') confirmDeleteFormula(el.dataset.fid);
+    });
+  }
 }
 
 // ===== 删除可撤销（删后 8 秒内一键写回） =====
@@ -1610,6 +1648,7 @@ function _cleanFormulaConcept(item) {
 }
 
 function renderFormulaList() {
+  _kpBindDelegates();
   const listEl = document.getElementById('kpFormulaList');
   const items = Object.values(getFormulaCache());
   const search = (document.getElementById('kpFormulaSearch')?.value || '').toLowerCase().trim();
@@ -1675,7 +1714,7 @@ function renderFormulaList() {
     // 来源会话：存在则显示可点击定位（跳转到产生该公式的对话）
     const srcSession = it.sessionId && typeof window.getSessionById === 'function' ? window.getSessionById(it.sessionId) : null;
     const srcHtml = srcSession
-      ? `<div class="kp-formula-src" onclick="locateFormulaNode('${it.id}')" title="点击跳转到对应节点">📌 ${escapeHtml(srcSession.title || '来源画布')}</div>`
+      ? `<div class="kp-formula-src" data-kact="locate-formula" data-fid="${escapeHtml(it.id)}" title="点击跳转到对应节点">📌 ${escapeHtml(srcSession.title || '来源画布')}</div>`
       : '';
     html += `
       <div class="kp-formula-card">
@@ -1688,8 +1727,8 @@ function renderFormulaList() {
           ${relatedHtml ? `<div class="kp-card-tags">${relatedHtml}</div>` : ''}
         </div>
         <div class="kp-formula-actions">
-          <button class="kp-action-btn kp-btn-primary" onclick="locateFormulaNode('${it.id}')">定位节点</button>
-          <button class="kp-action-btn kp-btn-danger" onclick="confirmDeleteFormula('${it.id}')">删除</button>
+          <button class="kp-action-btn kp-btn-primary" data-kact="locate-formula" data-fid="${escapeHtml(it.id)}">定位节点</button>
+          <button class="kp-action-btn kp-btn-danger" data-kact="delete-formula" data-fid="${escapeHtml(it.id)}">删除</button>
         </div>
       </div>`;
   }
