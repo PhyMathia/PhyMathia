@@ -159,8 +159,11 @@ export function run() {
   check('skills-ui: 样式契约——标签走令牌圆角、且整块在最小化/无计划时不占位', () => {
     const css = readSrc('src/static/css/graph-override.css');
     if (!css.includes('.graph-skill-chip > summary.graph-skill-chip-summary')) throw new Error('缺标签 summary 样式');
-    if (!/\.graph-skill-chip[^{]*\{[^}]*--r-pill/.test(css) && !/border-radius:\s*var\(--r-pill\)[^;]*;\s*color: var\(--text-secondary\)/.test(css)) {
-      throw new Error('胶囊圆角应走 --r-pill 令牌（设计尺子会拦裸值）');
+    if (!/\.graph-skill-chip[^{]*\{[^}]*--r-sm/.test(css) && !/border-radius:\s*var\(--r-sm\)[^;]*;\s*color: var\(--text-secondary\)/.test(css)) {
+      throw new Error('标签圆角应走 --r-sm 令牌（2026-11-21 小圆角化，不再用 --r-pill 大胶囊）');
+    }
+    if (!/max-width:\s*100%/.test(css) || !/box-sizing:\s*border-box/.test(css) || !/overflow-wrap:\s*anywhere/.test(css)) {
+      throw new Error('长技能名换行须只长高不撑宽：max-width/box-sizing/overflow-wrap 三件套缺一');
     }
     if (!/\.graph-node\.minimized \.graph-skill-chip\s*\{[^}]*display:\s*none/.test(css)) {
       throw new Error('最小化卡应隐藏技能标签');

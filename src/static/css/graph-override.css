@@ -363,7 +363,9 @@
 
 /* 技能计划标签（2026-11-16 第 4 步）：分析卡底部一行小标签，点开看模型给的理由。
    只用主题令牌（--border / --text-secondary / --accent），五套主题自动跟色；没有计划时
-   前端整块不渲染，所以这里不必处理「空标签」形态。details/summary 原生开合，零 JS 状态。 */
+   前端整块不渲染，所以这里不必处理「空标签」形态。details/summary 原生开合，零 JS 状态。
+   2026-11-21 改小圆角：原 --r-pill 全圆角＋长技能名换行会撑成鼓胀大药丸（用户嫌不好看），
+   改 --r-sm 小圆角＋max-width/box-sizing/overflow-wrap 让换行只长高不撑宽，前缀用 accent 拉层次。 */
 .graph-skill-chip {
   width: 100% !important;
   margin-top: 10px !important;
@@ -374,15 +376,18 @@
 .graph-skill-chip > summary.graph-skill-chip-summary {
   display: inline-flex !important;
   align-items: center !important;
-  gap: 4px !important;
+  gap: 5px !important;
   flex-wrap: wrap !important;
-  padding: 2px 8px !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  padding: 2px 9px !important;
   border: 1px solid var(--border) !important;
-  border-radius: var(--r-pill) !important;
+  border-radius: var(--r-sm) !important;
   color: var(--text-secondary) !important;
   background: color-mix(in srgb, var(--accent) 9%, transparent) !important;
   cursor: pointer !important;
   list-style: none !important;
+  overflow-wrap: anywhere !important;
 }
 
 .graph-skill-chip > summary.graph-skill-chip-summary::-webkit-details-marker {
@@ -394,7 +399,11 @@
   border-color: var(--accent) !important;
 }
 
-.graph-skill-chip-prefix,
+.graph-skill-chip-prefix {
+  color: var(--accent) !important;
+  opacity: 0.95 !important;
+}
+
 .graph-skill-chip-sep {
   opacity: 0.6 !important;
 }
