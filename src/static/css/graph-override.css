@@ -937,12 +937,15 @@
 }
 
 /* ---------- 糖果·进度胶囊：节点卡质感（2026-11-21 用户拍板）----------
- * 演变史三轮：① 11-13 早（1575dd2）深色专属节点卡质感（方角＋粉书脊＋渐变卡面＋控制钮
+ * 演变史四轮：① 11-13 早（1575dd2）深色专属节点卡质感（方角＋粉书脊＋渐变卡面＋控制钮
  *   玻璃化）；② 同日晚（fa7ef0a）用户要求深浅统一，整块删掉退回家族 compact 药丸，留下
  *   「别再加深色专属胶囊块」警告；③ 11-21 用户看着改款后的平药丸拍板「质感改成和节点
  *   一样」——本次把节点卡配方做成**深浅成对**（配方同构、令牌各走各的，与节点皮肤
- *   candy 的深浅成对口径一致）：既守 ② 的「深浅统一」，又满足 ③ 的「节点卡质感」。
- * 配方逐项抄本文件 [data-node-skin="candy"] .graph-node（8847 深色块／8839 浅色块），
+ *   candy 的深浅成对口径一致）：既守 ② 的「深浅统一」，又满足 ③ 的「节点卡质感」；
+ * ④ 同日追加：6px 书脊在胶囊的小身高＋全圆角上顺边框鼓成一道月牙（用户截图指认），
+ *   拍板「薄一点」——胶囊书脊减到 3px（节点卡仍 6px 不动），其余配方维持同构。
+ * 配方逐项抄本文件 [data-node-skin="candy"] .graph-node（8847 深色块／8839 浅色块，
+ * 唯书脊 3px 与卡不同，见演变史④），
  * attr 位一律换 var(--accent)——--node-attr 只由渲染层逐节点内联注入，胶囊身上没有、
  * 引用即整条失效（皮肤段头注释 ★ 的坑）。浅色卡面必须用浅色节点的「白纱」配方
  * （attr 36%＋bg-panel 基）：深色配方进浅色会复现 2026-10-01 的「灰米薄膜」老 bug。
@@ -955,7 +958,7 @@
 html[data-theme="dark"][data-panel-skin="candy"] .app-container .progress-status {
   border-radius: var(--r-lg) !important;
   border-color: var(--cd-line) !important;
-  border-left: 6px solid color-mix(in srgb, var(--accent) 72%, var(--text-primary)) !important;
+  border-left: 3px solid color-mix(in srgb, var(--accent) 72%, var(--text-primary)) !important;
   background: linear-gradient(
     170deg,
     color-mix(in srgb, var(--accent) 13%, transparent),
@@ -970,7 +973,7 @@ html[data-theme="dark"][data-panel-skin="candy"] .app-container .progress-status
 html[data-theme="light"][data-panel-skin="candy"] .app-container .progress-status {
   border-radius: var(--r-lg) !important;
   border-color: var(--cd-line) !important;
-  border-left: 6px solid color-mix(in srgb, var(--accent) 72%, var(--text-primary)) !important;
+  border-left: 3px solid color-mix(in srgb, var(--accent) 72%, var(--text-primary)) !important;
   background: linear-gradient(
     170deg,
     color-mix(in srgb, var(--accent) 36%, transparent),
