@@ -19,7 +19,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
-from . import accounts, continent, context, embedding, family, knowledge, profile, storage
+from . import accounts, continent, context, embedding, family, knowledge, profile, storage, trash
 from .config import UTOPIA_INBOX_DIR
 from .knowledge import (
     _add_formulas_from_items,
@@ -305,6 +305,15 @@ async def api_utopia_inbox_get(name: str):
 async def api_save_knowledge(request: Request):
     payload = await _parse_json_object(request)
 
+    # 客户端上报的本地已删清单（526）：全量推送随带 {id: 删除时刻}，服务端据此
+    # 补登记墓碑并清掉残留条目——删除链路的 DELETE 失败（网络/超时）时靠这条
+    # 兜底收敛。先摘出来再做 _normalize_knowledge，防止无 items 的 payload 把
+    # 清单当条目吃进。
+    client_deleted = payload.get("deleted")
+    if not isinstance(client_deleted, dict):
+        client_deleted = {}
+    payload.pop("deleted", None)
+
     incoming = _normalize_knowledge(payload)
     # 入库闸门：非知识条目（「用户要求：…」这类指令句回显 / 整句标题）拒收。浏览器会把
     # localStorage 里本地独有的知识点并集推回服务端，入口拒收才保证清掉的垃圾不会被
@@ -332,7 +341,62 @@ async def api_save_knowledge(request: Request):
         logger.info(f"Ingest gate rejected {len(orphaned)} orphan-session items")
 
     def updater(data):
-        normalized = _normalize_knowledge(data)
+        # 浅拷贝一层再动手：_normalize_knowledge 对普通 dict 输入原样返回同一
+        # 对象，下面的残留自愈要 pop——直接在别名上删会连 data 本尊一起删掉，
+        # 末尾「merged == data 不写盘」的 T202 短路恒真，清理永远落不了盘
+        normalized = dict(_normalize_knowledge(data))
+        paths = accounts.resolve_paths(account)
+        # 526 墓碑闸门：已删条目的**删前旧副本**拒收不重建（兄弟标签页 localStorage
+        # 残留副本经 15 秒定时同步全量推送回来）。时间戳感知——条目带 updatedAt
+        # （缺省回退 createdAt，知识条目历来讲 createdAt）且 ≤ 删除时刻才算旧副本；
+        # 无时间戳的净新建放行（语义即「同 id 重建以新为准」，也是测试/新客户端
+        # 首建的合法形态）。在 updater 内读登记表——与 DELETE 路由的登记同持全局
+        # _JSON_LOCK，杜绝「读表→删除登记→POST 合并」竞窗（T271 会话侧同款纪律）。
+        tombstones = trash.knowledge_tombstone_read(paths)
+        if client_deleted:
+            # 客户端上报的本地已删清单补登记（DELETE 失败兜底），登记后的整表
+            # 同轮生效——闸门与残留清理共用这一份
+            tombstones = trash.knowledge_tombstone_register(paths, client_deleted)
+
+        def _item_ts(item):
+            if not isinstance(item, dict):
+                return None
+            for field in ("updatedAt", "createdAt"):
+                raw = item.get(field)
+                if raw is None:
+                    continue
+                try:
+                    ts = int(raw)
+                except (TypeError, ValueError):
+                    continue
+                if ts > 0:
+                    return ts
+            return None
+
+        gate_rejected = 0
+        for key in list(incoming.keys()):
+            deleted_at = tombstones.get(str(key))
+            if deleted_at is None:
+                continue
+            ts = _item_ts(incoming[key])
+            if ts is not None and ts <= deleted_at:
+                incoming.pop(key, None)
+                gate_rejected += 1
+        if gate_rejected:
+            logger.info(f"Tombstone gate rejected {gate_rejected} stale knowledge copies")
+
+        # 残留自愈：登记表里的 id 若仍活在库存（DELETE 失败残留、直写文件的旧副本）
+        # 一并清掉——GET 不回写，清库只在写路径做。必须先于 _dedupe_knowledge：
+        # 否则去重可能把同键活条目折叠进已删幸存者，幸存者再被清时连带丢数据。
+        purged = 0
+        for key, deleted_at in tombstones.items():
+            ts = _item_ts(normalized.get(key))
+            if ts is not None and ts <= deleted_at:
+                normalized.pop(key, None)
+                purged += 1
+        if purged:
+            logger.info(f"Tombstone purge removed {purged} stale knowledge entries")
+
         # 隐式画像：只对「本轮真正新增」的 id 记 extract 事件——前端定时同步会
         # 反复全量推送，按 id 差分才不会每次同步都给兴趣加一次权重
         new_keys = [k for k in incoming if k not in normalized]
@@ -364,14 +428,30 @@ async def api_save_knowledge(request: Request):
 
 @router.delete("/api/knowledge/{item_id}")
 async def api_delete_knowledge(item_id: str, request: Request = None):
+    paths = _account_paths(request)
+
     def updater(data):
         data = _normalize_knowledge(data)
+        # 526：删除时刻登记进墓碑表（与本次删除同持 _JSON_LOCK，杜绝「删除登记→
+        # POST 合并」竞窗）——另一标签页 localStorage 残留副本经 15 秒定时同步
+        # 全量推回时，POST 闸门按「updatedAt/createdAt ≤ 删除时刻」拒收，不再
+        # 复活。库存没有这个 id 也登记：本地独有的条目删服务端本就无可删，兄弟
+        # 标签页可能还留着副本（回收站恢复链会按需除名，见 trash 恢复链）。
+        trash.knowledge_tombstone_register(paths, [item_id])
         data.pop(item_id, None)
         return data
 
     # T240：知识表单条删除同样整文件重写，随 POST/GET 一并离线程
-    await asyncio.to_thread(_mutate_json, _account_paths(request).knowledge_path, updater)
+    await asyncio.to_thread(_mutate_json, paths.knowledge_path, updater)
     return {"ok": True}
+
+
+@router.get("/api/knowledge/deleted-ids")
+async def api_deleted_knowledge_ids(request: Request = None):
+    """已删知识条目墓碑登记表（526，id→删除毫秒时刻）。前端 15 秒同步轮询它清
+    本地残留（兄弟标签页删掉的条目）——复活防线的客户端半边；服务端写闸门见
+    DELETE /api/knowledge/{id} 的登记与 POST /api/knowledge 的拒收+残留自愈。"""
+    return {"deleted": trash.knowledge_tombstone_read(_account_paths(request))}
 
 
 

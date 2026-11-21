@@ -148,6 +148,57 @@ function invalidateKnowledgeCache() {
   kpKnowledgeCache = null;
 }
 
+// ===== 本地已删清单（526，2026-11-21）：知识删除跨标签页传播的客户端半边 =====
+// 服务端 DELETE 时刻登记墓碑（trash._deleted_knowledge.json），POST 合并按
+// 「updatedAt/createdAt ≤ 删除时刻」拒收删前旧副本。本地这份 {id: 删除时刻}：
+// ① 删除链先落本地——服务端 DELETE 失败（网络/超时）时，清单随下一次全量
+//   推送补登墓碑；② 定时同步/快速刷新的并集合并用它剔除已删 id，同页残留
+//   副本不再复活；③ 服务端 deleted-ids 登记表反向并入（同 id 取较大时刻），
+//   兄弟标签页删掉的条目据此清本地。
+const KP_DELETED_TTL_MS = 90 * 24 * 3600 * 1000; // 与服务端墓碑 TTL 同口径
+
+function _readKnowledgeDeleted() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_KNOWLEDGE_DELETED);
+    const map = raw ? JSON.parse(raw) : {};
+    return (map && typeof map === 'object' && !Array.isArray(map)) ? map : {};
+  } catch { return {}; }
+}
+
+function _writeKnowledgeDeleted(map) {
+  // 过期清理与服务端 TTL 同口径：90 天前的登记条目直接丢弃
+  const cutoff = Date.now() - KP_DELETED_TTL_MS;
+  const kept = {};
+  for (const id in (map || {})) {
+    const ts = Number(map[id]);
+    if (Number.isFinite(ts) && ts > 0 && ts >= cutoff) kept[id] = ts;
+  }
+  safeLocalStorageSet(STORAGE_KEY_KNOWLEDGE_DELETED, JSON.stringify(kept));
+  return kept;
+}
+
+function _knowledgeMarkDeleted(ids) {
+  const map = _readKnowledgeDeleted();
+  const now = Date.now();
+  for (const id of (ids || [])) {
+    if (id) map[id] = now;
+  }
+  return _writeKnowledgeDeleted(map);
+}
+
+// 服务端 deleted-ids 登记表并入本地（同 id 取较大时刻＝删除时刻单调），
+// 返回合并后的清单；调用方据此从并集合并两侧（本地+服务端响应）剔除已删 id。
+function _knowledgeMergeDeleted(serverMap) {
+  const map = _readKnowledgeDeleted();
+  const src = (serverMap && typeof serverMap === 'object' && !Array.isArray(serverMap)) ? serverMap : {};
+  for (const id in src) {
+    const ts = Number(src[id]);
+    if (!Number.isFinite(ts) || ts <= 0) continue;
+    if (!(id in map) || Number(map[id]) < ts) map[id] = ts;
+  }
+  return _writeKnowledgeDeleted(map);
+}
+
 function getKnowledgeItems() {
   if (kpKnowledgeCache) return kpKnowledgeCache;
   try {
@@ -203,16 +254,30 @@ async function _quickRefreshKnowledge() {
     const fetchPromise = Promise.all([
       fetch('/api/knowledge', { cache: 'no-cache' }),
       fetch('/api/formulas', { cache: 'no-cache' }),
+      // 526：墓碑登记表（自带 catch 落 null，网络挂了不拖垮整轮刷新）
+      fetch('/api/knowledge/deleted-ids', { cache: 'no-cache' }).catch(() => null),
     ]);
     await Promise.all([
       kpKnowledgeSaveQueue.catch(() => false),
       kpFormulaSaveQueue.catch(() => false),
     ]);
-    const [knowResp, formulaResp] = await fetchPromise;
+    const [knowResp, formulaResp, kdelResp] = await fetchPromise;
     if (knowResp.ok) {
       const serverMap = await knowResp.json();
       if (serverMap && typeof serverMap === 'object' && !Array.isArray(serverMap)) {
+        // 526：并入服务端墓碑清单，已删 id 从本地残留与服务端响应两侧都剔除再
+        // 并集合并——另一标签页删掉的条目不被本地残留副本并回来（打开面板的
+        // 快速刷新同走这道闸）
+        let kdelData = null;
+        if (kdelResp && kdelResp.ok) {
+          try { kdelData = await kdelResp.json(); } catch (e) { kdelData = null; }
+        }
+        const deletedMap = _knowledgeMergeDeleted(kdelData && kdelData.deleted);
         const local = getKnowledgeItems() || {};
+        for (const id in deletedMap) {
+          delete local[id];
+          delete serverMap[id];
+        }
         const merged = dedupeKnowledgeItems({ ...local, ...serverMap });
         kpKnowledgeCache = merged;
         localStorage.setItem(STORAGE_KEY_KNOWLEDGE, JSON.stringify(merged));
@@ -238,8 +303,9 @@ function addKnowledgeItem(item) {
 }
 
 async function _deleteKnowledgeOnServer(ids) {
-  // 后端 POST /api/knowledge 是纯 merge：本地删除必须逐条调 DELETE，
-  // 否则 15 秒定时同步会把服务端残留条目整表拉回（“删了又复活”）
+  // 后端 POST /api/knowledge 是纯 merge：本地删除必须逐条调 DELETE（服务端在
+  // 删除时刻登记墓碑、残留副本推回被闸门拒收，526），否则 15 秒定时同步会把
+  // 服务端残留条目整表拉回（“删了又复活”）；DELETE 失败由本地已删清单随推送补登
   const list = (ids || []).filter(Boolean);
   for (const id of list) {
     try {
@@ -253,6 +319,9 @@ async function _deleteKnowledgeOnServer(ids) {
 }
 
 async function deleteKnowledgeItem(id) {
+  // 526：删除时刻先落本地已删清单——服务端 DELETE 失败时清单随下一次全量
+  // 推送补登墓碑；本页并集合并也据此剔除，不等服务端登记表
+  _knowledgeMarkDeleted([id]);
   // 先删服务端再删本地，避免删除瞬间被定时同步的并集合并拉回
   await _deleteKnowledgeOnServer([id]);
   const items = getKnowledgeItems();
@@ -281,6 +350,8 @@ async function deleteKnowledgeBySession(sessionId) {
     await saveKnowledgeItems(items);
     return;
   }
+  // 526：整条删除的条目先落本地已删清单（口径与 deleteKnowledgeItem 一致）
+  _knowledgeMarkDeleted(removedIds);
   await _deleteKnowledgeOnServer(removedIds);
   for (const id of removedIds) {
     delete items[id];

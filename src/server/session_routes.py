@@ -313,7 +313,10 @@ def _delete_session_sync(paths, account, session_id, msgs_path) -> None:
     # 还能回来，宁可报错不可丢数据。保留天数为 0（回收站关闭）时 capture 返回
     # False，走原删除链路。
     trash.capture_session(paths, session_id, messages_path=msgs_path)
-    _delete_items_by_session(paths.knowledge_path, session_id)  # T146: sessionIds 感知删除
+    # 526：整条删除的独占知识登记墓碑（updater 内回调＝同持 _JSON_LOCK）——兄弟
+    # 标签页残留副本推回被 POST 闸门拒收；回收站恢复随回写条目除名（trash 恢复链）
+    _delete_items_by_session(paths.knowledge_path, session_id,
+                             on_removed=lambda ids: trash.knowledge_tombstone_register(paths, ids))
     _delete_items_by_session(paths.formulas_path, session_id)  # T146: sessionIds 感知删除
     _purge_dangling_continent_edges(session_id, account)
     _delete_socratic_state(session_id, account)
@@ -701,7 +704,9 @@ async def api_clear_messages(session_id: str, request: Request = None):
     if msgs_path.exists():
         msgs_path.unlink()
     _write_json(msgs_path, [])
-    _delete_items_by_session(paths.knowledge_path, session_id)  # T146: sessionIds 感知删除
+    # 526：清空消息连带删掉的独占知识同样登记墓碑（口径与整删一致，见上）
+    _delete_items_by_session(paths.knowledge_path, session_id,
+                             on_removed=lambda ids: trash.knowledge_tombstone_register(paths, ids))
     _delete_items_by_session(paths.formulas_path, session_id)  # T146: sessionIds 感知删除
     _purge_dangling_continent_edges(session_id, account)
     _delete_socratic_state(session_id, account)

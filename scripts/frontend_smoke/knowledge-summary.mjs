@@ -631,4 +631,58 @@ check('extract：存量僵尸清理（dedupeFormulaItems/dedupeKnowledgeItems �
   }
   return true;
 });
+
+// ===== 知识删除墓碑（526，2026-11-21）：删除跨标签页传播协议的客户端半边 =====
+// 服务端半边：DELETE 时刻登记墓碑（trash._deleted_knowledge.json）＋POST 合并
+// 按「updatedAt/createdAt ≤ 删除时刻」拒收删前旧副本；本域三例守客户端协议面。
+
+check('knowledge: 本地已删清单四件套（读取/并入取大/标记/TTL 清理）＋config 键接通＋删除链两入口都先标记', () => {
+  const src = fs.readFileSync('src/static/js/knowledge.js', 'utf8');
+  for (const needle of [
+    'function _readKnowledgeDeleted()',
+    'function _knowledgeMergeDeleted(serverMap)',   // 服务端登记表并入（同 id 取较大时刻）
+    'function _knowledgeMarkDeleted(ids)',
+    'STORAGE_KEY_KNOWLEDGE_DELETED',
+    'KP_DELETED_TTL_MS',                            // 与服务端墓碑 90 天同口径
+    '_knowledgeMarkDeleted([id])',                  // deleteKnowledgeItem 入口
+    '_knowledgeMarkDeleted(removedIds)',            // deleteKnowledgeBySession 入口
+  ]) {
+    if (!src.includes(needle)) throw new Error('缺 ' + needle);
+  }
+  const cfg = fs.readFileSync('src/static/js/config.js', 'utf8');
+  if (!cfg.includes("const STORAGE_KEY_KNOWLEDGE_DELETED = 'phymathia_knowledge_deleted'")) {
+    throw new Error('config.js 缺 STORAGE_KEY_KNOWLEDGE_DELETED（localStorage 键统一 phymathia_ 前缀）');
+  }
+  return true;
+});
+
+check('knowledge: 快速刷新通道并入 deleted-ids 且已删 id 两侧剔除再并集', () => {
+  const src = fs.readFileSync('src/static/js/knowledge.js', 'utf8');
+  const fn = src.match(/async function _quickRefreshKnowledge\(\)[\s\S]*?\n\}/);
+  if (!fn) throw new Error('找不到 _quickRefreshKnowledge');
+  const body = fn[0];
+  if (!body.includes("fetch('/api/knowledge/deleted-ids'")) throw new Error('快速刷新未拉墓碑登记表');
+  if (!body.includes('_knowledgeMergeDeleted')) throw new Error('登记表未并入本地已删清单');
+  if (!body.includes('delete local[id]') || !body.includes('delete serverMap[id]')) {
+    throw new Error('已删 id 未从本地残留与服务端响应两侧剔除（残留副本会经并集合并复活）');
+  }
+  return true;
+});
+
+check('session: 15 秒同步链带墓碑（deleted-ids 并入 Promise.all＋并集两侧剔除＋写盘失效内存缓存）＋推送 payload 携带 deleted', () => {
+  const src = fs.readFileSync('src/static/js/session.js', 'utf8');
+  const sync = src.match(/const \[sessResp, knowResp, currResp, delResp, kdelResp\] = await Promise\.all\(([\s\S]*?)\]\);/);
+  if (!sync) throw new Error('同步 Promise.all 缺 kdelResp（已删知识登记表拉取）');
+  if (!sync[1].includes("fetch('/api/knowledge/deleted-ids'")) throw new Error('同步链未拉 /api/knowledge/deleted-ids');
+  if (!sync[1].includes('.catch(() => null)')) throw new Error('deleted-ids 拉取须自带 catch 落 null（同 delResp 口径，网络挂了不拖垮整轮同步）');
+  const kn = src.match(/if \(knowResp\.ok\) \{[\s\S]*?\n        \}/);
+  if (!kn || !kn[0].includes('_knowledgeMergeDeleted')) throw new Error('同步知识分支未并入已删清单');
+  if (!kn[0].includes('delete localKnow[id]') || !kn[0].includes('delete serverMap[id]')) {
+    throw new Error('同步并集合并未剔除已删 id');
+  }
+  if (!kn[0].includes('invalidateKnowledgeCache')) throw new Error('写盘后未失效内存缓存（kpKnowledgeCache 残留副本会被下一次 saveKnowledgeItems 整表推回）');
+  const save = src.match(/async function _saveKnowledgeToServer\([\s\S]*?\n    \}/);
+  if (!save || !save[0].includes('deleted:')) throw new Error('全量推送 payload 未携带本地已删清单（DELETE 失败的补登记兜底）');
+  return true;
+});
 }

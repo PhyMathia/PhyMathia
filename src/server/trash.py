@@ -374,6 +374,11 @@ def _restore_payload_data(paths: accounts.AccountPaths, item_dir: Path, sid: str
 
         storage._mutate_json(path, merge)
 
+    # 526：回写的独占知识条目除名墓碑（删除时经会话删除链登记过）——不除名的
+    # 话恢复条目的删前时间戳会被 POST 合并闸门拒收，改摘要/同步推回都收不进。
+    if isinstance(knowledge, dict) and knowledge:
+        knowledge_tombstone_unregister(paths, list(knowledge.keys()))
+
     # 探索网快照：kv__<variant>.json 各回各的拆分文件（文件名来自捕获时的白名单形态）
     for p in sorted(item_dir.glob("kv__*.json")):
         variant = p.name[len("kv__"):-len(".json")]
@@ -598,6 +603,85 @@ def tombstone_unregister(paths: accounts.AccountPaths, session_id: str) -> None:
         storage._mutate_json(deleted_registry_path(paths), _drop)
     except Exception as e:
         logger.warning("tombstone unregister %s failed: %s", session_id, e)
+
+
+# ====== 知识条目墓碑（526，2026-11-21：知识删除跨标签页传播） ======
+# 与会话墓碑（T271）同一套纪律：DELETE 时刻登记 id→删除毫秒；POST 合并时
+# 「updatedAt（缺省回退 createdAt，知识条目历来讲 createdAt）≤ 删除时刻」的
+# 删前旧副本拒收不重建；登记/除名一律在 knowledge.json 的 updater 内调用
+# （同持全局 _JSON_LOCK，杜绝「读表→删除登记→POST 合并」竞窗）。
+# 复活防线客户端半边：GET /api/knowledge/deleted-ids 供前端 15 秒同步清本地残留。
+
+KNOWLEDGE_DELETED_REGISTRY_NAME = "_deleted_knowledge.json"
+
+
+def knowledge_deleted_registry_path(paths: accounts.AccountPaths) -> Path:
+    return trash_root(paths) / KNOWLEDGE_DELETED_REGISTRY_NAME
+
+
+def knowledge_tombstone_read(paths: accounts.AccountPaths) -> dict:
+    """已删知识条目登记表（id→删除毫秒时刻）。脏值逐项剔除、缺失回落空表。"""
+    data = storage._read_json(knowledge_deleted_registry_path(paths), {})
+    if not isinstance(data, dict):
+        return {}
+    out = {}
+    for k, v in data.items():
+        if isinstance(k, str) and _ITEM_ID_RE.match(k) and isinstance(v, (int, float)) and v > 0:
+            out[k] = int(v)
+    return out
+
+
+def knowledge_tombstone_register(paths: accounts.AccountPaths, item_ids, at_ms: int = None) -> dict:
+    """登记已删知识条目，返回登记后的整表（调用方免二次读）。
+
+    item_ids 收列表（统一记 at_ms/now）或 {id: 删除时刻} 映射（POST 客户端
+    上报的逐条时刻，钳到不晚于 now 防未来时钟）。调用方在 knowledge.json 的
+    updater 内调用时同持全局锁；TTL 清理沿用会话侧 90 天口径，过期判定按真实
+    时钟（不随 at_ms 走）——登记旧时刻的条目当场被清，客户端上报的 90 天前
+    旧清单也自然拒收。"""
+    now = int(at_ms) if at_ms and int(at_ms) > 0 else int(time.time() * 1000)
+    if isinstance(item_ids, dict):
+        marks = {}
+        for k, v in item_ids.items():
+            if not isinstance(k, str) or not _ITEM_ID_RE.match(k):
+                continue
+            try:
+                ts = int(v)
+            except (TypeError, ValueError):
+                ts = now
+            marks[k] = min(ts, now) if ts > 0 else now
+    else:
+        marks = {s: now for s in (item_ids or [])
+                 if isinstance(s, str) and _ITEM_ID_RE.match(s)}
+    if not marks:
+        return knowledge_tombstone_read(paths)
+    data = knowledge_tombstone_read(paths)
+    data.update(marks)
+    cutoff = int(time.time() * 1000) - _TOMBSTONE_TTL_MS
+    data = {k: v for k, v in data.items() if v >= cutoff}
+    trash_root(paths).mkdir(parents=True, exist_ok=True)
+    storage._write_json(knowledge_deleted_registry_path(paths), data)
+    return data
+
+
+def knowledge_tombstone_unregister(paths: accounts.AccountPaths, item_ids) -> None:
+    """回收站整画布恢复成功后，随画布回写的独占知识条目除名：恢复的条目要能
+    照常收写（改摘要/定时同步推回），否则墓碑会把删前时间戳的回写全拒掉。
+
+    失败不抛——恢复主体已成功，登记残留只挡这个 id 的后续写入，可由再次
+    恢复纠正。"""
+    ids = [s for s in (item_ids or []) if isinstance(s, str) and _ITEM_ID_RE.match(s)]
+    if not ids:
+        return
+    try:
+        def _drop(data):
+            if isinstance(data, dict):
+                for sid in ids:
+                    data.pop(sid, None)
+            return data
+        storage._mutate_json(knowledge_deleted_registry_path(paths), _drop)
+    except Exception as e:
+        logger.warning("knowledge tombstone unregister failed: %s", e)
 
 
 # ====== 账号级墓碑（删账号回收站化：整个账号目录暂存，保留期内可恢复） ======

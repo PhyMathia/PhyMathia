@@ -1,0 +1,237 @@
+"""526 回归：知识删除墓碑——跨标签页删除传播。
+
+协议（2026-11-21，仿 T271 会话墓碑）：
+- DELETE /api/knowledge/{id} 在删除时刻登记墓碑（trash._deleted_knowledge.json）；
+- POST /api/knowledge 合并时「updatedAt（缺省回退 createdAt）≤ 删除时刻」的删前
+  旧副本拒收不重建，无时间戳的净新建放行（同 id 重建以新为准）；
+- POST payload 随带客户端本地已删清单（deleted: {id: 时刻}）→ 服务端补登记并
+  清掉残留条目（DELETE 失败的兜底收敛）；GET /api/knowledge/deleted-ids 供前端
+  15 秒同步清本地残留（复活防线客户端半边）；
+- 删会话连带删掉的独占条目经 _delete_items_by_session(on_removed=…) 同锁内登记；
+  回收站恢复随回写条目除名（trash._restore_payload_data）。
+"""
+
+import json
+import os
+import sys
+import tempfile
+import threading
+import time
+import unittest
+from pathlib import Path
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SRC = os.path.join(ROOT, "src")
+for p in (ROOT, SRC):
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
+os.environ.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+os.environ.setdefault("PHYMATHIA_EMBEDDING", "0")
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+import main as main_mod  # noqa: E402
+from server import accounts as accounts_mod  # noqa: E402
+from server import config as config_mod  # noqa: E402
+from server import knowledge as knowledge_mod  # noqa: E402
+from server import knowledge_routes as knowledge_routes_mod  # noqa: E402
+from server import storage as storage_mod  # noqa: E402
+from server import trash as trash_mod  # noqa: E402
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def _item(kid: str, created_at: int, **extra) -> dict:
+    # source=manual：永不进标题闸门，隔离墓碑语义与入库闸门
+    # sessionId 空：孤儿闸门对空归属放行，测试临时目录无需陪跑 sessions.json
+    base = {"id": kid, "title": "梯度下降", "content": "沿负梯度方向迭代求极小",
+            "sessionId": "", "source": "manual", "createdAt": created_at}
+    base.update(extra)
+    return base
+
+
+class KnowledgeTombstoneTest(unittest.TestCase):
+    def setUp(self):
+        self.client = TestClient(main_mod.app, base_url="http://127.0.0.1")
+        main_mod._json_get_cache.clear()
+        self._orig_data_dir = config_mod.DATA_DIR
+        self._td = tempfile.TemporaryDirectory()
+        config_mod.DATA_DIR = Path(self._td.name)
+        accounts_mod._ENSURED.clear()
+        self.kp = Path(self._td.name) / "users" / "default" / "knowledge.json"
+        self.kp.parent.mkdir(parents=True, exist_ok=True)
+        self.kp.write_text("{}", encoding="utf-8")
+
+    def tearDown(self):
+        config_mod.DATA_DIR = self._orig_data_dir
+        accounts_mod._ENSURED.clear()
+        self._td.cleanup()
+
+    def _registry(self) -> dict:
+        paths = accounts_mod.resolve_paths("default")
+        return trash_mod.knowledge_tombstone_read(paths)
+
+    # ---- DELETE 登记 + POST 闸门 ----
+
+    def test_delete_registers_tombstone_and_gate_blocks_stale_copy(self):
+        t0 = _now_ms() - 5000  # 删前旧副本的 createdAt（比删除时刻早 5 秒）
+        storage_mod._write_json(self.kp, {"k1": _item("k1", t0)})
+
+        r = self.client.delete("/api/knowledge/k1")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(storage_mod._read_json(self.kp), {})
+        reg = self._registry()
+        self.assertIn("k1", reg)
+        self.assertGreaterEqual(reg["k1"], t0 + 4000)  # 登记的是删除时刻，非条目 createdAt
+
+        # 兄弟标签页残留副本（createdAt ≤ 删除时刻）推回：拒收不重建
+        r = self.client.post("/api/knowledge", json={"items": {"k1": _item("k1", t0)}})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(storage_mod._read_json(self.kp), {})
+
+        # 净新建（无时间戳）放行：同 id 重建以新为准
+        fresh = _item("k1", t0)
+        fresh.pop("createdAt")
+        r = self.client.post("/api/knowledge", json={"items": {"k1": fresh}})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("k1", storage_mod._read_json(self.kp))
+
+    def test_gate_prefers_updated_at_over_created_at(self):
+        t0 = _now_ms() - 5000
+        storage_mod._write_json(self.kp, {"k1": _item("k1", t0)})
+        self.client.delete("/api/knowledge/k1")
+        deleted_at = self._registry()["k1"]
+
+        # createdAt 旧但 updatedAt 晚于删除时刻：视为改稿，放行
+        edited = _item("k1", t0, updatedAt=deleted_at + 1000)
+        r = self.client.post("/api/knowledge", json={"items": {"k1": edited}})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("k1", storage_mod._read_json(self.kp))
+
+        # updatedAt 也在删除时刻之前：仍是删前旧副本，拒收
+        storage_mod._write_json(self.kp, {})
+        self.client.delete("/api/knowledge/k1")
+        deleted_at = self._registry()["k1"]
+        stale = _item("k1", t0, updatedAt=deleted_at - 1)
+        r = self.client.post("/api/knowledge", json={"items": {"k1": stale}})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(storage_mod._read_json(self.kp), {})
+
+    # ---- 客户端上报清单：补登记 + 残留自愈 ----
+
+    def test_client_reported_deleted_purges_server_residue(self):
+        t0 = _now_ms() - 5000
+        # 模拟 DELETE 失败：条目仍留在库存，本地清单随全量推送上来
+        storage_mod._write_json(self.kp, {"k1": _item("k1", t0)})
+
+        r = self.client.post("/api/knowledge", json={
+            "items": {"k1": _item("k1", t0)},
+            "deleted": {"k1": _now_ms()},
+        })
+        self.assertEqual(r.status_code, 200)
+        # 补登记成功 + 库存残留自愈清掉
+        self.assertIn("k1", self._registry())
+        self.assertEqual(storage_mod._read_json(self.kp), {})
+
+        # deleted-ids 端点（复活防线客户端半边）返回登记表
+        r = self.client.get("/api/knowledge/deleted-ids")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("k1", r.json()["deleted"])
+
+        # 之后的旧副本推送照旧被闸门拒收
+        r = self.client.post("/api/knowledge", json={"items": {"k1": _item("k1", t0)}})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(storage_mod._read_json(self.kp), {})
+
+    def test_client_reported_deleted_sanitizes_bad_entries(self):
+        now = _now_ms()
+        # 脏条目：非法 id / 非法时刻 / 未来时钟——补登记不落库、非法回落 now、未来钳到 now
+        r = self.client.post("/api/knowledge", json={
+            "items": {},
+            "deleted": {"../evil": now, "k1": "not-a-number", "k2": now + 999999},
+        })
+        self.assertEqual(r.status_code, 200)
+        reg = self._registry()
+        self.assertNotIn("../evil", reg)
+        self.assertIn("k1", reg)              # 非法时刻回落 now
+        self.assertIn("k2", reg)
+        # 未来时钟钳到处理时刻的 now（≥ 测试取 now 的毫秒差可忽略，≤ 当下真时钟）
+        self.assertLessEqual(reg["k2"], _now_ms())
+        self.assertGreater(reg["k2"], 1_000_000_000_000)  # 且是合法毫秒时刻，非原样落库
+
+    # ---- 会话删除链：独占条目登记 ----
+
+    def test_delete_items_by_session_reports_only_fully_removed(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "knowledge.json"
+            t0 = _now_ms()
+            storage_mod._write_json(path, {
+                "k1": _item("k1", t0, sessionId="s2", sessionIds=["s2", "s1"]),  # 还有 s2 归属
+                "k2": _item("k2", t0, sessionId="s1"),  # s1 独占 → 整条删除
+            })
+            reported = []
+            removed = knowledge_mod._delete_items_by_session(
+                path, "s1", on_removed=reported.extend)
+            self.assertEqual(removed, 2)          # 受影响条数口径不变（T146 测试同款）
+            self.assertEqual(reported, ["k2"])    # 只报整条删除的 id，摘归属的不算
+            data = storage_mod._read_json(path)
+            self.assertEqual(set(data), {"k1"})
+            self.assertEqual(data["k1"]["sessionId"], "s2")
+
+    def test_trash_restore_unregisters_knowledge_tombstones(self):
+        t0 = _now_ms() - 5000
+        paths = accounts_mod.resolve_paths("default")
+        trash_mod.knowledge_tombstone_register(paths, ["k1"])
+        # 快照目录：只带 knowledge.json（其余段缺失走既有空值分支）
+        item_dir = Path(self._td.name) / "stone"
+        item_dir.mkdir()
+        (item_dir / "knowledge.json").write_text(
+            json.dumps({"k1": _item("k1", t0)}), encoding="utf-8")
+
+        trash_mod._restore_payload_data(paths, item_dir, "s1")
+        # 条目回写 + 墓碑除名：恢复后的条目要能照常收写
+        self.assertIn("k1", storage_mod._read_json(self.kp))
+        self.assertNotIn("k1", self._registry())
+
+    # ---- 登记表自身：TTL / 白名单 / 返回整表 ----
+
+    def test_register_ttl_and_return_value(self):
+        paths = accounts_mod.resolve_paths("default")
+        old = _now_ms() - 100 * 24 * 3600 * 1000  # 100 天前，超 90 天 TTL
+        reg = trash_mod.knowledge_tombstone_register(paths, ["k_old"], at_ms=old)
+        self.assertNotIn("k_old", reg)  # 过期清理当场生效
+        reg = trash_mod.knowledge_tombstone_register(paths, ["k_new"])
+        self.assertIn("k_new", reg)
+        # 非法 id 过白名单不落表
+        reg = trash_mod.knowledge_tombstone_register(paths, ["../evil"])
+        self.assertNotIn("../evil", reg)
+
+    def test_delete_route_runs_off_loop_thread(self):
+        # T240 口径守恒：删除路由的磁盘活儿仍在工作线程（墓碑登记同段，不回循环线程）
+        class _Spy:
+            def __init__(self, real):
+                self._real = real
+                self.run_thread = None
+
+            def __call__(self, *args, **kwargs):
+                self.run_thread = threading.current_thread()
+                return self._real(*args, **kwargs)
+
+        spy = _Spy(knowledge_routes_mod._mutate_json)
+        orig = knowledge_routes_mod._mutate_json
+        knowledge_routes_mod._mutate_json = spy
+        try:
+            storage_mod._write_json(self.kp, {"k1": _item("k1", _now_ms())})
+            r = self.client.delete("/api/knowledge/k1")
+            self.assertEqual(r.status_code, 200)
+        finally:
+            knowledge_routes_mod._mutate_json = orig
+        self.assertIsNotNone(spy.run_thread)
+        self.assertIsNot(spy.run_thread, threading.main_thread())
+
+
+if __name__ == "__main__":
+    unittest.main()

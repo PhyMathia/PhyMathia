@@ -119,13 +119,15 @@
       let mergedSessions = null;  // T78：本轮回合后的会话全集，供 current 指针判悬空用
       let changed = false;        // T204：本轮是否确有数据落盘变化（决定返回值）
       try {
-        const [sessResp, knowResp, currResp, delResp] = await Promise.all([
+        const [sessResp, knowResp, currResp, delResp, kdelResp] = await Promise.all([
           fetch('/api/sessions', { cache: 'no-cache', signal: AbortSignal.timeout(3000) }),
           fetch('/api/knowledge', { cache: 'no-cache', signal: AbortSignal.timeout(10000) }),
           fetch('/api/kv/phymathia_current_session', { cache: 'no-cache', signal: AbortSignal.timeout(10000) }),
           // T271：已删会话登记表——本地残留按它清。自带 catch 落 null：这条新
           // 端点网络挂了不该拖垮整轮同步（404/非 ok 走 delResp.ok 判断跳过）
           fetch('/api/sessions/deleted-ids', { cache: 'no-cache', signal: AbortSignal.timeout(3000) }).catch(() => null),
+          // 526：已删知识条目登记表——知识残留副本按它清（服务端侧同款纪律）
+          fetch('/api/knowledge/deleted-ids', { cache: 'no-cache', signal: AbortSignal.timeout(3000) }).catch(() => null),
         ]);
         _serverAvailable = sessResp.ok;
         _serverAvailableCheckedAt = Date.now();
@@ -297,9 +299,21 @@
         if (knowResp.ok) {
           const kItems = await knowResp.json();
           const localKnowRaw = localStorage.getItem(STORAGE_KEY_KNOWLEDGE);
-          const localKnow = localKnowRaw ? JSON.parse(localKnowRaw) : {};
+          let localKnow = localKnowRaw ? JSON.parse(localKnowRaw) : {};
           // 服务端返回 id->item 映射（后端已归一化）；防御性兜底：非对象时视为空
           const serverMap = (kItems && typeof kItems === 'object' && !Array.isArray(kItems)) ? kItems : {};
+          // 526：墓碑登记表并入本地已删清单（服务端为真源、同 id 取较大时刻），
+          // 已删 id 从本地残留与服务端响应两侧都剔除再并集合并——兄弟标签页删掉的
+          // 条目不被本地残留副本并回来，服务端收敛前的残留也不倒灌。kdelResp 非 ok
+          // 时退回本地清单兜底：本轮本页删过的条目照样不复活（登记表网络挂了不该
+          // 拖垮整轮同步，同 delResp 口径）。
+          const kdelData = (kdelResp && kdelResp.ok) ? await kdelResp.json().catch(() => null) : null;
+          const deletedMap = (typeof _knowledgeMergeDeleted === 'function')
+            ? _knowledgeMergeDeleted(kdelData && kdelData.deleted) : {};
+          for (const id in deletedMap) {
+            delete localKnow[id];
+            delete serverMap[id];
+          }
           // 并集合并：服务端优先、本地独有不丢（避免"取更多一方"覆盖本地独有数据）
           const merged = (typeof dedupeKnowledgeItems === 'function')
             ? dedupeKnowledgeItems({ ...(localKnow || {}), ...serverMap })
@@ -312,10 +326,15 @@
             if (mergedJson !== JSON.stringify(localKnow || {})) {
               safeLocalStorageSet(STORAGE_KEY_KNOWLEDGE, mergedJson);
               changed = true;
+              // 526：本地清过已删 id 时内存缓存必须同拍失效——kpKnowledgeCache 里
+              // 的残留副本会在下一次 saveKnowledgeItems 整表推回（同 T271 会话侧的
+              // 内存副本清理解）
+              if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
             }
           } else if (localCount > 0) {
-            // 本地有数据但服务端为空：上传补全服务端
-            try { await _postToServer('/api/knowledge', { items: localKnow }); } catch(e) { console.warn('[Storage] Upload knowledge failed:', e); }
+            // 本地有数据但服务端为空：上传补全服务端（走 _saveKnowledgeToServer，
+            // payload 随带本地已删清单，526）
+            try { await _saveKnowledgeToServer(localKnow); } catch(e) { console.warn('[Storage] Upload knowledge failed:', e); }
           }
         }
         if (currResp.ok) {
@@ -430,7 +449,10 @@
 
     // 保存知识条目到服务端
     async function _saveKnowledgeToServer(items) {
-      return _postToServer('/api/knowledge', { items: items || {} });
+      // 526：全量推送随带本地已删清单——服务端据此补登记墓碑并清残留条目
+      // （删除链路的 DELETE 可能失败，靠这条兜底最终收敛）
+      const deleted = (typeof _readKnowledgeDeleted === 'function') ? _readKnowledgeDeleted() : {};
+      return _postToServer('/api/knowledge', { items: items || {}, deleted: deleted });
     }
 
     // 保存当前会话 ID 到服务端

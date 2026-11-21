@@ -975,11 +975,17 @@ def _add_formulas_from_items(items: list, session_id: str, descriptions: dict = 
     return count
 
 
-def _delete_items_by_session(path: Path, session_id: str) -> int:
+def _delete_items_by_session(path: Path, session_id: str, on_removed=None) -> int:
     """sessionIds 感知的按会话删除（T146）：条目从该会话的归属里摘除，
     还有别的归属就把主 sessionId 改到剩余归属（孤儿闸门要求 sessionId 指向
-    活会话），一个归属都不剩才整条删除。返回受影响条数。"""
+    活会话），一个归属都不剩才整条删除。返回受影响条数。
+
+    on_removed(整条删除的 id 列表)：在 updater 内回调（同持全局 _JSON_LOCK）。
+    526 起调用方在此登记知识墓碑——删会话连带删掉的独占条目与单条 DELETE 走
+    同一条「删得掉」防线，兄弟标签页残留副本推回时被 POST 闸门拒收；回收站
+    恢复链（trash._restore_payload_data）对回写条目按需除名。"""
     affected = []
+    removed_ids = []
 
     def updater(data):
         nonlocal affected
@@ -1006,8 +1012,11 @@ def _delete_items_by_session(path: Path, session_id: str) -> int:
                     item.pop("sessionIds", None)
             else:
                 data.pop(key, None)
+                removed_ids.append(key)
             affected.append(key)
             changed = True
+        if removed_ids and on_removed:
+            on_removed(removed_ids)
         return data if changed else None
 
     _mutate_json(path, updater)
