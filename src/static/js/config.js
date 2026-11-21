@@ -231,6 +231,8 @@ const STORAGE_KEY_KNOWLEDGE = 'phymathia_knowledge';
 // 本地已删知识清单（526，{id: 删除时刻}）：删除传播的客户端半边——全量推送
 // 随 POST 带上（服务端补登墓碑）、定时同步用它剔除并集合并里的已删 id
 const STORAGE_KEY_KNOWLEDGE_DELETED = 'phymathia_knowledge_deleted';
+// 本地已删公式清单（537，同 526 口径）：公式删除传播的客户端半边
+const STORAGE_KEY_FORMULAS_DELETED = 'phymathia_formulas_deleted';
 // 知识总览面板上次停留的标签页（knowledge/formulas，全局键；重开面板时恢复）
 const STORAGE_KEY_KP_TAB = 'phymathia_kp_tab';
 // 检测出题素材源偏好（mixed/ai/local，quiz-ui.js 写、quiz.js 读）

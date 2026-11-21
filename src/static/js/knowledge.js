@@ -186,6 +186,14 @@ function _knowledgeMarkDeleted(ids) {
   return _writeKnowledgeDeleted(map);
 }
 
+// 撤销删除＝用户显式还原：从本地清单摘除，否则下一次推送的 deleted 载荷会把
+// 服务端墓碑再登记一遍、15s 同步又把还原的条目从本地清掉（undo 变 15 秒体验）
+function _knowledgeUnmarkDeleted(ids) {
+  const map = _readKnowledgeDeleted();
+  for (const id of (ids || [])) delete map[id];
+  return _writeKnowledgeDeleted(map);
+}
+
 // 服务端 deleted-ids 登记表并入本地（同 id 取较大时刻＝删除时刻单调），
 // 返回合并后的清单；调用方据此从并集合并两侧（本地+服务端响应）剔除已删 id。
 function _knowledgeMergeDeleted(serverMap) {
@@ -197,6 +205,66 @@ function _knowledgeMergeDeleted(serverMap) {
     if (!(id in map) || Number(map[id]) < ts) map[id] = ts;
   }
   return _writeKnowledgeDeleted(map);
+}
+
+// ===== 本地已删公式清单（537，2026-11-21）：与 526 知识清单同款四件套 =====
+// 复活向量在 loadFormulas 的「保留本地有而服务端没有的（离线收藏兜底）」——兄弟
+// 标签页的残留副本借此一直活着，收集链再遇同公式（saveFormulasToServer 按 latex
+// 命中 existing）就把它推回服务端。这份 {id: 删除时刻} 三用：①删除链先落本地
+// （DELETE 失败随下一次推送补登）；②面板加载/快速刷新的并集两侧剔除；③服务端
+// deleted-ids 反向并入，兄弟标签页删掉的公式据此清本地。
+function _readFormulaDeleted() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_FORMULAS_DELETED);
+    const map = raw ? JSON.parse(raw) : {};
+    return (map && typeof map === 'object' && !Array.isArray(map)) ? map : {};
+  } catch { return {}; }
+}
+
+function _writeFormulaDeleted(map) {
+  // 过期清理与服务端 TTL 同口径（与知识清单共用 90 天常量）
+  const cutoff = Date.now() - KP_DELETED_TTL_MS;
+  const kept = {};
+  for (const id in (map || {})) {
+    const ts = Number(map[id]);
+    if (Number.isFinite(ts) && ts > 0 && ts >= cutoff) kept[id] = ts;
+  }
+  safeLocalStorageSet(STORAGE_KEY_FORMULAS_DELETED, JSON.stringify(kept));
+  return kept;
+}
+
+function _formulaMarkDeleted(ids) {
+  const map = _readFormulaDeleted();
+  const now = Date.now();
+  for (const id of (ids || [])) {
+    if (id) map[id] = now;
+  }
+  return _writeFormulaDeleted(map);
+}
+
+// 撤销删除＝用户显式还原：从本地清单摘除，否则下一次推送的 deleted 载荷会把
+// 服务端墓碑再登记一遍、15s 同步又把还原的条目从本地清掉（undo 变 15 秒体验）
+function _formulaUnmarkDeleted(ids) {
+  const map = _readFormulaDeleted();
+  for (const id of (ids || [])) delete map[id];
+  return _writeFormulaDeleted(map);
+}
+
+function _formulaMergeDeleted(serverMap) {
+  const map = _readFormulaDeleted();
+  const src = (serverMap && typeof serverMap === 'object' && !Array.isArray(serverMap)) ? serverMap : {};
+  for (const id in src) {
+    const ts = Number(src[id]);
+    if (!Number.isFinite(ts) || ts <= 0) continue;
+    if (!(id in map) || Number(map[id]) < ts) map[id] = ts;
+  }
+  return _writeFormulaDeleted(map);
+}
+
+// 强制失效公式缓存：下次 getFormulaCache() 重新读 localStorage（同步链只写
+// localStorage 不动内存缓存，与 invalidateKnowledgeCache 同口径）
+function invalidateFormulaCache() {
+  kpFormulaCache = null;
 }
 
 function getKnowledgeItems() {
@@ -256,12 +324,14 @@ async function _quickRefreshKnowledge() {
       fetch('/api/formulas', { cache: 'no-cache' }),
       // 526：墓碑登记表（自带 catch 落 null，网络挂了不拖垮整轮刷新）
       fetch('/api/knowledge/deleted-ids', { cache: 'no-cache' }).catch(() => null),
+      // 537：公式墓碑登记表（同款 catch 兜底）
+      fetch('/api/formulas/deleted-ids', { cache: 'no-cache' }).catch(() => null),
     ]);
     await Promise.all([
       kpKnowledgeSaveQueue.catch(() => false),
       kpFormulaSaveQueue.catch(() => false),
     ]);
-    const [knowResp, formulaResp, kdelResp] = await fetchPromise;
+    const [knowResp, formulaResp, kdelResp, fdelResp] = await fetchPromise;
     if (knowResp.ok) {
       const serverMap = await knowResp.json();
       if (serverMap && typeof serverMap === 'object' && !Array.isArray(serverMap)) {
@@ -285,9 +355,19 @@ async function _quickRefreshKnowledge() {
     }
     if (formulaResp.ok) {
       const data = await formulaResp.json();
+      // 537：公式墓碑并入本地清单，已删 id 从本地残留与服务端响应两侧剔除
+      // 再并集（与知识分支同款纪律）
+      let fdelData = null;
+      if (fdelResp && fdelResp.ok) {
+        try { fdelData = await fdelResp.json(); } catch (e) { fdelData = null; }
+      }
+      const deletedFormulas = _formulaMergeDeleted(fdelData && fdelData.deleted);
       const serverFormulas = {};
-      for (const it of (data.items || [])) serverFormulas[it.id] = it;
+      for (const it of (data.items || [])) {
+        if (!deletedFormulas[it.id]) serverFormulas[it.id] = it;
+      }
       const localFormulas = getFormulaCache() || {};
+      for (const id in deletedFormulas) delete localFormulas[id];
       const mergedFormulas = dedupeFormulaItems({ ...localFormulas, ...serverFormulas });
       setFormulaCache(mergedFormulas);
     }
@@ -739,11 +819,16 @@ function _undoKpDelete() {
   _hideKpUndoToast();
   if (!snap || !snap.item) return;
   if (snap.kind === 'knowledge') {
+    // 526 补：撤销＝显式还原，先从本地已删清单摘除——否则推送的 deleted 载荷
+    // 会把墓碑再登记一遍，还原的条目被闸门拒收、15s 同步再从本地清掉
+    _knowledgeUnmarkDeleted([snap.item.id]);
     const items = getKnowledgeItems();
     items[snap.item.id] = snap.item;
     saveKnowledgeItems(items); // 走保存队列：本地写回 + POST merge 推回服务端
     showToast('已撤销删除：' + String(snap.item.title || '').slice(0, 16));
   } else {
+    // 537：公式撤销同款先摘除本地已删清单，再走写回路径
+    _formulaUnmarkDeleted([snap.item.id]);
     // 公式走 saveFormulasToServer 同款写入路径（语义归一 + 入缓存 + 排队 POST）
     saveFormulasToServer([snap.item]).then(() => {
       // 被语义校验（_looksLikeFormula）拦下的废条目不会经它入缓存：仅本地写回兜底
@@ -1526,6 +1611,7 @@ function setFormulaCache(items) {
 async function deleteFormulasBySession(sessionId) {
   const items = getFormulaCache();
   let changed = false;
+  const removedIds = [];
   for (const id in items) {
     const it = items[id];
     // T146：sessionIds 感知——还有别的归属就摘除该会话并改主会话，全没了才删
@@ -1537,9 +1623,13 @@ async function deleteFormulasBySession(sessionId) {
       it.sessionId = rest[0];
     } else {
       delete items[id];
+      removedIds.push(id);
     }
     changed = true;
   }
+  // 537：整删条目先落本地已删清单（口径与 confirmDeleteFormula 一致，DELETE
+  // 失败随下一次推送补登）
+  if (removedIds.length) _formulaMarkDeleted(removedIds);
   if (changed) setFormulaCache(items);
   // 服务端按会话删除（超时兜底 T195：无 signal 挂死会卡住清空/删会话链收尾）
   try {
@@ -1623,6 +1713,9 @@ async function saveFormulasToServer(formulas) {
   if (!pending.length) return;
 
   const snapshot = pending.map(item => ({ ...item }));
+  // 537：推送随带本地已删清单——服务端据此补登记墓碑并清残留条目（删除链的
+  // DELETE 失败靠这条兜底收敛；526 知识推送同款）
+  const deletedPayload = _readFormulaDeleted();
   kpFormulaSaveQueue = kpFormulaSaveQueue
     .catch(() => false)
     .then(async () => {
@@ -1630,7 +1723,7 @@ async function saveFormulasToServer(formulas) {
         return await fetch('/api/formulas', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ items: snapshot })
+          body: JSON.stringify({ items: snapshot, deleted: deletedPayload })
         });
       } catch (err) {
         console.warn('Save formulas to server failed:', err);
@@ -1660,15 +1753,29 @@ async function loadFormulas() {
   renderFormulaList();
   await kpFormulaSaveQueue.catch(() => false);
   try {
-    const resp = await fetch('/api/formulas', { cache: 'no-cache' });
+    // 537：墓碑登记表并行拉（自带 catch 落 null，网络挂不拖垮整轮加载）——
+    // 下面「保留本地有而服务端没有的」离线收藏兜底必须先剔除已删 id，否则
+    // 兄弟标签页删掉的公式会借本地残留副本一直活着并被收集链推回复活
+    const [resp, fdelResp] = await Promise.all([
+      fetch('/api/formulas', { cache: 'no-cache' }),
+      fetch('/api/formulas/deleted-ids', { cache: 'no-cache' }).catch(() => null),
+    ]);
     if (resp.ok) {
       const data = await resp.json();
       if (requestSeq !== kpFormulaLoadSeq) return;
+      let fdelData = null;
+      if (fdelResp && fdelResp.ok) {
+        try { fdelData = await fdelResp.json(); } catch (e) { fdelData = null; }
+      }
+      const deletedMap = _formulaMergeDeleted(fdelData && fdelData.deleted);
       const merged = {};
-      for (const it of (data.items || [])) merged[it.id] = it;
-      // 保留本地有而服务端没有的（离线收藏兜底）
+      for (const it of (data.items || [])) {
+        if (!deletedMap[it.id]) merged[it.id] = it;
+      }
+      // 保留本地有而服务端没有的（离线收藏兜底；已删 id 不在其列）
       const cache = getFormulaCache();
       for (const id in cache) {
+        if (deletedMap[id]) continue;
         if (!merged[id]) {
           merged[id] = cache[id];
         } else if (!merged[id].nodeId && cache[id].nodeId) {
@@ -1897,6 +2004,9 @@ async function locateFormulaNode(formulaId) {
 
 async function confirmDeleteFormula(id) {
   if (!confirm('确定删除此公式？')) return;
+  // 537：删除时刻先落本地已删清单——服务端 DELETE 失败时清单随下一次推送
+  // 补登墓碑；本页面板合并也据此剔除，不等服务端登记表（526 同款口径）
+  _formulaMarkDeleted([id]);
   const snapshot = getFormulaCache()[id] || null; // 删除前快照（撤销＝原样写回）
   const items = getFormulaCache();
   delete items[id];

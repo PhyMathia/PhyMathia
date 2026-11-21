@@ -317,7 +317,9 @@ def _delete_session_sync(paths, account, session_id, msgs_path) -> None:
     # 标签页残留副本推回被 POST 闸门拒收；回收站恢复随回写条目除名（trash 恢复链）
     _delete_items_by_session(paths.knowledge_path, session_id,
                              on_removed=lambda ids: trash.knowledge_tombstone_register(paths, ids))
-    _delete_items_by_session(paths.formulas_path, session_id)  # T146: sessionIds 感知删除
+    # 537：整删的独占公式同款登记（回收站恢复随回写除名）
+    _delete_items_by_session(paths.formulas_path, session_id,
+                             on_removed=lambda ids: trash.formula_tombstone_register(paths, ids))  # T146: sessionIds 感知删除
     _purge_dangling_continent_edges(session_id, account)
     _delete_socratic_state(session_id, account)
     for stale in (msgs_path, paths.kv_dir / f"{session_id}.json"):
@@ -707,7 +709,9 @@ async def api_clear_messages(session_id: str, request: Request = None):
     # 526：清空消息连带删掉的独占知识同样登记墓碑（口径与整删一致，见上）
     _delete_items_by_session(paths.knowledge_path, session_id,
                              on_removed=lambda ids: trash.knowledge_tombstone_register(paths, ids))
-    _delete_items_by_session(paths.formulas_path, session_id)  # T146: sessionIds 感知删除
+    # 537：整删的独占公式同款登记（回收站恢复随回写除名）
+    _delete_items_by_session(paths.formulas_path, session_id,
+                             on_removed=lambda ids: trash.formula_tombstone_register(paths, ids))  # T146: sessionIds 感知删除
     _purge_dangling_continent_edges(session_id, account)
     _delete_socratic_state(session_id, account)
     # 清空消息＝用户主动抹掉内容，可读归档跟着清（同一份数据不许留后门）

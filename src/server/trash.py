@@ -378,6 +378,9 @@ def _restore_payload_data(paths: accounts.AccountPaths, item_dir: Path, sid: str
     # 话恢复条目的删前时间戳会被 POST 合并闸门拒收，改摘要/同步推回都收不进。
     if isinstance(knowledge, dict) and knowledge:
         knowledge_tombstone_unregister(paths, list(knowledge.keys()))
+    # 537：公式同款除名（会话删除链登记过公式的整删条目）
+    if isinstance(formulas, dict) and formulas:
+        formula_tombstone_unregister(paths, list(formulas.keys()))
 
     # 探索网快照：kv__<variant>.json 各回各的拆分文件（文件名来自捕获时的白名单形态）
     for p in sorted(item_dir.glob("kv__*.json")):
@@ -682,6 +685,80 @@ def knowledge_tombstone_unregister(paths: accounts.AccountPaths, item_ids) -> No
         storage._mutate_json(knowledge_deleted_registry_path(paths), _drop)
     except Exception as e:
         logger.warning("knowledge tombstone unregister failed: %s", e)
+
+
+# ====== 公式条目墓碑（537，2026-11-21：公式删除跨标签页传播，仿 526 知识墓碑） ======
+# 同一套纪律：DELETE 时刻登记 id→删除毫秒；POST 合并时「createdAt ≤ 删除时刻」的
+# 删前旧副本拒收不重建（公式无 updatedAt，时间戳只讲 createdAt）；登记/除名一律在
+# formulas.json 的 updater 内调用（同持全局 _JSON_LOCK，杜绝竞窗）。复活防线的
+# 客户端半边：GET /api/formulas/deleted-ids 供前端清本地残留（loadFormulas 的
+# 「保留本地有而服务端没有的」离线收藏兜底会让兄弟标签页的残留副本一直活着）。
+
+FORMULAS_DELETED_REGISTRY_NAME = "_deleted_formulas.json"
+
+
+def formulas_deleted_registry_path(paths: accounts.AccountPaths) -> Path:
+    return trash_root(paths) / FORMULAS_DELETED_REGISTRY_NAME
+
+
+def formula_tombstone_read(paths: accounts.AccountPaths) -> dict:
+    """已删公式条目登记表（id→删除毫秒时刻）。脏值逐项剔除、缺失回落空表。"""
+    data = storage._read_json(formulas_deleted_registry_path(paths), {})
+    if not isinstance(data, dict):
+        return {}
+    out = {}
+    for k, v in data.items():
+        if isinstance(k, str) and _ITEM_ID_RE.match(k) and isinstance(v, (int, float)) and v > 0:
+            out[k] = int(v)
+    return out
+
+
+def formula_tombstone_register(paths: accounts.AccountPaths, item_ids, at_ms: int = None) -> dict:
+    """登记已删公式条目，返回登记后的整表（调用方免二次读）。
+
+    item_ids 收列表（统一记 at_ms/now）或 {id: 删除时刻} 映射（POST 客户端
+    上报的逐条时刻，钳到不晚于 now 防未来时钟）。TTL 清理沿用会话/知识侧
+    90 天口径，过期判定按真实时钟（不随 at_ms 走）。"""
+    now = int(at_ms) if at_ms and int(at_ms) > 0 else int(time.time() * 1000)
+    if isinstance(item_ids, dict):
+        marks = {}
+        for k, v in item_ids.items():
+            if not isinstance(k, str) or not _ITEM_ID_RE.match(k):
+                continue
+            try:
+                ts = int(v)
+            except (TypeError, ValueError):
+                ts = now
+            marks[k] = min(ts, now) if ts > 0 else now
+    else:
+        marks = {s: now for s in (item_ids or [])
+                 if isinstance(s, str) and _ITEM_ID_RE.match(s)}
+    if not marks:
+        return formula_tombstone_read(paths)
+    data = formula_tombstone_read(paths)
+    data.update(marks)
+    cutoff = int(time.time() * 1000) - _TOMBSTONE_TTL_MS
+    data = {k: v for k, v in data.items() if v >= cutoff}
+    trash_root(paths).mkdir(parents=True, exist_ok=True)
+    storage._write_json(formulas_deleted_registry_path(paths), data)
+    return data
+
+
+def formula_tombstone_unregister(paths: accounts.AccountPaths, item_ids) -> None:
+    """回收站恢复回写公式后按条目除名（526 知识侧同款）：恢复的条目要能照常
+    收写，否则墓碑会把删前时间戳的回写全拒掉。失败不抛——恢复主体已成功。"""
+    ids = [s for s in (item_ids or []) if isinstance(s, str) and _ITEM_ID_RE.match(s)]
+    if not ids:
+        return
+    try:
+        def _drop(data):
+            if isinstance(data, dict):
+                for sid in ids:
+                    data.pop(sid, None)
+            return data
+        storage._mutate_json(formulas_deleted_registry_path(paths), _drop)
+    except Exception as e:
+        logger.warning("formula tombstone unregister failed: %s", e)
 
 
 # ====== 账号级墓碑（删账号回收站化：整个账号目录暂存，保留期内可恢复） ======

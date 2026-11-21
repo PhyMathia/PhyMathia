@@ -497,13 +497,65 @@ async def api_save_formulas(request: Request):
     if not isinstance(items, list) or any(not isinstance(it, dict) for it in items):
         # 逐项 it.get 前先挡掉契约外形状（dict/字符串进来就是 500）
         raise HTTPException(status_code=400, detail="'items' must be a list of objects")
+    # 客户端上报的本地已删清单（537，526 同款）：全量推送随带 {id: 删除时刻}，
+    # 服务端据此补登记墓碑并清掉残留条目——DELETE 失败（网络/超时）的兜底收敛
+    client_deleted = payload.get("deleted") if isinstance(payload, dict) else None
+    if not isinstance(client_deleted, dict):
+        client_deleted = {}
     count = 0
 
     def updater(data):
         nonlocal count
+        paths = accounts.resolve_paths(account)
+        # 537 墓碑闸门：已删条目的**删前旧副本**拒收不重建（兄弟标签页 localStorage
+        # 残留副本经收集链推回）。公式无 updatedAt，时间戳只讲 createdAt；无时间戳
+        # 的净新建放行（同 id 重建以新为准，知识侧同口径）。在 updater 内读登记表
+        # ——与 DELETE 路由的登记同持全局 _JSON_LOCK，杜绝竞窗（526 同款纪律）。
+        tombstones = trash.formula_tombstone_read(paths)
+        if client_deleted:
+            # 客户端已删清单补登记（DELETE 失败兜底），登记后的整表同轮生效
+            tombstones = trash.formula_tombstone_register(paths, client_deleted)
+
+        def _formula_ts(item):
+            if not isinstance(item, dict):
+                return None
+            try:
+                ts = int(item.get("createdAt"))
+            except (TypeError, ValueError):
+                return None
+            return ts if ts > 0 else None
+
+        # 残留自愈：登记表 id 若仍活在库存（DELETE 失败残留）一并清掉——GET 不
+        # 回写，清库只在写路径做。必须先于 _dedupe_formula_map：去重可能把同键
+        # 活条目折叠进已删幸存者，幸存者再被清时连带丢数据（526 同课）
+        purged = 0
+        for key, deleted_at in tombstones.items():
+            stock = data.get(key) if isinstance(data, dict) else None
+            ts = _formula_ts(stock)
+            if ts is not None and ts <= deleted_at:
+                data.pop(key, None)
+                purged += 1
+        if purged:
+            logger.info(f"Formula tombstone purge removed {purged} stale entries")
+
+        # 闸门：incoming 里带已删 id 且 createdAt ≤ 删除时刻的删前旧副本拒收
+        gated_items = []
+        gate_rejected = 0
+        for it in items:
+            fid = str(it.get("id") or "")
+            deleted_at = tombstones.get(fid) if fid else None
+            if deleted_at is not None:
+                ts = _formula_ts(it)
+                if ts is not None and ts <= deleted_at:
+                    gate_rejected += 1
+                    continue
+            gated_items.append(it)
+        if gate_rejected:
+            logger.info(f"Formula tombstone gate rejected {gate_rejected} stale copies")
+
         # 写入时物理去重（原挂在 GET 里的清理逻辑挪到这里）
         data = _dedupe_formula_map(data)
-        for it in items:
+        for it in gated_items:
             latex = _normalize_formula(it.get("latex") or "")
             if not latex or not _looks_like_formula(latex):
                 continue
@@ -563,12 +615,15 @@ async def api_save_formulas(request: Request):
                     it.get("createdAt"), int(time.time() * 1000)),
             }
             count += 1
-        return data if count else None
+        # purged 也算落盘理由：墓碑自愈清掉残留但本轮没有新条目时（count=0），
+        # 不能走 T202 短路不写盘——否则 DELETE 失败的残留永远清不掉
+        return data if (count or purged) else None
 
     # T240：updater 里的全库 dedupe＋整文件写入挪 to_thread（T201 首波同款，
     # 收尾漏了公式库这条）——持 _JSON_LOCK 的磁盘 IO 压在事件循环上时，后台
     # 线程持锁写大文件会把全服务请求一起堵停
-    await asyncio.to_thread(_mutate_json, _account_paths(request, payload).formulas_path, updater)
+    account = _account_id(request, payload)
+    await asyncio.to_thread(_mutate_json, accounts.resolve_paths(account).formulas_path, updater)
     return {"ok": True, "count": count}
 
 
@@ -600,20 +655,40 @@ async def api_delete_formulas_by_session(session_id: str = "", request: Request 
         else:
             removed = list(data.keys())
             data.clear()
+        # 537：整删条目登记墓碑（与删除同持 _JSON_LOCK）——兄弟标签页的残留
+        # 副本经收集链推回时由 POST 闸门拒收，不再复活（526 同款纪律）
+        if removed:
+            trash.formula_tombstone_register(paths, removed)
         return data if (removed or sanitized) else None
 
-    await asyncio.to_thread(_mutate_json, _account_paths(request).formulas_path, updater)
+    paths = _account_paths(request)
+    await asyncio.to_thread(_mutate_json, paths.formulas_path, updater)
     return {"ok": True, "count": len(removed)}
 
 
 @router.delete("/api/formulas/{formula_id}")
 async def api_delete_formula(formula_id: str, request: Request = None):
+    paths = _account_paths(request)
+
     def updater(data):
+        # 537：删除时刻登记墓碑（与本次删除同持 _JSON_LOCK，杜绝「删除登记→
+        # POST 合并」竞窗）——库存没有该 id 也登记：本地独有条目删服务端无可
+        # 删，兄弟标签页可能还有副本（526 同款口径）
+        trash.formula_tombstone_register(paths, [formula_id])
         data.pop(formula_id, None)
         return data
 
-    await asyncio.to_thread(_mutate_json, _account_paths(request).formulas_path, updater)
+    await asyncio.to_thread(_mutate_json, paths.formulas_path, updater)
     return {"ok": True}
+
+
+@router.get("/api/formulas/deleted-ids")
+async def api_deleted_formula_ids(request: Request = None):
+    """已删公式条目墓碑登记表（537，id→删除毫秒时刻）。前端 15 秒同步与公式
+    面板加载轮询它清本地残留（loadFormulas 的「保留本地有而服务端没有」离线
+    收藏兜底会让兄弟标签页的残留副本一直活着）——复活防线客户端半边；服务端
+    写闸门见 DELETE 的登记与 POST 的拒收+残留自愈。"""
+    return {"deleted": trash.formula_tombstone_read(_account_paths(request))}
 
 
 

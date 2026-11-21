@@ -256,6 +256,50 @@ check('knowledge: 517 备份导入 id 白名单（_normalizeBackup 滤脏键/脏
   return true;
 });
 
+check('backup: 519 备份导入 __proto__ 键（normalize 丢弃三危险键，Object.assign 合并不改写原型）', () => {
+  if (typeof sandbox._normalizeBackup !== 'function') throw new Error('主沙箱缺 _normalizeBackup');
+  // 行为口径：JSON.parse 造出的自有 __proto__ 键（对象字面量写不出、字符串载荷才是真实
+  // 攻击形态）会过 ID_SAFE 白名单（下划线在字符集内）——normalize 必须连 constructor/
+  // prototype 一起整条丢弃，三张 map（sessions 两形态/knowledge/formulas）都不放行
+  const out = vm.runInContext([
+    'var __evil = JSON.parse(\'{"sessions":{"__proto__":{"p":1},"constructor":{"p":1},"legit1":{"t":"ok"}},"knowledge":{"__proto__":{"p":1},"ki_1":{"id":"ki_1"}},"formulas":{"__proto__":{"p":1},"f_1":{"id":"f_1"}}}\');',
+    // sessions 数组形态（旧版备份）同口径
+    'var __evilArr = JSON.parse(\'{"sessions":[{"id":"__proto__","t":"evil"},{"id":"legit2","t":"ok"}]}\');',
+    'var __n = _normalizeBackup(__evil), __na = _normalizeBackup(__evilArr);',
+    'var __own = function(o,k){ return Object.prototype.hasOwnProperty.call(o,k); };',
+    'JSON.stringify({',
+    '  sess: [__own(__n.sessions,"__proto__"), __own(__n.sessions,"constructor"), Object.keys(__n.sessions).join(",")],',
+    '  know: [__own(__n.knowledge,"__proto__"), Object.keys(__n.knowledge).join(",")],',
+    '  form: [__own(__n.formulas,"__proto__"), Object.keys(__n.formulas).join(",")],',
+    '  sessArr: [__own(__na.sessions,"__proto__"), Object.keys(__na.sessions).join(",")],',
+    '});',
+  ].join('\n'), sandbox);
+  const r = JSON.parse(out);
+  if (r.sess[0] || r.sess[1]) throw new Error('sessions 危险键应被丢弃: ' + out);
+  if (r.sess[2] !== 'legit1') throw new Error('sessions 合法键应保留: ' + out);
+  if (r.know[0] || r.know[1] !== 'ki_1') throw new Error('knowledge 危险键丢弃/合法键保留双查失败: ' + out);
+  if (r.form[0] || r.form[1] !== 'f_1') throw new Error('formulas 危险键丢弃/合法键保留双查失败: ' + out);
+  if (r.sessArr[0] || r.sessArr[1] !== 'legit2') throw new Error('sessions 数组形态同口径失败: ' + out);
+  // 端到端：走真实 _applyLocalBackup 合并路，setFormulaCache 捕获的 formulas 对象原型
+  // 必须仍是 Object.prototype（修前 __proto__ 经 [[Set]] 触发原型 setter 改写合并目标）
+  const e2e = vm.runInContext([
+    'var __prev = setFormulaCache;',
+    'var __cap = null;',
+    'setFormulaCache = function (f) { __cap = f; };',
+    'localStorage.setItem("phymathia_sessions", "{}");',
+    'localStorage.setItem("phymathia_knowledge", "{}");',
+    'localStorage.setItem("phymathia_formulas", "{}");',
+    '_applyLocalBackup(__n, false);',
+    'setFormulaCache = __prev;',
+    'JSON.stringify({ proto: __cap ? (Object.getPrototypeOf(__cap) === Object.prototype ? "clean" : "POLLUTED") : "not-called",',
+    '  hasF1: !!(__cap && Object.prototype.hasOwnProperty.call(__cap, "f_1")) });',
+  ].join('\n'), sandbox);
+  const r2 = JSON.parse(e2e);
+  if (r2.proto !== 'clean') throw new Error('合并目标原型被改写（应保持 Object.prototype）: ' + e2e);
+  if (!r2.hasF1) throw new Error('合法公式条目应照常并入合并目标: ' + e2e);
+  return true;
+});
+
 check('knowledge: 导出 Markdown 接线（按钮/整库口径/两个 tab 构建器/Blob 下载/window 导出）', () => {
   const src = fs.readFileSync('src/static/js/knowledge.js', 'utf8');
   for (const frag of [
@@ -671,7 +715,7 @@ check('knowledge: 快速刷新通道并入 deleted-ids 且已删 id 两侧剔除
 
 check('session: 15 秒同步链带墓碑（deleted-ids 并入 Promise.all＋并集两侧剔除＋写盘失效内存缓存）＋推送 payload 携带 deleted', () => {
   const src = fs.readFileSync('src/static/js/session.js', 'utf8');
-  const sync = src.match(/const \[sessResp, knowResp, currResp, delResp, kdelResp\] = await Promise\.all\(([\s\S]*?)\]\);/);
+  const sync = src.match(/const \[sessResp, knowResp, currResp, delResp, kdelResp, fdelResp\] = await Promise\.all\(([\s\S]*?)\]\);/);
   if (!sync) throw new Error('同步 Promise.all 缺 kdelResp（已删知识登记表拉取）');
   if (!sync[1].includes("fetch('/api/knowledge/deleted-ids'")) throw new Error('同步链未拉 /api/knowledge/deleted-ids');
   if (!sync[1].includes('.catch(() => null)')) throw new Error('deleted-ids 拉取须自带 catch 落 null（同 delResp 口径，网络挂了不拖垮整轮同步）');
@@ -683,6 +727,63 @@ check('session: 15 秒同步链带墓碑（deleted-ids 并入 Promise.all＋并�
   if (!kn[0].includes('invalidateKnowledgeCache')) throw new Error('写盘后未失效内存缓存（kpKnowledgeCache 残留副本会被下一次 saveKnowledgeItems 整表推回）');
   const save = src.match(/async function _saveKnowledgeToServer\([\s\S]*?\n    \}/);
   if (!save || !save[0].includes('deleted:')) throw new Error('全量推送 payload 未携带本地已删清单（DELETE 失败的补登记兜底）');
+  return true;
+});
+
+// ===== 公式删除墓碑（537，2026-11-21）：526 知识协议的公式侧同款 =====
+// 复活向量＝loadFormulas「保留本地有而服务端没有的（离线收藏兜底）」＋收集链按
+// latex 命中 existing 推回；三例守客户端协议面（四件套/面板加载与快速刷新/同步链）。
+
+check('formulas: 本地已删公式清单四件套＋config 键接通＋删除链两入口先标记＋撤销摘除', () => {
+  const src = fs.readFileSync('src/static/js/knowledge.js', 'utf8');
+  for (const needle of [
+    'function _readFormulaDeleted()',
+    'function _formulaMergeDeleted(serverMap)',   // 服务端登记表并入（同 id 取较大时刻）
+    'function _formulaMarkDeleted(ids)',
+    'function _formulaUnmarkDeleted(ids)',        // 撤销删除＝显式还原，先摘除
+    'function invalidateFormulaCache()',
+    '_formulaMarkDeleted([id])',                  // confirmDeleteFormula 入口
+    '_formulaMarkDeleted(removedIds)',            // deleteFormulasBySession 入口
+    '_formulaUnmarkDeleted([snap.item.id])',      // _undoKpDelete 公式分支
+  ]) {
+    if (!src.includes(needle)) throw new Error('缺 ' + needle);
+  }
+  const cfg = fs.readFileSync('src/static/js/config.js', 'utf8');
+  if (!cfg.includes("const STORAGE_KEY_FORMULAS_DELETED = 'phymathia_formulas_deleted'")) {
+    throw new Error('config.js 缺 STORAGE_KEY_FORMULAS_DELETED（localStorage 键统一 phymathia_ 前缀）');
+  }
+  return true;
+});
+
+check('formulas: 面板加载与快速刷新两侧剔除（离线收藏兜底不吃已删 id）', () => {
+  const src = fs.readFileSync('src/static/js/knowledge.js', 'utf8');
+  const load = src.match(/async function loadFormulas\(\)[\s\S]*?\n\}/);
+  if (!load) throw new Error('找不到 loadFormulas');
+  if (!load[0].includes("fetch('/api/formulas/deleted-ids'")) throw new Error('面板加载未拉公式墓碑登记表');
+  if (!load[0].includes('_formulaMergeDeleted')) throw new Error('登记表未并入本地已删清单');
+  if (!load[0].includes('deletedMap[it.id]') || !load[0].includes('if (deletedMap[id]) continue;')) {
+    throw new Error('已删 id 未从服务端响应与本地缓存两侧剔除（「保留本地独有」兜底会留住兄弟页删掉的公式）');
+  }
+  const quick = src.match(/async function _quickRefreshKnowledge\(\)[\s\S]*?\n\}/);
+  if (!quick) throw new Error('找不到 _quickRefreshKnowledge');
+  if (!quick[0].includes("fetch('/api/formulas/deleted-ids'")) throw new Error('快速刷新未拉公式墓碑登记表');
+  if (!quick[0].includes('delete localFormulas[id]')) throw new Error('快速刷新公式分支未剔本地残留');
+  return true;
+});
+
+check('formulas: 15 秒同步链公式墓碑通道＋推送 payload 携带 deleted', () => {
+  const src = fs.readFileSync('src/static/js/session.js', 'utf8');
+  const sync = src.match(/const \[sessResp, knowResp, currResp, delResp, kdelResp, fdelResp\] = await Promise\.all\(([\s\S]*?)\]\);/);
+  if (!sync) throw new Error('同步 Promise.all 缺 fdelResp（已删公式登记表拉取）');
+  if (!sync[1].includes("fetch('/api/formulas/deleted-ids'")) throw new Error('同步链未拉 /api/formulas/deleted-ids');
+  const fpurge = src.match(/537：公式墓碑登记表并入本地已删清单[\s\S]*?catch \(e\) \{ \/\* 公式表损坏不拖垮整轮同步 \*\/ \}/);
+  if (!fpurge) throw new Error('同步链缺公式本地剔除块');
+  if (!fpurge[0].includes('_formulaMergeDeleted')) throw new Error('公式登记表未并入本地清单');
+  if (!fpurge[0].includes('delete fMap[fid]')) throw new Error('本地公式表未剔除已删 id');
+  if (!fpurge[0].includes('invalidateFormulaCache')) throw new Error('写盘后未失效内存缓存（kpFormulaCache 残留副本会被收集链按 latex 命中推回）');
+  const ksrc = fs.readFileSync('src/static/js/knowledge.js', 'utf8');
+  const save = ksrc.match(/async function saveFormulasToServer\([\s\S]*?\n\}/);
+  if (!save || !save[0].includes('deleted: deletedPayload')) throw new Error('公式推送 payload 未携带本地已删清单（DELETE 失败的补登记兜底）');
   return true;
 });
 }

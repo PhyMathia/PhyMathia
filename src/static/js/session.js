@@ -119,7 +119,7 @@
       let mergedSessions = null;  // T78：本轮回合后的会话全集，供 current 指针判悬空用
       let changed = false;        // T204：本轮是否确有数据落盘变化（决定返回值）
       try {
-        const [sessResp, knowResp, currResp, delResp, kdelResp] = await Promise.all([
+        const [sessResp, knowResp, currResp, delResp, kdelResp, fdelResp] = await Promise.all([
           fetch('/api/sessions', { cache: 'no-cache', signal: AbortSignal.timeout(3000) }),
           fetch('/api/knowledge', { cache: 'no-cache', signal: AbortSignal.timeout(10000) }),
           fetch('/api/kv/phymathia_current_session', { cache: 'no-cache', signal: AbortSignal.timeout(10000) }),
@@ -128,6 +128,8 @@
           fetch('/api/sessions/deleted-ids', { cache: 'no-cache', signal: AbortSignal.timeout(3000) }).catch(() => null),
           // 526：已删知识条目登记表——知识残留副本按它清（服务端侧同款纪律）
           fetch('/api/knowledge/deleted-ids', { cache: 'no-cache', signal: AbortSignal.timeout(3000) }).catch(() => null),
+          // 537：已删公式条目登记表——公式残留副本按它清（服务端侧同款纪律）
+          fetch('/api/formulas/deleted-ids', { cache: 'no-cache', signal: AbortSignal.timeout(3000) }).catch(() => null),
         ]);
         _serverAvailable = sessResp.ok;
         _serverAvailableCheckedAt = Date.now();
@@ -335,6 +337,34 @@
             // 本地有数据但服务端为空：上传补全服务端（走 _saveKnowledgeToServer，
             // payload 随带本地已删清单，526）
             try { await _saveKnowledgeToServer(localKnow); } catch(e) { console.warn('[Storage] Upload knowledge failed:', e); }
+          }
+        }
+        // 537：公式墓碑登记表并入本地已删清单，已删 id 从本地公式表剔除——
+        // 兄弟标签页删掉的公式不再借 loadFormulas「保留本地有而服务端没有的」
+        // 离线收藏兜底复活。只清本地（服务端残留由 POST 闸门/自愈收口）；
+        // fdelResp 非 ok 时并入本地清单仍执行（同 kdelResp 口径）。
+        const fdelData = (fdelResp && fdelResp.ok) ? await fdelResp.json().catch(() => null) : null;
+        const fDeletedMap = (typeof _formulaMergeDeleted === 'function')
+          ? _formulaMergeDeleted(fdelData && fdelData.deleted) : {};
+        if (Object.keys(fDeletedMap).length) {
+          const fRaw = localStorage.getItem('phymathia_formulas');
+          if (fRaw) {
+            try {
+              const fMap = JSON.parse(fRaw);
+              if (fMap && typeof fMap === 'object' && !Array.isArray(fMap)) {
+                let fChanged = false;
+                for (const fid in fDeletedMap) {
+                  if (fid in fMap) { delete fMap[fid]; fChanged = true; }
+                }
+                if (fChanged) {
+                  safeLocalStorageSet('phymathia_formulas', JSON.stringify(fMap));
+                  changed = true;
+                  // 内存缓存同拍失效：kpFormulaCache 的残留副本会被收集链按
+                  // latex 命中推回（同知识侧 T271 口径）
+                  if (typeof invalidateFormulaCache === 'function') invalidateFormulaCache();
+                }
+              }
+            } catch (e) { /* 公式表损坏不拖垮整轮同步 */ }
           }
         }
         if (currResp.ok) {
