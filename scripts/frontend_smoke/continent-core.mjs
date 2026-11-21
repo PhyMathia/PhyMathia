@@ -1977,7 +1977,9 @@ check('aurora-glass 载体扩编：侧边栏/顶栏/二级栏（载体不得自�
   if (!/\[data-theme="light"\] \.aurora-glass--panel/.test(css)) throw new Error('--panel 缺浅色一套');
   const panel = css.slice(css.indexOf('.aurora-glass--panel {'), css.indexOf('}', css.indexOf('.aurora-glass--panel {')));
   if (!/blur\(14px\)/.test(panel)) throw new Error('--panel 应比基础档更浅的模糊');
-  // 载体自身不得再写 background（简写会重置 background-image 盖掉极光；graph-override 那层特指性最高）
+  // 载体自身不得再写 background（简写会重置 background-image 盖掉极光）
+  // 2026-11-21：撤「顶栏(override)」探针——graph-override 摘磨砂规则当日三拍后整条删除，
+  // 磨砂回归 --panel 档提供（存档注释见 graph-override.css 顶栏段）
   const strip = (file, sel) => {
     const text = fs.readFileSync(file, 'utf8');
     const i = text.indexOf(sel);
@@ -1989,7 +1991,6 @@ check('aurora-glass 载体扩编：侧边栏/顶栏/二级栏（载体不得自�
     ['src/static/css/styles.css', '.chat-header {', '顶栏'],
     ['src/static/css/styles.css', '.header-secondary-bar {', '二级栏'],
     ['src/static/css/styles-panels.css', '    .app-container .chat-header,\n    .app-container .header-secondary-bar {', '顶栏(panels)'],
-    ['src/static/css/graph-override.css', '.app-container .chat-header,\n.app-container .header-secondary-bar {', '顶栏(override)'],
   ]) {
     const block = strip(file, sel);
     if (block === null) throw new Error('找不到规则：' + name + ' @ ' + file);

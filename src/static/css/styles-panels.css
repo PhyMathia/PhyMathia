@@ -1342,14 +1342,26 @@
      *   故放本文件（顶栏组的既定归属地，1293 段同族）——styles.css 里那处
      *   .app-container .chat-header 是 design-ruler.mjs「横屏打磨」契约的探针字面量，
      *   要求其每一处都落在 @media (orientation: landscape) 内（竖屏一像素不许动）。
-     *   把常驻规则塞进 styles.css 会被那条契约判红（本轮实踩），故避其管辖文件。 */
+     *   把常驻规则塞进 styles.css 会被那条契约判红（本轮实踩），故避其管辖文件。
+     * 2026-11-21 二拍（用户「不要渐变，要通透」）：veil 归零后栏上仍有一段颜色洗——那是
+     *   三团极光色斑：第三团锚在栏底偏右（74% 104%），宽短载体恰好截到它的浓端，读作
+     *   「上浅下深的渐变」。11-13 预留的「要连色斑一起归零另说」就此兑现：--aurora-1/2/3
+     *   归 transparent（--plain 档同款写法），background-image 四层清单不动（2026-09-27
+     *   口径：删层会拖歪后面色斑与 veil 的 size/position）。底色通透化（撤 .90 提实、
+     *   退回家族 --panel 档）见 graph-override.css 同日块。 */
     html[data-panel-skin="candy"] .app-container .chat-header,
     html[data-panel-skin="candy"] .app-container .header-secondary-bar {
       --glass-veil: none;
+      --aurora-1: transparent;
+      --aurora-2: transparent;
+      --aurora-3: transparent;
     }
     html[data-theme="light"][data-panel-skin="candy"] .app-container .chat-header,
     html[data-theme="light"][data-panel-skin="candy"] .app-container .header-secondary-bar {
       --glass-veil: none;
+      --aurora-1: transparent;
+      --aurora-2: transparent;
+      --aurora-3: transparent;
     }
     .app-container .graph-workspace {
       position: fixed;

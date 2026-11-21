@@ -31,28 +31,15 @@
   border-radius: 0 0 var(--r-lg) var(--r-lg);
 }
 
-/* 顶栏/二级栏不做实时磨砂（2026-11-21）：用户两张同内容截图实证——一张正常，另一张里顶栏
-   整条（含 ☰ / logo / 右上按钮组）完全不画、画布内容直接顶到屏幕最上沿，同一帧左右两侧还
-   各多出一条 ~90px 纯色竖带。这是 backdrop-filter 表面在 GPU 吃紧/上下文重建时被整块丢掉
-   的典型症状（磨砂层拿不到背景纹理就整条不画，不是变透明）。这两条是全宽常驻载体，本来
-   --panel 档底色就是 .86、模糊只贡献 14% 的透出（改前/改后 A/B 截图肉眼无差），摘掉换
-   「永不丢层」；底色提到不支持 backdrop-filter 浏览器的兜底档（.90 / .97），压住画布节点
-   文字。小面板/弹窗（--compact / --dialog）仍保留磨砂：载体小、丢一帧也不显眼。 */
-.app-container .chat-header,
-.app-container .header-secondary-bar {
-  -webkit-backdrop-filter: none !important;
-  backdrop-filter: none !important;
-}
-
-html .app-container .chat-header.aurora-glass,
-html .app-container .header-secondary-bar.aurora-glass {
-  --glass-tint: rgba(6, 10, 24, 0.90) !important;
-}
-
-html[data-theme="light"] .app-container .chat-header.aurora-glass,
-html[data-theme="light"] .app-container .header-secondary-bar.aurora-glass {
-  --glass-tint: rgba(252, 249, 243, 0.97) !important;
-}
+/* 顶栏/二级栏磨砂：2026-11-21 一日三拍存档（规则现整条删除，磨砂由 --panel 档提供）——
+   ① 初版修闪烁（c38de78）：用户截图实证 backdrop-filter 表面在 GPU 吃紧/上下文重建时被
+      整块丢掉＝顶栏整条不画＋两侧 ~90px 纯色竖带，摘磨砂换「永不丢层」＋底色提实 .90/.97。
+   ② 用户「不要渐变，要通透」：撤提实，底色退回各家族 --panel 档（糖果深 rgba(30,24,36,.70)
+      紫黑跟族）；磨砂当时仍摘；糖果顶栏渐变层（veil＋色斑）在 styles-panels.css 同日块归零。
+   ③ 用户「和节点上的磨砂那种效果一样」：磨砂恢复——本文件不再摘除，--panel 档 blur(14px)
+      直接生效。丢层风险靠两道减负兜着（styles.css --panel 停漂移＋关闭态整高面板摘磨砂），
+      「顶栏整条消失」若复发首查这里、再回摘磨砂。冒烟「顶栏(override)」探针位随本块删除
+      同步撤（continent-core.mjs 同日改）。 */
 
 .app-container .graph-workspace {
   position: fixed !important;
@@ -949,14 +936,94 @@ html[data-theme="light"] .app-container .header-secondary-bar.aurora-glass {
   .app-container .progress-status .elapsed-time { display: none; }
 }
 
-/* ---------- 糖果·进度胶囊：深浅同一套配方（2026-11-13 用户拍板）----------
- * 此前本文件有过一块「糖果·深色：进度胶囊改节点卡质感」（深色专属：方角 --r-lg
- * ＋6px 粉书脊＋渐变卡面＋控制钮玻璃化），浅色维持极光奶白药丸——两者形态分叉。
- * 用户实测后要求「深色的胶囊改成浅色的样式，统一」：本块整条删除，糖果胶囊
- * 深浅都走家族基础档（.aurora-glass--compact 药丸＋磨砂＋同款描边），
- * 只有底色/色斑按深浅两套令牌走——与 thinking-slider「糖果深浅统一成一套」
- * （styles-panels.css 6530 段）、节点皮肤 candy 的深浅成对口径一致。
- * ★ 别再在糖果下加深色专属胶囊块：深浅分叉过一次，用户已明确否决。 */
+/* ---------- 糖果·进度胶囊：节点卡质感（2026-11-21 用户拍板）----------
+ * 演变史三轮：① 11-13 早（1575dd2）深色专属节点卡质感（方角＋粉书脊＋渐变卡面＋控制钮
+ *   玻璃化）；② 同日晚（fa7ef0a）用户要求深浅统一，整块删掉退回家族 compact 药丸，留下
+ *   「别再加深色专属胶囊块」警告；③ 11-21 用户看着改款后的平药丸拍板「质感改成和节点
+ *   一样」——本次把节点卡配方做成**深浅成对**（配方同构、令牌各走各的，与节点皮肤
+ *   candy 的深浅成对口径一致）：既守 ② 的「深浅统一」，又满足 ③ 的「节点卡质感」。
+ * 配方逐项抄本文件 [data-node-skin="candy"] .graph-node（8847 深色块／8839 浅色块），
+ * attr 位一律换 var(--accent)——--node-attr 只由渲染层逐节点内联注入，胶囊身上没有、
+ * 引用即整条失效（皮肤段头注释 ★ 的坑）。浅色卡面必须用浅色节点的「白纱」配方
+ * （attr 36%＋bg-panel 基）：深色配方进浅色会复现 2026-10-01 的「灰米薄膜」老 bug。
+ * --cd-line/--cd-shadow 定义在 html[data-node-skin="candy"] 上（8812 段，家族切换时
+ * data-node-skin 与 data-panel-skin 同步挂），胶囊可直引。
+ * 选择器 (0,4,1) 压过 .app-container .progress-status (0,2,0) 与家族 .aurora-glass
+ * (0,2,1)；background 简写在这里合法（styles.css 基础规则禁写 background 的约束只管
+ * 那条基态块，冒烟切片也只扫它）。dock-host 补 !important 底角归零——本块圆角带
+ * !important，不补会把「胶囊头＋面板身」的接缝顶圆。 */
+html[data-theme="dark"][data-panel-skin="candy"] .app-container .progress-status {
+  border-radius: var(--r-lg) !important;
+  border-color: var(--cd-line) !important;
+  border-left: 6px solid color-mix(in srgb, var(--accent) 72%, var(--text-primary)) !important;
+  background: linear-gradient(
+    170deg,
+    color-mix(in srgb, var(--accent) 13%, transparent),
+    color-mix(in srgb, var(--text-primary) 9%, transparent)
+  ) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  backdrop-filter: blur(16px) !important;
+  box-shadow:
+    0 0 24px color-mix(in srgb, var(--accent) 12%, transparent),
+    0 14px 38px var(--cd-shadow) !important;
+}
+html[data-theme="light"][data-panel-skin="candy"] .app-container .progress-status {
+  border-radius: var(--r-lg) !important;
+  border-color: var(--cd-line) !important;
+  border-left: 6px solid color-mix(in srgb, var(--accent) 72%, var(--text-primary)) !important;
+  background: linear-gradient(
+    170deg,
+    color-mix(in srgb, var(--accent) 36%, transparent),
+    color-mix(in srgb, color-mix(in srgb, var(--bg-panel) 93%, var(--accent)) 96%, transparent)
+  ) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  backdrop-filter: blur(16px) !important;
+  box-shadow:
+    0 0 24px color-mix(in srgb, var(--accent) 14%, transparent),
+    0 14px 38px var(--cd-shadow) !important;
+}
+/* 停靠宿主（任务面板挂底角）：柔光改贴地小影＋底角归零——大投影糊在面板顶边（night 块
+   2026-10-27 同款教训）；底角归零要在本文件补 !important，上方基础 dock-host 的让位
+   （border-bottom-*-radius: 0）不带 !important，会被本块圆角压掉。 */
+html[data-theme="dark"][data-panel-skin="candy"] .app-container .progress-status.aurora-glass--dock-host {
+  border-bottom-left-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  box-shadow:
+    0 6px 16px color-mix(in srgb, var(--overlay-bg) 42%, transparent) !important;
+}
+html[data-theme="light"][data-panel-skin="candy"] .app-container .progress-status.aurora-glass--dock-host {
+  border-bottom-left-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  box-shadow:
+    0 6px 14px color-mix(in srgb, var(--accent) 18%, transparent) !important;
+}
+/* 控制钮玻璃化（深色）：节点卡小玻璃钮同款混色（text-primary 8% 底／30% 线）——裸钮在
+   深色卡面上会消失；浅色卡面亮，基态「去框 hover 才浮底」直接立在卡上不动。
+   开始键保留「全胶囊唯一主操作」身份：半透粉玻璃＋粉描边、图标转白——半透粉上沿用
+   深色三角（#06101f）会糊回底色。圆角从药丸改控件档 --r-md，与节点卡小钮同一套曲线。 */
+html[data-theme="dark"][data-panel-skin="candy"] .app-container .progress-status .status-control-btn {
+  border: 1px solid color-mix(in srgb, var(--text-primary) 30%, transparent) !important;
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent) !important;
+  border-radius: var(--r-md) !important;
+}
+html[data-theme="dark"][data-panel-skin="candy"] .app-container .progress-status .status-control-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 14%, transparent) !important;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent) !important;
+  color: var(--text-primary) !important;
+}
+html[data-theme="dark"][data-panel-skin="candy"] .app-container .progress-status .status-control-btn:disabled {
+  background: transparent !important;
+  border-color: color-mix(in srgb, var(--text-primary) 14%, transparent) !important;
+}
+html[data-theme="dark"][data-panel-skin="candy"] .app-container .progress-status .status-run-btn {
+  background: color-mix(in srgb, var(--accent) 30%, transparent) !important;
+  border-color: color-mix(in srgb, var(--accent) 65%, transparent) !important;
+  color: var(--white) !important;
+}
+html[data-theme="dark"][data-panel-skin="candy"] .app-container .progress-status .status-run-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 42%, transparent) !important;
+  color: var(--white) !important;
+}
 
 .graph-new-session-wrap {
   position: absolute;
