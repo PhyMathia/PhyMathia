@@ -75,4 +75,33 @@ export function run() {
     }
     return true;
   });
+
+  // 516 侧栏动作总线（2026-11-21）：重命名/图标定位必须走 event.target 向上
+  // closest，不能用 event.currentTarget——容器委托后 currentTarget 指向 #sessionList
+  // 容器，closest('.session-item') 必空，实测点重命名毫无反应、图标面板定位到整列表。
+  check('516 侧栏委托：重命名/图标定位走 event.target 而非 currentTarget（防点不动回归）', () => {
+    const src = fs.readFileSync('src/static/js/session.js', 'utf8');
+    const stripComments = (s) => s.split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n');
+    const bodyOf = (name) => {
+      const start = src.indexOf('function ' + name + '(');
+      if (start < 0) throw new Error('找不到函数 ' + name);
+      const next = src.indexOf('\n    function ', start + 10);
+      return stripComments(src.slice(start, next < 0 ? src.length : next));
+    };
+    const rename = bodyOf('startRenameSession');
+    const icon = bodyOf('toggleIconPicker');
+    if (!rename.includes("event.target.closest('.session-item')")) {
+      throw new Error('startRenameSession 必须用 event.target.closest(".session-item") 定位所在行');
+    }
+    if (rename.includes('event.currentTarget')) {
+      throw new Error('startRenameSession 不得再用 event.currentTarget（委托后指向列表容器）');
+    }
+    if (!icon.includes("event.target.closest('[data-act=\"sess-icon\"]')")) {
+      throw new Error('toggleIconPicker 必须用 event.target 向上 closest 到 sess-icon 元素定位面板');
+    }
+    if (icon.includes('event.currentTarget')) {
+      throw new Error('toggleIconPicker 不得再用 event.currentTarget 定位图标元素');
+    }
+    return true;
+  });
 }

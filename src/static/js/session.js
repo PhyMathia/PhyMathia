@@ -1796,11 +1796,14 @@
     // ====== 对话重命名 ======
     function startRenameSession(event, sessionId) {
       event.stopPropagation();
-      _sessionRenameActive = true;
-      // 从按钮向上找到 session-item，再找到 session-title
-      const itemEl = event.currentTarget.closest('.session-item');
+      // 从按钮向上找到 session-item，再找到 session-title。
+      // 516 动作总线改成容器委托后，event.currentTarget 指向 #sessionList 容器而非按钮，
+      // 从容器往上 closest('.session-item') 必空——必须用 event.target（真正点中的
+      // svg/path/button）向上找。冻结标志放到定位成功之后，免得定位失败还把列表刷新冻住。
+      const itemEl = event.target.closest('.session-item');
       const titleEl = itemEl?.querySelector('.session-title');
       if (!titleEl) return;
+      _sessionRenameActive = true;
       const currentTitle = sessions[sessionId]?.title || '';
       const input = document.createElement('input');
       input.type = 'text';
@@ -1856,7 +1859,9 @@
       event.stopPropagation();
       // 关闭已有面板
       closeIconPicker();
-      const iconEl = event.currentTarget;
+      // 516 动作总线委托后 currentTarget 是 #sessionList 容器，面板定位要用真正
+      // 点中的图标元素（svg/path 向上 closest 到 sess-icon 那个 span）。
+      const iconEl = event.target.closest('[data-act="sess-icon"]') || event.target;
       const panel = document.createElement('div');
       panel.className = 'icon-picker-panel aurora-glass aurora-glass--dialog';
       // 挂载到 body，避免被 sidebar overflow 裁剪
