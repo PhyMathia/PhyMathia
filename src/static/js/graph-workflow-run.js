@@ -82,9 +82,22 @@ async function _processWorkflowChainItem(current, force, nodeSignal) {
     current.status = 'done';
     return true;
   }
-  if (!force && (current.content || '').trim() && current.inputHash === inputHash && current.status === 'done') return true;
+  // hash 短路（T509，2026-11-21 通用化）：不再要求 status==='done'——T359 超时半成品
+  // （content＋error）与中止回滚的旧内容（content＋waiting/error）同样不许被链上重跑
+  // 静默覆盖；跳过时不改状态，卡面徽标保持诚实。上游真变（hash 失配）仍按既有口径
+  // 重跑——那是工作流依赖传播的设计核心（2026-10-02 拍板），不能一刀切
+  if (!force && (current.content || '').trim() && current.inputHash === inputHash) return true;
   await _generateCustomNode(current, nodeSignal);
   return !_workflowNodeAborted(nodeSignal);
+}
+
+// force 可作用的 kind 白名单（T509 自 shouldForce 内联抽出，供 countedNodes 共用——
+// 两处口径必须同源，否则显式重跑的节点不在进度总数里，任务面板看不见这一颗）。
+// direct 与问题分析卡 2026-11-21 补进：三角「从头生成」（force=true 真重跑，T338/T330
+// 口径）过去对这两类静默空转——白名单挡住 force，hash 短路又因内容没变直接跳过
+function _workflowForceableKind(node) {
+  return node.kind === 'module' || node.kind === 'summary' || node.kind === 'blank'
+    || node.kind === 'direct' || node.kind === 'answer';
 }
 
 function _workflowDependencyEdges() {
@@ -162,11 +175,10 @@ async function _runWorkflowNodeConcurrent(node, subgraph, force, processed, fail
   // 完成/进度都由在途请求自己的 worker 收尾，两次记账不会互相覆盖。正常路径
   // _workflowReadyNodes/入口 busy 门挡在前面，这里是双保险
   if (node.busy) return;
-  // shouldForce 白名单（2026-11-20）：补进闭环反馈节点（answer＋socraticMeta）——
-  // _processWorkflowChainItem 的 socraticMeta 分支靠 force 区分「显式点名重跑」与
-  // 「被整链当上游依赖圈进来」，不扩名单的话任务重试/重生成面板对反馈节点会静默空转
-  const shouldForce = force && (node.kind === 'module' || node.kind === 'summary' || node.kind === 'blank'
-    || (node.kind === 'answer' && !!node.socraticMeta));
+  // shouldForce 白名单（2026-11-20 T508 补闭环反馈节点；2026-11-21 T509 抽 _workflowForceableKind
+  // 并补 direct/问题分析卡）——_processWorkflowChainItem 的各分支靠 force 区分「显式点名
+  // 重跑」与「被整链当上游依赖圈进来」，白名单缺 kind 时三角「从头生成」会静默空转
+  const shouldForce = force && _workflowForceableKind(node);
   const shouldCount = _workflowItemNeedsProgress(node) || shouldForce;
   const taskId = runtime ? runtime.taskId : null;
   if (shouldCount) _markWorkflowCurrentNode(node);
@@ -402,7 +414,7 @@ async function _executeParallelWorkflow(targetIds, force, meta) {
   const countedNodes = [...subgraph.ids]
     .map(id => _findGraphNode(id))
     .filter(node => node && (_workflowItemNeedsProgress(node)
-      || (force && forceTargets.has(node.id) && (node.kind === 'module' || node.kind === 'summary' || node.kind === 'blank'))));
+      || (force && forceTargets.has(node.id) && _workflowForceableKind(node))));
   const totalWork = countedNodes.length;
   // 任务列表：这一轮工作流 = 一条任务，节点明细 = 组里的条目（用户拍板的两级结构）。
   // 开跑前就把「要干哪几颗」记全，面板因此一眼能看到「3/6 已完成」这样的总数。

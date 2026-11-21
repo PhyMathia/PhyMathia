@@ -374,6 +374,10 @@ async function _generateCustomNode(node, nodeSignal) {
         failedLive.summary = _graphSummary(failedLive.content);
         failedLive.busy = false;
         failedLive.status = 'error';
+        // 半成品也是「当前输入下的产出」：补记当前输入哈希（T509，2026-11-21）——
+        // 链上 hash 短路已不要求 status==='done'，但首生成半成品的 stored hash 是
+        // 空串，不补记的话 hash 必失配，下次被链拉进子图照样重跑、可见内容照样被覆盖
+        try { failedLive.inputHash = _nodeInputHash(failedLive); } catch (e) { /* 保持原值 */ }
         // 版本账（T339）：这一版按「未跑完」入账（旧文仍在前一位，‹› 可回）
         _commitWorkflowNodeVersion(failedLive);
         _saveGraphNodeTail(failedLive);

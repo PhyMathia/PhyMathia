@@ -213,6 +213,33 @@ export async function run() {
       return true;
     });
 
+    check('T509 源码契约：链上守卫全 kind 通用（hash 短路无 status 条件＋force 谓词补 direct/answer＋T359 落地补 hash＋needsProgress 同口径）', () => {
+      const runSrc = _read('graph-workflow-run.js');
+      const chainBody = _body(runSrc, '_processWorkflowChainItem');
+      if (chainBody.indexOf("if (!force && (current.content || '').trim() && current.inputHash === inputHash) return true;") < 0) {
+        throw new Error('hash 短路形状变了');
+      }
+      if (chainBody.indexOf("current.inputHash === inputHash && current.status === 'done'") >= 0) {
+        throw new Error('hash 短路仍带 status 条件（T359 半成品/中止回滚内容会被链上覆盖）');
+      }
+      const fn = _body(runSrc, '_workflowForceableKind');
+      for (const k of ["'module'", "'summary'", "'blank'", "'direct'", "'answer'"]) {
+        if (!fn || fn.indexOf(k) < 0) throw new Error('force 白名单缺 ' + k);
+      }
+      const runConc = _body(runSrc, '_runWorkflowNodeConcurrent');
+      if (!runConc || runConc.indexOf('_workflowForceableKind(node)') < 0) {
+        throw new Error('shouldForce 没改用共用谓词（与 countedNodes 两把尺会漂移）');
+      }
+      const genBody = _body(_read('graph-workflow-generate.js'), '_generateCustomNode');
+      const t359 = genBody.indexOf("failedLive.status = 'error';");
+      const t359hash = genBody.indexOf('failedLive.inputHash = _nodeInputHash(failedLive)');
+      if (t359 < 0 || t359hash < 0 || t359hash < t359) throw new Error('T359 半成品落地没补记输入哈希（首生成半成品仍会被链上覆盖）');
+      const progBody = _body(_read('graph-workflow-progress.js'), '_workflowItemNeedsProgress');
+      if (progBody.indexOf("status === 'done'") >= 0) throw new Error('needsProgress 仍带 status 条件（与链上守卫两把尺）');
+      if (progBody.indexOf('if (node.socraticMeta) return') < 0) throw new Error('反馈节点的进度口径没改按 content 判（虚占进度总数）');
+      return true;
+    });
+
     check('T508 源码契约：链上守卫排在 socraticMeta 重生成之前＋shouldForce 白名单补反馈节点＋墓碑在 push 之前', () => {
       const runSrc = _read('graph-workflow-run.js');
       const chainBody = _body(runSrc, '_processWorkflowChainItem');
@@ -223,8 +250,8 @@ export async function run() {
         throw new Error('socraticMeta 分支的链上守卫缺失或没排在重生成之前');
       }
       const concBody = _body(runSrc, '_runWorkflowNodeConcurrent');
-      if (!concBody || concBody.indexOf("(node.kind === 'answer' && !!node.socraticMeta)") < 0) {
-        throw new Error('shouldForce 白名单没补闭环反馈节点（显式重试会对反馈节点空转）');
+      if (!concBody || concBody.indexOf('_workflowForceableKind(node)') < 0) {
+        throw new Error('shouldForce 没走共用 force 谓词（显式重试会对反馈节点空转）');
       }
       const matBody = _body(_read('graph-workflow-generate.js'), '_materializeSocraticFollowup');
       const tombAt = matBody.indexOf('harnessDeleted');
@@ -1093,23 +1120,131 @@ export async function run() {
     // 的 T355 链上护栏同款测法：沙箱内桩 _generateCustomNode 计数。节点引用钉进
     // __node508：本域 async 合串段在微任务阶段会重置 graphView，await 之后不能再重读
     // graphView.nodeById（异步收口线的跨用例串扰，README「同文件混排」节）。
+    // T509 补记：本域多条 async 用例在微任务阶段交错、互相换全局桩——每次链调用前
+    // 必须同步重装自己的桩（force 路径的桩在链体首个 await 之前同步触发，计数当场
+    // 落定，别人的桩换进来也污染不到这一发）。
     check('T508 闭环反馈链上不重跑：有内容即跳过；显式 force（任务重试）才走闭环重生成', async () => {
       _seedSocraticLoop();
       const fbRef = vm.runInContext('graphView.nodeById["a-fb"]', sandbox);
       sandbox.__node508 = fbRef;
-      vm.runInContext('window.__origGen508 = _generateCustomNode; window.__genCalls508 = 0;'
-        + '_generateCustomNode = async function () { window.__genCalls508++; return true; };', sandbox);
+      const install508 = 'window.__origGenChain = window.__origGenChain || _generateCustomNode;'
+        + '_generateCustomNode = async function () { window.__genCalls508++; return true; };';
+      vm.runInContext('window.__genCalls508 = 0;' + install508, sandbox);
       try {
         const skipped = await vm.runInContext('_processWorkflowChainItem(__node508, false, null)', sandbox);
         if (skipped !== true) throw new Error('已完成的反馈节点在链上没被跳过');
         if (vm.runInContext('window.__genCalls508', sandbox) !== 0) throw new Error('链上仍触发了闭环重生成');
         if (String(fbRef.content || '').indexOf('判定：正确') !== 0) throw new Error('链上跑动把反馈正文改了');
+        vm.runInContext(install508, sandbox);
         await vm.runInContext('_processWorkflowChainItem(__node508, true, null)', sandbox);
         if (vm.runInContext('window.__genCalls508', sandbox) !== 1) throw new Error('显式 force 没放行闭环重生成（任务重试会空转）');
       } finally {
-        vm.runInContext('_generateCustomNode = window.__origGen508;', sandbox);
-        vm.runInContext('delete window.__origGen508; delete window.__genCalls508;', sandbox);
+        // 共享链键恢复：首个安装者捕获真原身，任一 finally 恢复后即删键（交错下
+        // 后注册用例的 __origGen* 会捕获到别人的桩，逐用例各存各的原身必然互相毒化）
+        vm.runInContext('if (window.__origGenChain) { _generateCustomNode = window.__origGenChain; delete window.__origGenChain; }', sandbox);
+        vm.runInContext('delete window.__genCalls508;', sandbox);
         sandbox.__node508 = null;
+      }
+      return true;
+    });
+
+    // T509（2026-11-21）：链上守卫通用化——T359 半成品（content+error）与中止回滚
+    // （content+waiting）输入没变时不再被链上重跑覆盖；上游真变（hash 失配）仍重跑
+    // （依赖传播保留）。节点引用钉进 window.__*（同 T508：防同域 async 合串段微任务期
+    // 重置 graphView）。与 graph-human-finalize 的 T355 链上护栏同款测法。
+    check('T509 半成品/回滚内容链上不覆盖：hash 匹配即跳过不改状态；force 真重跑；hash 失配仍传播', async () => {
+      _seed();
+      vm.runInContext('(function () {'
+        + 'var p = { id: "md-partial", kind: "module", moduleKey: "learn", messageIndex: -1, timestamp: 300, content: "半成品正文", status: "error", busy: false, requirements: "" };'
+        + 'graphView.nodes.push(p); graphView.nodeById["md-partial"] = p;'
+        + 'var w = { id: "md-abort", kind: "module", moduleKey: "math", messageIndex: -1, timestamp: 301, content: "上一版内容", status: "waiting", busy: false, requirements: "" };'
+        + 'graphView.nodes.push(w); graphView.nodeById["md-abort"] = w;'
+        + 'graphView.nodeById["md-partial"].inputHash = _nodeInputHash(graphView.nodeById["md-partial"]);'
+        + 'graphView.nodeById["md-abort"].inputHash = _nodeInputHash(graphView.nodeById["md-abort"]);'
+        + '})()', sandbox);
+      const partialRef = vm.runInContext('graphView.nodeById["md-partial"]', sandbox);
+      const abortRef = vm.runInContext('graphView.nodeById["md-abort"]', sandbox);
+      sandbox.__nodeP509 = partialRef;
+      sandbox.__nodeW509 = abortRef;
+      // install509：每次链调用前同步重装（本域 async 用例微任务交错互换桩，见 T508 段注）
+      const install509 = 'window.__origGenChain = window.__origGenChain || _generateCustomNode;'
+        + '_generateCustomNode = async function () { window.__genCalls509++; return true; };';
+      vm.runInContext('window.__genCalls509 = 0;' + install509, sandbox);
+      try {
+        const skipP = await vm.runInContext('_processWorkflowChainItem(__nodeP509, false, null)', sandbox);
+        const skipW = await vm.runInContext('_processWorkflowChainItem(__nodeW509, false, null)', sandbox);
+        if (skipP !== true || skipW !== true) throw new Error('半成品/回滚节点在链上没被跳过');
+        if (vm.runInContext('window.__genCalls509', sandbox) !== 0) throw new Error('输入没变仍触发了重跑（可见内容会被覆盖）');
+        if (partialRef.status !== 'error' || abortRef.status !== 'waiting') throw new Error('跳过时改了状态（徽标应保持诚实）');
+        // 上游真变（改 requirements 使 hash 失配）→ 依赖传播保留，照旧重跑
+        vm.runInContext(install509 + ' __nodeP509.requirements = "改了要求";', sandbox);
+        await vm.runInContext('_processWorkflowChainItem(__nodeP509, false, null)', sandbox);
+        if (vm.runInContext('window.__genCalls509', sandbox) !== 1) throw new Error('上游真变时没重跑（依赖传播被误伤）');
+        // 显式 force（三角「从头生成」）→ 真重跑
+        vm.runInContext(install509, sandbox);
+        await vm.runInContext('_processWorkflowChainItem(__nodeW509, true, null)', sandbox);
+        if (vm.runInContext('window.__genCalls509', sandbox) !== 2) throw new Error('显式 force 没真重跑');
+      } finally {
+        vm.runInContext('if (window.__origGenChain) { _generateCustomNode = window.__origGenChain; delete window.__origGenChain; }', sandbox);
+        vm.runInContext('delete window.__genCalls509;', sandbox);
+        sandbox.__nodeP509 = null;
+        sandbox.__nodeW509 = null;
+      }
+      return true;
+    });
+
+    check('T509 显式重生成不空转：direct 三角与分析卡三角 force=true 真重跑（旧 shouldForce 白名单漏这两类）', async () => {
+      _seed();
+      vm.runInContext('(function () {'
+        + 'var d = { id: "dr-1", kind: "direct", messageIndex: -1, timestamp: 310, content: "成品答案", status: "done", busy: false, requirements: "" };'
+        + 'graphView.nodes.push(d); graphView.nodeById["dr-1"] = d; d.inputHash = _nodeInputHash(d);'
+        + 'var uq = { id: "uq-1", kind: "user", messageIndex: -1, timestamp: 315, content: "问题原文", status: "done" };'
+        + 'graphView.nodes.push(uq); graphView.nodeById["uq-1"] = uq;'
+        + 'var a = { id: "an-1", kind: "answer", messageIndex: -1, timestamp: 320, content: "", analysis: "旧分析", status: "done", busy: false, requirements: "", analysisHash: "", manual: false };'
+        + 'graphView.nodes.push(a); graphView.nodeById["an-1"] = a;'
+        + 'graphView.edges.push({ from: "uq-1", fromPort: "out-0", to: "an-1", toPort: "in-0" });'
+        + 'a.analysisHash = _simpleHash(_findQuestionContentUpstream(a) + "|" + (a.requirements || ""));'
+        + '})()', sandbox);
+      const directRef = vm.runInContext('graphView.nodeById["dr-1"]', sandbox);
+      const analysisRef = vm.runInContext('graphView.nodeById["an-1"]', sandbox);
+      const uqRef = vm.runInContext('graphView.nodeById["uq-1"]', sandbox);
+      sandbox.__nodeD509 = directRef;
+      sandbox.__nodeA509 = analysisRef;
+      sandbox.__nodeUQ509 = uqRef;
+      // install509b：每次链调用前同步重装桩＋重钉边表/nodeById——本域 async 用例微任务
+      // 交错，别的用例的 _seed() 会重置 graphView（分析链沿边找问题，边表被清就走到
+      // 「请先填写问题节点」支路假红）；桩在链体首个 await 前同步触发，计数当场落定
+      const install509b = 'window.__origGenChain = window.__origGenChain || _generateCustomNode;'
+        + 'window.__origAnaChain = window.__origAnaChain || _generateAnalysis;'
+        + '_generateCustomNode = async function () { window.__genCalls509b++; return true; };'
+        + '_generateAnalysis = async function () { window.__anaCalls509++; };'
+        + 'graphView.edges = [{ from: "uq-1", fromPort: "out-0", to: "an-1", toPort: "in-0" }];'
+        + 'graphView.nodeById["uq-1"] = __nodeUQ509; graphView.nodeById["an-1"] = __nodeA509;';
+      vm.runInContext('window.__genCalls509b = 0; window.__anaCalls509 = 0;' + install509b, sandbox);
+      try {
+        // direct：hash 匹配链上跳过；三角 force=true 真重跑
+        const skip = await vm.runInContext('_processWorkflowChainItem(__nodeD509, false, null)', sandbox);
+        if (skip !== true || vm.runInContext('window.__genCalls509b', sandbox) !== 0) {
+          throw new Error('direct 内容没变却被链上重跑');
+        }
+        vm.runInContext(install509b, sandbox);
+        await vm.runInContext('_processWorkflowChainItem(__nodeD509, true, null)', sandbox);
+        if (vm.runInContext('window.__genCalls509b', sandbox) !== 1) throw new Error('direct 三角「从头生成」静默空转（force 没穿透）');
+        // 分析卡：analysis 在＋hash 匹配链上跳过；三角 force=true 真重跑分析（T330 口径）
+        const skipA = await vm.runInContext('_processWorkflowChainItem(__nodeA509, false, null)', sandbox);
+        if (skipA !== true || vm.runInContext('window.__anaCalls509', sandbox) !== 0) {
+          throw new Error('分析卡没变却被链上重跑分析');
+        }
+        vm.runInContext(install509b, sandbox);
+        await vm.runInContext('_processWorkflowChainItem(__nodeA509, true, null)', sandbox);
+        if (vm.runInContext('window.__anaCalls509', sandbox) !== 1) throw new Error('分析卡三角「从头生成」静默空转（T330 的 force 没穿透）');
+      } finally {
+        vm.runInContext('if (window.__origGenChain) { _generateCustomNode = window.__origGenChain; delete window.__origGenChain; }'
+          + 'if (window.__origAnaChain) { _generateAnalysis = window.__origAnaChain; delete window.__origAnaChain; }', sandbox);
+        vm.runInContext('delete window.__genCalls509b; delete window.__anaCalls509;', sandbox);
+        sandbox.__nodeD509 = null;
+        sandbox.__nodeA509 = null;
+        sandbox.__nodeUQ509 = null;
       }
       return true;
     });

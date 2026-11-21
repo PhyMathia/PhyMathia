@@ -29,24 +29,31 @@ function _workflowItemNeedsProgress(node) {
   // 上游或要求变了才算「需要重跑」；不进 answer 分支（那条查 analysis）
   if (node.kind === 'summary' || node.kind === 'direct') {
     const inputHash = _nodeInputHash(node);
-    return !((node.content || '').trim() && node.inputHash === inputHash && node.status === 'done');
+    return !((node.content || '').trim() && node.inputHash === inputHash);
   }
   if (node.kind === 'answer' && !node.manual) {
+    // 闭环反馈（T509，2026-11-21）：prompt 是提交瞬间定稿的，输出不随上游变——
+    // 有内容即不需要进度（链上守卫见 _processWorkflowChainItem 的 socraticMeta 分支），
+    // 不再像分析卡那样因 analysis 恒空被判「永远待生成」虚占进度总数
+    if (node.socraticMeta) return !((node.content || '').trim());
     const question = _findQuestionContentUpstream(node);
     const analysisHash = _simpleHash(question + '|' + (node.requirements || ''));
     return !node.analysis || node.analysisHash !== analysisHash;
   }
-  // 空白节点（2026-10-24 T400）：与 module 同口径（内容＋输入哈希＋done 才算不用跑），
+  // 空白节点（2026-10-24 T400）：与 module 同口径（内容＋输入哈希），
   // 外加空要求闸门——卡上没写要求＝没有生成目标，「全部开始」不选它、进度总数也不算它
   // （显式跑这颗时 _processWorkflowChainItem 还有同一道闸，两条入口口径一致）。
+  // T509（2026-11-21）：三处口径与链上 hash 短路同步去掉 status==='done'——
+  // T359 半成品（content＋error）与中止回滚（content＋waiting）输入没变时不该被
+  // 「全部开始」选中重跑覆盖，链上守卫与进度口径必须同一把尺子
   if (node.kind === 'blank') {
     if (!String(node.requirements || '').trim()) return false;
     const inputHash = _nodeInputHash(node);
-    return !((node.content || '').trim() && node.inputHash === inputHash && node.status === 'done');
+    return !((node.content || '').trim() && node.inputHash === inputHash);
   }
   if (node.kind === 'module') {
     const inputHash = _nodeInputHash(node);
-    return !((node.content || '').trim() && node.inputHash === inputHash && node.status === 'done');
+    return !((node.content || '').trim() && node.inputHash === inputHash);
   }
   return false;
 }
