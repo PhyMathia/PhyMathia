@@ -983,7 +983,7 @@ function _fillModelMeta(selectValue, descEl, tagsEl, isMain) {
   if (model) {
     const preset = MODEL_PRESETS[model.provider];
     descEl.textContent = (preset?.name || model.provider) + ' · ' + (model.label || model.model);
-      tagsEl.innerHTML = `<span class="model-tag">${model.provider}</span><span class="model-tag">${model.apiKey ? UI_ICON_SVG.check + ' 已配置密钥' : UI_ICON_SVG.key + ' 密钥可留空'}</span>`;
+      tagsEl.innerHTML = `<span class="model-tag">${escapeHtml(model.provider)}</span><span class="model-tag">${model.apiKey ? UI_ICON_SVG.check + ' 已配置密钥' : UI_ICON_SVG.key + ' 密钥可留空'}</span>`;
   } else if (isMain) {
     descEl.textContent = selectValue ? '' : '未配置模型。请在下方「管理自定义模型」里添加';
     tagsEl.innerHTML = selectValue ? '' : '<span class="model-tag">未配置</span>';
