@@ -592,8 +592,14 @@ async def api_models_chat(request: Request):
             body["max_tokens"] = int(max_tokens)
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="max_tokens must be an integer")
-    # 思考程度（模型配置弹窗按条目设置）：仅显式选择时注入对应供应商的思考参数
+    # 思考程度（模型配置弹窗按条目设置）：仅显式选择时注入对应供应商的思考参数。
+    # T510（2026-11-21）：strict module（socratic/learn）例外——STRICT_MODULE_MAX_TOKENS
+    # 上限下思考预算会把 completion 吃光、正文恒空（齿轮会话实测：书生 Sage 每发恰
+    # 1000 tok 整、正文空、卡全败；同 run 非 strict 的 physics 6111 tok 成功）。
+    # 与 _pick_skill_refs 的「80 上限不注入思考」同一课：轻任务不吃思考预算
     thinking_params = _thinking_request_params(provider, str(payload.get("thinking") or ""), model_name)
+    if thinking_params and is_strict_module:
+        thinking_params = {}
     if thinking_params:
         body.update(thinking_params)
 

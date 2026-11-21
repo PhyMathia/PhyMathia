@@ -75,6 +75,14 @@ async function _processWorkflowChainItem(current, force, nodeSignal) {
     return false;
   }
   const inputHash = _nodeInputHash(current);
+  // 派生追问（T510，2026-11-21）：内容由闭环结算落地（_materializeSocraticFollowup），
+  // 不是生成目标——没有 inputHash，hash 短路判不出来，会被整链/「全部生成」反复重写
+  // （齿轮会话实测：3 颗派生追问全被拉去重跑）。有内容即视为成品并复位状态（历史失败
+  // 徽标随之一并洗净）；显式 force（三角点名重跑）例外
+  if (!force && current.sqAuto && (current.content || '').trim()) {
+    current.status = 'done';
+    return true;
+  }
   // 人工定稿护栏（T355）：整链跑动会拉上游依赖进子图，人工定稿节点即使 hash 因上游
   // 重生成而失配，也不许在这里被 _generateCustomNode 静默覆盖。force（显式从头生成
   // 这颗）例外——那是用户点名要换掉这颗的内容

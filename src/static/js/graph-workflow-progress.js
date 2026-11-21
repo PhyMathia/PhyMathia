@@ -52,6 +52,10 @@ function _workflowItemNeedsProgress(node) {
     return !((node.content || '').trim() && node.inputHash === inputHash);
   }
   if (node.kind === 'module') {
+    // 派生追问（T510）：内容由闭环结算落地（_materializeSocraticFollowup），不是
+    // 生成目标——没有 inputHash，按生成口径判恒真，被「全部开始」反复选中重写。
+    // 有内容即不需要进度；显式 force（三角点名）仍可重跑
+    if (node.sqAuto) return !((node.content || '').trim());
     const inputHash = _nodeInputHash(node);
     return !((node.content || '').trim() && node.inputHash === inputHash);
   }

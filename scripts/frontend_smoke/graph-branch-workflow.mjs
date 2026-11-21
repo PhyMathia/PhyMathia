@@ -237,6 +237,28 @@ export async function run() {
       const progBody = _body(_read('graph-workflow-progress.js'), '_workflowItemNeedsProgress');
       if (progBody.indexOf("status === 'done'") >= 0) throw new Error('needsProgress 仍带 status 条件（与链上守卫两把尺）');
       if (progBody.indexOf('if (node.socraticMeta) return') < 0) throw new Error('反馈节点的进度口径没改按 content 判（虚占进度总数）');
+      if (progBody.indexOf('if (node.sqAuto) return') < 0) throw new Error('派生追问的进度口径没接（会被全部开始反复重写）');
+      return true;
+    });
+
+    check('T510 派生追问不是生成目标：needsProgress 按 content 判＋链上守卫排在 hash 短路之前（无 inputHash 判不出来）', () => {
+      _seed();
+      const node = { id: 'sqx-1', kind: 'module', moduleKey: 'socratic', sqAuto: true, messageIndex: -1, timestamp: 500, content: '### 苏格拉底追问\n1. [基础] 甲', status: 'error', busy: false, requirements: '' };
+      vm.runInContext('graphView.nodes.push(' + JSON.stringify(node) + '); graphView.nodeById["sqx-1"] = graphView.nodes[graphView.nodes.length - 1];', sandbox);
+      if (vm.runInContext('_workflowItemNeedsProgress(graphView.nodeById["sqx-1"])', sandbox) !== false) {
+        throw new Error('有内容的派生追问仍被判待生成（会被全部开始反复重写）');
+      }
+      vm.runInContext('graphView.nodeById["sqx-1"].content = "";', sandbox);
+      if (vm.runInContext('_workflowItemNeedsProgress(graphView.nodeById["sqx-1"])', sandbox) !== true) {
+        throw new Error('空派生追问该允许生成');
+      }
+      const chainBody = _body(_read('graph-workflow-run.js'), '_processWorkflowChainItem');
+      const sqAutoAt = chainBody.indexOf("current.sqAuto && (current.content || '').trim()");
+      const hashAt = chainBody.indexOf('const inputHash = _nodeInputHash(current);');
+      const shortAt = chainBody.indexOf("if (!force && (current.content || '').trim() && current.inputHash === inputHash) return true;");
+      if (sqAutoAt < 0 || hashAt < 0 || shortAt < 0 || sqAutoAt < hashAt || sqAutoAt > shortAt) {
+        throw new Error('链上 sqAuto 守卫缺失或位置不对（须在 hash 短路之前——派生节点无 inputHash 判不出来）');
+      }
       return true;
     });
 
@@ -1247,6 +1269,33 @@ export async function run() {
         sandbox.__nodeD509 = null;
         sandbox.__nodeA509 = null;
         sandbox.__nodeUQ509 = null;
+      }
+      return true;
+    });
+
+    // T510（2026-11-21）：派生追问链上是成品——有内容即跳过并洗净历史失败徽标；
+    // 显式 force（三角点名重跑）例外。交错防污染同 T508/T509 段注：每链调用同步重装桩
+    check('T510 派生追问链上是成品：有内容即跳过并洗净失败徽标；force 真重跑', async () => {
+      _seed();
+      vm.runInContext('(function () { var s = { id: "sqy-1", kind: "module", moduleKey: "socratic", sqAuto: true, messageIndex: -1, timestamp: 520, content: "### 苏格拉底追问\\n1. [基础] 甲", status: "error", busy: false, requirements: "" };'
+        + 'graphView.nodes.push(s); graphView.nodeById["sqy-1"] = s; })()', sandbox);
+      const sqRef = vm.runInContext('graphView.nodeById["sqy-1"]', sandbox);
+      sandbox.__nodeSQ510 = sqRef;
+      const install510 = 'window.__origGenChain = window.__origGenChain || _generateCustomNode;'
+        + '_generateCustomNode = async function () { window.__genCalls510++; return true; };';
+      vm.runInContext('window.__genCalls510 = 0;' + install510, sandbox);
+      try {
+        const skip = await vm.runInContext('_processWorkflowChainItem(__nodeSQ510, false, null)', sandbox);
+        if (skip !== true) throw new Error('派生追问在链上没被跳过');
+        if (vm.runInContext('window.__genCalls510', sandbox) !== 0) throw new Error('派生追问被链上重跑');
+        if (sqRef.status !== 'done') throw new Error('历史失败徽标没被洗净');
+        vm.runInContext(install510, sandbox);
+        await vm.runInContext('_processWorkflowChainItem(__nodeSQ510, true, null)', sandbox);
+        if (vm.runInContext('window.__genCalls510', sandbox) !== 1) throw new Error('显式 force 没真重跑派生追问');
+      } finally {
+        vm.runInContext('if (window.__origGenChain) { _generateCustomNode = window.__origGenChain; delete window.__origGenChain; }', sandbox);
+        vm.runInContext('delete window.__genCalls510;', sandbox);
+        sandbox.__nodeSQ510 = null;
       }
       return true;
     });
