@@ -452,6 +452,23 @@ function _startLinkDrag(event, portEl) {
     currentX: null,
     currentY: null,
   };
+  // ComfyUI 式搬移（2026-11-21）：从已连线输入口起拖＝搬移那条边（松手改指向），
+  // 不再新增第二条。口上恰有一条入边才锁搬移；junction/hub 扇入口多线不锁
+  // （搬哪条有歧义，保持原「新建」行为）。落空白仍是断开（松手分支原语义）。
+  if (isInput) {
+    const dragToPort = portEl.dataset.portId || 'in-0';
+    const incoming = (graphView.edges || []).filter(edge =>
+      edge.to === node.id && (edge.toPort || 'in-0') === dragToPort && edge.from !== node.id);
+    if (incoming.length === 1) {
+      graphView.linkDrag.movedEdge = {
+        from: incoming[0].from,
+        fromPort: incoming[0].fromPort || 'out-0',
+        to: incoming[0].to,
+        toPort: incoming[0].toPort || 'in-0',
+        custom: !!incoming[0].custom,
+      };
+    }
+  }
   graphView.pointerId = event.pointerId;
   graphView.moved = false;
   graphCanvas?.classList.add('linking');
@@ -573,6 +590,71 @@ function _connectPorts(fromNodeId, fromPort, toNodeId, toPort) {
   _saveGraphState(state);
   // 建边会改输出口「待命名」继承身份（T266 是渲染时从 graphView.edges 现算的）——
   // 必须全量重渲染（内部自会重解析边），只重画线层不更新端口文字
+  renderGraphCanvas();
+}
+
+// ComfyUI 式搬移收口（2026-11-21）：拖已连线输入口松手＝改写旧边指向，不新增第二条
+// 线（_startLinkDrag 已在口上恰有一条入边时记 movedEdge）。与 _connectPorts 的差别：
+// 不走统一吸附/自动长口——输入口序位原地不动（in-0 还是 in-0），这正是「改线」与
+// 「加线」的分界。旧边是结构边（模块默认出口）时登记 removedEdges 顶替，防日后断开
+// 该口时默认边复活；新输出口已有自定义线时按 sameSource 一口一线语义顶掉（与直接
+// 连线的归宿一致；junction 扇出口不顶，模块默认边也不顶——socratic/learn 一对多是
+// 特性，非多出口默认边被 custom 占用后由 _resolveGraphEdges 的 occupiedOutputs 自动
+// 遮蔽）。落回原源口是无操作；落到目标节点自己的出口（自连）走 _canConnect 红闪、
+// 边保持原样。无 movedEdge 时原样回落 _connectPorts（从空输入口起拖行为不变）。
+function _finishInputLinkDrag(sourceNodeId, sourcePortId, drag) {
+  const moved = drag && drag.movedEdge;
+  if (!moved) {
+    _connectPorts(sourceNodeId, sourcePortId, drag.nodeId, drag.portId);
+    return;
+  }
+  const newFromPort = sourcePortId || 'out-0';
+  if (sourceNodeId === moved.from && newFromPort === moved.fromPort) return;
+  const fromNode = _findGraphNode(sourceNodeId);
+  const toNode = _findGraphNode(moved.to);
+  if (!_canConnect(fromNode, newFromPort, toNode)) {
+    _flashInvalidConnection();
+    return;
+  }
+  _pushGraphUndo();
+  const state = _graphState();
+  state.connections = state.connections || [];
+  state.removedEdges = state.removedEdges || [];
+  if (!(fromNode && fromNode.kind === 'junction')) {
+    const stealKeys = new Set();
+    for (const edge of (graphView.edges || [])) {
+      if (edge.custom && edge.from === sourceNodeId && (edge.fromPort || 'out-0') === newFromPort
+        && !(edge.to === moved.to && (edge.toPort || 'in-0') === moved.toPort)) {
+        stealKeys.add(_edgeKey(edge));
+      }
+    }
+    if (stealKeys.size) {
+      state.connections = state.connections.filter(item => !stealKeys.has(_edgeKey(item)));
+    }
+  }
+  const staleKey = _edgeKey(moved);
+  const newEdge = { from: sourceNodeId, fromPort: newFromPort, to: moved.to, toPort: moved.toPort };
+  if (moved.custom) {
+    // 自定义边原地改写：一步撤销、输入口序位不动；拖拽期间底账被改（并行会话/
+    // 撤销）找不到旧边时兜底摘旧＋建新
+    const target = state.connections.find(item =>
+      item.from === moved.from && (item.fromPort || 'out-0') === moved.fromPort
+      && item.to === moved.to && (item.toPort || 'in-0') === moved.toPort);
+    if (target) {
+      target.from = newEdge.from;
+      target.fromPort = newEdge.fromPort;
+    } else {
+      state.connections = state.connections.filter(item => _edgeKey(item) !== staleKey);
+      state.connections.push({ ...newEdge, type: 'custom', custom: true });
+    }
+  } else {
+    // 结构边（模块默认出口）：登记 removedEdges 顶替＋落自定义边，端口序位不变
+    state.removedEdges = Array.from(new Set([...state.removedEdges, staleKey]));
+    state.connections.push({ ...newEdge, type: 'custom', custom: true });
+  }
+  state.removedEdges = state.removedEdges.filter(key => key !== _edgeKey(newEdge));
+  _saveGraphState(state);
+  // 改边会改两侧输出口「待命名」继承身份（T266 渲染时现算）——必须全量重渲染
   renderGraphCanvas();
 }
 
@@ -2469,7 +2551,7 @@ function _endPointerDrag(event) {
       _connectPorts(drag.nodeId, drag.portId, targetNodeId, dropPort.dataset.portId);
     } else if (drag.mode === 'input' && dropPort && dropPort.classList.contains('graph-output-port')) {
       const sourceNodeId = dropPort.closest('.graph-node')?.dataset.nodeId;
-      _connectPorts(sourceNodeId, dropPort.dataset.portId, drag.nodeId, drag.portId);
+      _finishInputLinkDrag(sourceNodeId, dropPort.dataset.portId, drag);
     } else if (drag.mode === 'input' && graphView.moved) {
       // 拖输入口的线落到节点身上（非具体输出口）：吸附该节点第一个输出口；没有输出口
       // 或落回自己，维持原「拖走即断开」语义。不自动长输出口——出口有身份语义
@@ -2479,7 +2561,7 @@ function _endPointerDrag(event) {
         ? hoverEl.querySelector('.graph-output-port')
         : null;
       if (outPort) {
-        _connectPorts(hoverEl.dataset.nodeId, outPort.dataset.portId, drag.nodeId, drag.portId);
+        _finishInputLinkDrag(hoverEl.dataset.nodeId, outPort.dataset.portId, drag);
       } else {
         _disconnectInputPort(drag.nodeId, drag.portId);
       }

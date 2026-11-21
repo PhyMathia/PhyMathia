@@ -2352,6 +2352,70 @@ check('统一吸附/自动长口（2026-10-10 ②）：连线对任意可加口�
   return true;
 });
 
+check('ComfyUI 式输入口搬移（2026-11-21）：拖已连线输入口改写旧边不增线、不长口、结构边顶替防复活', () => {
+  const prevGet = sandbox.window.getGraphState, prevSave = sandbox.window.saveGraphState, prevSid = sandbox.window.getCurrentSessionId;
+  const realRender = sandbox.renderGraphCanvas;
+  sandbox.renderGraphCanvas = () => {};
+  const socraticNode = { id: 'soc1', kind: 'module', moduleKey: 'socratic', messageIndex: -1, timestamp: 1 };
+  const answerNode = { id: 'a1', kind: 'module', moduleKey: 'physics', messageIndex: -1, timestamp: 2 };
+  const userNode = { id: 'q1', kind: 'user', manual: true, messageIndex: -1, timestamp: 3 };
+  const emptyState = () => ({ collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9, layoutVersion: 1, connections: null, removedEdges: [], portCounts: {}, inputPortCounts: {}, groups: [], customNodes: [], harnessDeleted: {}, harnessCheckpoint: null });
+  let mem = emptyState();
+  sandbox.window.getGraphState = () => mem;
+  sandbox.window.saveGraphState = (_sid, state) => { mem = state; };
+  sandbox.window.getCurrentSessionId = () => 'sess_move_2026_11_21';
+  vm.runInContext('graphView.nodes = [' + JSON.stringify(socraticNode) + ',' + JSON.stringify(answerNode) + ',' + JSON.stringify(userNode) + '];'
+    + 'graphView.nodeById = { soc1: graphView.nodes[0], a1: graphView.nodes[1], q1: graphView.nodes[2] }; graphView.defaultEdges = []; graphView.edges = [];', sandbox);
+  try {
+    // 1. 自定义边原地改写：soc1.out-2→q1.in-0 改指 a1.out-1 —— 唯一一条边、toPort 仍 in-0、不记附加口数（不自动长口）
+    mem.connections = [{ from: 'soc1', fromPort: 'out-2', to: 'q1', toPort: 'in-0', type: 'custom', custom: true }];
+    sandbox._finishInputLinkDrag('a1', 'out-1', { nodeId: 'q1', portId: 'in-0', movedEdge: { from: 'soc1', fromPort: 'out-2', to: 'q1', toPort: 'in-0', custom: true } });
+    let edges = mem.connections || [];
+    if (edges.length !== 1 || edges[0].from !== 'a1' || edges[0].fromPort !== 'out-1' || edges[0].to !== 'q1' || edges[0].toPort !== 'in-0') {
+      throw new Error('搬移应原地改写唯一旧边（a1.out-1→q1.in-0），实际 ' + JSON.stringify(edges));
+    }
+    if ((mem.inputPortCounts || {}).q1) throw new Error('搬移不该触发自动长口（附加口数应保持空）');
+    // 2. 落回原源口：无操作
+    const before = JSON.stringify(mem.connections);
+    sandbox._finishInputLinkDrag('a1', 'out-1', { nodeId: 'q1', portId: 'in-0', movedEdge: { from: 'a1', fromPort: 'out-1', to: 'q1', toPort: 'in-0', custom: true } });
+    if (JSON.stringify(mem.connections) !== before) throw new Error('落回原源口应无操作');
+    // 3. 新源口已有自定义线：顶掉（一口一线，同 _connectPorts sameSource 归宿）
+    mem.connections = [
+      { from: 'a1', fromPort: 'out-1', to: 'q1', toPort: 'in-0', type: 'custom', custom: true },
+      { from: 'soc1', fromPort: 'out-0', to: 'a1', toPort: 'in-0', type: 'custom', custom: true },
+    ];
+    vm.runInContext('graphView.edges = [{ from: "a1", fromPort: "out-1", to: "q1", toPort: "in-0", type: "custom", custom: true }, { from: "soc1", fromPort: "out-0", to: "a1", toPort: "in-0", type: "custom", custom: true }];', sandbox);
+    sandbox._finishInputLinkDrag('soc1', 'out-0', { nodeId: 'q1', portId: 'in-0', movedEdge: { from: 'a1', fromPort: 'out-1', to: 'q1', toPort: 'in-0', custom: true } });
+    edges = mem.connections || [];
+    if (edges.some(c => c.from === 'soc1' && c.to === 'a1')) throw new Error('新源口既有线应被顶掉');
+    if (!edges.some(c => c.from === 'soc1' && c.fromPort === 'out-0' && c.to === 'q1' && c.toPort === 'in-0')) throw new Error('搬移后的目标边应在位');
+    // 4. 结构边搬移：默认边 soc1.out-1→q1.in-0 改指 a1 —— removedEdges 登记旧键防复活＋落自定义边
+    mem.connections = [];
+    vm.runInContext('graphView.edges = [{ from: "soc1", fromPort: "out-1", to: "q1", toPort: "in-0", type: "socratic" }];'
+      + 'graphView.defaultEdges = [{ from: "soc1", fromPort: "out-1", to: "q1", toPort: "in-0" }];', sandbox);
+    sandbox._finishInputLinkDrag('a1', 'out-1', { nodeId: 'q1', portId: 'in-0', movedEdge: { from: 'soc1', fromPort: 'out-1', to: 'q1', toPort: 'in-0', custom: false } });
+    if (!mem.connections.some(c => c.from === 'a1' && c.fromPort === 'out-1' && c.to === 'q1' && c.toPort === 'in-0' && c.custom)) throw new Error('结构边搬移应落自定义边');
+    if (!(mem.removedEdges || []).some(k => k === 'soc1:out-1->q1:in-0')) throw new Error('结构边旧键应登记 removedEdges 防复活，实际 ' + JSON.stringify(mem.removedEdges));
+    // 5. 自连：落到目标节点自己的出口 —— 红闪、边保持原样不写盘
+    mem.connections = [];
+    vm.runInContext('graphView.edges = [{ from: "soc1", fromPort: "out-1", to: "q1", toPort: "in-0", type: "custom", custom: true }];', sandbox);
+    sandbox._finishInputLinkDrag('q1', 'out-0', { nodeId: 'q1', portId: 'in-0', movedEdge: { from: 'soc1', fromPort: 'out-1', to: 'q1', toPort: 'in-0', custom: true } });
+    if ((mem.connections || []).length !== 0) throw new Error('自连不应写边');
+    // 6. 静态契约：起拖捕获 movedEdge、松手两分支（落输出口/落节点身）都走搬移收口
+    const iaSrc = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
+    if (!iaSrc.includes('graphView.linkDrag.movedEdge')) throw new Error('起拖 movedEdge 捕获缺失');
+    if (!iaSrc.includes('function _finishInputLinkDrag')) throw new Error('搬移收口函数缺失');
+    if ((iaSrc.match(/_finishInputLinkDrag\(/g) || []).length < 3) throw new Error('松手两分支应都走搬移收口');
+  } finally {
+    sandbox.renderGraphCanvas = realRender;
+    sandbox.window.getGraphState = prevGet;
+    sandbox.window.saveGraphState = prevSave;
+    sandbox.window.getCurrentSessionId = prevSid;
+    vm.runInContext('graphView.nodes = []; graphView.edges = []; graphView.nodeById = {}; graphView.defaultEdges = [];', sandbox);
+  }
+  return true;
+});
+
 check('节点标题（2026-10-10 ③）：副标题与喂料标签有标题用标题，画布搜索口径一致', () => {
   // 1. 副标题：note/manual answer 有标题显示标题，无标题回落品类名
   if (sandbox._nodeSub({ kind: 'note', title: '力学总结' }) !== '力学总结') throw new Error('note 副标题应优先标题');
