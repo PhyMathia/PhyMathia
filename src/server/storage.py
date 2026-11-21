@@ -451,6 +451,35 @@ def kv_write(key: str, value, account: str = DEFAULT_ACCOUNT) -> None:
         _kv_warn_main_bloat(account, trigger_key=key)
 
 
+def kv_mutate(key: str, value_updater, default=None, account: str = DEFAULT_ACCOUNT):
+    """按键做锁内读-改-写（T525）：value_updater(现值) → 新值，整段持 _JSON_LOCK。
+
+    读现值、算新值、写回必须原子（如 graph: 键三方合并）的场景用它——kv_read＋
+    kv_write 两段之间锁已释放，线程写者插入后其更新会被基于旧现值算出的整键
+    覆盖抹掉。value_updater 只做纯本地计算（不回调 kv_*、不做 IO），同线程
+    二次拿锁安全（RLock），但锁内拖 IO 会卡住全部 JSON 读写。返回变异后该键的
+    现值；value_updater 返回 None＝不动现值。
+    """
+    paths = accounts.resolve_paths(account)
+    target = _kv_target_path(key, account)
+    path = target or paths.kv_path
+
+    def updater(data):
+        data = dict(data) if isinstance(data, dict) else {}
+        current = data.get(key, default)
+        new_value = value_updater(current)
+        if new_value is None:
+            return None
+        data[key] = new_value
+        return data
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    result = _mutate_json(path, updater, default={})
+    if target is None:
+        _kv_warn_main_bloat(account, trigger_key=key)
+    return result.get(key) if isinstance(result, dict) else None
+
+
 def kv_delete(key: str, account: str = DEFAULT_ACCOUNT) -> None:
     """按键删 KV；拆分文件（会话/族）删空后移除文件本身（空 JSON 不是用户数据）。"""
     paths = accounts.resolve_paths(account)

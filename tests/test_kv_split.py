@@ -123,6 +123,67 @@ class RoutingTest(KvSplitBase):
         self.assertIsNone(storage_mod.kv_read("graph:sess_del"))
 
 
+class KvMutateTest(KvSplitBase):
+    """kv_mutate（T525）：锁内读-改-写的 kv 接口。"""
+
+    def test_mutate_receives_current_and_writes_result(self):
+        storage_mod.kv_write("graph:sess_m", {"v": "server"})
+        seen = {}
+
+        def updater(cur):
+            seen["cur"] = cur
+            return {"v": "merged"}
+
+        result = storage_mod.kv_mutate("graph:sess_m", updater)
+        self.assertEqual(seen["cur"], {"v": "server"})
+        self.assertEqual(result, {"v": "merged"})
+        self.assertEqual(storage_mod.kv_read("graph:sess_m"), {"v": "merged"})
+        self.assertIn("graph:sess_m", storage_mod._read_json(self.kv_dir / "sess_m.json", {}))  # 会话键路由不变
+
+    def test_mutate_missing_key_uses_default(self):
+        result = storage_mod.kv_mutate("graph:sess_none", lambda cur: {"cur": cur})
+        self.assertEqual(result, {"cur": None})  # 缺键时现值＝default(None)，返回落盘后的新值
+
+    def test_mutate_updater_none_keeps_current(self):
+        storage_mod.kv_write("graph:sess_keep", {"v": 1})
+        result = storage_mod.kv_mutate("graph:sess_keep", lambda cur: None)
+        self.assertEqual(result, {"v": 1})
+        self.assertEqual(storage_mod.kv_read("graph:sess_keep"), {"v": 1})
+
+    def test_mutate_serializes_concurrent_thread_writer(self):
+        # T525 核心：updater 执行期间锁在手上，另一线程的 kv_write 必须阻塞到
+        # kv_mutate 落盘之后才执行——它的值后写胜，不被 kv_mutate 的结果整键抹掉
+        storage_mod.kv_write("graph:sess_t525", {"v": "server"})
+        import threading
+        attempting = threading.Event()
+        writer_started = threading.Event()
+        writer_done = threading.Event()
+
+        def slow_updater(current):
+            attempting.set()
+            writer_started.wait(timeout=5)
+            # 给写者 0.3s 去完成写入：锁持有时它完不成（写者已 started 却未 done）；
+            # 若锁没持有（非原子实现），kv_write 微秒级完成、事件立置 → 断言红
+            self.assertFalse(writer_done.wait(timeout=0.3),
+                             "并发写者在 kv_mutate 临界区内完成——锁没罩住整段读-改-写")
+            return {"v": "merged"}
+
+        def writer():
+            attempting.wait(timeout=5)
+            writer_started.set()  # 先示意即将写，再撞锁
+            storage_mod.kv_write("graph:sess_t525", {"v": "concurrent"})
+            writer_done.set()
+
+        t = threading.Thread(target=writer)
+        t.start()
+        try:
+            result = storage_mod.kv_mutate("graph:sess_t525", slow_updater)
+        finally:
+            t.join(timeout=5)
+        self.assertEqual(result, {"v": "merged"})  # kv_mutate 自己的落盘值
+        self.assertEqual(storage_mod.kv_read("graph:sess_t525"), {"v": "concurrent"})  # 并发写者幸存
+
+
 class MigrationTest(KvSplitBase):
     def test_migration_moves_session_keys_only(self):
         storage_mod._write_json(self.kv_path, {

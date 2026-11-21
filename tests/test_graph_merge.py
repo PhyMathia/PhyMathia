@@ -9,6 +9,7 @@
 
 import os
 import sys
+import threading
 import time
 
 from fastapi import FastAPI
@@ -307,3 +308,57 @@ def test_route_merge_failure_falls_back_to_plain_store(monkeypatch):
     }).status_code == 200
     stored = client.get("/api/kv/graph:sess_t360").json()["value"]
     assert stored["updatedAt"] == 9000
+
+
+def test_route_merge_atomic_against_concurrent_thread_writer(monkeypatch):
+    """T525：合并进行中另一线程保存同键，其更新不许被合并结果整键覆盖。
+
+    修复后读—合并—写整段收进 kv_mutate 的 _JSON_LOCK 临界区：写者线程阻塞在锁上、
+    直到合并落盘后才写入，其节点幸存（后写者胜）。修复前 kv_read 锁外读旧值、
+    合并窗口内锁是空的，写者在合并计算期间写完、随后被 kv_write(merged) 抹掉。
+    """
+    from server import session_routes as routes_mod
+    from server import storage as storage_mod
+
+    client = _client()
+    storage_mod.kv_write("graph:sess_t525", state([node("a", "服务器旧值")], updated_at=1000))
+
+    real_merge = routes_mod.graph_merge.merge_graph_states
+    attempting = threading.Event()
+    release = threading.Event()
+
+    def slow_merge(server, incoming, base_node_sigs=None, now_ms=None):
+        attempting.set()  # 锁已持有、合并正在算——竞态窗口
+        release.wait(timeout=5)
+        return real_merge(server, incoming, base_node_sigs, now_ms)
+
+    monkeypatch.setattr(routes_mod.graph_merge, "merge_graph_states", slow_merge)
+
+    def concurrent_writer():
+        attempting.wait(timeout=5)
+        storage_mod.kv_write("graph:sess_t525", state([node("b", "并发设备新节点")], updated_at=2000))
+
+    def unblocker():
+        attempting.wait(timeout=5)
+        time.sleep(0.1)  # 给写者时间撞上锁（撞不上也安全：它的写只会更晚、仍幸存）
+        release.set()
+
+    writer = threading.Thread(target=concurrent_writer)
+    unblocker_t = threading.Thread(target=unblocker)
+    writer.start()
+    unblocker_t.start()
+    try:
+        resp = client.post("/api/kv/graph:sess_t525", json={
+            "value": state([node("a", "本端旧副本")], updated_at=1500),
+            "graph_merge": {"base_node_sigs": {"a": "sig-本端旧副本"}},
+        })
+        assert resp.status_code == 200, resp.text
+        writer.join(timeout=5)
+        unblocker_t.join(timeout=5)
+    finally:
+        release.set()  # 兜底：断言炸了也别把慢合并吊死在事件上
+
+    # 并发设备的保存排在合并落盘之后：它的节点 b 幸存
+    final = storage_mod.kv_read("graph:sess_t525")
+    contents = [n["content"] for n in final["customNodes"]]
+    assert contents == ["并发设备新节点"]
