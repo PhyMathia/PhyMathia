@@ -3013,7 +3013,11 @@
 
     /* 大面积载体变体：侧边栏 / 顶栏这类「整条 chrome」——底色更实、色斑更弱、模糊更浅。
        理由：全高/全宽的玻璃每帧要重采样整片背景，且长列表与密集按钮压在高透明底上可读性会掉。
-       小面板（右键菜单/胶囊）仍用基础档或 --compact，表单类弹窗用 --dialog。 */
+       小面板（右键菜单/胶囊）仍用基础档或 --compact，表单类弹窗用 --dialog。
+       2026-11-21：本档**不漂移**（animation: none）。整条 chrome 的色斑位移只有 28s 周期、
+       位移量肉眼几乎不可见，却让每个全宽/全高载体每帧重画一次 background-position 并连带
+       重采样 backdrop-filter——这是全站最贵的一笔常驻开销。要漂移只留小面板/弹窗（基础档、
+       --compact、--dialog 都还带着 auroraDrift），大块载体停在起始帧，外观不变。 */
     .aurora-glass--panel {
       --aurora-1: rgba(14, 116, 233, 0.14);
       --aurora-2: rgba(109, 40, 217, 0.12);
@@ -3022,6 +3026,7 @@
       --glass-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(0, 0, 0, 0.10) 90%);
       -webkit-backdrop-filter: blur(14px) saturate(140%);
       backdrop-filter: blur(14px) saturate(140%);
+      animation: none;
     }
 
     html[data-theme="light"] .aurora-glass--panel,
@@ -3147,6 +3152,18 @@
     html.aurora-still .aurora-glass { animation-play-state: paused; }
     html.aurora-still .graph-context-menu,
     html.aurora-still .quiz-return-pill { animation-play-state: running; }
+
+    /* 关闭态的整高玻璃面板不磨砂（2026-11-21）：侧栏 / 知识面板 / 记忆面板 / 设置抽屉
+       关着时只是被 transform 推出视口，元素仍在、仍是整高——各占一张全高 backdrop-filter
+       渲染表面。四张全高表面常驻，GPU 表面吃紧时最先丢的就是它们和顶栏（用户截图：顶栏
+       整条消失、左右两侧各一条纯色竖带）。关着时模糊结果没有任何像素能看到，摘掉零观感损失；
+       展开态（.open / .active / .show）保留磨砂。 */
+    .sidebar.aurora-glass:not(.open),
+    .knowledge-panel.aurora-glass:not(.active),
+    .settings-overlay:not(.show) .settings-drawer.aurora-glass {
+      -webkit-backdrop-filter: none !important;
+      backdrop-filter: none !important;
+    }
 
     /* 不支持 backdrop-filter 时：加深底色，保证文字对比度 */
     @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {

@@ -31,6 +31,29 @@
   border-radius: 0 0 var(--r-lg) var(--r-lg);
 }
 
+/* 顶栏/二级栏不做实时磨砂（2026-11-21）：用户两张同内容截图实证——一张正常，另一张里顶栏
+   整条（含 ☰ / logo / 右上按钮组）完全不画、画布内容直接顶到屏幕最上沿，同一帧左右两侧还
+   各多出一条 ~90px 纯色竖带。这是 backdrop-filter 表面在 GPU 吃紧/上下文重建时被整块丢掉
+   的典型症状（磨砂层拿不到背景纹理就整条不画，不是变透明）。这两条是全宽常驻载体，本来
+   --panel 档底色就是 .86、模糊只贡献 14% 的透出（改前/改后 A/B 截图肉眼无差），摘掉换
+   「永不丢层」；底色提到不支持 backdrop-filter 浏览器的兜底档（.90 / .97），压住画布节点
+   文字。小面板/弹窗（--compact / --dialog）仍保留磨砂：载体小、丢一帧也不显眼。 */
+.app-container .chat-header,
+.app-container .header-secondary-bar {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+html .app-container .chat-header.aurora-glass,
+html .app-container .header-secondary-bar.aurora-glass {
+  --glass-tint: rgba(6, 10, 24, 0.90) !important;
+}
+
+html[data-theme="light"] .app-container .chat-header.aurora-glass,
+html[data-theme="light"] .app-container .header-secondary-bar.aurora-glass {
+  --glass-tint: rgba(252, 249, 243, 0.97) !important;
+}
+
 .app-container .graph-workspace {
   position: fixed !important;
   inset: 0 !important;
