@@ -185,6 +185,7 @@ function renderGraphCanvas(streaming) {
   graphInner = document.createElement('div');
   graphInner.className = 'graph-canvas-inner';
   graphCanvas.appendChild(graphInner);
+  _bindGraphActionBus(graphInner); // 516：data-act 动作总线（见 graph-render.js 尾部），幂等挂新容器
 
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('class', 'graph-edge-layer');

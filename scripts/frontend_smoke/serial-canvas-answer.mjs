@@ -1089,11 +1089,11 @@ check('带要求重生成：按钮弹面板＋留空直发＋修订内核＋rege
   // ① 工作流节点按钮：有内容弹面板、没内容保留「生成」直跑
   const actionsBody = extract(grSrc, '_nodeActions');
   if (actionsBody === null) throw new Error('找不到 _nodeActions——断言本身该更新了');
-  if (!actionsBody.includes("graphOpenRegenerate(\\'' + node.id + '\\')")) {
-    throw new Error('工作流节点的「重新生成」没有改弹带要求面板（2026-10-13 回退）');
+  if (!actionsBody.includes("_iconRegenButton('regen-open', node.id")) {
+    throw new Error('工作流节点的「重新生成」没有改弹带要求面板（2026-10-13 回退；516 后走 data-act）');
   }
-  if (!actionsBody.includes("'runWorkflowNode(\\'' + node.id + '\\',false)'")) {
-    throw new Error('空白工作流节点的「生成」直跑入口丢了');
+  if (!actionsBody.includes("_iconPlayButton('wf-run', node.id")) {
+    throw new Error('空白工作流节点的「生成」直跑入口丢了（516 后走 data-act）');
   }
   // 命名统一（2026-10-13 清理）：面板已泛化成带要求重生成，旧称「没看懂」整体退役——
   // 画布上任何「重新生成」按钮开的是同一个小面板，不再一颗节点一个叫法
@@ -1206,13 +1206,13 @@ check('播放三角「从头生成」：不带内容直跑原管线＋T303 下�
   const grSrc = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
   const actionsBody = extract(grSrc, '_nodeActions');
   if (actionsBody === null) throw new Error('找不到 _nodeActions——断言本身该更新了');
-  if (!actionsBody.includes("_iconPlayButton('runWorkflowNode(\\'' + node.id + '\\',true)'")) {
-    throw new Error('工作流节点丢了播放三角「从头生成」直跑入口（T338）');
+  if (!actionsBody.includes("_iconPlayButton('wf-run', node.id, regenBusy ? '生成中...' : '从头生成（不带当前内容，重启工作流）', regenBusy, true)")) {
+    throw new Error('工作流节点丢了播放三角「从头生成」直跑入口（T338；516 后 force 走 data-force）');
   }
   // 三角必须排在循环箭头（面板入口）之后：_syncBlankNodeControls 取首个 .graph-regen-btn
   // 重置标题，排前面会被误当宿主按钮（锚 force=true 那颗＝有内容分支；空内容分支的独钮
   // 不参与本序）
-  if (actionsBody.indexOf("_iconPlayButton('runWorkflowNode(\\'' + node.id + '\\',true)'") < actionsBody.indexOf("_iconRegenButton('graphOpenRegenerate")) {
+  if (actionsBody.indexOf("_iconPlayButton('wf-run', node.id, regenBusy ? '生成中...' : '从头生成（不带当前内容，重启工作流）', regenBusy, true)") < actionsBody.indexOf("_iconRegenButton('regen-open'")) {
     throw new Error('播放三角排到了循环箭头之前——会被 _syncBlankNodeControls 误当宿主按钮');
   }
   // force=true 真重跑；confirmed 必须留缺省——有下游时 T303 confirm 闸照走，误传 true＝绕闸
@@ -1244,8 +1244,8 @@ check('空内容节点挂播放三角「从头生成」：没生成过不该出�
   if (actionsBody === null) throw new Error('找不到 _nodeActions——断言本身该更新了');
   // 空内容分支：force 仍 false（空节点没内容可清，true 只会多弹下游失效确认），
   // 但图标/入口必须是播放三角
-  if (!actionsBody.includes("_iconPlayButton('runWorkflowNode(\\'' + node.id + '\\',false)'")) {
-    throw new Error('空内容节点丢了播放三角「从头生成」入口');
+  if (!actionsBody.includes("_iconPlayButton('wf-run', node.id, label, regenBusy)")) {
+    throw new Error('空内容节点丢了播放三角「从头生成」入口（516 后走 data-act）');
   }
   // 循环箭头的 direct-run 宿主退役：runWorkflowNode(id,false) 不该再由 _iconRegenButton 挂
   if (actionsBody.includes("_iconRegenButton('runWorkflowNode(")) {
@@ -1293,7 +1293,7 @@ check('节点版本历史：旧版保留＋‹›切换＋删版（2026-10-15 T3
   if ((actionsBody.match(/_nodeVersionNavHtml\(node, regenBusy\)/g) || []).length < 2) {
     throw new Error('工作流节点动作区两个分支没有都挂版本导航（T339）');
   }
-  if (actionsBody.lastIndexOf('_nodeVersionNavHtml') > actionsBody.indexOf("_iconRegenButton('graphOpenRegenerate")) {
+  if (actionsBody.lastIndexOf('_nodeVersionNavHtml') > actionsBody.indexOf("_iconRegenButton('regen-open'")) {
     throw new Error('版本导航排到了循环箭头之后（T339）');
   }
   // 三个生成口的挂点：开跑收账清空、成功收新账、失败/中止兜回。

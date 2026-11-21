@@ -74,6 +74,12 @@ function parseUtopiaSnapshot(input) {
     }
     const id = (n.id === undefined || n.id === null) ? '' : String(n.id).trim();
     if (!id) return { ok: false, error: 'nodes 第 ' + (i + 1) + ' 项缺少 id' };
+    // 516（2026-11-21）：id 字符白名单——节点 id 会被渲染层写进 data-node-id 等属性，
+    // 恶意字符（引号/括号等）即使不 breakout 也会污染寻址。本地生成的 id（grp_/cp_/it_/
+    // draft- 等）全落此字符集，不会误杀真快照；渲染层另有 data-* + 委托总线兜底。
+    if (!/^[A-Za-z0-9_-]+$/.test(id)) {
+      return { ok: false, error: 'nodes 第 ' + (i + 1) + ' 项 id 含不允许的字符（只允许字母/数字/_/-）：' + id.slice(0, 40) };
+    }
     if (Object.prototype.hasOwnProperty.call(seenIds, id)) {
       return { ok: false, error: '快照里有重复节点 id：' + id };
     }
@@ -83,6 +89,18 @@ function parseUtopiaSnapshot(input) {
   for (const key of ['edges', 'groups', 'messages']) {
     if (data[key] === undefined || data[key] === null) { data[key] = []; continue; }
     if (!Array.isArray(data[key])) return { ok: false, error: key + ' 不是数组' };
+  }
+  // groups 逐项校验（516）：分组 id 与节点 id 同走 data-group-id / 委托寻址，同口径把关
+  for (let i = 0; i < data.groups.length; i++) {
+    const g = data.groups[i];
+    if (!g || typeof g !== 'object' || Array.isArray(g)) {
+      return { ok: false, error: 'groups 第 ' + (i + 1) + ' 项不是对象' };
+    }
+    const gid = (g.id === undefined || g.id === null) ? '' : String(g.id).trim();
+    if (!gid) return { ok: false, error: 'groups 第 ' + (i + 1) + ' 项缺少 id' };
+    if (!/^[A-Za-z0-9_-]+$/.test(gid)) {
+      return { ok: false, error: 'groups 第 ' + (i + 1) + ' 项 id 含不允许的字符（只允许字母/数字/_/-）：' + gid.slice(0, 40) };
+    }
   }
   // messages 里的非对象条目过滤并计数（渲染路径会读 msg.content，不能带坏条目进去）
   const dropped = data.messages.filter(function (m) { return !m || typeof m !== 'object' || Array.isArray(m); }).length;

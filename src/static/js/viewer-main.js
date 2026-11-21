@@ -88,6 +88,8 @@
       '.graph-port-remove,.graph-add-port-btn,.graph-add-input-btn,.graph-resize-handle,',
       '.graph-hub-connect-btn,.graph-regen-btn,.graph-blank-actions,.graph-source-controls,',
       '.graph-source-file-btn,.graph-source-paste-btn,.graph-relation-actions,',
+      // 516：空白卡要求框不在历史隐藏清单里（查看器是只读快照，要求框本就不该出现）
+      '.graph-blank-requirement,',
       '.graph-ai-eval-accept,.graph-ai-eval-ignore,.graph-link-btn,.graph-tool-btn[title*="新建"],',
       '.graph-tool-btn[title*="整理"],.graph-tool-btn[title*="分组"],.graph-tool-btn[title*="联系"],',
       // 右下角画布工具栏整个不要（查看器只保留顶栏那几个动作）

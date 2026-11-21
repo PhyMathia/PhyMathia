@@ -19,14 +19,18 @@ check('追问草稿卡渲染（T152→占位提示）：draftInput 作值、建�
       portMeta: { branchType: 'followup', question: '端口预填问题' },
       ...extra,
     }) + ')';
-    const inputAttrs = 'oninput="draftInputChanged(\'draft-smk\', this.value)"'
-      + ' onkeydown="return draftInputKeydown(event, \'draft-smk\')"';
+    // 516 后 textarea 只挂 data-act="draft-box"（input+keydown 同名双登记，见 graph-render.js 总线表）
+    const inputAttrs = 'data-act="draft-box" data-node-id="draft-smk"';
     const emptyTail = inputAttrs + '></textarea>';
     const typed = vm.runInContext(mk({ draftInput: '我自己打的字' }), sandbox);
     if (!typed.includes('>我自己打的字</textarea>')) throw new Error('重渲后没取节点对象上的 draftInput，字会丢');
     if (!typed.includes('placeholder="端口预填问题"')) throw new Error('建议问题应作 placeholder 灰色提示');
-    if (!typed.includes('oninput="draftInputChanged(\'draft-smk\', this.value)"')) throw new Error('textarea 未挂 oninput 回写');
-    if (!typed.includes('onkeydown="return draftInputKeydown(event, \'draft-smk\')"')) throw new Error('textarea 未挂回车发送（onkeydown）');
+    if (!typed.includes('data-act="draft-box"') || !typed.includes('data-node-id="draft-smk"')) throw new Error('textarea 未挂 data-act 输入回写（516 后走委托总线）');
+    // 回车发送：总线 keydown 表把 draft-box 登记到 draftInputKeydown（渲染面不再有内联 onkeydown）
+    if (!fs.readFileSync('src/static/js/graph-render.js', 'utf8').includes(
+      "'draft-box': function (el, e) { if (draftInputKeydown(e, el.dataset.nodeId) === false) e.preventDefault(); }")) {
+      throw new Error('总线 keydown 表丢了 draft-box→draftInputKeydown（回车发送断链）');
+    }
     const cleared = vm.runInContext(mk({ draftInput: '' }), sandbox);
     if (!cleared.includes(emptyTail)) throw new Error('用户主动清空后框内容应为空串（建议问题不再当正文塞回）');
     if (!cleared.includes('placeholder="端口预填问题"')) throw new Error('清空后建议问题应继续作灰色提示');
@@ -99,8 +103,8 @@ check('追问草稿卡「回答方式」：总开关开＝三枚胶囊默认自�
     if (!followup.includes('class="graph-draft-route-btn is-current" data-route="auto" aria-pressed="true"')) throw new Error('开关开时默认应选中「自动判断」');
     if (!followup.includes('data-route="analysis" aria-pressed="false"')) throw new Error('应有「拆分分析」选项');
     if (!followup.includes('data-route="direct" aria-pressed="false"')) throw new Error('应有「直接回答」选项');
-    if (!followup.includes('onclick="draftRouteChanged(\'draft-route\',\'auto\',this)"')) throw new Error('自动判断没挂 draftRouteChanged');
-    if (!followup.includes('onclick="draftRouteChanged(\'draft-route\',\'direct\',this)"')) throw new Error('直接回答没挂 draftRouteChanged');
+    if (!followup.includes('data-act="draft-route"') || !followup.includes('data-route="auto"') || !followup.includes('data-node-id="draft-route"')) throw new Error('自动判断没挂 draft-route 动作（516 后走委托总线）');
+    if (!followup.includes('data-act="draft-route"') || !followup.includes('data-route="direct"')) throw new Error('直接回答没挂 draft-route 动作（516 后走委托总线）');
 
     const manual = render({ routeMode: 'direct' });
     if (!manual.includes('class="graph-draft-route-btn is-current" data-route="direct" aria-pressed="true"')) throw new Error('routeMode=direct 应选中「直接回答」');

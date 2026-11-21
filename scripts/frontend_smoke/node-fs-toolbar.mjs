@@ -740,7 +740,7 @@ export function run() {
   check('node-fs-edit: 接线三处——头部按钮资格闸/关闭守卫/浮条编辑态收声，加粗老调用零变化', () => {
     const gc = readSrc('src/static/js/graph-custom.js');
     if (!gc.includes("typeof _nodeFsEditAvailable === 'function' && _nodeFsEditAvailable(node)")) return false;
-    if (!gc.includes("openNodeFsEdit(\\''")) return false; // onclick="openNodeFsEdit('id')"
+    if (!gc.includes('data-mact="fs-edit"')) return false; // 516 后全屏层编辑钮走 document 级弹层总线
     if (!gc.includes("typeof _nodeFsEditCloseGuard === 'function' && _nodeFsEditCloseGuard()")) return false;
     const bar = readSrc('src/static/js/node-fs-toolbar.js');
     if (!bar.includes("typeof _nodeFsEditActive === 'function' && _nodeFsEditActive()")) return false;

@@ -363,6 +363,57 @@ checkImport('utopia-import: 本地与服务端都失败 → 不切换、不新�
   return true;
 });
 
+checkImport('utopia-import: 恶意 id 的 .pmu 整包拒绝——不写库、不切换、不外发（516 回归）', async () => {
+  // 516（2026-11-21）：快照节点/分组 id 此前直插渲染模板的 onclick JS 串上下文，恶意 .pmu
+  // 拖进页面（任意位置接收）点一下就执行任意 JS。渲染层已改 data-act + 委托总线兜底，
+  // 这里钉导入门：id 字符白名单（^[A-Za-z0-9_-]+$，本地生成器 grp_/cp_/it_/draft- 等全落
+  // 此集合）在 parse 层整包拒绝——拒绝后三写一个不发生、服务端零请求、不切画布、onResult
+  // 不回调（parse 失败分支直接 return false）。用 onResult 指认而非键差（README 铁则）。
+  const evilNode = {
+    format: 'phymath-utopia/graph', version: 1, title: '恶意节点 id',
+    nodes: [{ id: "n');alert(1);//" }], edges: [], groups: [], messages: [],
+  };
+  const prevSwitch = sandbox.window.switchToSession;
+  const prevSync = sandbox.window.syncFromServer;
+  const prevFetch = sandbox.fetch;
+  const prevToast = sandbox.toastMsg;
+  const calls = [];
+  const toasts = [];
+  sandbox.window.switchToSession = async () => { calls.push('switch'); };
+  sandbox.window.syncFromServer = async () => {};
+  sandbox.fetch = async (url) => { calls.push(String(url)); return { ok: true, status: 200, json: async () => ({ value: [] }), text: async () => '' }; };
+  sandbox.toastMsg = (m) => { toasts.push(String(m)); };
+  const restore = () => {
+    sandbox.window.switchToSession = prevSwitch;
+    sandbox.window.syncFromServer = prevSync;
+    sandbox.fetch = prevFetch;
+    if (prevToast === undefined) delete sandbox.toastMsg; else sandbox.toastMsg = prevToast;
+  };
+  let ok = null;
+  let onResultSeen = null;
+  try {
+    ok = await sandbox.window.importUtopiaSnapshotText(JSON.stringify(evilNode), 'evil.pmu', { onResult: (r) => { onResultSeen = r; } });
+  } finally { restore(); }
+  if (ok !== false) throw new Error('恶意节点 id 快照应导入失败');
+  if (!toasts.some((t) => t.includes('不允许的字符'))) {
+    throw new Error('拒绝文案应说清字符白名单：' + JSON.stringify(toasts));
+  }
+  if (calls.length) throw new Error('被拒导入不应发生任何服务端写：' + JSON.stringify(calls));
+  if (onResultSeen !== null) throw new Error('parse 失败分支不应回调 onResult');
+  // 分组 id 同口径
+  const evilGroup = {
+    format: 'phymath-utopia/graph', version: 1, title: '恶意分组 id',
+    nodes: [{ id: 'n1' }], edges: [], groups: [{ id: "g\');alert(1);//" }], messages: [],
+  };
+  calls.length = 0;
+  let ok2 = null;
+  try {
+    ok2 = await sandbox.window.importUtopiaSnapshotText(JSON.stringify(evilGroup), 'evil2.pmu', {});
+  } finally { restore(); }
+  if (ok2 !== false) throw new Error('恶意分组 id 快照应导入失败');
+  if (calls.length) throw new Error('分组被拒也不应发生任何写：' + JSON.stringify(calls));
+});
+
 await importTail;
 await drain();
 }

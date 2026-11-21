@@ -83,16 +83,16 @@ function _nodeActions(node) {
       const label = regenBusy ? '生成中...' : '从头生成';
       return '<div class="graph-node-actions">'
         + _nodeVersionNavHtml(node, regenBusy)
-        + _iconPlayButton('runWorkflowNode(\'' + node.id + '\',false)', label, regenBusy)
+        + _iconPlayButton('wf-run', node.id, label, regenBusy)
         + '</div>';
     }
     return '<div class="graph-node-actions">'
       + _nodeVersionNavHtml(node, regenBusy)
-      + _iconRegenButton('graphOpenRegenerate(\'' + node.id + '\')', regenBusy ? '生成中...' : '重新生成', regenBusy)
+      + _iconRegenButton('regen-open', node.id, regenBusy ? '生成中...' : '重新生成', regenBusy)
       // 播放三角（T338）：不带当前内容的「从头生成」，force=true 真重跑；confirmed 留缺省
       // ＝有下游时照 T303 直接按钮路的 confirm 口径，无下游静默放行。排在循环箭头之后：
       // 固定「版本导航 → 循环箭头（面板）→ 三角（直跑）」的顺序，导出/只读按整行剥离
-      + _iconPlayButton('runWorkflowNode(\'' + node.id + '\',true)', regenBusy ? '生成中...' : '从头生成（不带当前内容，重启工作流）', regenBusy)
+      + _iconPlayButton('wf-run', node.id, regenBusy ? '生成中...' : '从头生成（不带当前内容，重启工作流）', regenBusy, true)
       + '</div>';
   }
   if (node.kind === 'module' && node.moduleKey !== 'socratic') {
@@ -106,7 +106,7 @@ function _nodeActions(node) {
         // 经全局词法环境可见；typeof 守卫兜沙箱/加载序）
         const vizBusy = typeof _generatingVizNodes !== 'undefined' && _generatingVizNodes.has(node.id);
         return '<div class="graph-node-actions">'
-          + _iconRegenButton('generateVizNode(\'' + node.id + '\')', vizBusy ? '生成中...' : '生成可视化', vizBusy)
+          + _iconRegenButton('viz-gen', node.id, vizBusy ? '生成中...' : '生成可视化', vizBusy)
           + '</div>';
       }
     }
@@ -115,7 +115,7 @@ function _nodeActions(node) {
     // 忙态口径同 T58：这颗自己在重生成（_regeneratingNodes）才置灰。
     const regenBusy = !!node.busy || (typeof _regeneratingNodes !== 'undefined' && _regeneratingNodes.has(node.id));
     return '<div class="graph-node-actions">'
-      + _iconRegenButton('graphOpenRegenerate(\'' + node.id + '\')', regenBusy ? '生成中...' : '重新生成', regenBusy)
+      + _iconRegenButton('regen-open', node.id, regenBusy ? '生成中...' : '重新生成', regenBusy)
       + '</div>';
   }
   return '';
@@ -144,12 +144,12 @@ function _playIconHtml() {
   return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
 }
 
-function _iconPlayButton(onclick, title, disabled) {
-  return '<button class="graph-regen-btn graph-play-btn graph-icon-btn" onclick="' + onclick + '" title="' + escapeHtml(title) + '"' + (disabled ? ' disabled' : '') + '>' + _playIconHtml() + '</button>';
+function _iconPlayButton(act, nodeId, title, disabled, force) {
+  return '<button class="graph-regen-btn graph-play-btn graph-icon-btn" data-act="' + act + '" data-node-id="' + escapeHtml(nodeId) + '"' + (force ? ' data-force="1"' : '') + ' title="' + escapeHtml(title) + '"' + (disabled ? ' disabled' : '') + '>' + _playIconHtml() + '</button>';
 }
 
-function _iconRegenButton(onclick, title, disabled) {
-  return '<button class="graph-regen-btn graph-icon-btn" onclick="' + onclick + '" title="' + escapeHtml(title) + '"' + (disabled ? ' disabled' : '') + '>' + _regenIconHtml() + '</button>';
+function _iconRegenButton(act, nodeId, title, disabled) {
+  return '<button class="graph-regen-btn graph-icon-btn" data-act="' + act + '" data-node-id="' + escapeHtml(nodeId) + '" title="' + escapeHtml(title) + '"' + (disabled ? ' disabled' : '') + '>' + _regenIconHtml() + '</button>';
 }
 
 // ===== 版本历史导航（2026-10-15 T339）：‹ 2/5 › ＋ 删当前版 =====
@@ -176,10 +176,10 @@ function _nodeVersionNavHtml(node, busy) {
   const av = (typeof node.activeVersion === 'number' && node.activeVersion >= 0 && node.activeVersion < total)
     ? node.activeVersion : total - 1;
   return '<span class="graph-version-nav" title="版本历史（重新生成/从头生成的旧版本都留在这里）">'
-    + '<button class="graph-version-btn" onclick="graphNodeVersionStep(\'' + node.id + '\',-1)" title="上一版本"' + (av <= 0 ? ' disabled' : '') + '>' + _versionChevronLeftHtml() + '</button>'
+    + '<button class="graph-version-btn" data-act="ver-step" data-step="-1" data-node-id="' + escapeHtml(node.id) + '" title="上一版本"' + (av <= 0 ? ' disabled' : '') + '>' + _versionChevronLeftHtml() + '</button>'
     + '<span class="graph-version-count" title="当前看到第 ' + (av + 1) + ' / ' + total + ' 版">' + (av + 1) + '/' + total + '</span>'
-    + '<button class="graph-version-btn" onclick="graphNodeVersionStep(\'' + node.id + '\',1)" title="下一版本"' + (av >= total - 1 ? ' disabled' : '') + '>' + _versionChevronRightHtml() + '</button>'
-    + '<button class="graph-version-btn graph-version-del" onclick="graphNodeVersionDelete(\'' + node.id + '\')" title="删除当前看到的这个版本">' + _versionTrashHtml() + '</button>'
+    + '<button class="graph-version-btn" data-act="ver-step" data-step="1" data-node-id="' + escapeHtml(node.id) + '" title="下一版本"' + (av >= total - 1 ? ' disabled' : '') + '>' + _versionChevronRightHtml() + '</button>'
+    + '<button class="graph-version-btn graph-version-del" data-act="ver-del" data-node-id="' + escapeHtml(node.id) + '" title="删除当前看到的这个版本">' + _versionTrashHtml() + '</button>'
     + '</span>';
 }
 
@@ -290,8 +290,8 @@ function _renderDraftNodeHtml(node) {
     body = '<div class="graph-draft-body socratic">'
       + '<div class="graph-draft-question">' + escapeHtml(meta.question || '') + '</div>'
       + '<div class="graph-draft-actions graph-socratic-actions">'
-      + '<button class="graph-draft-btn graph-socratic-btn graph-socratic-answer" onclick="draftSocraticAnswer(\'' + node.id + '\')">我来回答</button>'
-      + '<button class="graph-draft-btn graph-socratic-btn graph-socratic-ai" onclick="draftAskAi(\'' + node.id + '\')">直接问AI</button>'
+      + '<button class="graph-draft-btn graph-socratic-btn graph-socratic-answer" data-act="draft-answer" data-node-id="' + escapeHtml(node.id) + '">我来回答</button>'
+      + '<button class="graph-draft-btn graph-socratic-btn graph-socratic-ai" data-act="draft-ai" data-node-id="' + escapeHtml(node.id) + '">直接问AI</button>'
       + '</div></div>';
   } else {
     // T152：草稿输入的真身在节点对象（draftInput，输入即写回、随重渲存活），
@@ -308,7 +308,7 @@ function _renderDraftNodeHtml(node) {
     const autoEnabled = (typeof followupAutoRouteEnabled === 'function') ? followupAutoRouteEnabled() : false;
     const routeMode = (node.routeMode === 'direct' || node.routeMode === 'analysis')
       ? node.routeMode : (autoEnabled ? 'auto' : 'analysis');
-    const routeBtn = (route, label, hint) => '<button type="button" class="graph-draft-route-btn' + (routeMode === route ? ' is-current' : '') + '" data-route="' + route + '" aria-pressed="' + (routeMode === route ? 'true' : 'false') + '" title="' + hint + '" onclick="draftRouteChanged(\'' + node.id + '\',\'' + route + '\',this)">' + label + '</button>';
+    const routeBtn = (route, label, hint) => '<button type="button" class="graph-draft-route-btn' + (routeMode === route ? ' is-current' : '') + '" data-route="' + route + '" aria-pressed="' + (routeMode === route ? 'true' : 'false') + '" title="' + hint + '" data-act="draft-route" data-node-id="' + escapeHtml(node.id) + '">' + label + '</button>';
     const routeSwitch = meta.branchType === 'followup'
       ? '<div class="graph-draft-route" role="group" aria-label="回答方式">'
         + (autoEnabled ? routeBtn('auto', '自动判断', '由 AI 判断：一句话能答清就直接回答，否则拆分分析') : '')
@@ -317,16 +317,16 @@ function _renderDraftNodeHtml(node) {
         + '</div>'
       : '';
     body = '<div class="graph-draft-body">'
-      + '<textarea class="graph-draft-input" rows="3" placeholder="' + escapeHtml(suggestion) + '" oninput="draftInputChanged(\'' + node.id + '\', this.value)" onkeydown="return draftInputKeydown(event, \'' + node.id + '\')">' + escapeHtml(value) + '</textarea>'
+      + '<textarea class="graph-draft-input" rows="3" placeholder="' + escapeHtml(suggestion) + '" data-act="draft-box" data-node-id="' + escapeHtml(node.id) + '">' + escapeHtml(value) + '</textarea>'
       + '<div class="graph-draft-footer">' + routeSwitch
-      + '<button class="graph-draft-btn graph-draft-send" onclick="submitDraftQuestion(\'' + node.id + '\')">发送提问</button>'
+      + '<button class="graph-draft-btn graph-draft-send" data-act="draft-send" data-node-id="' + escapeHtml(node.id) + '">发送提问</button>'
       + '</div></div>';
   }
-  return '<div class="graph-node graph-node-draft graph-node-branch graph-attr-' + attr.key + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';">'
+  return '<div class="graph-node graph-node-draft graph-node-branch graph-attr-' + attr.key + '" data-node-id="' + escapeHtml(node.id) + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';">'
     + _renderInputPorts(node)
     + '<div class="graph-node-main">'
     + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span>'
-    + '<button class="graph-draft-close" onclick="removeDraftNode(\'' + node.id + '\')" title="取消">×</button></div>'
+    + '<button class="graph-draft-close" data-act="draft-close" data-node-id="' + escapeHtml(node.id) + '" title="取消">×</button></div>'
     + body
     + '</div></div>';
 }
@@ -608,20 +608,20 @@ function _renderInputPorts(node, state) {
         : (node.kind === 'user' || node.kind === 'human_note' ? '任意输入端口：可连接任意来源' : '输入端口：拖到右侧输出可重连来源'));
     // T266：附加口双击手动命名（覆盖连线派生名并进喂料语义）；基础口/具名口身份固定不开放
     const renameAttr = (isAdditional && canAddInput)
-      ? ' ondblclick="event.stopPropagation();graphRenameInputPort(\'' + node.id + '\',' + i + ')"'
+      ? ' data-act="port-rename" data-port-index="' + i + '"'
       : '';
-    html += '<div class="graph-port graph-input-port' + anyClass + '" data-node-id="' + node.id + '" data-port-id="in-' + i + '" data-attribute="' + portAttr + '"' + renameAttr
+    html += '<div class="graph-port graph-input-port' + anyClass + '" data-node-id="' + escapeHtml(node.id) + '" data-port-id="in-' + i + '" data-attribute="' + portAttr + '"' + renameAttr
       + (named ? ' data-port-label="' + encodeURIComponent(label) + '"' + (typeKey ? ' data-port-type="' + typeKey + '"' : '') : '')
       + ' style="--port-color:' + portColor + ';" title="' + escapeHtml(portTitle) + '">'
       + '<span class="graph-port-dot"></span><span class="graph-port-label' + blankClass + '">' + escapeHtml(shownLabel) + '</span>'
       + (typeLabel ? '<span class="graph-port-type" data-port-type="' + typeKey + '">' + escapeHtml(typeLabel) + '</span>' : '')
       + (canRemove
-        ? '<button class="graph-port-remove" onclick="event.stopPropagation();graphRemoveInputPort(\'' + node.id + '\',' + i + ')" title="删除输入端口">×</button>'
+        ? '<button class="graph-port-remove" data-act="port-in-del" data-node-id="' + escapeHtml(node.id) + '" data-port-index="' + i + '" title="删除输入端口">×</button>'
         : '')
       + '</div>';
   }
   if (canAddInput) {
-    html += '<button class="graph-add-port-btn graph-add-input-btn" onclick="event.stopPropagation();graphAddInputPort(\'' + node.id + '\')" title="添加输入端口">+</button>';
+    html += '<button class="graph-add-port-btn graph-add-input-btn" data-act="port-in-add" data-node-id="' + escapeHtml(node.id) + '" title="添加输入端口">+</button>';
   }
   html += '</div>';
   return html;
@@ -746,7 +746,7 @@ function _renderOutputPorts(node, messages, state) {
             ? '输出「' + label + '」：名字与类型来自所连输入端口；拖到空处打开节点菜单（选中自动连回本口），或拖到输入端口重连'
             : '待命名的输出端口：连到某个输入端口后，将采用该端口的名字与类型；拖到空处打开节点菜单，选择要创建的节点（自动连线）')
           : '输出端口：拖到空处创建提问节点，或拖到输入端口重连'));
-    html += '<div class="graph-port graph-output-port" data-node-id="' + node.id + '" data-port-id="out-' + i + '"'
+    html += '<div class="graph-port graph-output-port" data-node-id="' + escapeHtml(node.id) + '" data-port-id="out-' + i + '"'
       + ' data-port-type="' + (meta.type || 'branch') + '"'
       + (meta.contentType ? ' data-port-content-type="' + escapeHtml(meta.contentType) + '"' : '')
       + ' data-port-branch="' + (meta.branchType || 'followup') + '"'
@@ -765,7 +765,7 @@ function _renderOutputPorts(node, messages, state) {
       + '<span class="graph-port-label' + blankClass + '">' + escapeHtml(label) + '</span>'
       + (typeLabel ? '<span class="graph-port-type" data-port-type="' + typeKey + '">' + escapeHtml(typeLabel) + '</span>' : '')
       + (meta.custom
-        ? '<button class="graph-port-remove" onclick="event.stopPropagation();graphRemoveOutputPort(\'' + node.id + '\',' + i + ')" title="删除输出端口">×</button>'
+        ? '<button class="graph-port-remove" data-act="port-out-del" data-node-id="' + escapeHtml(node.id) + '" data-port-index="' + i + '" title="删除输出端口">×</button>'
         : '')
       + '</div>';
   }
@@ -773,7 +773,7 @@ function _renderOutputPorts(node, messages, state) {
     const addTitle = (node.kind === 'source' && !_sourceIsLegacyNode(node))
       ? '添加整篮输出口（送出节点内全部素材）'
       : '添加输出端口';
-    html += '<button class="graph-add-port-btn" onclick="event.stopPropagation();graphAddOutputPort(\'' + node.id + '\')" title="' + addTitle + '">+</button>';
+    html += '<button class="graph-add-port-btn" data-act="port-out-add" data-node-id="' + escapeHtml(node.id) + '" title="' + addTitle + '">+</button>';
   }
   html += '</div>';
   return html;
@@ -809,16 +809,16 @@ function _renderBlankNodeHtml(node, state) {
   const actionsHtml = node.minimized ? '' : '<div class="graph-node-actions">'
     + _nodeVersionNavHtml(node, regenBusy)
     + (hasContent
-      ? _iconRegenButton('graphOpenRegenerate(\'' + node.id + '\')', regenBusy ? '生成中...' : '重新生成（可写反馈，留空按卡上要求重跑）', regenBusy)
+      ? _iconRegenButton('regen-open', node.id, regenBusy ? '生成中...' : '重新生成（可写反馈，留空按卡上要求重跑）', regenBusy)
       : '')
     // 三角走 generateBlankNode 而非 runWorkflowNode：先把要求框同步进节点再强制重跑；
     // forceOverride=true＝「从头生成」不看 hash，有下游时 T303 confirm 照走（不旁路）。
-    + _iconPlayButton('generateBlankNode(\'' + node.id + '\',false,null,true)', regenBusy ? '生成中...' : (hasContent ? '从头生成（按卡上要求重跑）' : '按卡上的要求生成'), regenBusy)
+    + _iconPlayButton('blank-gen', node.id, regenBusy ? '生成中...' : (hasContent ? '从头生成（按卡上要求重跑）' : '按卡上的要求生成'), regenBusy)
     + (typeof _nodeFsTogglesHtml === 'function' ? _nodeFsTogglesHtml(node) : '')
     + '</div>';
-  const deleteBtn = '<button class="graph-node-delete-toggle" onclick="deleteBlankNode(\'' + node.id + '\')" title="删除空白节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>';
+  const deleteBtn = '<button class="graph-node-delete-toggle" data-act="blank-del" data-node-id="' + escapeHtml(node.id) + '" title="删除空白节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>';
   const pendingClass = _graphNodePending(node) ? ' graph-node-pending' : '';
-  return '<div class="graph-node graph-node-blank graph-node-module graph-module-' + node.moduleKey + attrClass + selectedClass + busyClass + minimizedClass + pendingClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
+  return '<div class="graph-node graph-node-blank graph-node-module graph-module-' + node.moduleKey + attrClass + selectedClass + busyClass + minimizedClass + pendingClass + '" data-node-id="' + escapeHtml(node.id) + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + _renderInputPorts(node, state)
     + '<div class="graph-node-main">'
     + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span><span class="graph-node-badge">AI 生成</span>' + _customNodeStatusHtml(node) + _graphMinimizeToggleHtml(node) + deleteBtn + '</div>'
@@ -828,7 +828,7 @@ function _renderBlankNodeHtml(node, state) {
     // 要求框只做输入（oninput 400ms 防抖同步 node.requirements），生成入口全在下方动作区；
     // 框旁那颗循环箭头直跑钮 2026-10-24 用户拍板删除（与动作区循环箭头/三角重复），别加回。
     + '<div class="graph-blank-requirement">'
-    + '<textarea class="graph-blank-input" rows="2" placeholder="写要求，例如：写一个反例 / 用比喻解释 / 整理时间线" ' + (node.busy ? 'disabled' : '') + ' oninput="updateBlankNodeRequirements(\'' + node.id + '\', this.value)">' + escapeHtml(node.requirements || '') + '</textarea>'
+    + '<textarea class="graph-blank-input" rows="2" placeholder="写要求，例如：写一个反例 / 用比喻解释 / 整理时间线" ' + (node.busy ? 'disabled' : '') + ' data-act="blank-req" data-node-id="' + escapeHtml(node.id) + '">' + escapeHtml(node.requirements || '') + '</textarea>'
     + '</div>')
     + actionsHtml
     + '<span class="graph-resize-handle" title="调整尺寸"></span>'
@@ -1077,7 +1077,7 @@ function _canMinimizeGraphNode(node) {
 
 function _graphMinimizeToggleHtml(node) {
   if (!_canMinimizeGraphNode(node)) return '';
-  return '<button class="graph-node-minimize-toggle" onclick="graphModuleAction(\'minimize\',\'' + node.id + '\')" title="' + (node.minimized ? '展开' : '最小化') + '">' + (node.minimized ? '+' : '−') + '</button>';
+  return '<button class="graph-node-minimize-toggle" data-act="node-minimize" data-node-id="' + escapeHtml(node.id) + '" title="' + (node.minimized ? '展开' : '最小化') + '">' + (node.minimized ? '+' : '−') + '</button>';
 }
 
 // 还没出内容的大卡（空白/模块/总结/汇聚）先按内容收缩，出内容后再撑回原尺寸。
@@ -1098,7 +1098,7 @@ function _customNodeHeaderHtml(node, attr, extraButtons) {
     + _graphMinimizeToggleHtml(node)
     + (typeof _nodeFsTogglesHtml === 'function' ? _nodeFsTogglesHtml(node) : '')
     + (extraButtons || '')
-    + '<button class="graph-node-delete-toggle" onclick="deleteCustomNode(\'' + node.id + '\')" title="删除节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>'
+    + '<button class="graph-node-delete-toggle" data-act="custom-del" data-node-id="' + escapeHtml(node.id) + '" title="删除节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>'
     + '</div>';
 }
 
@@ -1121,27 +1121,27 @@ function _renderSourceNodeHtml(node, state) {
     const itemCount = node.items && node.items.length ? '<div class="graph-source-count">' + node.items.length + ' 个知识点</div>' : '';
     body = '<div class="graph-source-body graph-source-legacy">'
       + fileName + itemCount
-      + (node.items && node.items.length ? '<button type="button" class="graph-source-organize-btn" onclick="openHarnessOrganizeRelations(\'' + node.id + '\')">🤖 AI 整理关系</button>' : '')
+      + (node.items && node.items.length ? '<button type="button" class="graph-source-organize-btn" data-act="source-organize" data-node-id="' + escapeHtml(node.id) + '">🤖 AI 整理关系</button>' : '')
       + '<div class="graph-source-legacy-hint">旧版输入节点（已停止解析，只读保留）</div>'
       + '</div>';
   } else {
     const items = Array.isArray(node.items) ? node.items : [];
     const ocrOn = node.ocrOn === true;
     const rows = items.map((item, index) => _renderSourceItemRow(node, attr, item, index)).join('');
-    body = '<div class="graph-source-body" ondragover="event.preventDefault();this.classList.add(\'graph-source-drag\')" ondragleave="this.classList.remove(\'graph-source-drag\')" ondrop="handleSourceNodeDrop(event,\'' + node.id + '\')">'
-      + '<label class="graph-source-ocr-toggle"><input type="checkbox"' + (ocrOn ? ' checked' : '') + ' onchange="toggleSourceOcr(\'' + node.id + '\',this.checked)"><span>图片自动转文字</span></label>'
+    body = '<div class="graph-source-body" data-act="source-drop" data-node-id="' + escapeHtml(node.id) + '" ondragover="event.preventDefault();this.classList.add(\'graph-source-drag\')" ondragleave="this.classList.remove(\'graph-source-drag\')">'
+      + '<label class="graph-source-ocr-toggle"><input type="checkbox"' + (ocrOn ? ' checked' : '') + ' data-act="source-ocr" data-node-id="' + escapeHtml(node.id) + '"><span>图片自动转文字</span></label>'
       + (items.length ? '<div class="graph-source-list">' + rows + '</div>' : '<div class="graph-source-empty">还没有素材：粘贴文字 / 拖入图片或文件<br>每加一条素材，右侧就长出一个出口</div>')
       + '<div class="graph-source-add">'
-      + '<textarea class="graph-source-text-input" rows="2" placeholder="粘贴文字，或 Ctrl+V 直接粘贴截图" onpaste="handleSourcePaste(event,\'' + node.id + '\')"></textarea>'
+      + '<textarea class="graph-source-text-input" rows="2" placeholder="粘贴文字，或 Ctrl+V 直接粘贴截图" data-act="source-paste" data-node-id="' + escapeHtml(node.id) + '"></textarea>'
       + '<div class="graph-source-add-actions">'
-      + '<button type="button" class="graph-source-add-btn" onclick="addSourceTextFromCard(\'' + node.id + '\')">加入</button>'
-      + '<label class="graph-source-file-btn">选择文件<input type="file" multiple class="graph-source-file-input" onchange="handleSourceNodeFile(this,\'' + node.id + '\')"></label>'
-      + '<label class="graph-source-file-btn">选择图片<input type="file" multiple accept="image/*" class="graph-source-file-input" onchange="handleSourceNodeFile(this,\'' + node.id + '\')"></label>'
+      + '<button type="button" class="graph-source-add-btn" data-act="source-add" data-node-id="' + escapeHtml(node.id) + '">加入</button>'
+      + '<label class="graph-source-file-btn">选择文件<input type="file" multiple class="graph-source-file-input" data-act="source-file" data-node-id="' + escapeHtml(node.id) + '"></label>'
+      + '<label class="graph-source-file-btn">选择图片<input type="file" multiple accept="image/*" class="graph-source-file-input" data-act="source-file" data-node-id="' + escapeHtml(node.id) + '"></label>'
       + '</div></div>'
       + '<div class="graph-source-drop-hint">拖文件到此处 · Ctrl+V 可粘贴截图 · 每条素材一个出口</div>'
       + '</div>';
   }
-  return '<div class="graph-node graph-node-source graph-attr-source' + selectedClass + minimizedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
+  return '<div class="graph-node graph-node-source graph-attr-source' + selectedClass + minimizedClass + '" data-node-id="' + escapeHtml(node.id) + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + _renderInputPorts(node, state)
     + '<div class="graph-node-main">'
     + _customNodeHeaderHtml(node, attr, '')
@@ -1192,7 +1192,7 @@ function _renderSourceItemRow(node, attr, item, index) {
   });
   const rowStyle = boundPorts.length ? ' style="padding-right:' + (24 + 22 * boundPorts.length) + 'px;"' : '';
   const boundPortHtml = boundPorts.map((absIdx, n) =>
-    '<span class="graph-port graph-output-port graph-source-row-port" data-node-id="' + node.id + '" data-port-id="out-' + absIdx + '"'
+    '<span class="graph-port graph-output-port graph-source-row-port" data-node-id="' + escapeHtml(node.id) + '" data-port-id="out-' + absIdx + '"'
     + ' data-port-type=""'
     + ' data-port-branch="followup"'
     + ' data-attribute="source"'
@@ -1208,12 +1208,12 @@ function _renderSourceItemRow(node, attr, item, index) {
     + '<span class="graph-source-row-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>'
     + '<span class="graph-source-row-meta">' + escapeHtml(metaBits.join(' · ')) + '</span>'
     + '<span class="graph-source-row-actions">'
-    + '<button type="button" title="查看/编辑文本" onclick="event.stopPropagation();openSourceItemModal(\'' + node.id + '\',\'' + item.id + '\')">查看</button>'
-    + '<button type="button" title="改名" onclick="event.stopPropagation();renameSourceItem(\'' + node.id + '\',\'' + item.id + '\')">改名</button>'
-    + '<button type="button" title="给这条素材再开一个输出口（可连到另一个节点，只送这条素材）" onclick="event.stopPropagation();graphAddSourceItemPort(\'' + node.id + '\',\'' + item.id + '\')">加口</button>'
-    + '<button type="button" title="删除素材（连线随之重排）" onclick="event.stopPropagation();deleteSourceItem(\'' + node.id + '\',\'' + item.id + '\')">删除</button>'
+    + '<button type="button" title="查看/编辑文本" data-act="source-item-view" data-node-id="' + escapeHtml(node.id) + '" data-item-id="' + escapeHtml(item.id) + '">查看</button>'
+    + '<button type="button" title="改名" data-act="source-item-rename" data-node-id="' + escapeHtml(node.id) + '" data-item-id="' + escapeHtml(item.id) + '">改名</button>'
+    + '<button type="button" title="给这条素材再开一个输出口（可连到另一个节点，只送这条素材）" data-act="source-item-port" data-node-id="' + escapeHtml(node.id) + '" data-item-id="' + escapeHtml(item.id) + '">加口</button>'
+    + '<button type="button" title="删除素材（连线随之重排）" data-act="source-item-del" data-node-id="' + escapeHtml(node.id) + '" data-item-id="' + escapeHtml(item.id) + '">删除</button>'
     + '</span>'
-    + '<span class="graph-port graph-output-port graph-source-row-port" data-node-id="' + node.id + '" data-port-id="out-' + index + '"'
+    + '<span class="graph-port graph-output-port graph-source-row-port" data-node-id="' + escapeHtml(node.id) + '" data-port-id="out-' + index + '"'
     + ' data-port-type=""'
     + ' data-port-branch="followup"'
     + ' data-attribute="source"'
@@ -1234,12 +1234,12 @@ function _renderRelationNodeHtml(node, state) {
   const sizeStyle = node.customWidth ? 'width:' + node.customWidth + 'px !important;min-width:' + node.customWidth + 'px !important;max-width:' + node.customWidth + 'px !important;' : '';
   const statusHtml = _customNodeStatusHtml(node, true);
   const body = '<div class="graph-relation-body">'
-    + '<textarea class="graph-custom-node-content" rows="2" onchange="updateCustomNodeContent(\'' + node.id + '\',this.value)" placeholder="联系说明">' + escapeHtml(node.content || '') + '</textarea>'
+    + '<textarea class="graph-custom-node-content" rows="2" data-act="content-edit" data-node-id="' + escapeHtml(node.id) + '" placeholder="联系说明">' + escapeHtml(node.content || '') + '</textarea>'
     + '<div class="graph-relation-actions">'
     + statusHtml
-    + _iconRegenButton('generateRelationNode(\'' + node.id + '\')', node.busy ? '生成中' : '生成联系', node.busy)
+    + _iconRegenButton('rel-gen', node.id, node.busy ? '生成中' : '生成联系', node.busy)
     + '</div></div>';
-  return '<div class="graph-node graph-node-relation graph-attr-relation graph-node-compact' + selectedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
+  return '<div class="graph-node graph-node-relation graph-attr-relation graph-node-compact' + selectedClass + '" data-node-id="' + escapeHtml(node.id) + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + _renderInputPorts(node, state)
     + '<div class="graph-node-main">'
     + '<div class="graph-node-full-content">' + body + '</div>'
@@ -1257,7 +1257,7 @@ function _renderJunctionNodeHtml(node, state) {
   const attr = _nodeAttribute(node);
   const selectedClass = graphView.selectedNodeIds.has(node.id) ? ' selected' : '';
   const body = '<div class="graph-junction-dot" title="中转节点：多路汇入扇出，内容直通下游"></div>';
-  return '<div class="graph-node graph-node-junction graph-attr-junction graph-node-compact' + selectedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';">'
+  return '<div class="graph-node graph-node-junction graph-attr-junction graph-node-compact' + selectedClass + '" data-node-id="' + escapeHtml(node.id) + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';">'
     + _renderInputPorts(node, state)
     + '<div class="graph-node-main">'
     + '<div class="graph-junction-body">' + body + '</div>'
@@ -1282,7 +1282,7 @@ function _renderHumanNoteNodeHtml(node, state) {
     : '';
   const minimizedClass = node.minimized ? ' minimized' : '';
   const sizeStyle = node.minimized ? '' : customWidth + customHeight;
-  return '<div class="graph-node graph-node-human-note graph-attr-human_note' + selectedClass + minimizedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
+  return '<div class="graph-node graph-node-human-note graph-attr-human_note' + selectedClass + minimizedClass + '" data-node-id="' + escapeHtml(node.id) + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + _renderInputPorts(node, state)
     + '<div class="graph-node-main">'
     + '<div class="graph-node-header">'
@@ -1291,8 +1291,8 @@ function _renderHumanNoteNodeHtml(node, state) {
     // 三个按钮包一层：窄卡（260–340）里头部必然折行，整组一起折才不至于剩一个删除键孤零零挂在第二行
     + '<span class="graph-node-head-actions">'
     + _graphMinimizeToggleHtml(node)
-    + '<button class="graph-node-edit-toggle" onclick="editHumanNoteNode(\'' + node.id + '\')" title="编辑我的理解"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>'
-    + '<button class="graph-node-delete-toggle" onclick="deleteCustomNode(\'' + node.id + '\')" title="删除节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>'
+    + '<button class="graph-node-edit-toggle" data-act="note-edit" data-node-id="' + escapeHtml(node.id) + '" title="编辑我的理解"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>'
+    + '<button class="graph-node-delete-toggle" data-act="custom-del" data-node-id="' + escapeHtml(node.id) + '" title="删除节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>'
     + '</span>'
     + '</div>'
     + '<div class="graph-node-label">' + escapeHtml(node.label || '我的理解') + '</div>'
@@ -1314,8 +1314,8 @@ function _renderAiEvalNodeHtml(node, state) {
     ? '<span class="graph-ai-eval-priority priority-' + escapeHtml(node.priority || 'medium') + '">' + escapeHtml(priorityLabel) + '</span>'
     : '';
   const body = '<div class="graph-ai-eval-suggestion">' + escapeHtml(node.suggestion || node.content || '') + '</div>' + priorityHtml;
-  const evalActions = '<button class="graph-ai-eval-accept" onclick="acceptAiEvalNode(\'' + node.id + '\')" title="采纳这条建议">采纳</button>'
-    + '<button class="graph-ai-eval-ignore" onclick="ignoreAiEvalNode(\'' + node.id + '\')" title="忽略这条建议">忽略</button>';
+  const evalActions = '<button class="graph-ai-eval-accept" data-act="eval-accept" data-node-id="' + escapeHtml(node.id) + '" title="采纳这条建议">采纳</button>'
+    + '<button class="graph-ai-eval-ignore" data-act="eval-ignore" data-node-id="' + escapeHtml(node.id) + '" title="忽略这条建议">忽略</button>';
   const customWidth = node.customWidth ? 'width:' + node.customWidth + 'px !important;min-width:' + node.customWidth + 'px !important;max-width:' + node.customWidth + 'px !important;' : '';
   const customHeight = node.customHeight
     ? 'min-height:' + node.customHeight + 'px !important;height:' + node.customHeight + 'px !important;'
@@ -1323,7 +1323,7 @@ function _renderAiEvalNodeHtml(node, state) {
   const zigzag = '<svg class="graph-ai-eval-zigzag" width="100%" height="100%" aria-hidden="true">'
     + '<polygon class="graph-ai-eval-zigzag-shape" points="0 0"></polygon>'
     + '</svg>';
-  return '<div class="graph-node graph-node-ai-eval graph-attr-ai_eval' + selectedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + customWidth + customHeight + '">'
+  return '<div class="graph-node graph-node-ai-eval graph-attr-ai_eval' + selectedClass + '" data-node-id="' + escapeHtml(node.id) + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + customWidth + customHeight + '">'
     + zigzag
     + _renderInputPorts(node, state)
     + '<div class="graph-node-main">'
@@ -1515,7 +1515,7 @@ function _renderNodeHtml(node, messages, state) {
   // T69：折叠卡不建内容子树（CSS 本就 display:none），展开时整卡重建补水
   const skipBody = !!node.minimized;
   const customFill = !skipBody && node.messageIndex < 0 && node.manual && !hasCustomContent
-    ? '<textarea class="graph-custom-node-content" rows="5" onchange="updateCustomNodeContent(\'' + node.id + '\', this.value)">' + escapeHtml(_nodeContent(message, node)) + '</textarea>'
+    ? '<textarea class="graph-custom-node-content" rows="5" data-act="content-edit" data-node-id="' + escapeHtml(node.id) + '">' + escapeHtml(_nodeContent(message, node)) + '</textarea>'
     : '';
   const customBody = skipBody ? '' : (node.messageIndex < 0
     ? (customFill
@@ -1564,16 +1564,15 @@ function _renderNodeHtml(node, messages, state) {
   const minimizeToggle = _graphMinimizeToggleHtml(node);
   const fsBtnsHtml = typeof _nodeFsTogglesHtml === 'function' ? _nodeFsTogglesHtml(node, message) : '';
   const editBtn = node.kind === 'module'
-    ? '<button class="graph-node-edit-toggle" onclick="editModuleNode(\'' + node.id + '\')" title="人工编辑模块"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>'
+    ? '<button class="graph-node-edit-toggle" data-act="mod-edit" data-node-id="' + escapeHtml(node.id) + '" title="人工编辑模块"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>'
     : (((node.kind === 'summary' || node.kind === 'note' || node.kind === 'direct' || (node.kind === 'answer' && node.manual)) && !(node.messageIndex >= 0))
-      ? '<button class="graph-node-edit-toggle" onclick="editCustomNodeContent(\'' + node.id + '\')" title="编辑内容（笔记本模式：左侧看上游原文）"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>'
+      ? '<button class="graph-node-edit-toggle" data-act="custom-edit" data-node-id="' + escapeHtml(node.id) + '" title="编辑内容（笔记本模式：左侧看上游原文）"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>'
       : '');
-  const deleteAction = node.messageIndex < 0
-    ? 'deleteCustomNode(\'' + node.id + '\')'
-    : 'graphModuleAction(\'delete\',\'' + node.id + '\')';
-  const deleteBtn = node.isRoot ? '' : '<button class="graph-node-delete-toggle" onclick="' + deleteAction + '" title="删除节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>';
+  // 516：删除入口按节点来源二分——手工卡走 deleteCustomNode，消息派生卡走 graphModuleAction('delete')
+  const deleteAct = node.messageIndex < 0 ? 'custom-del' : 'node-delete';
+  const deleteBtn = node.isRoot ? '' : '<button class="graph-node-delete-toggle" data-act="' + deleteAct + '" data-node-id="' + escapeHtml(node.id) + '" title="删除节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>';
   const quickConnectBtn = node.kind === 'hub'
-    ? '<button class="graph-hub-connect-btn" onclick="event.stopPropagation();quickConnectToHub(\'' + node.id + '\')" title="一键接入选中节点输出"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"></path><path d="M9 8V2"></path><path d="M15 8V2"></path><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"></path></svg></button>'
+    ? '<button class="graph-hub-connect-btn" data-act="hub-connect" data-node-id="' + escapeHtml(node.id) + '" title="一键接入选中节点输出"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"></path><path d="M9 8V2"></path><path d="M15 8V2"></path><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"></path></svg></button>'
     : '';
   const sizeStyle = node.minimized ? '' : customWidth + customHeight;
   const pendingClass = _graphNodePending(node) ? ' graph-node-pending' : '';
@@ -1581,16 +1580,16 @@ function _renderNodeHtml(node, messages, state) {
   const inputHtml = _renderInputPorts(node, graphState);
   const outputHtml = _renderOutputPorts(node, messages, graphState);
   const labelHtml = (node.kind === 'user' && node.messageIndex < 0)
-    ? '<textarea class="graph-custom-question-input" rows="2" placeholder="输入问题..." onchange="updateCustomNodeContent(\'' + node.id + '\', this.value)">' + escapeHtml(label) + '</textarea>'
+    ? '<textarea class="graph-custom-question-input" rows="2" placeholder="输入问题..." data-act="content-edit" data-node-id="' + escapeHtml(node.id) + '">' + escapeHtml(label) + '</textarea>'
     : (expanded ? '' : '<div class="graph-node-label">' + escapeHtml(node.kind === 'answer' && typeof _graphFormulaDelimit === 'function' ? _graphFormulaDelimit(label) : label) + '</div>');
-  return '<div class="' + baseClass + modClass + attrClass + rootClass + branchClass + selectedClass + dimmedClass + minimizedClass + resizedClass + pendingClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
+  return '<div class="' + baseClass + modClass + attrClass + rootClass + branchClass + selectedClass + dimmedClass + minimizedClass + resizedClass + pendingClass + '" data-node-id="' + escapeHtml(node.id) + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + inputHtml
     + '<div class="graph-node-main">'
     + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span>' + badgeHtml + unreadHtml + subHtml + statusHtml + minimizeToggle + editBtn + fsBtnsHtml + quickConnectBtn + deleteBtn + '</div>'
     + labelHtml
     + (skipBody ? _minimizedBodyHtml() : (body ? '<div class="graph-node-full-content">' + body + '</div>' : ''))
     + skillChipHtml
-    + (expandable && !skipBody ? '<div class="graph-node-actions"><button class="graph-answer-expand-btn" onclick="toggleGraphNodeExpand(\'' + node.id + '\')" title="' + (expanded ? '收起，回到预览' : '查看完整内容') + '">' + (expanded ? '收起 ▴' : '展开全文 ▾') + '</button></div>' : '')
+    + (expandable && !skipBody ? '<div class="graph-node-actions"><button class="graph-answer-expand-btn" data-act="act-expand" data-node-id="' + escapeHtml(node.id) + '" title="' + (expanded ? '收起，回到预览' : '查看完整内容') + '">' + (expanded ? '收起 ▴' : '展开全文 ▾') + '</button></div>' : '')
     + _nodeActions(node)
     + '<span class="graph-resize-handle" title="调整尺寸"></span>'
     + '</div>'
@@ -2304,3 +2303,141 @@ function _patchGraphStreaming(messages, state) {
   _syncGraphHeavyClasses(state && state.zoom); // 509：节点数只在渲染时变（增删/导入/恢复），降级类同步刷新
 }
 
+
+// ---------- 动作总线（backlog 516，2026-11-21）：渲染模板一律 data-act + data-*，事件走容器级委托 ----------
+// 背景（红队 P1）：.pmu/备份导入的 id 此前直插 onclick/oninput JS 串上下文，恶意 id（如
+// `x');alert(1);//`）点击/输入即执行任意 JS；escapeHtml 救不了 JS 串上下文，所以渲染侧
+// 统一改 data-*：id 只进 HTML 属性（经 escapeHtml 防属性 breakout），JS 串里不再出现任何
+// 外部数据。导入侧另有字符白名单（utopia.js parseUtopiaSnapshot / ui-backup.js）作纵深，
+// 但渲染层是最后防线——旧脏数据、多设备同步水合来的 id 同样打不进来。
+// 表按事件类型分：同一 data-act 可登记多事件（draft-box 同时认 input+keydown）；
+// _GRAPH_ACT_STOPPROP 复刻原 inline event.stopPropagation() 的那批入口（端口增删/附加口
+// 双击改名/素材行按钮/hub 接线）——bus 挂 graphInner（节点容器）先于 canvas 既有委托收到
+// 事件，stopPropagation 后 canvas 层（节点选择/edge 双删/空白双击面板）行为与 inline 时代
+// 完全一致；未登记的动作一律放行，不影响既有委托逻辑。
+var _GRAPH_ACT_TABLE = {
+  click: {
+    'ver-step': function (el) { graphNodeVersionStep(el.dataset.nodeId, Number(el.dataset.step || 0)); },
+    'ver-del': function (el) { graphNodeVersionDelete(el.dataset.nodeId); },
+    'wf-run': function (el) { runWorkflowNode(el.dataset.nodeId, el.dataset.force === '1'); },
+    'regen-open': function (el) { graphOpenRegenerate(el.dataset.nodeId); },
+    'viz-gen': function (el) { generateVizNode(el.dataset.nodeId); },
+    'blank-gen': function (el) { generateBlankNode(el.dataset.nodeId, false, null, true); },
+    'rel-gen': function (el) { generateRelationNode(el.dataset.nodeId); },
+    'blank-del': function (el) { deleteBlankNode(el.dataset.nodeId); },
+    'draft-answer': function (el) { draftSocraticAnswer(el.dataset.nodeId); },
+    'draft-ai': function (el) { draftAskAi(el.dataset.nodeId); },
+    'draft-route': function (el) { draftRouteChanged(el.dataset.nodeId, el.dataset.route, el); },
+    'draft-send': function (el) { submitDraftQuestion(el.dataset.nodeId); },
+    'draft-close': function (el) { removeDraftNode(el.dataset.nodeId); },
+    'port-in-del': function (el) { graphRemoveInputPort(el.dataset.nodeId, Number(el.dataset.portIndex)); },
+    'port-in-add': function (el) { graphAddInputPort(el.dataset.nodeId); },
+    'port-out-del': function (el) { graphRemoveOutputPort(el.dataset.nodeId, Number(el.dataset.portIndex)); },
+    'port-out-add': function (el) { graphAddOutputPort(el.dataset.nodeId); },
+    'source-organize': function (el) { openHarnessOrganizeRelations(el.dataset.nodeId); },
+    'source-add': function (el) { addSourceTextFromCard(el.dataset.nodeId); },
+    'source-item-view': function (el) { openSourceItemModal(el.dataset.nodeId, el.dataset.itemId); },
+    'source-item-rename': function (el) { renameSourceItem(el.dataset.nodeId, el.dataset.itemId); },
+    'source-item-port': function (el) { graphAddSourceItemPort(el.dataset.nodeId, el.dataset.itemId); },
+    'source-item-del': function (el) { deleteSourceItem(el.dataset.nodeId, el.dataset.itemId); },
+    'node-minimize': function (el) { graphModuleAction('minimize', el.dataset.nodeId); },
+    'node-delete': function (el) { graphModuleAction('delete', el.dataset.nodeId); },
+    'custom-del': function (el) { deleteCustomNode(el.dataset.nodeId); },
+    'note-edit': function (el) { editHumanNoteNode(el.dataset.nodeId); },
+    'mod-edit': function (el) { editModuleNode(el.dataset.nodeId); },
+    'custom-edit': function (el) { editCustomNodeContent(el.dataset.nodeId); },
+    'eval-accept': function (el) { acceptAiEvalNode(el.dataset.nodeId); },
+    'eval-ignore': function (el) { ignoreAiEvalNode(el.dataset.nodeId); },
+    'hub-connect': function (el) { quickConnectToHub(el.dataset.nodeId); },
+    'act-expand': function (el) { toggleGraphNodeExpand(el.dataset.nodeId); },
+    'fs-open': function (el) { openNodeFullscreen(el.dataset.nodeId); },
+    'fs-newwin': function (el) { openNodeNewWindow(el.dataset.nodeId); },
+    'grp-add': function (el) { const g = el.closest('.graph-group'); if (g) graphAddSelectedToGroup(g.dataset.groupId); },
+    'grp-del': function (el) { const g = el.closest('.graph-group'); if (g) graphDeleteGroup(g.dataset.groupId); },
+  },
+  dblclick: {
+    'port-rename': function (el) { graphRenameInputPort(el.dataset.nodeId, Number(el.dataset.portIndex)); },
+  },
+  input: {
+    'blank-req': function (el) { updateBlankNodeRequirements(el.dataset.nodeId, el.value); },
+    'draft-box': function (el) { draftInputChanged(el.dataset.nodeId, el.value); },
+  },
+  change: {
+    // 分组名/颜色经容器 data-group-id 寻址（转义过的属性，dataset 读回原值）
+    'grp-rename': function (el) { const g = el.closest('.graph-group'); if (g) graphRenameGroup(g.dataset.groupId, el.value); },
+    'grp-color': function (el) { const g = el.closest('.graph-group'); if (g) graphSetGroupColor(g.dataset.groupId, el.value); },
+    'source-ocr': function (el) { toggleSourceOcr(el.dataset.nodeId, el.checked); },
+    'source-file': function (el) { handleSourceNodeFile(el, el.dataset.nodeId); },
+    'content-edit': function (el) { updateCustomNodeContent(el.dataset.nodeId, el.value); },
+  },
+  keydown: {
+    // 原 inline `return draftInputKeydown(event, id)`：返回 false 阻止默认（Enter 不换行等）
+    'draft-box': function (el, e) { if (draftInputKeydown(e, el.dataset.nodeId) === false) e.preventDefault(); },
+  },
+  paste: {
+    'source-paste': function (el, e) { handleSourcePaste(e, el.dataset.nodeId); },
+  },
+  drop: {
+    'source-drop': function (el, e) { handleSourceNodeDrop(e, el.dataset.nodeId); },
+  },
+};
+var _GRAPH_ACT_STOPPROP = {
+  'port-in-del': 1, 'port-in-add': 1, 'port-out-del': 1, 'port-out-add': 1,
+  'port-rename': 1, 'hub-connect': 1,
+  'source-item-view': 1, 'source-item-rename': 1, 'source-item-port': 1, 'source-item-del': 1,
+};
+
+function _graphActBusHandler(e) {
+  const t = e.target;
+  if (!t || typeof t.closest !== 'function') return;
+  const el = t.closest('[data-act]');
+  if (!el) return;
+  const table = _GRAPH_ACT_TABLE[e.type];
+  const fn = table ? table[el.dataset.act] : null;
+  if (!fn) return; // 该事件类型没登记这个动作（如 source-drop 只认 drop）→ 放行给既有委托
+  fn(el, e);
+  if (_GRAPH_ACT_STOPPROP[el.dataset.act]) e.stopPropagation();
+}
+
+// 挂载点在 graph-interact.js renderGraphCanvas 的 graphInner 创建后（每次全量重建换新
+// 元素，幂等 guard 挂在元素自身上）；viewer 复用同一 renderGraphCanvas，自动生效。
+// ---------- 弹层动作总线（516 同批，2026-11-21）：human-note/模块/笔记本弹层、全屏层、
+// 素材文本弹层都动态挂在 body 上，graphInner 总线够不着——走 document 级 data-mact 委托，
+// 与画布 data-act 分属两个命名空间，绝不双跑（画布按钮无 data-mact，弹层按钮无 data-act）。
+var _GRAPH_MODAL_ACT_TABLE = {
+  click: {
+    'note-save': function (el) { saveHumanNoteNode(el.dataset.nodeId); },
+    'module-save': function (el) { saveModuleNode(el.dataset.nodeId); },
+    'custom-save': function (el) { saveCustomNodeContent(el.dataset.nodeId); },
+    'fs-edit': function (el) { openNodeFsEdit(el.dataset.nodeId); },
+    'fs-newwin': function (el) { openNodeNewWindow(el.dataset.nodeId); },
+    'source-ocr-retry': function (el) { retrySourceItemOcr(el.dataset.nodeId, el.dataset.itemId); },
+    'source-item-save': function (el) { saveSourceItemText(el.dataset.nodeId, el.dataset.itemId); },
+  },
+};
+
+function _graphModalActHandler(e) {
+  const t = e.target;
+  if (!t || typeof t.closest !== 'function') return;
+  const el = t.closest('[data-mact]');
+  if (!el) return;
+  const table = _GRAPH_MODAL_ACT_TABLE[e.type];
+  const fn = table ? table[el.dataset.mact] : null;
+  if (!fn) return;
+  fn(el, e);
+}
+
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('click', _graphModalActHandler);
+}
+
+function _bindGraphActionBus(container) {
+  if (!container || container.__graphActBusBound) return;
+  // 沙箱 loose 代理没有 addEventListener（README createElement 例外同款）：真实浏览器
+  // 里 graphInner 恒有该方法，这里只挡测试沙箱，不掩盖真实缺陷
+  if (typeof container.addEventListener !== 'function') return;
+  container.__graphActBusBound = true;
+  ['click', 'dblclick', 'input', 'change', 'keydown', 'paste', 'drop'].forEach(function (t) {
+    container.addEventListener(t, _graphActBusHandler);
+  });
+}

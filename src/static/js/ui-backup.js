@@ -216,10 +216,14 @@ async function exportData(options = {}) {
 
 function _normalizeBackup(data) {
   const result = { ...data };
+  // 516（2026-11-21）：sessions 键＝session id，会进侧栏渲染的 data-sid 等属性——只放行
+  // ^[A-Za-z0-9_-]+$（本地生成的 id 全落此字符集）；不合法键整条跳过不导入，脏数据不进
+  // localStorage 也不上服务端（/api/backup/import 收到的已过滤）。渲染层另有委托总线兜底。
+  const SID_SAFE = /^[A-Za-z0-9_-]+$/;
   result.sessions = result.sessions && typeof result.sessions === 'object' && !Array.isArray(result.sessions)
-    ? result.sessions
+    ? Object.fromEntries(Object.entries(result.sessions).filter(([id]) => SID_SAFE.test(id)))
     : Array.isArray(result.sessions)
-      ? Object.fromEntries(result.sessions.map(item => [item.id, item]).filter(([id]) => id))
+      ? Object.fromEntries(result.sessions.map(item => [item.id, item]).filter(([id]) => id && SID_SAFE.test(id)))
       : {};
   result.messages = result.messages && typeof result.messages === 'object' ? result.messages : {};
   result.knowledge = result.knowledge && typeof result.knowledge === 'object' ? result.knowledge : {};

@@ -126,7 +126,7 @@ function editHumanNoteNode(nodeId) {
     + '<label>公式</label>'
     + '<textarea id="humanNoteFormula" rows="3">' + escapeHtml(node.formula || '') + '</textarea>'
     + '<div class="graph-network-modal-actions">'
-    + '<button class="graph-network-modal-save" onclick="saveHumanNoteNode(\'' + node.id + '\')">保存</button>'
+    + '<button class="graph-network-modal-save" data-mact="note-save" data-node-id="' + escapeHtml(node.id) + '">保存</button>'
     + '<button onclick="closeHumanNoteNodeModal()">取消</button>'
     + '</div>'
     + '</div>';
@@ -238,7 +238,7 @@ function editModuleNode(nodeId) {
     + '<label>' + escapeHtml(editLabel) + '</label>'
     + '<textarea id="moduleNodeContent" rows="8">' + escapeHtml(current) + '</textarea>'
     + '<div class="graph-network-modal-actions">'
-    + '<button class="graph-network-modal-save" onclick="saveModuleNode(\'' + node.id + '\')">保存</button>'
+    + '<button class="graph-network-modal-save" data-mact="module-save" data-node-id="' + escapeHtml(node.id) + '">保存</button>'
     + '<button onclick="closeModuleNodeModal()">取消</button>'
     + '</div>'
     + '</div>';
@@ -532,7 +532,7 @@ function editCustomNodeContent(nodeId) {
     + '<label for="customNodeContentBox">内容</label>'
     + '<textarea id="customNodeContentBox" rows="16">' + escapeHtml(node.content || '') + '</textarea>'
     + '<div class="graph-notebook-actions">'
-    + '<button class="graph-notebook-save" onclick="saveCustomNodeContent(\'' + node.id + '\')">保存</button>'
+    + '<button class="graph-notebook-save" data-mact="custom-save" data-node-id="' + escapeHtml(node.id) + '">保存</button>'
     + '<button onclick="closeModuleNodeModal()">取消</button>'
     + '</div></div></div></div>';
   overlay.addEventListener('pointerdown', ev => { if (ev.target === overlay) closeModuleNodeModal(); });
@@ -728,8 +728,8 @@ function _nodeFsTogglesHtml(node, message) {
   if (node.kind === 'module' && node.moduleKey === 'viz') return '';
   const expandIcon = (typeof UI_ICON_SVG !== 'undefined' && UI_ICON_SVG.expand) || '⛶';
   const externalIcon = (typeof UI_ICON_SVG !== 'undefined' && UI_ICON_SVG.external) || '↗';
-  return '<button class="graph-node-fs-toggle" onclick="openNodeFullscreen(\'' + node.id + '\')" title="本页全屏">' + expandIcon + '</button>'
-    + '<button class="graph-node-fs-toggle" onclick="openNodeNewWindow(\'' + node.id + '\')" title="新窗口全屏">' + externalIcon + '</button>';
+  return '<button class="graph-node-fs-toggle" data-act="fs-open" data-node-id="' + escapeHtml(node.id) + '" title="本页全屏">' + expandIcon + '</button>'
+    + '<button class="graph-node-fs-toggle" data-act="fs-newwin" data-node-id="' + escapeHtml(node.id) + '" title="新窗口全屏">' + externalIcon + '</button>';
 }
 
 let nodeFsOverlay = null;
@@ -776,9 +776,9 @@ function openNodeFullscreen(nodeId) {
     + '<span class="graph-node-fs-head-actions">'
     // 渲染态编辑（2026-11-18）：资格闸在 node-fs-edit.js（与划词加粗同闸＋blank 排除）
     + (typeof _nodeFsEditAvailable === 'function' && _nodeFsEditAvailable(node)
-      ? '<button type="button" onclick="openNodeFsEdit(\'' + node.id + '\')" title="编辑正文">' + editIcon + '</button>'
+      ? '<button type="button" data-mact="fs-edit" data-node-id="' + escapeHtml(node.id) + '" title="编辑正文">' + editIcon + '</button>'
       : '')
-    + '<button type="button" onclick="openNodeNewWindow(\'' + node.id + '\')" title="新窗口全屏">' + externalIcon + '</button>'
+    + '<button type="button" data-mact="fs-newwin" data-node-id="' + escapeHtml(node.id) + '" title="新窗口全屏">' + externalIcon + '</button>'
     + '<button type="button" onclick="closeNodeFullscreen()" title="关闭（Esc）">×</button>'
     + '</span>'
     + '<span class="graph-node-fs-progress" aria-hidden="true"><span></span></span></div>'
@@ -1845,9 +1845,9 @@ function openSourceItemModal(nodeId, itemId) {
     + '<textarea id="sourceItemText" rows="12" placeholder="该素材的可读文本（可修改）">' + escapeHtml(item.text || '') + '</textarea>'
     + '<div class="graph-network-modal-actions">'
     + (item.kind === 'image'
-      ? '<button type="button" class="graph-source-ocr-retry" onclick="retrySourceItemOcr(\'' + node.id + '\',\'' + item.id + '\')">重新识别</button>'
+      ? '<button type="button" class="graph-source-ocr-retry" data-mact="source-ocr-retry" data-node-id="' + escapeHtml(node.id) + '" data-item-id="' + escapeHtml(item.id) + '">重新识别</button>'
       : '')
-    + '<button type="button" class="graph-network-modal-save" onclick="saveSourceItemText(\'' + node.id + '\',\'' + item.id + '\')">保存</button>'
+    + '<button type="button" class="graph-network-modal-save" data-mact="source-item-save" data-node-id="' + escapeHtml(node.id) + '" data-item-id="' + escapeHtml(item.id) + '">保存</button>'
     + '<button type="button" onclick="closeSourceItemModal()">取消</button>'
     + '</div></div>';
   overlay.addEventListener('click', function (ev) {

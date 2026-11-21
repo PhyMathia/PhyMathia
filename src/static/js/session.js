@@ -1641,8 +1641,43 @@
     const SESSION_EMPTY_MARK = '<span class="session-empty-mark" title="空画布：暂无消息与节点">'
       + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="3.5 3.5" stroke-linecap="round"><rect x="4.5" y="4.5" width="15" height="15" rx="3.5"/></svg></span>';
 
+    // ====== 侧栏动作总线（backlog 516，2026-11-21）======
+    // 备份导入的 session id 此前直插 onclick JS 串上下文（恶意 sid 点一下就执行任意 JS，
+    // escapeHtml 救不了 JS 串上下文）——画布列表与图标选择面板统一改 data-act + data-sid
+    // （id 经 escapeHtml 进属性）+ 容器级委托；导入侧另有字符白名单（ui-backup.js）作纵深。
+    // startRenameSession/deleteSession/toggleIconPicker/selectSessionIcon/pageIconPicker
+    // 内部本来就 stopPropagation，委托后语义不变；未登记的动作放行给既有逻辑。
+    const _SESSION_ACT_TABLE = {
+      'sess-switch': function (el) { switchToSession(el.dataset.sid); closeSidebar(); },
+      'sess-toggle': function (el) { toggleSessionSelect(el.dataset.sid); },
+      'sess-icon': function (el, e) { toggleIconPicker(e, el.dataset.sid); },
+      'sess-rename': function (el, e) { startRenameSession(e, el.dataset.sid); },
+      'sess-del': function (el, e) { deleteSession(el.dataset.sid, e); },
+      'icon-pick': function (el, e) { selectSessionIcon(e, el.dataset.sid, el.dataset.icon || ''); },
+      'icon-page': function (el, e) { pageIconPicker(Number(el.dataset.pageDelta), e); },
+    };
+
+    function _sessionActHandler(e) {
+      const t = e.target;
+      if (!t || typeof t.closest !== 'function') return;
+      const el = t.closest('[data-act]');
+      if (!el) return;
+      const fn = _SESSION_ACT_TABLE[el.dataset.act];
+      if (!fn) return;
+      fn(el, e);
+    }
+
+    function _bindSessionActBus(container) {
+      if (!container || container.__sessionActBusBound) return;
+      // 沙箱 loose 代理没有 addEventListener（README createElement 例外同款）：只挡测试沙箱
+      if (typeof container.addEventListener !== 'function') return;
+      container.__sessionActBusBound = true;
+      container.addEventListener('click', _sessionActHandler);
+    }
+
     function renderSessionList() {
       const list = document.getElementById('sessionList');
+      if (list) _bindSessionActBus(list); // 516：画布列表动作委托（list 元素持久，幂等）
       if (!list) return;
       if (_sessionRenameActive) {
         // 自愈兜底：输入框已不在 DOM 却仍处于改名态（异常路径未触发 blur），解除冻结
@@ -1701,7 +1736,7 @@
           // 免得批量操作时误触单条路径
           const picked = _sessionSelected.has(id);
           return `
-          <div class="session-item multi-select-item ${picked ? 'picked' : ''} ${isActive ? 'current' : ''}${empty ? ' is-empty' : ''}" onclick="toggleSessionSelect('${id}')" title="${picked ? '取消选择' : '选择此画布'}">
+          <div class="session-item multi-select-item ${picked ? 'picked' : ''} ${isActive ? 'current' : ''}${empty ? ' is-empty' : ''}" data-act="sess-toggle" data-sid="${escapeHtml(id)}" title="${picked ? '取消选择' : '选择此画布'}">
             <span class="session-check">${picked ? UI_ICON_SVG.check : ''}</span>
             <span class="session-icon session-icon-static">${icon}</span>
             <div class="session-info">
@@ -1711,14 +1746,14 @@
           </div>`;
         }
         return `
-          <div class="session-item ${isActive ? 'active' : ''}${empty ? ' is-empty' : ''}" onclick="switchToSession('${id}'); closeSidebar();">
-            <span class="session-icon" onclick="toggleIconPicker(event, '${id}')" title="切换图标">${icon}</span>
+          <div class="session-item ${isActive ? 'active' : ''}${empty ? ' is-empty' : ''}" data-act="sess-switch" data-sid="${escapeHtml(id)}">
+            <span class="session-icon" data-act="sess-icon" data-sid="${escapeHtml(id)}" title="切换图标">${icon}</span>
             <div class="session-info">
               <div class="session-title">${title}${empty ? SESSION_EMPTY_MARK : ''}</div>
               <div class="session-time">${time}</div>
             </div>
-            <button class="session-rename-btn" onclick="startRenameSession(event, '${id}')" title="重命名">${UI_ICON_SVG.pencil}</button>
-            <button class="session-delete" onclick="deleteSession('${id}', event)" title="删除">${UI_ICON_SVG.trash}</button>
+            <button class="session-rename-btn" data-act="sess-rename" data-sid="${escapeHtml(id)}" title="重命名">${UI_ICON_SVG.pencil}</button>
+            <button class="session-delete" data-act="sess-del" data-sid="${escapeHtml(id)}" title="删除">${UI_ICON_SVG.trash}</button>
           </div>`;
       };
 
@@ -1805,6 +1840,7 @@
       // 挂载到 body，避免被 sidebar overflow 裁剪
       document.body.appendChild(panel);
       activeIconPicker = { panel, sessionId, iconEl, page: 0, icons: ICON_OPTIONS };
+      panel.addEventListener('click', _sessionActHandler); // 516：面板动作委托（panel 每次新建，无需幂等 guard）
       renderIconPickerPage();
 
       // 点击外部关闭
@@ -1838,16 +1874,16 @@
         const escapedId = escapeHtml(ic.id);
         const escapedLabel = escapeHtml(ic.label);
         const content = ic.svg || escapeHtml(ic.id);
-        return `<span class="icon-picker-item" data-icon="${escapedId}" title="${escapedLabel}" onclick="selectSessionIcon(event, '${sessionId}', '${escapedId}')">${content}</span>`;
+        return `<span class="icon-picker-item" data-act="icon-pick" data-sid="${escapeHtml(sessionId)}" data-icon="${escapedId}" title="${escapedLabel}">${content}</span>`;
       }).join('');
       const nav = `
-        <button class="icon-picker-nav" onclick="pageIconPicker(-1, event)" ${page === 0 ? 'disabled' : ''}>‹</button>
+        <button class="icon-picker-nav" data-act="icon-page" data-page-delta="-1" ${page === 0 ? 'disabled' : ''}>‹</button>
         <span class="icon-picker-page">${page + 1}/${totalPages}</span>
-        <button class="icon-picker-nav" onclick="pageIconPicker(1, event)" ${page >= totalPages - 1 ? 'disabled' : ''}>›</button>
+        <button class="icon-picker-nav" data-act="icon-page" data-page-delta="1" ${page >= totalPages - 1 ? 'disabled' : ''}>›</button>
       `;
       panel.innerHTML = `
         <div class="icon-picker-grid">${grid}</div>
-        <div class="icon-picker-footer">${nav}<span class="icon-picker-item icon-picker-reset" title="恢复默认" onclick="selectSessionIcon(event, '${sessionId}', '')">${UI_ICON_SVG.reset}</span></div>
+        <div class="icon-picker-footer">${nav}<span class="icon-picker-item icon-picker-reset" data-act="icon-pick" data-sid="${escapeHtml(sessionId)}" data-icon="" title="恢复默认">${UI_ICON_SVG.reset}</span></div>
       `;
       if (reposition) positionIconPicker(panel, activeIconPicker.iconEl);
     }

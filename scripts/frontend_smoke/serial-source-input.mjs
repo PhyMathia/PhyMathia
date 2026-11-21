@@ -29,29 +29,29 @@ check('素材篮渲染：新节点三入口＋OCR 开关＋条目行；旧数据
     const html = vm.runInContext('_renderSourceNodeHtml(graphView.nodeById["src-test"], { portCounts: {} })', sandbox);
     for (const frag of [
       'graph-source-text-input',            // 粘贴文字入口
-      'addSourceTextFromCard',              // 「加入」按钮
+      'data-act="source-add"',              // 「加入」按钮
       'graph-source-file-btn',              // 选择文件/图片入口（两枚）
-      'handleSourcePaste',                  // Ctrl+V 粘贴截图
-      'handleSourceNodeDrop',               // 拖拽区
-      'toggleSourceOcr',                    // 图片自动转文字开关
+      'data-act="source-paste"',            // Ctrl+V 粘贴截图
+      'data-act="source-drop"',             // 拖拽区
+      'data-act="source-ocr"',              // 图片自动转文字开关
       'graph-source-empty',                 // 空篮提示
     ]) {
       if (!html.includes(frag)) throw new Error('新节点渲染缺入口：' + frag);
     }
     if (html.includes('graph-source-row')) throw new Error('空篮不应渲染条目行');
     // 2026-10-24 开放加口：新素材篮应有「＋添加输出端口」（附加口＝整篮出口）
-    if (!(html.includes('graphAddOutputPort') && html.includes('graph-add-port-btn'))) {
+    if (!(html.includes('data-act="port-out-add"') && html.includes('graph-add-port-btn'))) {
       throw new Error('新素材篮应有「＋添加输出端口」入口');
     }
     // 旧数据（items 知识点形状）：只读分支——不渲染条目行/输入区，保留 AI 整理关系
     seedNode([{ id: 'n1', title: '牛顿定律', summary: 'F=ma' }], { fileName: '讲义.pdf', fileId: 'doc_x' });
     const legacyHtml = vm.runInContext('_renderSourceNodeHtml(graphView.nodeById["src-test"], { portCounts: {} })', sandbox);
-    if (!legacyHtml.includes('graph-source-legacy') || !legacyHtml.includes('openHarnessOrganizeRelations')) {
+    if (!legacyHtml.includes('graph-source-legacy') || !legacyHtml.includes('data-act="source-organize"')) {
       throw new Error('旧数据应走只读分支并保留 AI 整理关系');
     }
-    if (legacyHtml.includes('addSourceTextFromCard')) throw new Error('旧数据不提供新输入入口');
+    if (legacyHtml.includes('data-act="source-add"')) throw new Error('旧数据不提供新输入入口');
     if (legacyHtml.includes('解析中')) throw new Error('旧数据只读分支不该有 busy 态');
-    if (legacyHtml.includes('graphAddOutputPort')) throw new Error('旧数据不开放加输出端口');
+    if (legacyHtml.includes('data-act="port-out-add"')) throw new Error('旧数据不开放加输出端口');
   } finally {
     sandbox.escapeHtml = realEsc;
     vm.runInContext('graphView.selectedNodeIds = new Set();', sandbox);
@@ -230,7 +230,7 @@ check('素材篮加输出端口（2026-10-24）：门对新数据开、旧节点
     seedNode([{ id: 'ib', kind: 'image', name: '受力图', text: '' }], { addonPorts: [{ item: 'ib' }, {}] });
     vm.runInContext('graphView.selectedNodeIds = new Set();', sandbox);
     const html2 = vm.runInContext('_renderSourceNodeHtml(graphView.nodeById["src-test"], { portCounts: { "src-test": 3 } })', sandbox);
-    if (!html2.includes('graphAddSourceItemPort')) throw new Error('行内「加口」按钮缺失');
+    if (!html2.includes('data-act="source-item-port"')) throw new Error('行内「加口」按钮缺失（516 后走委托总线）');
     const colStart = html2.indexOf('graph-port-col graph-output-col');
     if (colStart < 0) throw new Error('输出列缺失');
     const boundAt = html2.indexOf('data-port-id="out-1"');

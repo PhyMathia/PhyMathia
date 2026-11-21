@@ -394,6 +394,36 @@ check('utopia: parseUtopiaSnapshot 加固（重复 id / 非对象节点 / 非数
   return true;
 });
 
+check('utopia: parseUtopiaSnapshot 节点/分组 id 字符白名单（516：恶意 id 不得进渲染）', () => {
+  // 516（2026-11-21）：节点/分组 id 会写进渲染层的 data-node-id/data-group-id 并被委托总线
+  // 寻址——导入侧白名单 ^[A-Za-z0-9_-]+$（本地生成器 grp_/cp_/it_/draft-* 等全落此集合，
+  // 不会误杀真快照）；渲染层另有 data-act + 委托总线兜底，两道防线各自独立成立。
+  const parse = sandbox.parseUtopiaSnapshot;
+  const fmt = { format: 'phymath-utopia/graph', version: 1 };
+  // onclick JS 串上下文 / HTML 属性 breakout 的载荷形状必须整包拒绝
+  for (const evil of ["x');alert(1);//", 'a" onerror=alert(1) data-x="', '<img src=x onerror=alert(1)>', 'a b', 'a/b', 'a.b', 'a+b', 'a;b', 'a$b', 'a\'b']) {
+    const r = parse(JSON.stringify({ ...fmt, nodes: [{ id: evil }] }));
+    if (r.ok !== false || !/不允许的字符/.test(r.error || '')) {
+      throw new Error('恶意节点 id 未被拒：' + JSON.stringify(evil) + ' -> ' + JSON.stringify(r));
+    }
+  }
+  // 合法字符集（本地生成器口径）必须放行
+  for (const good of ['grp_1737472000000_ab12c', 'custom-copy-1737-9x2zq', 'cp_ab12_9z', 'it_1_abcde', 'draft-1737-qq', 'A-Z_09', 'sess_abc123def456']) {
+    const r = parse(JSON.stringify({ ...fmt, nodes: [{ id: good }] }));
+    if (!r.ok) throw new Error('合法 id 被误杀：' + good + ' -> ' + (r.error || ''));
+  }
+  // 分组 id 同口径：恶意拒 / 非对象拒 / 缺 id 拒 / 合法过
+  const badG = parse(JSON.stringify({ ...fmt, nodes: [{ id: 'a' }], groups: [{ id: "g');alert(1);//" }] }));
+  if (badG.ok !== false || !/不允许的字符/.test(badG.error || '')) throw new Error('恶意分组 id 未被拒：' + JSON.stringify(badG));
+  const badGObj = parse(JSON.stringify({ ...fmt, nodes: [{ id: 'a' }], groups: [42] }));
+  if (badGObj.ok !== false || !/不是对象/.test(badGObj.error || '')) throw new Error('非对象分组应被拒');
+  const badGNoId = parse(JSON.stringify({ ...fmt, nodes: [{ id: 'a' }], groups: [{ color: '#fff' }] }));
+  if (badGNoId.ok !== false || !/缺少 id/.test(badGNoId.error || '')) throw new Error('缺 id 分组应被拒');
+  const goodG = parse(JSON.stringify({ ...fmt, nodes: [{ id: 'a' }], groups: [{ id: 'grp_1_x' }] }));
+  if (!goodG.ok) throw new Error('合法分组被误杀：' + (goodG.error || ''));
+  return true;
+});
+
 check('utopia: 第二批静态契约（浮卡模式标识/复制文件名/轻量警告/导入失败可见/查看器文案）', () => {
   const u = fs.readFileSync('src/static/js/utopia.js', 'utf8');
   for (const need of ['轻量存档已保存', 'utopiaCopyNameBtn', '复制文件名', "summary.mode === 'light'", '_utopiaCopyText', 'omittedMessages', 'exportMode']) {

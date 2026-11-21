@@ -390,16 +390,18 @@ export async function run() {
       if (!htmlEmpty.includes('graph-node-actions') || !htmlEmpty.includes('graph-play-btn')) {
         throw new Error('空白卡动作区缺「从头生成」三角');
       }
-      if (htmlEmpty.includes('graph-version-nav') || htmlEmpty.includes("graphOpenRegenerate('b1')")) {
+      if (htmlEmpty.includes('graph-version-nav') || htmlEmpty.includes('data-act="regen-open"')) {
         throw new Error('没生成过的空白卡不该挂版本导航/循环箭头');
       }
-      if (!htmlEmpty.includes("updateBlankNodeRequirements('b1'")) {
-        throw new Error('要求框没接输入同步（面板/全部开始会读到旧要求）');
+      if (!htmlEmpty.includes('data-act="blank-req"') || !htmlEmpty.includes('data-node-id="b1"')) {
+        throw new Error('要求框没接输入同步（516 后走 data-act 委托，面板/全部开始会读到旧要求）');
       }
       if (!htmlFull.includes('graph-version-nav') || !htmlFull.includes('2/2')) {
         throw new Error('空白卡有版本却没挂 ‹n/n› 导航');
       }
-      if (!htmlFull.includes("graphOpenRegenerate('b1')")) throw new Error('空白卡有内容却缺循环箭头（反馈面板入口）');
+      if (!htmlFull.includes('data-act="regen-open"') || !htmlFull.includes('data-node-id="b1"')) throw new Error('空白卡有内容却缺循环箭头（反馈面板入口，516 后走 data-act 委托）');
+      // 516（2026-11-21）：渲染面不得再有内联事件 JS 串（此前导入 id 直插 onclick 可执行）
+      if (/on(click|input|change)=/.test(htmlFull)) throw new Error('空白卡渲染面残留内联事件（516：应 data-act + 委托总线）');
       if (!htmlFull.includes('graph-node-fs-toggle')) throw new Error('空白卡有内容却缺全屏按钮');
       const giSrc = _read('graph-interact.js');
       if (!giSrc.includes('留空＝按卡上要求重新生成')) throw new Error('空白卡反馈面板占位没写「留空＝按卡上要求重跑」');

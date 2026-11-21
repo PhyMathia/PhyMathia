@@ -1693,7 +1693,7 @@ check('T266 手动命名（渲染）：双击起名覆盖派生名、类型仍�
     let html = String(sandbox._renderInputPorts(recipeNode, state()));
     if (!html.includes('>力学材料</span>')) throw new Error('手动名应覆盖派生名显示');
     if (!html.includes('（手动命名）')) throw new Error('手动名口 tooltip 应标注「（手动命名）」');
-    if ((html.split('graphRenameInputPort').length - 1) !== 1) throw new Error('双击改名属性只应挂在附加口（in-1）');
+    if ((html.split('data-act="port-rename"').length - 1) !== 1) throw new Error('双击改名属性只应挂在附加口（in-1，516 后走 data-act）');
     if (!html.includes('>力一</span>') || !html.includes('data-port-type="text"')) throw new Error('具名口「力一」应保持原名与类型徽标');
 
     // 2. 未连线：手动名仍然显示（名字是用户意图，不依赖连线）

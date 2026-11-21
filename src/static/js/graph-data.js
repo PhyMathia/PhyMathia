@@ -49,12 +49,12 @@ function _renderGroupHtml(group) {
   const color = group.color || 'var(--graph-group-default)';
   // input[type=color] 只认 #rrggbb：令牌引用解析成计算值（T166），用户选过的真值原样
   const colorHex = resolveCssColor(color);
-  return '<div class="graph-group" data-group-id="' + group.id + '" style="left:' + group.x + 'px;top:' + group.y + 'px;width:' + group.width + 'px;height:' + group.height + 'px;--group-color:' + color + ';">'
+  return '<div class="graph-group" data-group-id="' + escapeHtml(group.id) + '" style="left:' + group.x + 'px;top:' + group.y + 'px;width:' + group.width + 'px;height:' + group.height + 'px;--group-color:' + color + ';">'
     + '<div class="graph-group-header">'
-    + '<input class="graph-group-name-input" value="' + escapeHtml(group.name || '分组') + '" title="重命名分组" onchange="graphRenameGroup(\'' + group.id + '\', this.value)">'
-    + '<input class="graph-group-color-input" type="color" value="' + escapeHtml(colorHex) + '" title="调整分组颜色" onchange="graphSetGroupColor(\'' + group.id + '\', this.value)">'
-    + '<button class="graph-group-add-btn" title="将选中节点加入此组" onclick="graphAddSelectedToGroup(\'' + group.id + '\')">+</button>'
-    + '<button class="graph-group-delete-btn" title="删除分组" onclick="graphDeleteGroup(\'' + group.id + '\')">×</button>'
+    + '<input class="graph-group-name-input" value="' + escapeHtml(group.name || '分组') + '" title="重命名分组" data-act="grp-rename">'
+    + '<input class="graph-group-color-input" type="color" value="' + escapeHtml(colorHex) + '" title="调整分组颜色" data-act="grp-color">'
+    + '<button class="graph-group-add-btn" title="将选中节点加入此组" data-act="grp-add">+</button>'
+    + '<button class="graph-group-delete-btn" title="删除分组" data-act="grp-del">×</button>'
     + '</div>'
     + '<span class="graph-group-resize-handle" title="调整分组尺寸"></span>'
     + '</div>';
