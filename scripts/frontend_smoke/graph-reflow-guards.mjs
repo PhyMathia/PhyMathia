@@ -63,25 +63,32 @@ check('T380: _applyGraphTransform scroll 守卫——非零才写、已零零写
   const prevInner = vm.runInContext('graphInner', sandbox);
   const prevState = vm.runInContext('_graphState', sandbox);
   const prevZoom = vm.runInContext('graphView.zoom', sandbox);
-  vm.runInContext([
-    'var __st = 5, __sl = 0, __writes = { top: 0, left: 0 };',
-    'graphCanvas = { classList: { toggle: function(){} } };',
-    'Object.defineProperty(graphCanvas, "scrollTop", { get: function(){ return __st; }, set: function(v){ __writes.top++; __st = v; }, configurable: true });',
-    'Object.defineProperty(graphCanvas, "scrollLeft", { get: function(){ return __sl; }, set: function(v){ __writes.left++; __sl = v; }, configurable: true });',
-    'graphInner = { style: {} };',
-    '_graphState = function(){ return { pan: { x: 10, y: 20 }, zoom: 1.5 }; };',
-    '_applyGraphTransform();',
-    '_applyGraphTransform();',
-  ].join('\n'), sandbox);
-  const r = JSON.parse(vm.runInContext('JSON.stringify({ writes: __writes, st: __st, sl: __sl, transform: graphInner.style.transform })', sandbox));
-  if (r.writes.top !== 1) throw new Error('scrollTop 非零应只写一次归零，实测写 ' + r.writes.top + ' 次（第二次调用已为零不得再写）');
-  if (r.writes.left !== 0) throw new Error('scrollLeft 已为零不得写，实测写 ' + r.writes.left + ' 次');
-  if (r.st !== 0) throw new Error('scrollTop 未归零');
-  if (!/translate\(10px, ?20px\) scale\(1\.5\)/.test(r.transform)) throw new Error('transform 未按状态落：' + r.transform);
-  vm.runInContext([
-    'graphCanvas = __prevCanvas; graphInner = __prevInnerG; _graphState = __prevStateG; graphView.zoom = __prevZoomG;',
-  ].join('\n'), Object.assign(sandbox, { __prevCanvas: prevCanvas, __prevInnerG: prevInner, __prevStateG: prevState, __prevZoomG: prevZoom }));
-  return true;
+  try {
+    vm.runInContext([
+      'var __st = 5, __sl = 0, __writes = { top: 0, left: 0 };',
+      // classList 须带 contains（2026-11-21 闪烁修复后 _syncGraphHeavyClasses 读挂载态走滞回）
+      // ——桩位跟随真实元素 API，缺了会在 _applyGraphTransform 内抛错并污染沙箱全局。
+      'graphCanvas = { classList: { toggle: function(){}, contains: function(){ return false; } } };',
+      'Object.defineProperty(graphCanvas, "scrollTop", { get: function(){ return __st; }, set: function(v){ __writes.top++; __st = v; }, configurable: true });',
+      'Object.defineProperty(graphCanvas, "scrollLeft", { get: function(){ return __sl; }, set: function(v){ __writes.left++; __sl = v; }, configurable: true });',
+      'graphInner = { style: {} };',
+      '_graphState = function(){ return { pan: { x: 10, y: 20 }, zoom: 1.5 }; };',
+      '_applyGraphTransform();',
+      '_applyGraphTransform();',
+    ].join('\n'), sandbox);
+    const r = JSON.parse(vm.runInContext('JSON.stringify({ writes: __writes, st: __st, sl: __sl, transform: graphInner.style.transform })', sandbox));
+    if (r.writes.top !== 1) throw new Error('scrollTop 非零应只写一次归零，实测写 ' + r.writes.top + ' 次（第二次调用已为零不得再写）');
+    if (r.writes.left !== 0) throw new Error('scrollLeft 已为零不得写，实测写 ' + r.writes.left + ' 次');
+    if (r.st !== 0) throw new Error('scrollTop 未归零');
+    if (!/translate\(10px, ?20px\) scale\(1\.5\)/.test(r.transform)) throw new Error('transform 未按状态落：' + r.transform);
+    return true;
+  } finally {
+    // 恢复必须必跑（2026-11-21 实踩：本例原先只在成功路径恢复桩，体内一抛，
+    // 无 remove 的 graphCanvas／无 querySelector 的 graphInner 泄漏给后续域＝三例连坐假红）
+    vm.runInContext([
+      'graphCanvas = __prevCanvas; graphInner = __prevInnerG; _graphState = __prevStateG; graphView.zoom = __prevZoomG;',
+    ].join('\n'), Object.assign(sandbox, { __prevCanvas: prevCanvas, __prevInnerG: prevInner, __prevStateG: prevState, __prevZoomG: prevZoom }));
+  }
 });
 
 check('T380: 源码契约——守卫与帧缓存在位、无条件 scroll 写法未回潮', () => {

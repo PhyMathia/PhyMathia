@@ -7227,7 +7227,11 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 /* ---------- 性能修复：高倍缩放自动降级 ----------
    zoom > 2.2 时（JS 在 _applyGraphTransform 中挂 .graph-heavy-zoom），
    图层纹理面积随 zoom 平方膨胀，重型特效极易耗尽显存 → 灰白瓦片伪影 + 卡顿。
-   此区间临时关闭光晕/投影/过渡，缩回后自动恢复。 */
+   此区间临时关闭光晕/投影/过渡，缩回后自动恢复。
+   2026-11-21 缩放闪烁修复后该类多两段语义：①滚轮缩放手势窗内（静默 180ms 前）
+   强制挂上——手势期只做合成，快速来回缩放不再每跨一次阈值就把边层滤镜＋全卡
+   投影拆装一遍（修前探针实测 3.8s 拆 10 次＝Edge 可见闪烁）；②挂/摘走滞回带
+   （>2.2 挂、<2.0 摘），停在阈值附近不再抖。语义落在 _syncGraphHeavyClasses。 */
 .graph-canvas.graph-heavy-zoom .graph-edge-layer {
   filter: none !important;
 }

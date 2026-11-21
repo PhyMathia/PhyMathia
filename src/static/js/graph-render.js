@@ -2106,6 +2106,19 @@ function _refreshEdgeGeometry(edgeKeys) {
 // 高倍缩放降级阈值：超过后图层纹理面积随 zoom 平方膨胀，重型特效（边光晕/节点投影/过渡）
 // 极易耗尽显存，产生灰白瓦片伪影与卡顿。此时画布挂 .graph-heavy-zoom，由 CSS 关闭重型特效。
 const GRAPH_HEAVY_ZOOM_THRESHOLD = 2.2;
+// 释放线低于触发线构成滞回带（缩放闪烁修复，2026-11-21）：挂上后缩回到 2.2 以下不立刻摘，
+// 要退到 2.0 以下才摘——快速来回缩放在 2.2 附近抖动时不再每跨一次就把特效整组拆装一遍
+// （探针 debug_zoom_flicker.mjs 修前实测：3.8s 手势翻转 10 次＝每 0.4s 一次全场景重光栅）。
+const GRAPH_HEAVY_ZOOM_RELEASE = 2.0;
+// 滚轮缩放「手势静默窗」：每个 wheel 事件刷新 deadline（graph-events.js），窗内
+// _syncGraphHeavyClasses 强制挂 heavy-zoom（特效整组挂起＝缩放帧只做 transform 合成，
+// 不再付整层滤镜重光栅）；静默超窗后由 events 侧定时器按当前 zoom 复原一次。滞回带
+// 保证「手势结束时恰好停在 2.2 附近」也不会来回抖：挂上要退到 2.0 才摘。
+// 强制挂起另设 GRAPH_ZOOM_GESTURE_MIN_TICKS 起量门槛：孤立的一两格滚轮（高频操作）
+// 不付「投影闪一下」的代价，持续手势到第 3 格起才整组挂起——闪烁风暴本就只属于
+// 持续快速手势，起点晚两格没有观感损失。
+const GRAPH_ZOOM_GESTURE_IDLE_MS = 180;
+const GRAPH_ZOOM_GESTURE_MIN_TICKS = 3;
 
 // 节点数降级阈值（509，2026-11-19）：卡片磨砂 backdrop-filter＋box-shadow 在平移每帧重算，
 // 合成代价随节点数线性涨——真机量测（隔离实例＋逐帧改 pan）帧间隔中位数 10 节点 16.6ms、
@@ -2119,10 +2132,21 @@ const GRAPH_HEAVY_NODES_THRESHOLD = 60;
 // 渲染尾部（_patchGraphStreaming）都调——zoom 只在 pan/zoom 时变，节点数只在渲染时变，
 // 两处都调才不会出现「加了节点不降级 / 删了节点不恢复」的滞后。classList.toggle 带 force
 // 在状态不变时不动 DOM，每帧调用无副作用。
+// heavy-zoom 三段语义（2026-11-21 缩放闪烁修复）：①手势窗内（graphView.zoomGestureUntil
+// 未过期且窗内累计 tick 数达门槛）强制挂上——手势期只做合成不做特效重光栅；②窗外的
+// 挂/摘走滞回带：没挂时 >2.2 才挂，挂着时退到 <2.0 才摘；③手势窗结束由 events 侧
+// 定时器回灌本函数完成复原。
 function _syncGraphHeavyClasses(zoom) {
   if (typeof graphCanvas === 'undefined' || !graphCanvas) return;
   const heavyNodes = (graphView.nodes || []).length >= GRAPH_HEAVY_NODES_THRESHOLD;
-  graphCanvas.classList.toggle('graph-heavy-zoom', (zoom || 1) > GRAPH_HEAVY_ZOOM_THRESHOLD);
+  const gestureLive = typeof graphView.zoomGestureUntil === 'number'
+    && performance.now() < graphView.zoomGestureUntil
+    && (graphView.zoomGestureTicks || 0) >= GRAPH_ZOOM_GESTURE_MIN_TICKS;
+  const z = zoom || 1;
+  const cur = graphCanvas.classList.contains('graph-heavy-zoom');
+  const heavyZoom = gestureLive
+    || (cur ? z > GRAPH_HEAVY_ZOOM_RELEASE : z > GRAPH_HEAVY_ZOOM_THRESHOLD);
+  graphCanvas.classList.toggle('graph-heavy-zoom', heavyZoom);
   graphCanvas.classList.toggle('graph-heavy-nodes', heavyNodes);
 }
 

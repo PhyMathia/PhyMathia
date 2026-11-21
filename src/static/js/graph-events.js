@@ -192,6 +192,7 @@ function _initGraphCanvasEvents() {
   // 事件里只累乘系数、记最新光标锚点，rAF 每帧最多执行一次 zoomGraph（与拖拽
   // _handlePointerMove 的每帧一次口径一致）。preventDefault 必须同步，不能挪进 rAF。
   let _graphWheelRaf = 0, _graphWheelFactor = 1, _graphWheelX = 0, _graphWheelY = 0;
+  let _graphWheelGestureTimer = 0;
   graphCanvas.addEventListener('wheel', e => {
     const scroller = e.target.closest('.graph-node-full-content, .graph-node .mermaid-container');
     if (scroller) return;
@@ -199,6 +200,21 @@ function _initGraphCanvasEvents() {
     _graphWheelFactor *= e.deltaY < 0 ? 1.08 : 0.92;
     _graphWheelX = e.clientX;
     _graphWheelY = e.clientY;
+    // 缩放手势窗（2026-11-21 缩放闪烁修复）：每个 wheel 刷新 deadline 并累计 tick，窗内
+    // tick 数达门槛后 _syncGraphHeavyClasses 强制挂 heavy-zoom＝手势期特效整组挂起、
+    // 缩放帧只做合成；静默超窗后按当前 zoom 复原一次并把计数清零（滞回带防「停在
+    // 2.2 附近」抖动）。修前快速来回缩放每跨一次 2.2 就把边层滤镜＋全卡投影拆装一遍
+    // （探针实测 3.8s 拆 10 次）；一两格的孤立滚轮不达门槛、无任何观感代价。
+    graphView.zoomGestureUntil = performance.now() + GRAPH_ZOOM_GESTURE_IDLE_MS;
+    graphView.zoomGestureTicks = (graphView.zoomGestureTicks || 0) + 1;
+    clearTimeout(_graphWheelGestureTimer);
+    _graphWheelGestureTimer = setTimeout(() => {
+      graphView.zoomGestureUntil = 0;
+      graphView.zoomGestureTicks = 0;
+      if (typeof _syncGraphHeavyClasses === 'function') {
+        _syncGraphHeavyClasses(_graphState().zoom);
+      }
+    }, GRAPH_ZOOM_GESTURE_IDLE_MS + 30);
     if (!_graphWheelRaf) {
       _graphWheelRaf = requestAnimationFrame(() => {
         _graphWheelRaf = 0;
