@@ -246,8 +246,14 @@ async function _workflowSendWithImages(node, slotCall, payload, signal) {
   ));
 }
 
-async function _generateCustomNode(node, nodeSignal) {
-  if (!node || node.busy) return;
+// opts.foreground=false（viz 后台通道，2026-11-22）：viz 从前台摘出去，不进胶囊进度、
+// 不进节点级排队闸（_nodeGenBegin/End 会触发队列 flush，后台 viz 完成不该是放行点——
+// 队列在 run 收尾时就该放行了）。opts.snapshot 是开跑冻结的世界观，整条链只读它。
+// 空 opts 时行为与上线前逐字节一致。
+async function _generateCustomNode(node, nodeSignal, opts) {
+  const _bg = opts && opts.foreground === false ? opts : null;
+  // viz 后台发射时已同步占住 busy（防同微任务窗口重复开火）；自己发起的这条要放行。
+  if (!node || (node.busy && !(_bg && _bg.vizBgJob))) return;
   // T361：苏格拉底反馈节点也是 answer 底座，但它走自己的闭环口径（见下方 soc 分支），
   // 不再被「answer 节点一律走问题分析」的旧闸门挡在门外。
   if (node.kind === 'answer' && !node.manual && !node.socraticMeta) return;
@@ -276,6 +282,11 @@ async function _generateCustomNode(node, nodeSignal) {
   // 484：开跑先落任务 id（随 _saveCustomNodes 进盘）——刷新后清扫凭它探活续跑
   node.genTaskId = _newGenTaskId();
   node.genTaskKind = 'content';
+  // viz 后台：把 viz-bg 任务 id / genTaskId 记在节点上，刷新后 484 收编器据此翻回任务行。
+  if (_bg) {
+    if (_bg.vizBgJob && _bg.vizBgJob.taskId) node.vizBgTaskId = _bg.vizBgJob.taskId;
+    if (_bg.vizBgJob) _bg.vizBgJob.genTaskId = node.genTaskId;
+  }
   _saveCustomNodes();
   if (workflowRunActive) _refreshWorkflowNodeUi(node);
   else renderGraphCanvas();
@@ -292,9 +303,11 @@ async function _generateCustomNode(node, nodeSignal) {
   if (recipe && recipe.analysis_phase) {
     await _recipeGenerateAnalysis(node, nodeSignal);
   }
-  const workflowContext = socratic ? {} : _buildWorkflowContextForNode(node);
-  const prompt = socratic ? String(socratic.prompt || '') : _workflowPromptForNode(node, workflowContext);
-  const graphPath = _blankNodeGraphPath(node);
+  // viz 后台：世界观只读开跑快照，不受后续任务改画布/换模型影响（约束①）。
+  const workflowContext = socratic ? {} : (_bg && _bg.snapshot ? _bg.snapshot.workflowContext : _buildWorkflowContextForNode(node));
+  const prompt = socratic ? String(socratic.prompt || '')
+    : (_bg && _bg.snapshot ? _bg.snapshot.prompt : _workflowPromptForNode(node, workflowContext));
+  const graphPath = _bg && _bg.snapshot ? (_bg.snapshot.branchMeta.graphPath || []) : _blankNodeGraphPath(node);
   const pathParent = graphPath[graphPath.length - 1];
   const branchMeta = socratic ? {
     parentId: socratic.parentId || (pathParent ? String(pathParent.timestamp || '') : String(node.timestamp || '')),
@@ -312,19 +325,24 @@ async function _generateCustomNode(node, nodeSignal) {
     branchLabel: workflowContext.target.label,
     graphPath,
     workflowContext,
-    wfStats: _wfStatsForNode(node),
+    wfStats: _bg && _bg.snapshot ? _bg.snapshot.branchMeta.wfStats : _wfStatsForNode(node),
   };
   const signal = _workflowNodeSignal(nodeSignal);
 
-  if (typeof _nodeGenBegin === 'function') _nodeGenBegin(node.id);
+  // viz 后台不进节点级排队闸：那把闸的 _nodeGenEnd 会 flush 队列，而后台 viz 的
+  // 完成不该是放行点（队列在 run 收尾时就该放行，不必等这条最长的 viz）。
+  if (!_bg && typeof _nodeGenBegin === 'function') _nodeGenBegin(node.id);
   try {
     let resp = null;
-    const slotCall = _slotCallForWorkflowNode(node);
+    // 模型槽也用开跑快照：下一条任务换了 html 槽模型不影响在跑的这条。
+    const slotCall = _bg && _bg.snapshot && _bg.snapshot.slotRole
+      ? { role: _bg.snapshot.slotRole, model: (typeof getActiveModelForRole === 'function' && getActiveModelForRole(_bg.snapshot.slotRole)) || null }
+      : _slotCallForWorkflowNode(node);
     if (slotCall && typeof proxyChatWithModel === 'function') {
       const payload = {
         prompt,
-        level: typeof currentLevel !== 'undefined' ? currentLevel : 'university',
-        session_id: _workflowSessionId(),
+        level: _bg && _bg.snapshot ? _bg.snapshot.level : (typeof currentLevel !== 'undefined' ? currentLevel : 'university'),
+        session_id: _bg && _bg.snapshot ? _bg.snapshot.sid : _workflowSessionId(),
         stream: true,
         thinking: getSlotThinkingForRole(slotCall.role),
         gen_task_id: node.genTaskId,
@@ -352,7 +370,7 @@ async function _generateCustomNode(node, nodeSignal) {
     }
     let streamError = null;
     try {
-      await _streamCustomNodeResponse(resp, node);
+      await _streamCustomNodeResponse(resp, node, { foreground: !_bg });
     } catch (err) {
       streamError = err;
       // 484：连接死亡（刷新/导航掐死 fetch 抛 TypeError）直通外层统一处理——
@@ -410,7 +428,8 @@ async function _generateCustomNode(node, nodeSignal) {
   } finally {
     // T341：流末尾 busy 已落 false，但 viz 归一/重试/版本收账还在跑——排队修订
     // 要等整条生成链收尾才放行，否则仍会与收尾写入并发。
-    if (typeof _nodeGenEnd === 'function') _nodeGenEnd(node.id);
+    // viz 后台从不进这道闸（见上），自然也不在这里放行别人的队列。
+    if (!_bg && typeof _nodeGenEnd === 'function') _nodeGenEnd(node.id);
   }
 }
 

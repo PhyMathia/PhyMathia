@@ -131,7 +131,10 @@ async function* _sseContentFrames(resp) {
   }
 }
 
-async function _streamCustomNodeResponse(resp, node) {
+// opts.foreground=false（viz 后台通道 2026-11-22）：进度不进前台胶囊——后台 viz 跑着
+// 的时候前台在接待下一条提问，胶囊是那条提问的，不能被这条 viz 的字流覆盖。
+async function _streamCustomNodeResponse(resp, node, opts) {
+  const _bg = opts && opts.foreground === false;
   let content = '';
   let renderPending = false;
   let saveTimer = null;
@@ -174,7 +177,7 @@ async function _streamCustomNodeResponse(resp, node) {
   try {
     for await (const piece of _sseContentFrames(resp)) {
       content += piece;
-      _scheduleWorkflowStreamProgress(content.length);
+      if (!_bg) _scheduleWorkflowStreamProgress(content.length);
       scheduleRender();
       scheduleSave();
     }

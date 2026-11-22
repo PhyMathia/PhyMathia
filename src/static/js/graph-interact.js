@@ -1183,32 +1183,17 @@ const _generatingVizNodes = new Set();
 // 谁都不认领的 controller）。
 async function generateVizNode(nodeId, fromQueue = false, handoffTaskId = null) {
   if (_generatingVizNodes.has(nodeId)) return;
-  if (!fromQueue && typeof _isSendBusy === 'function' && _isSendBusy()) {
-    _enqueueNodeJob('生成可视化', function(taskId) {
-      if (typeof _queuedJobNodeGuard === 'function' && !_queuedJobNodeGuard(taskId, nodeId)) return;
-      return generateVizNode(nodeId, true, taskId);
-    }, {
-      kind: 'node',
-      replay: { nodeJob: { id: nodeId, kind: 'viz' } },
-    });
-    return;
-  }
   const node = _findGraphNode(nodeId);
   if (!node || node.kind !== 'module' || node.moduleKey !== 'viz') return;
   const messages = _getChatHistory();
   const message = messages[node.messageIndex];
   if (!message) return;
 
-  const jobAbort = new AbortController();
-  const taskId = (typeof _taskBeginNodeJob === 'function')
-    ? _taskBeginNodeJob({ title: '生成可视化', nodeId: nodeId, nodeKind: 'viz' })
-    : null;
-  if (handoffTaskId && typeof _taskFinish === 'function') _taskFinish(handoffTaskId, 'done', '已交给生成');
-  if (taskId && typeof _taskBindCancel === 'function') _taskBindCancel(taskId, () => jobAbort.abort());
-
-  _generatingVizNodes.add(nodeId);
-  try {
-    const nextContent = await ensureVisualization(message.content || '', jobAbort.signal);
+  // viz 后台通道（2026-11-22）：点「生成可视化」后前台立刻放行——不进队列、不挡
+  // 接着提的问题。开关关/超限（≤2 条）时 vizBgLaunchMessage 返回 false，走下方旧路径
+  // （排队 + 同步），行为逐字节等于上线前。
+  const _run = async (signal) => {
+    const nextContent = await ensureVisualization(message.content || '', signal);
     if (nextContent === message.content) {
       throw new Error('模型未返回完整 HTML 页面，请检查模型配置后重试');
     }
@@ -1220,9 +1205,37 @@ async function generateVizNode(nodeId, fromQueue = false, handoffTaskId = null) 
     if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
     if (typeof renderCurrentChat === 'function') await renderCurrentChat();
     else if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
-    if (typeof hideProgress === 'function') hideProgress();
     if (typeof window.setProgressTerminal === 'function') window.setProgressTerminal('可视化已生成');
     if (typeof showToast === 'function') showToast('交互可视化已生成');
+  };
+  if (!fromQueue && typeof vizBgLaunchMessage === 'function'
+      && vizBgLaunchMessage(nodeId, _run, () => _generatingVizNodes.delete(nodeId))) {
+    if (handoffTaskId && typeof _taskFinish === 'function') _taskFinish(handoffTaskId, 'done', '已转后台');
+    _generatingVizNodes.add(nodeId);
+    return;
+  }
+  if (!fromQueue && typeof _isSendBusy === 'function' && _isSendBusy()) {
+    _enqueueNodeJob('生成可视化', function(taskId) {
+      if (typeof _queuedJobNodeGuard === 'function' && !_queuedJobNodeGuard(taskId, nodeId)) return;
+      return generateVizNode(nodeId, true, taskId);
+    }, {
+      kind: 'node',
+      replay: { nodeJob: { id: nodeId, kind: 'viz' } },
+    });
+    return;
+  }
+
+  const jobAbort = new AbortController();
+  const taskId = (typeof _taskBeginNodeJob === 'function')
+    ? _taskBeginNodeJob({ title: '生成可视化', nodeId: nodeId, nodeKind: 'viz' })
+    : null;
+  if (handoffTaskId && typeof _taskFinish === 'function') _taskFinish(handoffTaskId, 'done', '已交给生成');
+  if (taskId && typeof _taskBindCancel === 'function') _taskBindCancel(taskId, () => jobAbort.abort());
+
+  _generatingVizNodes.add(nodeId);
+  try {
+    await _run(jobAbort.signal);
+    if (typeof hideProgress === 'function') hideProgress();
     if (taskId && typeof _taskFinish === 'function') _taskFinish(taskId, 'done');
   } catch (err) {
     const aborted = jobAbort.signal.aborted || (err && err.name === 'AbortError');

@@ -141,6 +141,9 @@ function stopWorkflowRun() {
   // 484（2026-11-19）：订阅断开≠取消——在跑节点的后台任务要显式 DELETE，否则
   // 服务端 reader 会把上游读到底（宽限到点才自动停）。
   if (typeof _cancelBusyNodesServerGenerations === 'function') _cancelBusyNodesServerGenerations();
+  // viz 后台通道（2026-11-22）：总闸连后台 viz 一起停（它不在 workflowInFlightControllers
+  // 里，上面那圈扫不到）。单条停仍各管各的：viz 行的停止绑 vizBgCancel，前台行绑前台闸。
+  if (typeof vizBgCancelAll === 'function') vizBgCancelAll();
 }
 
 function _renderBlankNodeLive(node, content) {

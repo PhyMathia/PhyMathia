@@ -177,7 +177,26 @@ function _markWorkflowDependentsBlocked(failedId, subgraph, processed, blocked, 
   _saveCustomNodes();
 }
 
+// viz 后台通道的叶子判定：必须是 viz 载体，且本轮子图里没有别的节点依赖它的输出。
+// 有下游的 viz 走原同步路径（下游要拿它的内容），不能后台化。
+function _vizBgIsLeaf(node, subgraph) {
+  if (!node || !subgraph || typeof vizBgCanLaunch !== 'function' || !vizBgCanLaunch(node)) return false;
+  return !(subgraph.edges || []).some(edge => edge.from === node.id);
+}
+
 async function _runWorkflowNodeConcurrent(node, subgraph, force, processed, failed, blocked, runtime) {
+  // viz 后台通道（2026-11-22，backlog 504 子集）：viz 是最长的一根，不该让整轮
+  // 工作流（以及队列里的下一条）等它。叶子 viz（本轮子图里没有下游依赖它）在开跑
+  // 瞬间转后台：vizBgLaunch 冻结快照、建独立任务行、发起生成，本 worker 立刻释放；
+  // 有下游依赖的 viz 必须原地跑完——否则下游读到空内容（用户拍板的硬边界）。
+  // 开关关/超限（最多 2 条）/非 viz 时 vizBgLaunch 返回 false，行为逐字节等于上线前。
+  if (typeof vizBgLaunch === 'function' && vizBgEnabled() && _vizBgIsLeaf(node, subgraph)) {
+    const launched = vizBgLaunch(node, { force: !!force });
+    if (launched) {
+      processed.add(node.id);
+      return true;
+    }
+  }
   // 并发重复触发兜底：busy＝已有一份在途请求在生成这颗节点（手动点重生成撞上
   // 自动工作流、两条入口同一 tick 派发等）。本 worker 直接空转不归档——失败/
   // 完成/进度都由在途请求自己的 worker 收尾，两次记账不会互相覆盖。正常路径

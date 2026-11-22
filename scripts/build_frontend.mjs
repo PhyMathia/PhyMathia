@@ -71,6 +71,9 @@ const entries = [
   'graph-workflow-template.js',
   'graph-workflow-progress.js',
   'graph-workflow-stream.js',
+  // viz 后台通道（2026-11-22）：依赖 generate.js 的生成链与 stream.js 的取消口，
+  // 被 run.js 的调度器调用——夹在两者之间，加载期零副作用（纯函数定义＋注册表）。
+  'viz-background.js',
   'graph-workflow-generate.js',
   'graph-workflow-run.js',
   'graph-workflow-entry.js',

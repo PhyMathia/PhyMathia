@@ -146,7 +146,9 @@ function _taskCreate(spec) {
     endedAt: 0,
     note: '',
     paused: false,
-    nodes: [],
+    // viz 后台通道（2026-11-22）：带 nodeId 的行才能在刷新后被 484 收编认领
+    // （_taskHasNodeId 查 nodes/replay.nodeIds）。opts 不传时行为不变。
+    nodes: Array.isArray(opts.nodes) ? opts.nodes.slice(0, TASK_NODE_LIMIT) : [],
     replay: opts.replay || null,
     canceller: null,
     cancelRequested: false,
@@ -814,7 +816,9 @@ function _taskSplitLoaded(raw) {
     if (!item || !item.id) continue;
     const task = {
       id: String(item.id),
-      kind: item.kind === 'workflow' ? 'workflow' : (item.kind === 'node' ? 'node' : 'send'),
+      // viz-bg（2026-11-22）：后台可视化任务行，跨刷新保留 kind 才能走 viz 重放语义。
+      kind: item.kind === 'workflow' ? 'workflow' : (item.kind === 'node' ? 'node'
+        : (item.kind === 'viz-bg' ? 'viz-bg' : 'send')),
       title: _taskClip(item.title || '任务', TASK_TITLE_LIMIT),
       state: item.state || 'done',
       sessionId: item.sessionId || '',
