@@ -2107,6 +2107,25 @@ html[data-theme="light"][data-wallpaper="night"] {
     transparent 100%);
 }
 
+/* 浅色静止底色也走白纱（2026-11-22 三轮补）：底色平时虽不可见，但列带挂着
+   transition，拖动换列/松手淡出淡入的 0.18s 会把底色显出一帧——首轮浅色底
+   沿用深橄榄公式，过渡途中闪过深色，正是用户报的「移动最后一帧还有深色」。 */
+[data-theme="light"] .graph-layer-band {
+  background: linear-gradient(90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--band-wash-light) 10%, transparent) 42%,
+    color-mix(in srgb, var(--band-wash-light) 10%, transparent) 58%,
+    transparent 100%);
+}
+
+[data-theme="light"] .graph-layer-band:nth-child(even) {
+  background: linear-gradient(90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--band-wash-light) 14%, transparent) 42%,
+    color-mix(in srgb, var(--band-wash-light) 14%, transparent) 58%,
+    transparent 100%);
+}
+
 /* 拖动中目标层：只在吸附成立时显形（不提亮别的层，也不画任何描边）。
    横向渐变的可见部分是列缘肩部（约 1/3 强度，全强度段多被卡片挡住）。
    深色 20% 淡白提亮；浅色走 --band-wash-light 白玻璃纱（提亮方向与深色对称，
