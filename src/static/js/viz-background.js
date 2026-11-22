@@ -148,6 +148,7 @@ function vizBgLaunch(node, opts) {
   // 开出第二条、两边烧 token。后台链凭 vizBgJob 认自己的 busy（见 generate.js）。
   node.busy = true;
   node.status = 'running';
+  if (typeof __pm570Log === 'function') __pm570Log('bg-launch', { id: String(nodeId).slice(0, 10), t: __pm570Tag(node) });
   if (typeof _saveCustomNodes === 'function') _saveCustomNodes();
   _vizBgJobs.set(nodeId, job);
   if (taskId && typeof _taskBindCancel === 'function') {
@@ -169,6 +170,7 @@ function vizBgLaunch(node, opts) {
     // _generateCustomNode 内部吞错误（失败时只改节点 status 不抛），所以不能凭
     // Promise resolve 就记完成——读节点终态判成败，避免任务行虚报「已完成」。
     const live = (typeof _findGraphNodeTail === 'function' ? _findGraphNodeTail(nodeId) : null);
+    if (typeof __pm570Log === 'function') __pm570Log('bg-settle-read', { id: String(nodeId).slice(0, 10), t: live ? __pm570Tag(live) : '', st: live ? (live.status || '') : '', len: live ? String(live.content || '').length : -1 });
     const ok = !!(live && live.status === 'done' && String(live.content || '').trim());
     _vizBgSettle(nodeId, ok ? 'done' : 'error', ok ? '' : '可视化未生成成功');
   }).catch(err => {
@@ -263,6 +265,16 @@ function vizBgRelease(nodeId) {
 // 484 收编联动：viz-bg 行靠 nodes 里的 nodeId 被现成的 _taskResumeGenerationForNode /
 // _taskResumeSettleForNode 认领（见 tasks.js:291/309），无需本文件另写恢复函数。
 // 节点上的 vizBgTaskId 仅作诊断留痕（刷新后哪条行接管了这颗 viz）。
+
+// 后台 viz 的窗口反馈（571，2026-11-23）：自动重试最长十几分钟，期间不能碰前台
+// 胶囊（世界观隔离不变量②），唯一合法出口是 viz-bg 自己那行任务——把进行中的
+// note 换成重试提示。job 不存在（同步路/已收编/已结算）时静默。
+function vizBgNote(nodeId, text) {
+  const job = _vizBgJobs.get(String(nodeId));
+  if (!job || !job.taskId || typeof _taskPatch !== 'function') return false;
+  _taskPatch(job.taskId, { note: String(text || '') });
+  return true;
+}
 
 // 单节点「生成可视化」按钮（消息链 viz，写 message.content 而非节点）的后台发射。
 // 与 vizBgLaunch 同口径：独立 controller / viz-bg 任务行 / 不进前台队列与胶囊。

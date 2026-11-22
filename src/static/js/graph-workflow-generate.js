@@ -415,6 +415,7 @@ async function _generateCustomNode(node, nodeSignal, opts) {
         failedLive.content = '';
         failedLive.busy = false;
       }
+      if (failedLive && typeof __pm570Log === 'function') __pm570Log('hop1-clear', { id: String(node.id).slice(0, 10), t: __pm570Tag(failedLive), err: err && err.name, vizC: !!vizCarrier });
     }
 
     // T419：成功/归一/重试各收口按生成收尾寻址结算（484：结算块抽成共享函数，
@@ -429,6 +430,7 @@ async function _generateCustomNode(node, nodeSignal, opts) {
     // 返回 deferred 给后台 viz 的发射器：它凭这个别把「已交给续跑」记成失败。
     if (_maybeDeferOnConnectionDeath(node, err)) return { deferred: true };
     const live = _findGraphNodeTail(node.id);
+    if (typeof __pm570Log === 'function') __pm570Log('catch-settle', { id: String(node.id).slice(0, 10), t: live ? __pm570Tag(live) : '', err: err && err.name });
     if (live) {
       live.busy = false;
       live.status = err.name === 'AbortError' ? 'waiting' : 'error';
@@ -459,7 +461,8 @@ async function _finishCustomNodeGeneration(node, ctx) {
   // viz 后台（2026-11-22）：重试也走后台口径——不写前台胶囊、模型沿用开跑快照。
   const background = !!ctx.background;
   const snapshot = ctx.snapshot || null;
-  const live = _findGraphNodeTail(node.id);
+  let live = _findGraphNodeTail(node.id);
+  if (typeof __pm570Log === 'function') __pm570Log('settle-entry', { id: String(node.id).slice(0, 10), t: live ? __pm570Tag(live) : '', bg: background, busy: !!(live && live.busy), len: live ? String(live.content || '').length : -1 });
   // viz 式收口（官方交互可视化＋P2 配方 html_iframe 载体）：内容必须归一成完整
   // HTML 代码块；不合格时按配方声明的重试预算（on_incomplete.max_retries，官方 1 次）
   // 与重试提示词（retry_prompt）走独立 HTML 生成通道重试
@@ -480,6 +483,12 @@ async function _finishCustomNodeGeneration(node, ctx) {
         workflowContext.analysis,
         ...(workflowContext.upstream || []).map(item => item.label + '：' + (item.summary || item.content || '')),
       ].filter(Boolean).join('\n\n').slice(0, 12000);
+      // 571（2026-11-23）：自动重试窗口曾全程静默（实测 10 分钟无任何反馈）——
+      // 「失败 toast＋圈圈继续转」让人以为失败了还在空转。前台补一句 toast；后台
+      // 不碰前台胶囊与全局开关（世界观隔离不变量②），反馈写 viz-bg 自己的任务行。
+      if (!background && typeof showToast === 'function') showToast('可视化不完整，正在自动重试');
+      if (background && typeof vizBgNote === 'function') vizBgNote(node.id, '可视化不完整，正在自动重试');
+      if (typeof __pm570Log === 'function') __pm570Log('retry-begin', { id: String(node.id).slice(0, 10), bg: background, max: maxRetries });
       for (let attempt = 0; attempt < maxRetries && !normalized; attempt++) {
         try {
           const retryOpts = { quiet: background };
@@ -494,6 +503,14 @@ async function _finishCustomNodeGeneration(node, ctx) {
           console.warn('Viz module automatic retry failed:', retryErr);
         }
       }
+      // 570（2026-11-23 插桩定罪后修复）：重试窗口最长十几分钟，期间工作流任务会终结
+      // （兄弟分支收尾清 _taskActiveCtx）、视图会随切画布重建、缓存会随保存/拉取换数组
+      // ——结算入口命中的 live 到收尾这一刻可能已是断线风筝：真机复现 S4 里成品被写进
+      // 无人序列化的对象，收尾保存序列化的是当前画布，成品与摘忙双双丢失、世界 KV 永久
+      // 冻结在 busy=true（节点卡「生成中」、刷新后 484 只能按失败结算）。收尾写账前按
+      // 同一把尺子重新寻址，命中谁就写谁；节点真被删了（寻址为空）才留在原对象上写完。
+      const reLive = _findGraphNodeTail(node.id);
+      if (reLive) live = reLive;
     }
     if (!normalized) {
       const wasAborted = _workflowNodeAborted(nodeSignal);
@@ -501,6 +518,7 @@ async function _finishCustomNodeGeneration(node, ctx) {
       live.summary = '';
       live.status = wasAborted ? 'waiting' : 'error';
       live.busy = false;
+      if (typeof __pm570Log === 'function') __pm570Log('settle-fail-write', { id: String(node.id).slice(0, 10), t: __pm570Tag(live), st: live.status });
       // 版本账（T339）：这轮没产出可用内容，兜回上一版（账上有版本时旧内容原样回来）
       _restoreWorkflowNodeVersion(live);
       _saveGraphNodeTail(live);
@@ -515,6 +533,7 @@ async function _finishCustomNodeGeneration(node, ctx) {
     live.summary = _graphSummary(normalized);
     live.status = 'done';
     live.busy = false;
+    if (typeof __pm570Log === 'function') __pm570Log('settle-write', { id: String(node.id).slice(0, 10), t: __pm570Tag(live), len: String(live.content || '').length, st: live.status });
     // 版本账（T339）：归一后的整页 HTML 收作新版本
     _commitWorkflowNodeVersion(live);
     _saveGraphNodeTail(live);

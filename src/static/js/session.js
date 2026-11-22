@@ -807,6 +807,7 @@
       if (_isBadGraphSid(sid)) return;
       let merge = null;
       try { merge = _graphSyncMergePayload(sid, state); } catch (e) { merge = null; }
+      if (typeof __pm570Log === 'function') __pm570Log('post', { sid: String(sid).slice(0, 12), merged: !!merge, baseN: merge && merge.base_node_sigs ? Object.keys(merge.base_node_sigs).length : -1, n: __pm570Fp(state.customNodes) });
       try {
         const resp = await fetch('/api/kv/' + encodeURIComponent('graph:' + sid), {
           method: 'POST',
@@ -846,6 +847,7 @@
         if (!serverState || typeof serverState !== 'object') return;
         const local = getGraphState(sid);
         const useServer = !local.updatedAt || !serverState.updatedAt || serverState.updatedAt >= local.updatedAt;
+        if (typeof __pm570Log === 'function') __pm570Log('pull', { sid: String(sid).slice(0, 12), useServer: useServer, locUpd: local.updatedAt || 0, srvUpd: serverState.updatedAt || 0, n: __pm570Fp(serverState.customNodes) });
         const effective = useServer ? _normalizeGraphState({ ...local, ...serverState }) : local;
         const healed = _healHydratedGraphState(effective, sid);
         if (useServer) {
@@ -872,11 +874,25 @@
     }
 
     function _scheduleGraphStateServerSave(sid, state) {
+      // 570（2026-11-23 插桩定罪后修复）：单槽待存被**跨会话**顶替时，被顶掉的那发
+      // 不许凭空消失——结算链同 tick 连发两枪（任务副本合回世界画布＋当前画布保存），
+      // 第二枪把第一枪顶掉，世界画布的结算推送就永远发不出去（复现 S4：math 收尾被
+      // 当前画布保存顶掉，世界 KV 冻结在 busy=true、「无新推送」）。跨会话顶替先把旧
+      // pending 立刻发出（fire-and-forget，_postGraphState 自带 10s 超时与吞错）；
+      // 同会话顶替照旧合并防抖，节奏不变。
+      const prev = _graphStatePendingSave;
+      if (prev && prev.sid !== sid) {
+        _graphStatePendingSave = null;
+        clearTimeout(_graphStateSyncTimer);
+        _postGraphState(prev.sid, prev.state);
+      }
+      if (typeof __pm570Log === 'function') __pm570Log('sched', { sid: String(sid).slice(0, 12), clobbers: prev && prev.sid !== sid ? String(prev.sid).slice(0, 12) : '' });
       _graphStatePendingSave = { sid, state };
       clearTimeout(_graphStateSyncTimer);
       _graphStateSyncTimer = setTimeout(async () => {
         const pending = _graphStatePendingSave;
         _graphStatePendingSave = null;
+        if (typeof __pm570Log === 'function') __pm570Log('sched-fire', { sid: pending ? String(pending.sid).slice(0, 12) : '', has: !!pending });
         if (pending) await _postGraphState(pending.sid, pending.state);
       }, 400);
     }
@@ -907,6 +923,10 @@
       if (_isBadGraphSid(sid)) return;
       if (!sid) return;
       const snap = { ...state, updatedAt: Date.now() };
+      if (typeof __pm570Log === 'function') {
+        const st = (new Error().stack || '').split('\n');
+        __pm570Log('save', { sid: String(sid).slice(0, 12), at: String(st[2] || '').trim().slice(0, 80), n: __pm570Fp(snap.customNodes) });
+      }
       _graphStateMemCache.set(sid, snap);
       _scheduleGraphStateServerSave(sid, snap);
       // 工作流/自绘节点落地＝有内容：暂定画布摘帽。消息派生内容不走这里（它有

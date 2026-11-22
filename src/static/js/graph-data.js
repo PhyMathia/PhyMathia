@@ -342,6 +342,40 @@ function _findGraphNode(nodeId) {
   return graphView.nodeById[nodeId] || null;
 }
 
+// ===== 570 插桩（2026-11-23，临时诊断）=====
+// backlog 570「生成收尾结算没进持久层」的浏览器侧取证探针：localStorage 置
+// phymathia_570_probe='1' 后，结算写点／保存调度／服务端推送／拉取替换四条链
+// 每步打一行 [570] 摘要。指纹里的 t＝__pm570Tag 对象身份短号（WeakMap 稳定）：
+// 同一节点 id 跨行换号＝对象身份断裂，这正是 570 的两个嫌疑之一。flag 缺省关＝
+// 零开销直通；定罪修复后整节可撤。
+function __pm570Tag(obj) {
+  if (!obj || typeof obj !== 'object') return String(obj);
+  try {
+    if (!window.__pm570Tags) window.__pm570Tags = new WeakMap();
+    let id = window.__pm570Tags.get(obj);
+    if (!id) {
+      window.__pm570Seq = (window.__pm570Seq || 0) + 1;
+      id = 'o' + window.__pm570Seq;
+      window.__pm570Tags.set(obj, id);
+    }
+    return id;
+  } catch (e) { return '?'; }
+}
+function __pm570Fp(nodes) {
+  try {
+    return (Array.isArray(nodes) ? nodes : [])
+      .filter(n => n && n.messageIndex < 0)
+      .slice(0, 40)
+      .map(n => ({ id: String(n.id || '').slice(0, 8), t: __pm570Tag(n), b: n.busy ? 1 : 0, s: n.status || '', len: String(n.content || '').length }));
+  } catch (e) { return [{ err: String((e && e.message) || e) }]; }
+}
+function __pm570Log(kind, data) {
+  try {
+    if (typeof localStorage === 'undefined' || localStorage.getItem('phymathia_570_probe') !== '1') return;
+    (console.info || console.log)('[570]', kind, JSON.stringify(data));
+  } catch (e) { /* 插桩绝不影响主链路 */ }
+}
+
 // ===== T419：生成收尾寻址 =====
 // 生成中允许切画布（2026-10-11）之后，收尾那一刻人往往不在节点那张画布上——
 // _findGraphNode 只认当前视图（和任务工作副本），live 为空，busy/content/status 的
@@ -367,6 +401,7 @@ function _findGraphNodeTail(nodeId) {
       const list = Array.isArray(state && state.customNodes) ? state.customNodes : [];
       const node = list.find(item => item && String(item.id) === String(nodeId) && item.messageIndex < 0);
       if (node) {
+        if (typeof __pm570Log === 'function') __pm570Log('tail-fallback', { id: String(nodeId).slice(0, 10), sid: String(sid).slice(0, 12), t: __pm570Tag(node) });
         _tailHomeStates.set(String(nodeId), { sid: sid, state: state });
         return node;
       }
@@ -377,13 +412,26 @@ function _findGraphNodeTail(nodeId) {
 // 与 _findGraphNodeTail 配对的收尾落盘：兜底命中的节点落它所属会话的 state
 // （_saveGraphStateFor 按 sid 路由，含 T360 合并推服务端），其余原路 _saveCustomNodes
 // （任务副本合并照旧）。传兜底查到的 live 本身；live 为空照走原路，与旧口径一致。
+// 570（2026-11-23 插桩定罪后修复）：home 路不再推查找那一拍捕获的 state 包裹——并发
+// 兄弟结算/任意保存随时把缓存数组整个换掉，推旧包裹＝推过期快照，会把别人刚落的账盖
+// 回去（复现 S2a：math 的结算被 learn/socratic 的过期包裹推回 busy=true）。保存这一拍
+// 重新读现值，按 id 把结算节点并进去再落盘，与 _taskSaveCtxNodes 同型。
 function _saveGraphNodeTail(node) {
   const home = node ? _tailHomeStates.get(String(node.id)) : null;
-  if (home) {
+  if (typeof __pm570Log === 'function') __pm570Log('tail-save', { id: node ? String(node.id).slice(0, 10) : '', home: home ? String(home.sid).slice(0, 12) : '', t: node ? __pm570Tag(node) : '' });
+  if (home && typeof window.getGraphState === 'function' && typeof window.saveGraphState === 'function') {
     _tailHomeStates.delete(String(node.id));
-    if (typeof _saveGraphStateFor === 'function') {
-      _saveGraphStateFor(home.sid, home.state);
-      return;
+    const fresh = window.getGraphState(home.sid);
+    if (fresh && typeof fresh === 'object') {
+      const list = Array.isArray(fresh.customNodes) ? fresh.customNodes.slice() : [];
+      const copy = Object.assign({}, node);
+      const idx = list.findIndex(item => item && String(item.id) === String(node.id));
+      if (idx >= 0) list[idx] = copy; else list.push(copy);
+      fresh.customNodes = list;
+      if (typeof _saveGraphStateFor === 'function') {
+        _saveGraphStateFor(home.sid, fresh);
+        return;
+      }
     }
   }
   if (typeof _saveCustomNodes === 'function') _saveCustomNodes();

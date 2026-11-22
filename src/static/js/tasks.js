@@ -575,6 +575,7 @@ function _taskSaveCtxNodes(ctx) {
   const byId = new Map(existing.map(item => [String(item && item.id), item]));
   for (const node of mine) byId.set(String(node.id), node);
   state.customNodes = [...byId.values()];
+  if (typeof __pm570Log === 'function') __pm570Log('ctx-merge', { sid: String(ctx.sessionId).slice(0, 12), mine: __pm570Fp(mine), n: __pm570Fp(state.customNodes) });
   window.saveGraphState(ctx.sessionId, state);
 }
 
