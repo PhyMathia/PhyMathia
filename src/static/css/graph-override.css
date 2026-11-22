@@ -2074,16 +2074,20 @@ html[data-theme="light"][data-wallpaper="night"] {
   height: 0;
   z-index: 0;
   pointer-events: none;
+  /* 吸附提示色跟主题强调色（2026-11-22 用户拍板，收编进 2026-10-10 画布交互色口径）：
+     淡化板一律 var(--accent) 对 var(--text-primary) 调——深色档自动淡白、浅色档自动淡墨，
+     一套公式深浅两档都对（同本文件工具栏底色的口径），五套家族各跟各的 accent。 */
+  --band-wash: color-mix(in srgb, var(--accent) 55%, var(--text-primary));
 }
 
 .graph-layer-band {
   position: absolute;
   pointer-events: none;
   background: linear-gradient(90deg,
-    rgba(186, 212, 255, 0) 0%,
-    rgba(186, 212, 255, 0.095) 42%,
-    rgba(186, 212, 255, 0.095) 58%,
-    rgba(186, 212, 255, 0) 100%);
+    transparent 0%,
+    color-mix(in srgb, var(--band-wash) 10%, transparent) 42%,
+    color-mix(in srgb, var(--band-wash) 10%, transparent) 58%,
+    transparent 100%);
   -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 20%, #000 80%, transparent 100%);
   mask-image: linear-gradient(180deg, transparent 0%, #000 20%, #000 80%, transparent 100%);
   /* 平时完全隐藏（2026-11-19 用户拍板）：层只作为拖动时的吸附提示，
@@ -2094,48 +2098,36 @@ html[data-theme="light"][data-wallpaper="night"] {
 
 .graph-layer-band:nth-child(even) {
   background: linear-gradient(90deg,
-    rgba(186, 212, 255, 0) 0%,
-    rgba(186, 212, 255, 0.14) 42%,
-    rgba(186, 212, 255, 0.14) 58%,
-    rgba(186, 212, 255, 0) 100%);
+    transparent 0%,
+    color-mix(in srgb, var(--band-wash) 14%, transparent) 42%,
+    color-mix(in srgb, var(--band-wash) 14%, transparent) 58%,
+    transparent 100%);
 }
 
-[data-theme="light"] .graph-layer-band {
-  background: linear-gradient(90deg,
-    rgba(30, 64, 120, 0) 0%,
-    rgba(30, 64, 120, 0.05) 42%,
-    rgba(30, 64, 120, 0.05) 58%,
-    rgba(30, 64, 120, 0) 100%);
-}
-
-[data-theme="light"] .graph-layer-band:nth-child(even) {
-  background: linear-gradient(90deg,
-    rgba(30, 64, 120, 0) 0%,
-    rgba(30, 64, 120, 0.085) 42%,
-    rgba(30, 64, 120, 0.085) 58%,
-    rgba(30, 64, 120, 0) 100%);
-}
-
-/* 拖动中目标层：只在吸附成立时显形（不提亮别的层，也不画任何描边） */
+/* 拖动中目标层：只在吸附成立时显形（不提亮别的层，也不画任何描边）。
+   横向渐变的可见部分是列缘肩部（约 1/3 强度，全强度段多被卡片挡住）：
+   深色 20% 与旧观感持平；浅色在暖纸面上肩部只剩 ~7% 读不出来（2026-11-22 实拍），
+   单独提到 34%。 */
 .graph-layer-band.is-target {
   opacity: 1;
   background: linear-gradient(90deg,
-    rgba(186, 212, 255, 0) 0%,
-    rgba(186, 212, 255, 0.22) 42%,
-    rgba(186, 212, 255, 0.22) 58%,
-    rgba(186, 212, 255, 0) 100%);
+    transparent 0%,
+    color-mix(in srgb, var(--band-wash) 20%, transparent) 42%,
+    color-mix(in srgb, var(--band-wash) 20%, transparent) 58%,
+    transparent 100%);
 }
 
 [data-theme="light"] .graph-layer-band.is-target {
   background: linear-gradient(90deg,
-    rgba(30, 64, 120, 0) 0%,
-    rgba(30, 64, 120, 0.14) 42%,
-    rgba(30, 64, 120, 0.14) 58%,
-    rgba(30, 64, 120, 0) 100%);
+    transparent 0%,
+    color-mix(in srgb, var(--band-wash) 34%, transparent) 42%,
+    color-mix(in srgb, var(--band-wash) 34%, transparent) 58%,
+    transparent 100%);
 }
 
 /* 拖动中的插列提示（2026-11-20）：缝里松手＝在这里插一列。
-   竖线挂在 graphInner 上而不是 .graph-layers 里，才能盖过被拖卡片本身。 */
+   竖线挂在 graphInner 上而不是 .graph-layers 里，才能盖过被拖卡片本身。
+   色系 2026-11-22 起（用户拍板）跟主题强调色：accent 实线＋accent 辉光，不再用祖母绿硬编码。 */
 .graph-col-insert {
   display: none;
   position: absolute;
@@ -2143,9 +2135,9 @@ html[data-theme="light"][data-wallpaper="night"] {
   z-index: 6;
   pointer-events: none;
   background: linear-gradient(180deg,
-    rgba(52, 211, 153, 0) 0%, rgba(52, 211, 153, 0.95) 8%,
-    rgba(52, 211, 153, 0.95) 92%, rgba(52, 211, 153, 0) 100%);
-  box-shadow: 0 0 10px rgba(52, 211, 153, 0.5);
+    transparent 0%, color-mix(in srgb, var(--accent) 92%, transparent) 8%,
+    color-mix(in srgb, var(--accent) 92%, transparent) 92%, transparent 100%);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 /* 两端外侧的幽灵列框：提示松手会新建一列 */
@@ -2154,21 +2146,37 @@ html[data-theme="light"][data-wallpaper="night"] {
   position: absolute;
   z-index: 5;
   pointer-events: none;
-  border: 1px dashed rgba(52, 211, 153, 0.75);
-  background: rgba(52, 211, 153, 0.08);
+  border: 1px dashed color-mix(in srgb, var(--accent) 75%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
   border-radius: var(--r-lg);
 }
 
+/* 浅色档：辉光在暖纸面上发脏（2026-11-22 实拍），收细改成「荧光笔划线」——
+   弱辉光＋线两侧一条 accent 柔光带（::before 挂本元素，随 3px 线同位缩放），
+   横向用渐变羽化、纵向用 mask 对齐实线的两端淡出。 */
 [data-theme="light"] .graph-col-insert {
-  background: linear-gradient(180deg,
-    rgba(16, 145, 105, 0) 0%, rgba(16, 145, 105, 0.9) 8%,
-    rgba(16, 145, 105, 0.9) 92%, rgba(16, 145, 105, 0) 100%);
-  box-shadow: 0 0 8px rgba(16, 145, 105, 0.35);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
+[data-theme="light"] .graph-col-insert::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -5px;
+  right: -5px;
+  background: linear-gradient(90deg,
+    transparent 0%, color-mix(in srgb, var(--accent) 26%, transparent) 30%,
+    color-mix(in srgb, var(--accent) 26%, transparent) 70%, transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 8%, #000 92%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 8%, #000 92%, transparent 100%);
+}
+
+/* 浅色幽灵框：绿色浑罩在米色纸上像污渍（2026-11-22 实拍）——
+   换成带一点 accent 的纸面白玻璃「空槽」＋加深一档的 accent 虚线框。 */
 [data-theme="light"] .graph-col-ghost {
-  border-color: rgba(16, 145, 105, 0.65);
-  background: rgba(16, 145, 105, 0.06);
+  border-color: color-mix(in srgb, var(--accent) 80%, transparent);
+  background: color-mix(in srgb, color-mix(in srgb, var(--accent) 7%, #fff) 55%, transparent);
 }
 
 /* ---------- 15. ComfyUI 风格分组 ---------- */
