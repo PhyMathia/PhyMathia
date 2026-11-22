@@ -182,3 +182,10 @@ def test_message_text_for_log_no_base64_leak():
     assert "题目" in text
     assert "base64" not in text, "日志/token 估算只取文字部件，base64 不进日志"
     assert models_routes._message_text_for_log({"content": "纯串"}) == "纯串"
+
+
+def test_unhashable_level_falls_to_default():
+    # level 传 list/dict 曾让 LEVEL_PROMPTS.get 抛 TypeError 把整条 /api/models/chat
+    # 打成裸 500（T231 graph_path 同款守卫口径）——契约外形状回落默认档
+    body = _chat(_payload(level={"a": 1}))
+    assert "牛顿" in body["messages"][-1]["content"]

@@ -106,7 +106,10 @@ def _ts(value, default=0.0):
         return default
     if number >= 1e12:
         number /= 1000.0
-    return number
+    # 限于公元 9999 年以内（profile._timestamp 同口径）：极大有限数会让
+    # _bump_rhythm 的 time.localtime 抛 OverflowError，updater 一抛整批
+    # 事件连带丢弃（record_events 的 fire-and-forget 只剩一行 warning）
+    return number if number <= 253402300799 else default
 
 
 def _clamp(value, low, high):

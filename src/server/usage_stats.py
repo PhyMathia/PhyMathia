@@ -260,7 +260,9 @@ def _agg_finalize(bucket):
 # 一次付一次。按「文件指纹 (mtime_ns, size)」缓存整份解析结果：指纹未变的重复读取
 # 零 IO（历史文件天然全命中），只有当天在追加的文件失配重读。LRU 上限防长驻进程
 # 把读过的文件全留在内存；entries 是缓存共享 dict，调用方只读、绝不就地改。
-_USAGE_CACHE_MAX_FILES = 32
+# 读缓存按文件驻留；上限必须 ≥ 单次查询窗口的文件数（90/365 天窗口会超过
+# 32 个），否则 LRU 每轮把刚读的逐出、缓存永不命中，summarize 每次全量重扫
+_USAGE_CACHE_MAX_FILES = 128
 _usage_cache: dict = {}   # str(path) -> {"key": (mtime_ns, size), "entries": [entry, ...]}
 
 

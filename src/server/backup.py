@@ -12,6 +12,7 @@ from .knowledge import (
     _dedupe_knowledge,
     _normalize_formula_map,
     _normalize_knowledge,
+    _strip_nonfinite_ts,
 )
 from .profile import PROFILES_DIR, device_key as _device_key, save_profile
 from .storage import (
@@ -239,6 +240,12 @@ def _apply_restore(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
     message_count = _restore_messages(backup.get("messages") or {}, saved_sessions, replace, account)
 
     knowledge = _normalize_knowledge(backup.get("knowledge") or {})
+    # 手编备份 JSON 能带 NaN/Infinity（json.loads 收得进）——恢复回写前统一落
+    # 当前毫秒，否则 GET 响应体从恢复那刻起持续非法（浏览器 JSON.parse 全炸）
+    _restore_now_ms = int(time.time() * 1000)
+    for _it in knowledge.values():
+        if isinstance(_it, dict):
+            _strip_nonfinite_ts(_it, _restore_now_ms)
     if replace:
         for target in (paths.knowledge_path, paths.formulas_path, paths.kv_path):
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -246,11 +253,19 @@ def _apply_restore(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
     if knowledge:
         existing_knowledge = _read_json(paths.knowledge_path, {})
         _write_json(paths.knowledge_path, _dedupe_knowledge({**existing_knowledge, **knowledge}))
+        # 备份导入是用户明确要回来的数据，等同回收站恢复（会话侧 T271 同款纪律）：
+        # 恢复条目若还在条目级墓碑登记表里，同步除名——否则下一轮 15 秒同步的
+        # POST 闸门/残留自愈会按「删前时间戳 ≤ 删除时刻」把刚恢复的条目二次清除
+        trash.knowledge_tombstone_unregister(paths, list(knowledge.keys()))
 
     formulas = _normalize_formula_map(backup.get("formulas") or {})
+    for _it in formulas.values():
+        if isinstance(_it, dict):
+            _strip_nonfinite_ts(_it, _restore_now_ms)
     if formulas:
         existing_formulas = _read_json(paths.formulas_path, {})
         _write_json(paths.formulas_path, _dedupe_formula_map({**existing_formulas, **formulas}))
+        trash.formula_tombstone_unregister(paths, list(formulas.keys()))
 
     kv_data = backup.get("kv") or {}
     if isinstance(kv_data, dict):

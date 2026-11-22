@@ -618,6 +618,15 @@ class ValidateModelTargetUnitTest(unittest.TestCase):
             )
             self.assertTrue(url.startswith(f"http://{host}"))
 
+    def test_private_prefix_hostname_not_treated_as_local(self):
+        # 前缀误判回归：startswith("10.") 曾把公网域名当私网放行明文 http，
+        # 用户自填的 API 密钥会经明文 http 发往 DNS 指向的任意公网主机。
+        # 私网放行只认点分十进制 IPv4 整体。
+        for host in ("10.evil.com", "192.168.evil.com", "172.16.evil.com",
+                     "169.254.evil.com", "10.0.0.2.evil.com", "10.999.1.2"):
+            with self.assertRaises(ValueError):
+                config_mod.validate_model_target("custom", f"http://{host}/v1", False)
+
     def test_env_key_official_host_allowed(self):
         url = config_mod.validate_model_target(
             "deepseek", "https://api.deepseek.com", True

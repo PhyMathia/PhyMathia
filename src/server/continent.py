@@ -424,11 +424,24 @@ def _links_for(owners: set, item_session: dict, session_rank: dict, item_sids: d
             sids = (primary,)
         for sid in sids:
             by_session.setdefault(sid, []).append(iid)
+    # 排序键按「本桶登记的学习序」取（session_rank[sid] 是 sid → {iid: 序}，
+    # 见 build_continent）：没登记的条目排最后、再按 id 定序——默认 0 会跟真实
+    # 序 0 撞车，且平局落在 owners 集合迭代序上（PYTHONHASHSEED），重启后
+    # 端点/辐条配对漂移
     for sid in by_session:
-        by_session[sid].sort(key=lambda iid: session_rank.get(iid, 0))
+        local = session_rank.get(sid)
+        local = local if isinstance(local, dict) else {}
+        by_session[sid].sort(key=lambda iid: (local.get(iid, len(local) + 1), iid))
     # 会话间按「各自最早一张卡」排：上两行刚把每会话的卡按学习序排好，取 [0]
     # 即代表卡（此前误用 min() 取字典序最小 id，与学习序脱节——09-20 修复）
-    sids = sorted(by_session, key=lambda s: session_rank.get(by_session[s][0], 0))
+    def _rep_key(s):
+        local = session_rank.get(s)
+        rep = by_session[s][0]
+        if isinstance(local, dict) and rep in local:
+            return (local[rep], s)
+        return (float("inf"), s)
+
+    sids = sorted(by_session, key=_rep_key)
     pairs = (itertools.combinations(sids, 2) if len(sids) <= 4
              else zip(sids, sids[1:]))
     return [{"from": by_session[a][0], "to": by_session[b][0],
@@ -1324,13 +1337,14 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
         return -_num_or_zero(sess.get("updatedAt"))
 
     clusters = []
-    session_rank = {}  # itemId → 簇内序（共享连线端点取「每会话最前」用）
+    session_rank = {}  # sid → {itemId: 本桶学习序}（共享连线端点取「每会话最前」用）
     for sid in sorted(by_session, key=_cluster_sort_key):
         iids = sorted(by_session[sid], key=lambda i: (_created_rank(items[i]), i))
-        for rank, iid in enumerate(iids):
-            # T146：跨会话条目只在主会话里记 rank——别让后遍历到的岛覆盖主会话序
-            if item_session.get(iid) == sid:
-                session_rank[iid] = rank
+        # 每桶各自记序。T146 原口径「跨会话条目只在主会话登记 rank」会把主会话
+        # 的序泄进其他岛的桶：外来副本在 B 岛带着 A 的 rank 0 抢走代表卡位，
+        # 与 B 自己 rank 0 平局时又落进 owners 集合迭代序（PYTHONHASHSEED），
+        # 重启后端点/辐条配对漂移——见 _links_for。
+        session_rank[sid] = {iid: rank for rank, iid in enumerate(iids)}
         clusters.append({
             "sessionId": sid,
             "title": _cluster_title(sid, title_index, bool(sessions)),

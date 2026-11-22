@@ -1877,11 +1877,17 @@ def _enforce_phase_gates(
         ]
         dropped = len(raw_ops) - len(preset_ops)
         if dropped:
-            return raw_ops, summary, [{
+            gate_error = {
                 "index": "phase",
                 "op": "preset",
                 "reason": f"创造模式只允许配方操作（create_recipe / update_recipe / delete_recipe / 带 recipe_id 的 create_node），外加从画布既有节点接进本次新放实例的 add_edge（to 写新实例 temp_id、from 写快照既有节点，禁止既有节点之间互连或反向），本次丢弃了 {dropped} 个越权图操作",
-            }], []
+            }
+            if attempt < retries:
+                return raw_ops, summary, [gate_error], []
+            # 末次尝试放行合法配方操作、越权项丢弃并在 summary 注明（T236 体例：
+            # scope 闸同款末次出口）——此前末次也整批拒，批内合法 recipe 操作
+            # 全部随葬 parse_error
+            return preset_ops, (str(summary or "") + "\n\n（" + gate_error["reason"] + "）").strip(), [], []
         raw_ops = preset_ops
     if phase == "chat":
         # 答疑模式保险丝：红线 prompt 失效时的服务端兜底——图操作一律清空，
@@ -2034,7 +2040,10 @@ async def _assemble_result_with_selfchecks(
     if scope_dropped:
         for warn in scope_drop_warnings(scope_dropped):
             result.setdefault("warnings", []).append(warn)
-    if phase == "apply":
+    if phase == "apply" and (result.get("operations") or []):
+        # 脚手架回收只伴随「真有操作被应用」的批次：零操作（重试耗尽的空手
+        # 返回）时 next_snapshot 未变，这里若照跑会把用户全部待处理评价节点
+        # 连同其连线静默删光，而 summary 还说「本次未提出图修改建议」
         result = _cleanup_remaining_eval_nodes(result, current)
 
     # ---- 语义自检：规则（零成本） ----

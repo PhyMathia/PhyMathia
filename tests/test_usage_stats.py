@@ -637,3 +637,23 @@ class ReadCacheTest(UsageStatsBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CacheWindowTest(UsageStatsBase):
+    def test_cache_holds_full_query_window(self):
+        """读缓存上限必须 ≥ 单次查询窗口的文件数（90/365 天窗口会超 32 个）：
+        否则 LRU 每轮把刚读的文件逐出，缓存永不命中、summarize 每次全量重扫
+        且压在事件循环上（api_usage_stats 现已挪 to_thread，重扫只剩性能问题）。"""
+        import datetime as _dt
+        usage_stats._usage_cache.clear()
+        try:
+            base = _dt.date(2026, 9, 1)
+            for i in range(40):
+                day = (base + _dt.timedelta(days=i)).isoformat()
+                line = json.dumps({"model": "m1", "kind": "chat", "ts": 1790000000000,
+                                   "prompt_tokens": 10, "completion_tokens": 5})
+                (usage_stats.USAGE_DIR / f"{day}.jsonl").write_text(line + "\n", encoding="utf-8")
+            usage_stats.summarize(days=365)
+            assert len(usage_stats._usage_cache) >= 40
+        finally:
+            usage_stats._usage_cache.clear()

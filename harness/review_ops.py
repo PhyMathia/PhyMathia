@@ -192,8 +192,18 @@ def _auto_connect_isolated(current: Dict[str, Any], result: Dict[str, Any], focu
     live_ids = [str(node.get("id"))
                 for node in (result.get("next_snapshot") or {}).get("nodes", [])]
     existing_ids = live_ids or [str(node.get("id")) for node in current.get("nodes", [])]
-    anchors = [str(item) for item in (focus_node_ids or []) if str(item) in existing_ids]
-    anchor = anchors[0] if anchors else (existing_ids[0] if existing_ids else None)
+    # 锚点必须是「非本批新建」的存活节点：空画布首建（或整删重建）时 live_ids
+    # 全是本批新建节点，旧口径 existing_ids[0] 会选中新节点自己 → add_edge
+    # 自环被 build_next_snapshot 拒收（「不能添加自环」），把成功建出首个节点的
+    # 批次整批翻成 error。没有可锚的既有节点时就不连（空图首建孤立正是本意）
+    batch_created_ids = {
+        str(op.get("assigned_id") or op.get("id") or op.get("temp_id") or "")
+        for op in created
+    }
+    anchors = [str(item) for item in (focus_node_ids or [])
+               if str(item) in existing_ids and str(item) not in batch_created_ids]
+    anchor = anchors[0] if anchors else next(
+        (iid for iid in existing_ids if iid not in batch_created_ids), None)
     if not anchor:
         return result
     extra_ops = [

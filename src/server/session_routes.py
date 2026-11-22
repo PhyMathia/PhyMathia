@@ -408,8 +408,21 @@ async def api_clear_all_sessions(request: Request = None):
     def _clear_all_io():
         for f in paths.messages_dir.glob("*.json"):
             f.unlink()
-        _write_json(paths.knowledge_path, {})
-        _write_json(paths.formulas_path, {})
+        # 526/537：知识/公式整库清空与墓碑登记收进同一 _mutate_json 临界区
+        # （T524 会话侧同款纪律）——单删链随删登记（见 _delete_session_sync），
+        # 这条清空链漏了：空登记表下兄弟标签页 15 秒同步的全量推送在 POST
+        # 闸门/残留自愈上全部放行，手动知识条目（sessionId 空，孤儿闸门放行）
+        # 与公式（无孤儿闸门）整库复活
+        def _wipe_knowledge(data):
+            trash.knowledge_tombstone_register(paths, list(data.keys()))
+            return {}
+
+        def _wipe_formulas(data):
+            trash.formula_tombstone_register(paths, list(data.keys()))
+            return {}
+
+        _mutate_json(paths.knowledge_path, _wipe_knowledge, default={})
+        _mutate_json(paths.formulas_path, _wipe_formulas, default={})
         _write_json(paths.kv_path, {})
         for directory in (paths.kv_dir, paths.kv_meta_dir):
             if directory.exists():
@@ -611,6 +624,11 @@ async def api_save_messages(session_id: str, request: Request, response: Respons
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
+    if not isinstance(payload, (list, dict)):
+        # 合法 JSON 标量体（"x"/123/null）request.json() 不抛，下面的 .get
+        # 却是裸 AttributeError 500——400 拒收（knowledge_routes items 同款口径）
+        raise HTTPException(status_code=400,
+                            detail="'messages' must be a list or an object with a 'messages' list")
     messages = payload if isinstance(payload, list) else payload.get("messages", [])
     if isinstance(messages, list):
         for msg in messages:

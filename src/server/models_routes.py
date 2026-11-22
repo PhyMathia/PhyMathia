@@ -465,6 +465,10 @@ async def api_models_chat(request: Request):
             current_text = "<上下文>\n" + "\n\n".join(context_parts) + "\n</上下文>\n\n" + prompt
 
         level = payload.get("level", "university")
+        if not isinstance(level, str):
+            # 契约外形状（list/dict 不可哈希）不进 LEVEL_PROMPTS.get——T231
+            # graph_path 同款守卫口径，异常客户端不该打成裸 500
+            level = "university"
         level_suffix = LEVEL_PROMPTS.get(level, LEVEL_PROMPTS["university"])
         user_text = current_text + level_suffix
         # skill 三段式的「投递」端（2026-11-16）。顺序固定：分析步给候选 → 模块生成按
@@ -1411,7 +1415,11 @@ async def api_usage_stats(days: int = 7, records: int = 0, session: str = ""):
     records>0 时附带返回最近 N 条调用明细（时间倒序，服务端上限 500）。
     session 传会话 id 时附带回读桶 currentSession（T197 本次会话消耗卡）。
     """
-    return usage_stats.summarize(days=days, records=records, session=session)
+    # 挪 to_thread（T201/T240 同款口径）：summarize 同步 glob＋逐文件读盘解析，
+    # 窗口文件数超过读缓存上限时缓存必然逐出重读，压在事件循环上会把流式
+    # 下发、SSE 重放全部一起堵停
+    return await asyncio.to_thread(
+        usage_stats.summarize, days=days, records=records, session=session)
 
 
 

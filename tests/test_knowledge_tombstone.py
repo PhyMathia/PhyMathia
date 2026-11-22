@@ -33,6 +33,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import main as main_mod  # noqa: E402
 from server import accounts as accounts_mod  # noqa: E402
+from server import backup as backup_mod  # noqa: E402
 from server import config as config_mod  # noqa: E402
 from server import knowledge as knowledge_mod  # noqa: E402
 from server import knowledge_routes as knowledge_routes_mod  # noqa: E402
@@ -231,6 +232,70 @@ class KnowledgeTombstoneTest(unittest.TestCase):
             knowledge_routes_mod._mutate_json = orig
         self.assertIsNotNone(spy.run_thread)
         self.assertIsNot(spy.run_thread, threading.main_thread())
+
+    # ---- 备份恢复除名（备份导入是用户明确要回来的数据，等同回收站恢复） ----
+
+    def test_backup_restore_unregisters_tombstone(self):
+        t0 = _now_ms() - 5000
+        storage_mod._write_json(self.kp, {"k1": _item("k1", t0)})
+        self.client.delete("/api/knowledge/k1")
+        self.assertIn("k1", self._registry())
+
+        payload = {"sessions": {}, "messages": {},
+                   "knowledge": {"k1": _item("k1", t0)},
+                   "formulas": {}, "kv": {}, "profiles": {}}
+        result = backup_mod._restore_backup(payload, replace=False)
+        self.assertEqual(result["knowledge"], 1)
+        self.assertIn("k1", storage_mod._read_json(self.kp))    # 恢复落盘
+        self.assertNotIn("k1", self._registry())                # 墓碑同步除名
+
+        # 15 秒定时同步推回同一份删前旧副本：恢复的条目必须活下来，
+        # 不被 POST 闸门/残留自愈按「createdAt ≤ 删除时刻」二次清除
+        r = self.client.post("/api/knowledge", json={"items": {"k1": _item("k1", t0)}})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("k1", storage_mod._read_json(self.kp))
+
+    def test_post_knowledge_nan_timestamps_sanitized(self):
+        """NaN/±Infinity 经 POST 入库会把 GET /api/knowledge 响应体毒化成非法
+        JSON（15 秒同步整个 Promise.all 停摆）——入库前统一落当前毫秒。
+
+        用原始字节发线缆真身：Python 的 json.loads 默认放行 NaN/Infinity 字面量
+        （curl 直调同款），httpx 的 json= 序列化反而拒发模拟不了这条路径。"""
+        it = _item("k9", _now_ms())
+        it["createdAt"] = "NaN"
+        it["updatedAt"] = "Infinity"
+        body = json.dumps({"items": {"k9": it}}).replace('"NaN"', "NaN").replace('"Infinity"', "Infinity")
+        r = self.client.post("/api/knowledge", content=body.encode("utf-8"),
+                             headers={"Content-Type": "application/json"})
+        self.assertEqual(r.status_code, 200)
+        raw = self.kp.read_text(encoding="utf-8")
+        self.assertNotIn("NaN", raw)
+        self.assertNotIn("Infinity", raw)
+        stock = storage_mod._read_json(self.kp)
+        self.assertIsInstance(stock["k9"]["createdAt"], int)
+        self.assertIsInstance(stock["k9"]["updatedAt"], int)
+        # GET 响应体是合法 JSON（浏览器 JSON.parse 口径；Python json.loads 默认
+        # 吞 NaN 查不出来，只能查原文 token）
+        r2 = self.client.get("/api/knowledge")
+        self.assertEqual(r2.status_code, 200)
+        self.assertNotIn("NaN", r2.text)
+        self.assertNotIn("Infinity", r2.text)
+
+
+    def test_clear_all_sessions_registers_item_tombstones(self):
+        """清空全部会话（DELETE /api/sessions）抹 knowledge.json 时必须随库登记
+        条目墓碑（T524 会话侧同款纪律）——否则兄弟标签页 15 秒同步的全量推送
+        在空登记表上全部放行，手动条目（sessionId 空）整库复活。"""
+        t0 = _now_ms() - 5000
+        storage_mod._write_json(self.kp, {"k1": _item("k1", t0)})
+        r = self.client.delete("/api/sessions")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(storage_mod._read_json(self.kp), {})   # 库已清
+        self.assertIn("k1", self._registry())                   # 且登记墓碑
+        # 兄弟标签页推回删前旧副本：闸门拒收，不复活
+        r = self.client.post("/api/knowledge", json={"items": {"k1": _item("k1", t0)}})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(storage_mod._read_json(self.kp), {})
 
 
 if __name__ == "__main__":

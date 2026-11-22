@@ -642,3 +642,19 @@ class ImplicitProfileRoutesTest(RouteTestBase):
         view = self.client.get('/api/profile/dashboard',
                                params={'device_id': 'dev_impl_c'}).json()
         self.assertIn('测试主题', [t['topic'] for t in view['topics']])
+
+
+def test_huge_ts_does_not_kill_batch():
+    """ts=1e20 曾从 _bump_rhythm 的 time.localtime 抛 OverflowError——updater
+    一抛 record_events 整批事件连带丢弃（fire-and-forget 只剩一行 warning）。
+    上限钳到公元 9999 年（profile._timestamp 同口径），合法事件照常入账。"""
+    s = _fresh()
+    now = time.time()
+    changed = pi.apply_events(s, [
+        _ev("ask", "H", len=100, ts=1e20),
+        _ev("expand", "G", ts=now),
+    ], now=now)
+    assert changed
+    assert s["events"] == 2
+    # 越界 ts 回落到 default=now（profile._timestamp 同口径：未知时间不伪造为钳制值）
+    assert s["rhythm"]["at"] == pytest.approx(now, abs=5)

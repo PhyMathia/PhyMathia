@@ -19,6 +19,7 @@
 只依赖标准库；本模块不得 import 任何使用方。
 """
 
+import ipaddress
 import os
 import re
 from urllib.parse import urlparse
@@ -81,6 +82,23 @@ def _official_host(provider: str) -> str:
     return ""
 
 
+# RFC1918/链路本地私网段（LAN 自建模型允许明文 http 的范围，与原 startswith
+# 链的意图一致——原实现是前缀匹配，"10.evil.com" 这类公网域名会被当私网放行）
+_PRIVATE_V4_NETWORKS = tuple(
+    ipaddress.ip_network(n)
+    for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16")
+)
+
+
+def _is_private_ipv4(host: str) -> bool:
+    """host 是否为私网点分十进制 IPv4 整体（不是「以私网前缀开头的任意域名」）。"""
+    try:
+        addr = ipaddress.IPv4Address(host)
+    except ValueError:
+        return False
+    return any(addr in net for net in _PRIVATE_V4_NETWORKS)
+
+
 def validate_model_target(provider: str, base_url: str, env_key_used: bool) -> str:
     """校验 AI 代理目标，返回最终 base_url；非法目标抛 ValueError。
 
@@ -106,11 +124,7 @@ def validate_model_target(provider: str, base_url: str, env_key_used: bool) -> s
     host = parsed.netloc.rsplit("@", 1)[-1].rsplit(":", 1)[0].strip("[]").lower()
     is_local = parsed.scheme == "http" and (
         host in ("127.0.0.1", "localhost", "::1", "localhost.localdomain")
-        or host.startswith("192.168.")
-        or host.startswith("10.")
-        or host.startswith("169.254.")
-        # 172.16.0.0 – 172.31.255.255 私网段
-        or (host.startswith("172.") and host.split(".")[1].isdigit() and 16 <= int(host.split(".")[1]) <= 31)
+        or _is_private_ipv4(host)
     )
     if parsed.scheme != "https" and not is_local:
         raise ValueError("Invalid base_url: remote endpoints must use https")

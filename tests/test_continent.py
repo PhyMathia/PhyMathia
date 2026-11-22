@@ -1422,3 +1422,25 @@ class PurgeDanglingUserEdgesTest(unittest.TestCase):
         ]
         kept = purge_dangling_user_edges(edges, items)
         self.assertEqual([e["id"] for e in kept], ["keep", "loop"])
+
+
+class LinksForForeignCopyTest(unittest.TestCase):
+    """_links_for 的跨会话条目排序：session_rank 按 sid → {iid: 本桶学习序}
+    登记（旧平面表让主会话 A 的 rank 泄进 B 岛——外来副本在 B 不是最早卡
+    却带着 A 的 rank 0 抢走代表卡位，与 B 自己的序 0 平局时还落进 owners
+    集合迭代序（PYTHONHASHSEED），重启后端点/辐条配对漂移）。"""
+
+    def test_foreign_copy_not_representative_of_secondary_island(self):
+        from server.continent import _links_for
+
+        owners = {"kx", "b1", "b2"}
+        item_session = {"kx": "A", "b1": "B", "b2": "B"}
+        # kx 主属 A（A 桶序 0）；在 B 桶的学习序排第 2（b1 才是 B 最早卡）
+        session_rank = {"A": {"kx": 0}, "B": {"b1": 0, "kx": 1, "b2": 2}}
+        item_sids = {"kx": ("A", "B"), "b1": ("B",), "b2": ("B",)}
+        links = _links_for(owners, item_session, session_rank, item_sids)
+        # B 岛的连线端点必须是 B 自己最早学的 b1，而不是主属 A 的 kx
+        b_endpoints = {l["to"] if l["toSession"] == "B" else l["from"] for l in links}
+        self.assertEqual(b_endpoints, {"b1"})
+        self.assertEqual(links, [{"from": "kx", "to": "b1",
+                                  "fromSession": "A", "toSession": "B"}])

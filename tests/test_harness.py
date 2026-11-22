@@ -4426,3 +4426,141 @@ class ToolResultClipTest(unittest.TestCase):
         self.assertTrue(out.startswith("x" * 10))
         self.assertIn("结果过长已截断", out)
         self.assertLessEqual(len(out), _TOOL_RESULT_CHARS + 20)
+
+
+class HarnessEmptyCanvasAutoConnectTest(unittest.TestCase):
+    """空画布首建：_auto_connect_isolated 的锚点不得选本批新建节点自己——
+    旧口径 existing_ids[0] 在空图上就是新建节点 → add_edge 自环被拒收
+    （「不能添加自环」），首个节点的成功批次整批翻成 error。"""
+
+    def test_no_self_loop_on_empty_canvas(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {
+                "content": "",
+                "tool_calls": [
+                    {"function": {"name": "create_node", "arguments": '{"temp_id": "n1", "kind": "human_note", "label": "牛顿第二定律", "reason": "新增"}'}},
+                ],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [], "edges": []},
+                "帮我建一个牛顿第二定律节点",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="tools",
+                self_check="off",
+                retries=0,
+            ))
+        self.assertEqual(result["status"], "ok", result.get("errors"))
+        self.assertEqual(
+            [op for op in result["operations"] if op.get("op") == "add_edge"], [],
+            "空画布上没有可锚的既有节点，不得生成自动连线（更不能自环）")
+        self.assertTrue(
+            [op for op in result["operations"] if op.get("op") == "create_node"],
+            "首个节点应照常建出（孤立是空图首建的正常形态）")
+
+    def test_still_connects_to_real_existing_node(self):
+        # 回归锚：有既有节点时自动连线照常工作（不因本批修复被误伤）
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {
+                "content": "",
+                "tool_calls": [
+                    {"function": {"name": "create_node", "arguments": '{"temp_id": "n1", "kind": "human_note", "label": "链式法则", "reason": "新增"}'}},
+                ],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
+                "新增知识点：链式法则",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="tools",
+                self_check="off",
+                retries=0,
+            ))
+        add_edges = [op for op in result["operations"] if op.get("op") == "add_edge"]
+        self.assertTrue(add_edges, "应自动补一条连线避免孤立节点")
+        self.assertNotEqual(add_edges[0].get("from"), add_edges[0].get("to"))
+
+
+class HarnessApplyZeroOpsEvalCleanupTest(unittest.TestCase):
+    """apply 相位零操作（重试耗尽的空手返回）不得触发评价节点脚手架回收——
+    否则用户全部待处理评价节点连同连线被静默删光。"""
+
+    def test_zero_ops_keeps_eval_nodes(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {"content": "这些修改之前已经应用过了，没有需要改动的地方。", "tool_calls": []}
+
+        graph = {
+            "nodes": [
+                {"id": "A", "kind": "human_note", "label": "导数"},
+                {"id": "E1", "kind": "ai_eval", "label": "对「导数」的建议"},
+            ],
+            "edges": [],
+        }
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                graph, "应用评价建议",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="tools",
+                self_check="off",
+                phase="apply",
+                retries=1,
+            ))
+        self.assertEqual(
+            [op for op in result["operations"] if op.get("op") == "delete_node"], [],
+            "零操作批次不得生成 delete_node")
+        remaining = [n for n in result["next_snapshot"]["nodes"] if n.get("kind") == "ai_eval"]
+        self.assertEqual(len(remaining), 1, "待处理评价节点必须还在")
+
+
+class HarnessPresetGateLastAttemptTest(unittest.TestCase):
+    """preset 白名单闸的末次出口（T236 体例）：末次尝试放行合法配方操作、
+    越权项丢弃降 summary 注明——此前末次也整批拒，合法 recipe 操作随葬 parse_error。"""
+
+    def test_last_attempt_passes_recipe_ops(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {
+                "content": "",
+                "content": "已放置受力分析模板。",
+                "tool_calls": [
+                    {"function": {"name": "create_node", "arguments": '{"temp_id": "n1", "kind": "module", "module_key": "force", "label": "受力分析模板", "reason": "新放实例", "recipe_id": "recipe-hn-1"}'}},
+                    {"function": {"name": "update_node", "arguments": '{"node_id": "A", "reason": "越权改动", "patch": {"label": "越权标签"}}'}},
+                ],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "斜面"}],
+                 "edges": [],
+                 "user_recipes": [{"id": "recipe-hn-1", "name": "受力分析模板"}]},
+                "放一个受力分析模板",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="tools",
+                self_check="off",
+                phase="preset",
+                retries=0,
+            ))
+        self.assertEqual(result["status"], "ok", result.get("errors"))
+        ops = result["operations"]
+        self.assertTrue([op for op in ops if op.get("op") == "create_node"],
+                        "带 recipe_id 的合法 create_node 应放行")
+        self.assertEqual([op for op in ops if op.get("op") == "update_node"], [],
+                         "越权 update_node 应丢弃")
+        self.assertIn("越权", str(result.get("summary") or ""))

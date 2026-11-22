@@ -162,8 +162,12 @@ def parse_picks(text: Any, rows: Iterable[Dict[str, str]]) -> List[str]:
     except Exception:
         picked = []
     if not picked:
+        # 词边界匹配：裸子串会把「文件名的子串」误挑——references/ 同时有
+        # craft.md 与 t.md 时，散文提及 craft.md 会让 "t.md" in "...craft.md..."
+        # 命中，错参考挤占 MAX_FILES 配额、挤掉本该入选的真资料
         for name in known:
-            if name in raw and name not in picked:
+            if re.search(r"(?<![A-Za-z0-9._-])" + re.escape(name) + r"(?![A-Za-z0-9_-])", raw) \
+                    and name not in picked:
                 picked.append(name)
     return picked[:MAX_FILES]
 

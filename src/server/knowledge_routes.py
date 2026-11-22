@@ -33,6 +33,7 @@ from .knowledge import (
     _looks_like_reasoning_leak,
     _local_extract_knowledge,
     _normalize_formula,
+    _strip_nonfinite_ts,
     _normalize_knowledge,
     _num_or_zero,
 )
@@ -315,6 +316,13 @@ async def api_save_knowledge(request: Request):
     payload.pop("deleted", None)
 
     incoming = _normalize_knowledge(payload)
+    # NaN/±Infinity 防线：这些条目不经 _coerce_created_at（那是公式 POST 口径），
+    # 时间戳原样入库会毒化 GET /api/knowledge 响应体（浏览器 JSON.parse 全炸，
+    # 15 秒同步整个 Promise.all 一并停摆）——入库前统一落当前毫秒
+    _now_ms = int(time.time() * 1000)
+    for _it in incoming.values():
+        if isinstance(_it, dict):
+            _strip_nonfinite_ts(_it, _now_ms)
     # 入库闸门：非知识条目（「用户要求：…」这类指令句回显 / 整句标题）拒收。浏览器会把
     # localStorage 里本地独有的知识点并集推回服务端，入口拒收才保证清掉的垃圾不会被
     # 另一个标签页推回来（手动条目豁免，见 _is_acceptable_knowledge_item）。
@@ -503,9 +511,10 @@ async def api_save_formulas(request: Request):
     if not isinstance(client_deleted, dict):
         client_deleted = {}
     count = 0
+    sanitized = 0
 
     def updater(data):
-        nonlocal count
+        nonlocal count, sanitized
         paths = accounts.resolve_paths(account)
         # 537 墓碑闸门：已删条目的**删前旧副本**拒收不重建（兄弟标签页 localStorage
         # 残留副本经收集链推回）。公式无 updatedAt，时间戳只讲 createdAt；无时间戳
@@ -553,8 +562,14 @@ async def api_save_formulas(request: Request):
         if gate_rejected:
             logger.info(f"Formula tombstone gate rejected {gate_rejected} stale copies")
 
-        # 写入时物理去重（原挂在 GET 里的清理逻辑挪到这里）
-        data = _dedupe_formula_map(data)
+        # 写入时物理去重（原挂在 GET 里的清理逻辑挪到这里）。清洗差异计入落盘
+        # 理由（T202 短路的豁免）——AI 入库（knowledge._add_formulas_from_items）
+        # 与 DELETE 路由均已同口径；漏记时「推送与库存完全一致」的同步轮
+        # （count=0）永远清不掉脏条目/重复孪生
+        cleaned = _dedupe_formula_map(data)
+        if cleaned != data:
+            data = cleaned
+            sanitized = 1
         for it in gated_items:
             latex = _normalize_formula(it.get("latex") or "")
             if not latex or not _looks_like_formula(latex):
@@ -617,7 +632,7 @@ async def api_save_formulas(request: Request):
             count += 1
         # purged 也算落盘理由：墓碑自愈清掉残留但本轮没有新条目时（count=0），
         # 不能走 T202 短路不写盘——否则 DELETE 失败的残留永远清不掉
-        return data if (count or purged) else None
+        return data if (count or purged or sanitized) else None
 
     # T240：updater 里的全库 dedupe＋整文件写入挪 to_thread（T201 首波同款，
     # 收尾漏了公式库这条）——持 _JSON_LOCK 的磁盘 IO 压在事件循环上时，后台
@@ -709,6 +724,9 @@ async def api_extract_knowledge(request: Request):
     model = payload.get("model", "")
     base_url = payload.get("base_url", "")
     level = payload.get("level", "university")
+    if not isinstance(level, str):
+        # 契约外形状（list/dict 不可哈希）不进 LEVEL_PROMPTS.get（T231 同款守卫）
+        level = "university"
 
     latest_assistant = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
     if latest_assistant and (

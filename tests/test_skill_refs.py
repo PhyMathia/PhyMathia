@@ -225,3 +225,12 @@ def test_pick_skill_refs_degrades_on_upstream_error(monkeypatch):
     # 没有 references 的 skill 连请求都不发（返回空、不报错）
     assert asyncio.run(models_routes._pick_skill_refs(
         "iso-cutaway", "q", "http://127.0.0.1:1/x", {}, "m", "default")) == ""
+
+
+def test_parse_picks_fallback_matches_whole_name():
+    rows = [{"file": "craft.md", "label": "x"}, {"file": "t.md", "label": "y"}]
+    # 散文回退扫描曾用裸子串：提及 craft.md 会连「文件名的子串」t.md 一起误挑，
+    # 错参考挤占 MAX_FILES 配额、挤掉本该入选的真资料
+    assert skill_refs.parse_picks("我想参考 craft.md 的画家顺序", rows) == ["craft.md"]
+    # 词边界不挡正常提及（路径前缀/独立文件名都认）
+    assert skill_refs.parse_picks("读 references/t.md 和 craft.md", rows) == ["craft.md", "t.md"]

@@ -138,3 +138,69 @@ def test_save_formulas_coerces_created_at(acc_env):
     assert abs(data["f_bad"]["createdAt"] - now) < 60_000
     # int/float 原样收
     assert data["f_float"]["createdAt"] == 1500000000000.5
+
+
+# ====== NaN/Infinity 防线（json.dumps 吐裸 NaN/Infinity＝非法 JSON 毒化响应体） ======
+
+def test_save_formulas_nonfinite_createdat_falls_to_now(acc_env):
+    """NaN/±Infinity 原样入库会把 GET 响应体毒化成非法 JSON（浏览器
+    resp.json() 全炸且被 ETag 缓存固化）——非有限浮点按「其余落 now」口径收敛。"""
+    now = int(time.time() * 1000)
+    asyncio.run(knowledge_routes.api_save_formulas(_FakeRequest({"items": [
+        {"id": "f_nan", "latex": "E=mc^2", "sessionId": "s1",
+         "createdAt": float("nan")},
+        {"id": "f_inf", "latex": "F=ma", "sessionId": "s1",
+         "createdAt": float("inf")},
+    ]})))
+    data = storage._read_json(acc_env.formulas_path, {})
+    assert isinstance(data["f_nan"]["createdAt"], int)
+    assert abs(data["f_nan"]["createdAt"] - now) < 60_000
+    assert isinstance(data["f_inf"]["createdAt"], int)
+    # 落盘文本不含裸 NaN/Infinity（合法 JSON 才是目标，Python json.loads 吞 NaN 查不出）
+    raw = acc_env.formulas_path.read_text(encoding="utf-8")
+    assert "NaN" not in raw
+    assert "Infinity" not in raw
+
+
+def test_backup_restore_sanitizes_nonfinite_timestamps(acc_env):
+    """手编备份 JSON 能带 NaN/Infinity（json.loads 收得进）——恢复回写前统一落
+    当前毫秒，否则 GET 响应体从恢复那刻起持续非法。"""
+    from server import backup
+
+    backup._restore_backup({
+        "sessions": {}, "messages": {},
+        "knowledge": {"k1": {"id": "k1", "title": "梯度下降",
+                             "content": "沿负梯度方向迭代求极小", "sessionId": "",
+                             "source": "manual", "createdAt": float("nan")}},
+        "formulas": {"f1": {"id": "f1", "latex": "E=mc^2", "concept": "质能方程",
+                            "meaning": "质量与能量的等价关系", "meaningSource": "model",
+                            "topic": "相对论", "related": [], "sessionId": "",
+                            "createdAt": float("inf")}},
+        "kv": {}, "profiles": {},
+    }, replace=False)
+    for path in (acc_env.knowledge_path, acc_env.formulas_path):
+        raw = path.read_text(encoding="utf-8")
+        assert "NaN" not in raw
+        assert "Infinity" not in raw
+    assert isinstance(storage._read_json(acc_env.knowledge_path)["k1"]["createdAt"], int)
+    assert isinstance(storage._read_json(acc_env.formulas_path)["f1"]["createdAt"], int)
+
+
+def test_post_formulas_persists_sanitize_on_identical_push(acc_env):
+    """POST 推送与库存完全一致（count=0）且无墓碑清理（purged=0）时，去重/清洗
+    差异也要落盘——AI 入库与 DELETE 路径均已同口径；漏记的这条让同步稳态轮
+    永远清不掉脏条目（重复孪生还会在按 id 单删后以另一 id 复活）。"""
+    storage._write_json(acc_env.formulas_path, {
+        "f_dirty": "not-a-dict",
+        "f1": {"id": "f1", "latex": "E=mc^2", "concept": "质能方程", "meaning": "",
+               "meaningSource": "local", "topic": "", "related": [],
+               "sessionId": "s1", "createdAt": 1500000000000},
+    })
+    item = {"id": "f1", "latex": "E=mc^2", "concept": "质能方程", "meaning": "",
+            "meaningSource": "local", "topic": "", "related": [],
+            "sessionId": "s1", "createdAt": 1500000000000}
+    r = asyncio.run(knowledge_routes.api_save_formulas(_FakeRequest({"items": [item]})))
+    assert r["count"] == 0                      # 推送与库存一致：无新入库
+    stock = storage._read_json(acc_env.formulas_path, {})
+    assert "f_dirty" not in stock               # 清洗差异已落盘
+    assert "f1" in stock

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -139,12 +140,30 @@ def _coerce_created_at(raw, now: int) -> int:
     if isinstance(raw, bool):
         return now
     if isinstance(raw, (int, float)):
+        # NaN/±Infinity 原样收会毒化 GET 响应体：json.loads 收得进（Python 扩展
+        # 语法），json.dumps 默认吐出裸 NaN/Infinity——非法 JSON，浏览器
+        # resp.json() 全炸且被 GET ETag 缓存固化。按「其余落 now」口径处理
+        if isinstance(raw, float) and not math.isfinite(raw):
+            return now
         return raw
     if isinstance(raw, str):
         s = raw.strip()
         if re.fullmatch(r"-?\d+", s):
             return int(s)
     return now
+
+
+def _strip_nonfinite_ts(item: dict, now_ms: int) -> None:
+    """NaN/±Infinity 防线：时间戳字段里的非有限浮点统一落当前毫秒（原地修改）。
+
+    挡的是绕过 _coerce_created_at 的直写面——POST /api/knowledge 收的原始
+    items、备份恢复回写的条目（手编备份 JSON 同样能带 NaN）。只清非有限浮点；
+    字符串/bool/缺失不碰——各自已有 T224 读侧兜底与 526 闸门口径，不是本防线
+    的目标（它们能进合法 JSON，毒不了响应体）。"""
+    for field in ("createdAt", "updatedAt"):
+        v = item.get(field)
+        if isinstance(v, float) and not math.isfinite(v):
+            item[field] = int(now_ms)
 
 
 def _dedupe_formula_map(data: dict) -> dict:
@@ -1133,6 +1152,7 @@ def _normalize_formula_map(data) -> dict:
 __all__ = [
     "_normalize_knowledge", "_normalize_formula", "_formula_key",
     "_looks_like_formula", "_dedupe_formula_map", "_normalize_formula_map",
+    "_strip_nonfinite_ts",
     "_parse_extract_json", "_parse_profile_facts", "_parse_profile_ops", "_clean_knowledge_title", "_normalize_knowledge_key",
     "_strip_knowledge_section", "_is_junk_knowledge_title", "_is_concept_like_title",
     "_looks_like_reasoning_leak", "_is_acceptable_knowledge_item",

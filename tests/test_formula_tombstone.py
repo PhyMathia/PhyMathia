@@ -33,6 +33,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import main as main_mod  # noqa: E402
 from server import accounts as accounts_mod  # noqa: E402
+from server import backup as backup_mod  # noqa: E402
 from server import config as config_mod  # noqa: E402
 from server import knowledge_routes as knowledge_routes_mod  # noqa: E402
 from server import storage as storage_mod  # noqa: E402
@@ -230,6 +231,40 @@ class FormulaTombstoneTest(unittest.TestCase):
             knowledge_routes_mod._mutate_json = orig
         self.assertIsNotNone(spy.run_thread)
         self.assertIsNot(spy.run_thread, threading.main_thread())
+
+    # ---- 备份恢复除名（537 同款：备份导入＝用户明确要回的数据，等同回收站恢复） ----
+
+    def test_backup_restore_unregisters_tombstone(self):
+        t0 = _now_ms() - 5000
+        storage_mod._write_json(self.fp, {"f1": _formula("f1", t0)})
+        self.client.delete("/api/formulas/f1")
+        self.assertIn("f1", self._registry())
+
+        payload = {"sessions": {}, "messages": {}, "knowledge": {},
+                   "formulas": {"f1": _formula("f1", t0)}, "kv": {}, "profiles": {}}
+        result = backup_mod._restore_backup(payload, replace=False)
+        self.assertEqual(result["formulas"], 1)
+        self.assertIn("f1", storage_mod._read_json(self.fp))    # 恢复落盘
+        self.assertNotIn("f1", self._registry())                # 墓碑同步除名
+
+        # 收集链推回同一份删前旧副本：恢复的公式必须活下来，不被闸门/残留自愈清掉
+        r = self.client.post("/api/formulas", json={"items": [_formula("f1", t0)]})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("f1", storage_mod._read_json(self.fp))
+
+
+    def test_clear_all_sessions_registers_formula_tombstones(self):
+        """清空全部会话抹 formulas.json 时必须随库登记公式墓碑（537/T524 同款）——
+        公式合并无孤儿闸门，空登记表下兄弟标签页推送 100% 整库复活。"""
+        t0 = _now_ms() - 5000
+        storage_mod._write_json(self.fp, {"f1": _formula("f1", t0)})
+        r = self.client.delete("/api/sessions")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(storage_mod._read_json(self.fp), {})
+        self.assertIn("f1", self._registry())
+        r = self.client.post("/api/formulas", json={"items": [_formula("f1", t0)]})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(storage_mod._read_json(self.fp), {})
 
 
 if __name__ == "__main__":

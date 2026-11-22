@@ -144,6 +144,16 @@ class SaveMessagesRouteTest(unittest.TestCase):
         client.post(f"/api/sessions/{sid}/messages", json=seed)
         self.assertEqual(storage_mod._get_messages_path(sid).read_bytes(), before)
 
+    def test_post_scalar_body_rejected_400(self):
+        # 合法 JSON 标量体（"x"/123/null/true）曾从 payload.get 抛 AttributeError
+        # 打成裸 500——400 拒收（knowledge_routes items 同款口径）
+        from fastapi.testclient import TestClient
+        client = TestClient(self._main.app, base_url="http://127.0.0.1")
+        for raw in (b'"x"', b'123', b'null', b'true'):
+            resp = client.post("/api/sessions/sess_scalar/messages",
+                               content=raw, headers={"Content-Type": "application/json"})
+            self.assertEqual(resp.status_code, 400, raw)
+
 
 if __name__ == "__main__":
     unittest.main()
