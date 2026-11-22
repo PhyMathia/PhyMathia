@@ -2078,6 +2078,9 @@ html[data-theme="light"][data-wallpaper="night"] {
      淡化板一律 var(--accent) 对 var(--text-primary) 调——深色档自动淡白、浅色档自动淡墨，
      一套公式深浅两档都对（同本文件工具栏底色的口径），五套家族各跟各的 accent。 */
   --band-wash: color-mix(in srgb, var(--accent) 55%, var(--text-primary));
+  /* 浅色档专用：白玻璃提亮纱（带一点 accent 防死灰）——浅色从「加深」反转成「提亮」，
+     与深色档的淡白提亮感知对称（2026-11-22 二轮：用户报 34% 深橄榄「颜色太深不好看」）。 */
+  --band-wash-light: color-mix(in srgb, var(--accent) 7%, #fff);
 }
 
 .graph-layer-band {
@@ -2105,9 +2108,9 @@ html[data-theme="light"][data-wallpaper="night"] {
 }
 
 /* 拖动中目标层：只在吸附成立时显形（不提亮别的层，也不画任何描边）。
-   横向渐变的可见部分是列缘肩部（约 1/3 强度，全强度段多被卡片挡住）：
-   深色 20% 与旧观感持平；浅色在暖纸面上肩部只剩 ~7% 读不出来（2026-11-22 实拍），
-   单独提到 34%。 */
+   横向渐变的可见部分是列缘肩部（约 1/3 强度，全强度段多被卡片挡住）。
+   深色 20% 淡白提亮；浅色走 --band-wash-light 白玻璃纱（提亮方向与深色对称，
+   首轮 34% 深橄榄被用户否「太深」），70% 靠蓝通道抬升读出「磨砂高光」。 */
 .graph-layer-band.is-target {
   opacity: 1;
   background: linear-gradient(90deg,
@@ -2120,8 +2123,8 @@ html[data-theme="light"][data-wallpaper="night"] {
 [data-theme="light"] .graph-layer-band.is-target {
   background: linear-gradient(90deg,
     transparent 0%,
-    color-mix(in srgb, var(--band-wash) 34%, transparent) 42%,
-    color-mix(in srgb, var(--band-wash) 34%, transparent) 58%,
+    color-mix(in srgb, var(--band-wash-light) 70%, transparent) 42%,
+    color-mix(in srgb, var(--band-wash-light) 70%, transparent) 58%,
     transparent 100%);
 }
 
@@ -2153,8 +2156,13 @@ html[data-theme="light"][data-wallpaper="night"] {
 
 /* 浅色档：辉光在暖纸面上发脏（2026-11-22 实拍），收细改成「荧光笔划线」——
    弱辉光＋线两侧一条 accent 柔光带（::before 挂本元素，随 3px 线同位缩放），
-   横向用渐变羽化、纵向用 mask 对齐实线的两端淡出。 */
+   横向用渐变羽化、纵向用 mask 对齐实线的两端淡出。
+   二轮：实线芯从 accent 92%（深金）调浅成 accent 62% 对白（暖金中调），
+   用户报首轮「颜色太深」。 */
 [data-theme="light"] .graph-col-insert {
+  background: linear-gradient(180deg,
+    transparent 0%, color-mix(in srgb, color-mix(in srgb, var(--accent) 62%, #fff) 92%, transparent) 8%,
+    color-mix(in srgb, color-mix(in srgb, var(--accent) 62%, #fff) 92%, transparent) 92%, transparent 100%);
   box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
@@ -2173,10 +2181,11 @@ html[data-theme="light"][data-wallpaper="night"] {
 }
 
 /* 浅色幽灵框：绿色浑罩在米色纸上像污渍（2026-11-22 实拍）——
-   换成带一点 accent 的纸面白玻璃「空槽」＋加深一档的 accent 虚线框。 */
+   换成带一点 accent 的纸面白玻璃「空槽」；虚线框二轮同步调浅
+   （accent 55% 对白、提高不透明度补清晰度），用户报首轮 80% 深金「太深」。 */
 [data-theme="light"] .graph-col-ghost {
-  border-color: color-mix(in srgb, var(--accent) 80%, transparent);
-  background: color-mix(in srgb, color-mix(in srgb, var(--accent) 7%, #fff) 55%, transparent);
+  border-color: color-mix(in srgb, color-mix(in srgb, var(--accent) 55%, #fff) 85%, transparent);
+  background: color-mix(in srgb, color-mix(in srgb, var(--accent) 7%, #fff) 60%, transparent);
 }
 
 /* ---------- 15. ComfyUI 风格分组 ---------- */
