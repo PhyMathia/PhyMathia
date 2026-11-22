@@ -766,6 +766,16 @@ def formula_tombstone_unregister(paths: accounts.AccountPaths, item_ids) -> None
 ACCOUNT_TRASH_DIR_NAME = "_trash"
 
 
+class AccountRollbackError(RuntimeError):
+    """账号入墓后 meta 落盘失败、移回原位的回滚也失败（数据滞留回收站区）。
+
+    552 窗口一的灾难分支：普通失败已在 capture_account 内逆序回滚（目录移回
+    原位再抛，调用方文案「原账号未受影响」属实）；唯独回滚本身也失败时数据
+    停在无 meta 的孤儿墓碑里（1 天后会被孤儿规则清除）——独立异常类型让删除
+    路由把这种「没能恢复原状」的失败与普通失败区分开，按实际状态出文案。
+    """
+
+
 def account_tombstone_dir() -> Path:
     """账号墓碑区：data/users/_trash/（全局一处，不分账号——删除的是账号本身）。"""
     return accounts.users_dir() / ACCOUNT_TRASH_DIR_NAME
@@ -793,7 +803,7 @@ def tombstone_account_ids() -> set:
 def capture_account(account: str, entry: dict, days: int) -> str | None:
     """删除账号：整个账号目录移入墓碑区，meta.json 最后落盘。返回墓碑目录名。
 
-    调用方（main.py 删除路由）已先做注册表除名；本函数抛异常时由调用方
+    调用方（session_routes 删除路由）已先做注册表除名；本函数抛异常时由调用方
     restore_entry 回滚。账号目录不存在（从未产生数据）→ 不建墓碑返回 None。
     """
     account = accounts.validate_account_id(account)
@@ -811,15 +821,34 @@ def capture_account(account: str, entry: dict, days: int) -> str | None:
     shutil.move(str(root), str(stone_dir))
     now = int(time.time() * 1000)
     # meta 最后写：meta 在＝墓碑完整（同 capture_session 的完整性标志口径）
-    storage._write_json(stone_dir / _META_NAME, {
-        "id": account,
-        "name": (entry or {}).get("name") or account,
-        "kind": "account",
-        "deletedAt": now,
-        "purgeAt": now + days * _DAY_MS,
-        "retentionDays": days,
-        "entry": entry or {},
-    })
+    try:
+        storage._write_json(stone_dir / _META_NAME, {
+            "id": account,
+            "name": (entry or {}).get("name") or account,
+            "kind": "account",
+            "deletedAt": now,
+            "purgeAt": now + days * _DAY_MS,
+            "retentionDays": days,
+            "entry": entry or {},
+        })
+    except Exception:
+        # 552 窗口一：move 成功后 meta 落盘失败＝无 meta 孤儿墓碑——列表/恢复都
+        # 不认它，1 天后被孤儿规则连账号数据整目录 rmtree，而调用方已 restore_entry
+        # 把账号登记回去，成了「有登记没数据」的幽灵空账号。失败链逆序回滚：把
+        # 目录移回原位再抛，调用方的「原账号未受影响」才属实（_write_json 原子写，
+        # meta 不会半截残留；防御性 unlink 只兜 tmp 清理也失败的极端）。
+        try:
+            (stone_dir / _META_NAME).unlink(missing_ok=True)
+        except OSError:
+            pass
+        try:
+            shutil.move(str(stone_dir), str(root))
+        except Exception as back_exc:
+            raise AccountRollbackError(
+                f"账号 {account} 目录已移入回收站但 meta 落盘失败，移回原位也失败，"
+                f"数据滞留回收站区 {stone_dir.name}，请人工处理（{back_exc}）"
+            ) from back_exc
+        raise
     return stone_dir.name
 
 

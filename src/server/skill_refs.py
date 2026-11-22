@@ -38,6 +38,11 @@ MAX_CHARS = 12000
 MAX_FILES = 2
 # 每份配额的下限：太小的配额等于没读
 MIN_PER_FILE = 2000
+# 回退取标题只读文件头部：`# 标题` 按惯例在开头几行；references/ 动辄几十万字符
+# （anatomy 34 万），聊天热路径（模型挑参考前）为取一行标题整读全部参考文件是
+# 纯浪费 IO（568）。标题真落在头部窗口之外的极端文件回退用文件名，挑错参考的
+# 代价远小于整读的 IO。
+TITLE_HEAD_BYTES = 4096
 
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+\.md$")
 
@@ -98,7 +103,10 @@ def catalog(skill_id: str, account: Any = None) -> List[Dict[str, str]]:
         if not _SAFE_NAME.match(name):
             continue
         try:
-            label = _title_of((folder / name).read_text(encoding="utf-8", errors="replace"))
+            # 568：只读头部取 `# 标题`，不整读（references/ 单文件可达几十万字符）
+            with (folder / name).open("rb") as fh:
+                head = fh.read(TITLE_HEAD_BYTES)
+            label = _title_of(head.decode("utf-8", errors="replace"))
         except Exception:
             label = ""
         out.append({"file": name, "label": label or name})

@@ -619,6 +619,37 @@ def test_account_tombstone_purge_expired_and_orphan(acc_env):
     assert [it["id"] for it in trash.list_account_tombstones()] == ["grace"]
 
 
+def test_capture_account_meta_failure_rolls_back_move(acc_env, monkeypatch):
+    """552 窗口一：meta 落盘失败必须把目录移回原位再抛——无 meta 孤儿墓碑会被
+    孤儿规则连数据 rmtree，调用方 restore_entry 后「原账号未受影响」才属实。"""
+    accounts.ensure_account("default")
+    _make("nora")
+    n = accounts.resolve_paths("nora")
+    n.kv_dir.mkdir(parents=True, exist_ok=True)
+    storage._write_json(n.sessions_path, {"sess_y": {"id": "sess_y", "title": "诺拉的画布"}})
+    entry = dict(accounts.get_account("nora"))
+    accounts.remove_account("nora")  # 与删除路由同序：先除名再墓碑化
+    real_write = trash.storage._write_json
+
+    def flaky(path, data):
+        if Path(path).name == trash._META_NAME:
+            raise OSError("disk full (simulated)")
+        return real_write(path, data)
+
+    with monkeypatch.context() as m:
+        m.setattr(trash.storage, "_write_json", flaky)
+        with pytest.raises(OSError):
+            trash.capture_account("nora", entry, 7)
+    # 逆序回滚：目录已移回原位、数据原样、墓碑区没留下任何孤儿目录
+    assert n.root.exists()
+    assert json.loads(n.sessions_path.read_text(encoding="utf-8"))["sess_y"]["title"] == "诺拉的画布"
+    assert not trash.account_tombstone_dir().exists() or not any(trash.account_tombstone_dir().iterdir())
+    # 回滚后可重删（同路由重试路径）：这次不再失败
+    assert trash.capture_account("nora", entry, 7)
+    assert not n.root.exists()
+    assert [it["id"] for it in trash.list_account_tombstones()] == ["nora"]
+
+
 def test_route_trash_readonly_gate_account_tombstones(acc_env):
     """查阅态兜底：账号墓碑的恢复/彻底删除同样被只读头拦 403。"""
     accounts.ensure_account("default")

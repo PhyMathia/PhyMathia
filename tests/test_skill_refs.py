@@ -56,6 +56,22 @@ def test_catalog_falls_back_to_first_heading():
     assert rows["beta.md"] == "Beta Section"
 
 
+def test_catalog_fallback_reads_head_only_for_titles():
+    """568：无 INDEX.md 的回退取标题只读文件头部——标题在头部窗口内照常取到，
+    窗口外的极端文件回退用文件名（不再为取标题整读几十万字符）。"""
+    root = skill_registry._user_dir("default")
+    base = root / "demo-refs-head"
+    _write(base / "phymathia.md",
+           "---\nid: demo-refs-head\nname: demo-refs-head\ndesc: x\nscope: viz\n---\n\n正文\n")
+    _write(base / "references" / "top.md", "# Top Heading\n\n" + "内容\n" * 4000)
+    _write(base / "references" / "deep.md", "垫话\n\n" + "x" * 8192 + "\n\n# Deep Heading\n")
+    skill_registry.reload_skills()
+
+    rows = {row["file"]: row["label"] for row in skill_refs.catalog("demo-refs-head")}
+    assert rows["top.md"] == "Top Heading"   # 头部窗口（4096 字节）内：标题照常
+    assert rows["deep.md"] == "deep.md"      # 窗口外：回退文件名，不再整读
+
+
 def test_compose_respects_budget_and_file_cap():
     block = skill_refs.compose("anatomy", ["craft.md", "kit.md", "motion.md"])
     assert block.startswith("\n\n<skill_refs")

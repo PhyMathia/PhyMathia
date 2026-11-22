@@ -108,12 +108,23 @@ async def api_accounts_delete(request: Request):
     in_trash = False
     try:
         if days == 0:
-            trash.purge_account_data(account)  # 回收站关闭：删除即彻底清除（与画布同口径）
+            # 552 窗口二：画像清除在前、账号数据销毁殿后——rmtree(ignore_errors)
+            # 不抛也不可逆，若先清数据、画像清除再抛，restore_entry 就是在复活
+            # 数据已物理销毁的账号。两步互不依赖（画像在 data/profiles/，账号
+            # 数据在 data/users/<id>/），倒序对成功路径零语义变化；失败时必然
+            # 一无所毁，restore_entry ＋ 文案「原账号未受影响」才属实。
             trash.purge_bound_profiles(entry)  # 本账号归属的画像设备一并彻底清除（2026-10-07 画像按账号隔离）
+            trash.purge_account_data(account)  # 回收站关闭：删除即彻底清除（与画布同口径）
         else:
             in_trash = trash.capture_account(account, entry, days) is not None
+    except trash.AccountRollbackError as e:
+        # 552：入墓后回滚也失败＝账号数据滞留回收站区，按实际状态出文案
+        accounts.restore_entry(entry)
+        raise HTTPException(status_code=500, detail=f"删除失败：{e}")
     except Exception as e:
-        accounts.restore_entry(entry)  # 移入失败＝原账号原样（宁可 500 不可丢数据）
+        accounts.restore_entry(entry)  # 失败＝原账号原样（宁可 500 不可丢数据）
+        if days == 0:
+            raise HTTPException(status_code=500, detail=f"删除失败：账号数据未能彻底清除，原账号未受影响（{e}）")
         raise HTTPException(status_code=500, detail=f"删除失败：账号数据未能移入回收站，原账号未受影响（{e}）")
     accounts.forget_ensured(account)  # 防 ensure 缓存让已删账号以空目录复活
     return {"ok": True, "id": account, "inTrash": in_trash, "restorableDays": days if in_trash else 0}

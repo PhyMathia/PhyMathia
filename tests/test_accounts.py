@@ -501,6 +501,31 @@ def test_accounts_route_delete_trash_off_purges_immediately(acc_env):
         assert trash.list_account_tombstones() == []
 
 
+def test_accounts_route_delete_zero_days_profiles_purge_failure_keeps_data(acc_env, monkeypatch):
+    """552 窗口二：days=0 时画像清除必须发生在账号数据销毁之前——画像清除抛
+    异常时 restore_entry 复活的是数据完好的账号，500 文案「原账号未受影响」属实。"""
+    accounts.ensure_account("default")
+    _make("olga")
+    kv_dir = accounts.resolve_paths("olga").kv_dir
+    kv_dir.mkdir(parents=True, exist_ok=True)
+    (kv_dir / "k.json").write_text("{}", encoding="utf-8")
+    trash.set_retention_days("olga", 0)
+
+    def boom(entry, exclude_stone=None):
+        raise OSError("profiles io error (simulated)")
+
+    monkeypatch.setattr(trash, "purge_bound_profiles", boom)
+    with _client(acc_env) as client:
+        r = client.post("/api/accounts/delete", json={"account_id": "olga", "delete_data": True})
+    assert r.status_code == 500
+    assert "原账号未受影响" in r.json()["detail"]
+    # 账号原样：注册表在、数据目录与内容在、没留墓碑（销毁步殿后＝一无所毁）
+    assert "olga" in accounts.load_registry()
+    assert (accounts.users_dir() / "olga").exists()
+    assert (kv_dir / "k.json").exists()
+    assert trash.list_account_tombstones() == []
+
+
 def test_trash_account_purge_route(acc_env):
     """墓碑彻底删除：200 后目录消失；再删 404。"""
     accounts.ensure_account("default")
