@@ -199,5 +199,24 @@ class NormalizeUserProfileTest(unittest.TestCase):
         )
 
 
+class FactIdWhitelistTest(unittest.TestCase):
+    """事实 id 白名单（2026-11-22）：备份导入可带入脏 id，前端记忆面板拼 onclick——
+    " 切断 HTML 属性、' 切断 JS 字符串（HTML 实体解码先于 JS 词法，escapeHtml 救
+    不了内联事件）。归一化入口（磁盘读/局部更新/备份落盘同口径）必须剥净。"""
+
+    def test_dirty_id_chars_stripped(self):
+        for dirty in ['x" onmouseover="alert(1)', "x');alert(1);//", "a<b>c&d'e\\f 空格"]:
+            out = profile_mod._normalize_fact_item({"id": dirty, "fact": "f"})
+            self.assertRegex(out["id"], r"^[A-Za-z0-9_-]*$"), dirty
+
+    def test_clean_id_passthrough_and_empty_fallback(self):
+        self.assertEqual(profile_mod._normalize_fact_item({"id": "pf_abc-123_X", "fact": "f"})["id"],
+                         "pf_abc-123_X")
+        # 剥空/缺 id 回退生成新 pf_ 前缀 id（不落空串，删除/恢复按 id 寻址）
+        self.assertTrue(profile_mod._normalize_fact_item({"id": '""\'\'', "fact": "f"})["id"]
+                        .startswith("pf_"))
+        self.assertTrue(profile_mod._normalize_fact_item({"fact": "f"})["id"].startswith("pf_"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -190,7 +190,10 @@ class DraftRecipeTest(unittest.TestCase):
         user_text = seen[0]["messages"][1]["content"]
         self.assertIn("受力分析", user_text, "补丁模式必须把当前草稿喂给模型")
         self.assertIn("要一个受力分析节点", user_text)
-        self.assertTrue(seen[0]["json_mode"], "草稿通道固定走 JSON 模式")
+        # json_mode 跟随供应商能力（2026-11-22）：fixture provider=opencode 不在
+        # 白名单——不认 response_format 的上游整请求 400 → 502，起草全灭；
+        # 支持的供应商（deepseek/openai）才带（对照用例见 JsonModeGateTest）。
+        self.assertFalse(seen[0]["json_mode"], "opencode 不认 response_format，不许带 json_mode")
 
     def test_duplicate_name_reported(self):
         out = _run({"recipe": {"desc": "拆分"}}, draft=dict(BASE),
@@ -487,3 +490,24 @@ class ClampMaxTokensSharedTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JsonModeGateTest(unittest.TestCase):
+    """json_mode 必须过供应商能力门控（2026-11-22）：不认 response_format 的上游
+    整请求 400 → 502，起草通道全灭（主链四处调用点同款闸，此处此前漏挂）。"""
+
+    def test_deepseek_gets_json_mode_opencode_does_not(self):
+        from harness.review import _supports_json_mode
+        for provider, want in (("deepseek", True), ("openai", True),
+                               ("opencode", False), ("", False), (None, False)):
+            self.assertIs(_supports_json_mode(provider), want, provider)
+
+    def test_draft_call_follows_provider_gate(self):
+        seen = []
+        fake = _fake_llm({"recipe": {"desc": "拆分"}}, seen=seen)
+        deepseek = dict(MODEL, provider="deepseek")
+        with mock.patch.object(draft_mod, "_call_model", new=fake), \
+                mock.patch.object(draft_mod, "_resolve_model", new=lambda model: dict(deepseek)):
+            asyncio.run(draft_mod.draft_recipe(
+                instruction="做一个受力分析节点", draft=None, model=dict(deepseek)))
+        self.assertTrue(seen[0]["json_mode"], "deepseek 认 response_format，应带 json_mode")

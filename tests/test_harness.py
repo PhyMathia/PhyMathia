@@ -284,6 +284,18 @@ class HarnessCoreTest(unittest.TestCase):
         payload = extract_json('```json\n{"summary":"x","operations":[]}\n```')
         self.assertEqual(payload["summary"], "x")
 
+    def test_extract_json_non_json_fence_does_not_swallow_payload(self):
+        """非 JSON 围栏在真载荷之前（弱模型先写思路/示例再给 JSON，2026-11-22）：
+        修前命中第一个围栏就把整段文本替换成围栏内容，后面的真 JSON 被吞——
+        _parse_plan_output 报 parse_error、draft_recipe 报格式不对，白烧一轮。"""
+        text = '说明：\n```\n这是备注思路\n```\n{"summary":"x","operations":[]}'
+        payload = extract_json(text)
+        self.assertEqual(payload["summary"], "x")
+        # 围栏内容是真 JSON 时行为不变（优先用围栏内容，不受回退影响）
+        self.assertEqual(extract_json('```\n{"in_fence": true}\n```'), {"in_fence": True})
+        # 无围栏纯文本照旧
+        self.assertEqual(extract_json('前置说明 {"a": 1} 尾部'), {"a": 1})
+
 
 class HarnessLevelSuffixPlacementTest(unittest.TestCase):
     """harness 前缀缓存拍板（2026-10-01）：难度等级后置出 system。

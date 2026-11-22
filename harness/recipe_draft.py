@@ -23,7 +23,8 @@ from .prompts import build_recipe_draft_messages
 from .recipe_templates import pick_template
 from .recipes import RECIPE_NAME_MAX, normalize_recipe_input, validate_recipe
 from .review import (
-    HarnessError, _apply_thinking_default, _call_model, _resolve_model, clamp_max_tokens,
+    HarnessError, _apply_thinking_default, _call_model, _resolve_model,
+    _supports_json_mode, clamp_max_tokens,
 )
 
 logger = logging.getLogger(__name__)
@@ -246,11 +247,15 @@ async def draft_recipe(
     # 超大值落 DRAFT_TOKENS_CEILING、合法值原样。
     tokens = clamp_max_tokens(max_tokens, DRAFT_MAX_TOKENS, DRAFT_TOKENS_CEILING)
     try:
+        # json_mode 过供应商能力门控（2026-11-22）：不认 response_format 的上游
+        # （opencode 免费模型/自建网关一类）整请求 400 → 502，工坊起草全灭。主链
+        # 四处调用点都先过 _supports_json_mode（review.py 同款），这里此前漏挂；
+        # 不支持时退回纯提示词约束，extract_json 照常从围栏/前后噪声里捞 JSON。
         reply = await _call_model(
             messages,
             resolved,
             tokens,
-            json_mode=True,
+            json_mode=_supports_json_mode(resolved["provider"]),
         )
     except HarnessError:
         raise

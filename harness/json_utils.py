@@ -157,6 +157,11 @@ def extract_json(text: str):
     balanced scanning so truncated tails or trailing commas do not make a valid
     prefix unusable. Top-level arrays (models often emit [ {op...} ] directly)
     are returned as-is.
+
+    围栏回退（2026-11-22）：弱模型常先吐一个**非 JSON** 围栏（思路/示例）再给
+    真载荷。修前命中第一个围栏就把整段文本替换成围栏内容，后面的真 JSON 被
+    吞掉（解析 None→ops 全丢→重试烧轮次）。围栏链路解析不出时回退原文再走
+    一遍既有兜底。
     """
 
     if not isinstance(text, str):
@@ -165,6 +170,21 @@ def extract_json(text: str):
     fenced = re.search(r"```(?:json)?\s*([\s\S]*?)```", cleaned)
     if fenced:
         cleaned = fenced.group(1).strip()
+        parsed = _extract_payload(cleaned)
+        if parsed is not None:
+            return parsed
+        # 围栏内容不是 JSON（思路/示例围栏在前）：回退原文，别把围栏后的真载荷吞掉
+        return _extract_payload(text.strip())
+    return _extract_payload(cleaned)
+
+
+def _extract_payload(cleaned: str):
+    """主链：在已剥壳的文本上找 JSON（fast path / 数组 / repair / 平衡扫描）。"""
+
+    # Fast path: the whole payload is valid JSON.
+    parsed = _try_parse(cleaned)
+    if parsed is not None:
+        return parsed
 
     # Fast path: the whole payload is valid JSON.
     parsed = _try_parse(cleaned)

@@ -927,6 +927,55 @@ check('graph-poster: 缩略知识海报纯函数（纯文本/标题摘要/断行
   return true;
 });
 
+check('graph-poster: 可达环不死循环＋不可达环成员不丢（用户拖反向端口连线成环）', () => {
+  const dbg = sandbox.window.graphPosterDebug;
+  // 场景一：Q(根)→A 默认结构边 + A→Q 自定义端口连线（graph-interact.js 生成、无 link
+  // 标记）→ 从根可达的环。修前 BFS「最长路径」松弛无限重放，frontier 涨到数组上限，
+  // 浏览器里导出海报整页冻结。修复＝next 越过节点数上界即停止松弛。
+  const cyc = dbg.layout({
+    nodes: [
+      { id: 'q', kind: 'user', isRoot: true, x: 0, y: 0, w: 260, h: 140, messageIndex: -1, label: '问题' },
+      { id: 'a', kind: 'answer', x: 400, y: 0, w: 260, h: 140, messageIndex: -1, analysis: '回答' },
+    ],
+    edges: [
+      { from: 'q', to: 'a' },
+      { from: 'a', to: 'q', type: 'custom', custom: true, fromPort: 'out-0', toPort: 'in-1' },
+    ],
+    groups: [],
+  });
+  if (!cyc || cyc.cards.length !== 2) throw new Error('环场景应返回且两卡齐全：' + (cyc ? cyc.cards.length : 'null'));
+  // 场景二：从 q 可达的下游环节点——不丢、不死循环
+  const orphan = dbg.layout({
+    nodes: [
+      { id: 'q', kind: 'user', isRoot: true, x: 0, y: 0, w: 260, h: 140, messageIndex: -1, label: '问题' },
+      { id: 'c1', kind: 'answer', x: 400, y: 0, w: 260, h: 140, messageIndex: -1, analysis: '环一' },
+      { id: 'c2', kind: 'answer', x: 800, y: 0, w: 260, h: 140, messageIndex: -1, analysis: '环二' },
+    ],
+    edges: [
+      { from: 'q', to: 'c1' },
+      { from: 'c1', to: 'c2' },
+      { from: 'c2', to: 'c1' },
+    ],
+    groups: [],
+  });
+  if (!orphan || orphan.cards.length !== 3) throw new Error('可达环上的下游节点不丢：' + (orphan ? orphan.cards.length : 'null'));
+  // 场景三：与根不连通的孤立环节点归末层（修前 layerOf=undefined 匹配不到任何层＝从海报消失）
+  const iso = dbg.layout({
+    nodes: [
+      { id: 'q', kind: 'user', isRoot: true, x: 0, y: 0, w: 260, h: 140, messageIndex: -1, label: '问题' },
+      { id: 'x1', kind: 'answer', x: 400, y: 0, w: 260, h: 140, messageIndex: -1, analysis: '孤环一' },
+      { id: 'x2', kind: 'answer', x: 800, y: 0, w: 260, h: 140, messageIndex: -1, analysis: '孤环二' },
+    ],
+    edges: [
+      { from: 'x1', to: 'x2' },
+      { from: 'x2', to: 'x1' },
+    ],
+    groups: [],
+  });
+  if (!iso || iso.cards.length !== 3) throw new Error('孤立环节点应归末层不消失：' + (iso ? iso.cards.length : 'null'));
+  return true;
+});
+
 check('graph-poster: 导出接线（菜单海报段 + 主包/查看器双注册）', () => {
   const ge = fs.readFileSync('src/static/js/graph-export.js', 'utf8');
   if (!ge.includes('data-poster-scale')) throw new Error('导出菜单缺海报倍数行');

@@ -453,7 +453,7 @@ async function memoryRenderPanel() {
           '<div class="memory-item"><span class="memory-item-tag">' + (MEMORY_CATEGORY_LABELS[f.category] || f.category || '其他') + '</span>' +
           '<span class="memory-item-fact">' + escapeHtml(String(f.fact || '')) + '</span>' +
           '<span class="memory-item-time" title="确认 ' + (f.occurrences || 1) + ' 次">' + memoryRelTime(f.updatedAt) + ' · ×' + (f.occurrences || 1) + '</span>' +
-          '<button class="memory-item-btn memory-item-btn-danger" onclick="memoryDeleteFact(\'' + String(f.id || '').replace(/'/g, '') + '\')">删除</button></div>'
+          '<button class="memory-item-btn memory-item-btn-danger" onclick="memoryDeleteFact(\'' + String(f.id || '').replace(/[^A-Za-z0-9_-]/g, '') + '\')">删除</button></div>'
         ).join('')
       : '<div class="memory-empty">暂无自动记忆。对话中提到的个人信息（学段、目标、薄弱点等）与检测错题、常问主题会出现在这里。</div>';
   }
@@ -469,8 +469,8 @@ async function memoryRenderPanel() {
           '<div class="memory-item memory-item-idle"><span class="memory-item-tag">' + (MEMORY_CATEGORY_LABELS[f.category] || f.category || '其他') + '</span>' +
           '<span class="memory-item-fact">' + escapeHtml(String(f.fact || '')) + '</span>' +
           '<span class="memory-item-time">休眠 · 上次使用 ' + memoryRelTime(f.lastUsedAt || f.updatedAt) + '</span>' +
-          '<button class="memory-item-btn" onclick="memoryRestoreFact(\'' + String(f.id || '').replace(/'/g, '') + '\')">恢复</button>' +
-          '<button class="memory-item-btn memory-item-btn-danger" onclick="memoryDeleteFact(\'' + String(f.id || '').replace(/'/g, '') + '\')">删除</button></div>'
+          '<button class="memory-item-btn" onclick="memoryRestoreFact(\'' + String(f.id || '').replace(/[^A-Za-z0-9_-]/g, '') + '\')">恢复</button>' +
+          '<button class="memory-item-btn memory-item-btn-danger" onclick="memoryDeleteFact(\'' + String(f.id || '').replace(/[^A-Za-z0-9_-]/g, '') + '\')">删除</button></div>'
         ).join('')
       : '<div class="memory-empty">超过 30 天没被回答用到的记忆会休眠（不再注入），可随时恢复。</div>';
   }
@@ -486,8 +486,8 @@ async function memoryRenderPanel() {
           '<div class="memory-item memory-item-archived"><span class="memory-item-tag">' + (MEMORY_CATEGORY_LABELS[f.category] || f.category || '其他') + '</span>' +
           '<span class="memory-item-fact">' + escapeHtml(String(f.fact || '')) + '</span>' +
           '<span class="memory-item-time">' + (f.source === 'superseded' ? '已更正' : '已移除') + ' · ' + memoryRelTime(f.removedAt) + '</span>' +
-          '<button class="memory-item-btn" onclick="memoryRestoreArchive(\'' + String(f.id || '').replace(/'/g, '') + '\')">恢复</button>' +
-          '<button class="memory-item-btn memory-item-btn-danger" onclick="memoryDeleteArchive(\'' + String(f.id || '').replace(/'/g, '') + '\')">删除</button></div>'
+          '<button class="memory-item-btn" onclick="memoryRestoreArchive(\'' + String(f.id || '').replace(/[^A-Za-z0-9_-]/g, '') + '\')">恢复</button>' +
+          '<button class="memory-item-btn memory-item-btn-danger" onclick="memoryDeleteArchive(\'' + String(f.id || '').replace(/[^A-Za-z0-9_-]/g, '') + '\')">删除</button></div>'
         ).join('')
       : '<div class="memory-empty">AI 更正或你否认旧记忆时，原内容会留档在这里，可恢复或删除。</div>';
   }
@@ -501,8 +501,8 @@ async function memoryRenderPanel() {
       ? pending.map(p =>
           '<div class="memory-item"><span class="memory-item-tag">候选</span>' +
           '<span class="memory-item-fact">' + escapeHtml(String(p.fact || '')) + '</span>' +
-          '<button class="memory-item-btn" onclick="memoryConfirmPending(\'' + String(p.id || '').replace(/'/g, '') + '\')">确认</button>' +
-          '<button class="memory-item-btn memory-item-btn-danger" onclick="memoryDeletePending(\'' + String(p.id || '').replace(/'/g, '') + '\')">忽略</button></div>'
+          '<button class="memory-item-btn" onclick="memoryConfirmPending(\'' + String(p.id || '').replace(/[^A-Za-z0-9_-]/g, '') + '\')">确认</button>' +
+          '<button class="memory-item-btn memory-item-btn-danger" onclick="memoryDeletePending(\'' + String(p.id || '').replace(/[^A-Za-z0-9_-]/g, '') + '\')">忽略</button></div>'
         ).join('')
       : '<div class="memory-empty">这里会出现对话中只提到过一次的信息，出现两次后自动生效。</div>';
   }

@@ -40,9 +40,13 @@ _SWEEP_INTERVAL_SECONDS = float(os.environ.get("PHYMATHIA_GEN_SWEEP_SECONDS", "1
 _DONE_TTL_SECONDS = 3600.0
 _DEAD_TTL_SECONDS = 1800.0
 _TASK_MAX = 64
-# 单任务帧缓冲软上限（字符）：正文 20 万封顶＋SSE 包裹开销，超限按出错收尾防失控
-# 上游把内存吃穿（正常模块生成远达不到）。
-_BUFFER_CHAR_LIMIT = 2_000_000
+# 单任务帧缓冲软上限（字符）：超限按出错收尾防失控上游把内存吃穿。
+# 标定（2026-11-22 修静默截断时校准）：缓冲存的是逐字原样 SSE 行，开销≈正文
+# 100-250×（单字 delta 帧的 JSON 包裹），且 reasoning_content 帧同样计入——
+# 推理型模型 6 万 reasoning token（见 backlog 506 实测）单此一项就 ~12M 字符，
+# 旧值 2M 在正常长生成内即触发。8M 覆盖常规正文＋中等 reasoning；真超限走
+# 「补错误帧＋[DONE]」的显式报错，不静默截断。
+_BUFFER_CHAR_LIMIT = 8_000_000
 
 _tasks = {}  # f"{account}:{task_id}" -> GenerationTask（dict 按插入序，LRU 依此淘汰）
 _sweeper_task = None
@@ -93,11 +97,18 @@ class GenerationTask:
             if self.state != "running":
                 return
             if self.chars + len(line) > _BUFFER_CHAR_LIMIT:
-                # 直接收尾：终帧在 finish 里补，reader 的 finally 照样关上游
+                # 直接收尾：错误帧＋[DONE] 必须在这里就地补——注释原以为 finish 会补，
+                # 但 finish 的幂等闸门（state != running 即 return）让 reader 末尾的
+                # finish("done") 变 no-op，[DONE] 永远落不了地：订阅端把流末当正常
+                # 完成，正文静默截断（2026-11-22 修）。reader 的 finally 照样关上游
                 self.state = "error"
                 self.error_detail = "帧缓冲超限"
                 self.ended_at = time.time()
                 self.buffer_truncated = True
+                self.frames.append("data: " + json.dumps(
+                    {"error": 500, "detail": "生成超出服务端缓冲上限，内容被截断"},
+                    ensure_ascii=False) + "\n\n")
+                self.frames.append("data: [DONE]\n\n")
                 self._cond.notify_all()
                 return
             self.frames.append(line)

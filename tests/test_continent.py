@@ -1286,6 +1286,30 @@ class RegionFamilyProposalTest(unittest.TestCase):
         out = region_family_proposals(grown, self.clusters, self.items, [], rej)
         self.assertEqual([p["count"] for p in out], [3], "证据长了才重新开口")
 
+    def test_dismissed_dirty_counts_do_not_500(self):
+        # dismissed/rejected 的计数字段可被脏值污染（.pmu 备份导入 kv_restore_bulk
+        # 整包落盘零形状校验、api_set_kv 对 value 不校验）——裸 int() 会让整条
+        # /api/continent 持久 500（脏值在盘上每次打开都炸）。修＝计数兜底归零
+        # （=「没驳回过」，提议照常走），与 _num_or_zero 同口径（2026-11-22）。
+        log = self._log({"to": "信号与系统", "sid": "sess_mm", "at": 1},
+                        {"to": "信号与系统", "sid": "sess_el", "at": 2})
+        for dirty in ("x", "", [], {}, ["2"], "inf", None, True):
+            rej = {"region:信号与系统": {"islands": dirty}}
+            out = region_family_proposals(log, self.clusters, self.items, [], rej)
+            self.assertEqual([p["name"] for p in out], ["信号与系统"],
+                             f"脏 islands={dirty!r} 应按 0 处理（未驳回），不抛错")
+        # rejected 卡片计数同款（family_term_suggestions 的再生长判断）
+        from server.continent import family_term_suggestions
+        items = {"k1": {"title": "散度环流"}, "k2": {"title": "散度环流的积分形式"}}
+        for dirty in ("x", [], {}, "inf", None):
+            rejected = {"矢量分析": {"散度环流": {"cards": dirty}}}
+            suggestions = family_term_suggestions(items, [], {}, rejected)
+            self.assertIsInstance(suggestions, list,
+                                  f"脏 cards={dirty!r} 不许把整条建议链打崩")
+            # 正常计数值仍工作（驳回数=1 张卡、再生长余量内 → 被压制的组不放行）
+            clean = family_term_suggestions(items, [], {}, {"矢量分析": {"散度环流": {"cards": 2}}})
+            self.assertIsInstance(clean, list)
+
     def test_no_usable_terms_means_no_proposal(self):
         # 空族会被 families_from_payload 整条丢掉（没有词条的族接不住任何卡）——
         # 提不出干净词条就干脆不提，省得用户点了「建成族」什么都不发生

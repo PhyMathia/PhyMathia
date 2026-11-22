@@ -446,6 +446,16 @@ def _num_or_zero(raw) -> float:
         return 0.0
 
 
+def _int_or_zero(raw) -> int:
+    """_num_or_zero 的 int 口径：建议 dismissed/rejected 的计数字段可被脏值污染
+    （备份导入 kv_restore_bulk 整包落盘、api_set_kv 对 value 零形状校验），裸
+    int() 会把整条 /api/continent 打成持久 500（脏值在盘上，每次打开都炸）。"""
+    try:
+        return int(raw or 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 def _created_rank(item) -> float:
     return _num_or_zero((item or {}).get("createdAt"))
 
@@ -853,7 +863,7 @@ def family_term_suggestions(items, families, card_sims, rejected=None) -> list:
             break
         old = rej.get(g["family"])
         old = old.get(g["term"]) if isinstance(old, dict) else None
-        if old and len(g["cards"]) <= int(old.get("cards") or 0) + FAMILY_SUGGEST_REGROW:
+        if old and len(g["cards"]) <= _int_or_zero(old.get("cards")) + FAMILY_SUGGEST_REGROW:
             continue
         out = dict(g)
         out["regrown"] = bool(old)
@@ -928,7 +938,7 @@ def region_family_proposals(region_log, clusters, items, families, dismissed=Non
         if len(g["sids"]) < REGION_PROPOSAL_MIN_ISLANDS or name in canon:
             continue
         old = rej.get("region:" + name)
-        if isinstance(old, dict) and int(old.get("islands") or 0) >= len(g["sids"]):
+        if isinstance(old, dict) and _int_or_zero(old.get("islands")) >= len(g["sids"]):
             continue
         # 这批证据岛里的全部卡先收齐：词条提炼与「学科味儿」命中计数共用一份遍历
         cards, norm_titles = [], []

@@ -81,6 +81,18 @@ def _tombstone_fresh(entry, now_ms):
     return (now_ms - at) <= TOMBSTONE_TTL_MS
 
 
+def _tombstone_ms(entry):
+    """墓碑时间戳的 int 兜底（2026-11-22）：nodeSigs 可经 /api/kv 直写或 .pmu
+    备份导入带入任意形状（"x"/"inf"/列表…），裸 int(float()) 抛错会让路由兜底
+    退回「整份照存」——T360 的合并保护被畸形数据静默绕过（"inf" 还能穿透
+    _tombstone_fresh 后在 int() 处 OverflowError）。解析失败给 None；_sigs_equal
+    对 None 一律判不等（同脏也走慢合并——快路径放行＝绕过合并保护，恰是本修要堵的）。"""
+    try:
+        return int(float(entry.get("d", 0)))
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def _node_text(node):
     if not isinstance(node, dict):
         return ""
@@ -120,7 +132,8 @@ def _sigs_equal(left, right) -> bool:
         if isinstance(value, dict) or isinstance(other, dict):
             if not (isinstance(value, dict) and isinstance(other, dict)):
                 return False
-            if int(float(value.get("d", 0))) != int(float(other.get("d", 0))):
+            mine, theirs = _tombstone_ms(value), _tombstone_ms(other)
+            if mine is None or theirs is None or mine != theirs:
                 return False
             continue
         if value != other:
@@ -229,7 +242,9 @@ def merge_graph_states(server, incoming, base_node_sigs=None, now_ms=None):
             continue
         # 删除生效：不留该节点的签名；墓碑未过期就继续留在表里挡别处复活
         if is_tombstone(tomb) and _tombstone_fresh(tomb, now):
-            merged_sigs[node_id] = {"d": int(float(tomb.get("d")))}
+            ts = _tombstone_ms(tomb)
+            if ts is not None:  # 脏时间戳解不出就不落墓碑（{"d": None} 会废掉墓碑形状）
+                merged_sigs[node_id] = {"d": ts}
 
     # 两侧的墓碑（未过期、且该节点确实不在合并结果里）都留：别再被谁加回来
     for sigs in (server_sigs, incoming_sigs):
@@ -239,7 +254,9 @@ def merge_graph_states(server, incoming, base_node_sigs=None, now_ms=None):
             if node_id in merged_sigs or node_id in out_ids:
                 continue
             if is_tombstone(entry) and _tombstone_fresh(entry, now):
-                merged_sigs[node_id] = {"d": int(float(entry.get("d")))}
+                ts = _tombstone_ms(entry)
+                if ts is not None:
+                    merged_sigs[node_id] = {"d": ts}
 
     merged["customNodes"] = out_nodes
     merged["nodeSigs"] = merged_sigs

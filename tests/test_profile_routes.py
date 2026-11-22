@@ -84,6 +84,21 @@ class ProfileMemoryTest(RouteTestBase):
         self.assertEqual(p["facts"], [])
         self.assertEqual(p["archive"][0]["fact"], "我是高二学生")
 
+    def test_remove_pending_also_archives(self):
+        """pending 命中同样落 archive（2026-11-22 对齐契约）：docstring 与
+        models-api.md 都写「remove 落 archive（面板可查看/恢复）」，修前 pending
+        分支无痕蒸发——AI 撤回候选后用户在面板看不到也找不回。"""
+        profile_mod.apply_profile_ops(self._dev(), [
+            {"op": "new", "fact": "薄弱：电磁感应", "category": "weakness"}])
+        p = profile_mod.get_profile(self._dev())
+        self.assertEqual(len(p["pending"]), 1)
+        pid = p["pending"][0]["id"]
+        profile_mod.apply_profile_ops(self._dev(), [{"op": "remove", "id": pid}])
+        p = profile_mod.get_profile(self._dev())
+        self.assertEqual(p["pending"], [])
+        self.assertEqual(p["archive"][0]["fact"], "薄弱：电磁感应",
+                         "候选被 remove 必须留档（面板可见可恢复），不许无痕蒸发")
+
     def test_legacy_add_fact_candidates_still_works(self):
         self.assertEqual(
             profile_mod.add_fact_candidates(self._dev(),

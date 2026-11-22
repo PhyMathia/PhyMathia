@@ -115,6 +115,42 @@ def test_error_finish_appends_terminal_frames():
     asyncio.run(scenario())
 
 
+def test_buffer_overflow_appends_terminal_frames(monkeypatch):
+    """超限收尾必须就地补错误帧＋[DONE]（2026-11-22 修静默截断）。
+
+    修前：append_frame 超限只置 state=error，注释声称「终帧在 finish 里补」，
+    但 finish 的幂等闸门（state != running 即 return）让 reader 末尾的
+    finish("done") 变 no-op——[DONE] 与错误帧永远落不了地，订阅端把流末当
+    正常完成，正文被静默截断（长生成/推理型 reasoning 帧即可触发）。"""
+    monkeypatch.setattr(generation_tasks, "_BUFFER_CHAR_LIMIT", 16)
+
+    async def scenario():
+        task = generation_tasks.GenerationTask("t", "default")
+        await task.append_frame("data: short\n\n")
+        # 下一帧越过上限：就地收尾
+        await task.append_frame("data: " + "x" * 64 + "\n\n")
+        assert task.state == "error" and task.error_detail == "帧缓冲超限"
+        assert task.buffer_truncated is True
+        # 修复核心：缓冲尾部带明确收口（错误帧在前、[DONE] 在后），
+        # 订阅端重放时前端 _sseContentFrames 才会把 data.error 抛成显式失败
+        assert task.frames[-1].strip() == "data: [DONE]"
+        err_frame = task.frames[-2]
+        assert err_frame.startswith("data: ")
+        payload = json.loads(err_frame[len("data: "):])
+        assert payload.get("error") and "截断" in payload.get("detail", "")
+        # reader 随后的 finish/append 全部 no-op，不重复补帧
+        await task.finish("done")
+        await task.append_frame("data: late\n\n")
+        assert task.frames[-1].strip() == "data: [DONE]"
+        # 订阅端（迟到重放）完整收到错误帧＋[DONE]
+        replay = [frame async for frame in task.subscribe()]
+        assert replay == task.frames
+        status = task.status()
+        assert status["state"] == "error" and status["truncated"] is True
+
+    asyncio.run(scenario())
+
+
 def test_grace_cancel_after_unwatched():
     tid = "22222222-2222-2222-2222-222222222222"
 

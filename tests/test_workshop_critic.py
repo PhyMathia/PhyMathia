@@ -89,7 +89,10 @@ class CriticCallTest(unittest.TestCase):
         # critic 不许带工具：tools/tool_choice 都不传
         self.assertIsNone(seen[0]["tools"])
         self.assertIsNone(seen[0]["tool_choice"])
-        self.assertTrue(seen[0]["json_mode"])
+        # json_mode 跟随供应商能力（2026-11-22）：fixture provider=opencode 不在
+        # 白名单，带了会被整请求 400 打成 502（初筛全灭）；主链同款闸（对照见
+        # JsonModeGateTest）。
+        self.assertFalse(seen[0]["json_mode"])
         # 服务端固定系统提示词第一条；user 带配方名/材料摘要/输出全文
         roles = [item["role"] for item in seen[0]["messages"]]
         self.assertEqual(roles, ["system", "user"])
@@ -264,3 +267,24 @@ class CriticRouteTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JsonModeGateTest(unittest.TestCase):
+    """json_mode 跟随供应商能力（2026-11-22）：deepseek/openai 带_response_format，
+    其余（opencode 免费模型/自建网关）不带——带了整请求 400 → 502 初筛全灭。"""
+
+    def test_critic_call_follows_provider_gate(self):
+        seen = []
+
+        async def fake(messages, model, max_tokens, tools=None, tool_choice=None,
+                       json_mode=False, on_delta=None):
+            seen.append({"json_mode": json_mode})
+            return {"content": json.dumps({"verdict": "pass", "score": 9, "issues": [], "say": "ok"}),
+                    "tool_calls": []}
+
+        deepseek = dict(MODEL, provider="deepseek")
+        with mock.patch.object(critic_mod, "_call_model", new=fake), \
+                mock.patch.object(critic_mod, "_resolve_model", new=lambda model: dict(deepseek)):
+            asyncio.run(critic_mod.workshop_critic_call(
+                output="第一步 研究\n取物块为研究对象。", model=dict(deepseek)))
+        self.assertTrue(seen[0]["json_mode"], "deepseek 应带 json_mode")

@@ -268,6 +268,13 @@
         var down = byId[e.to];
         var next = curLayer + 1;
         if (layerOf[down.id] === undefined || next > layerOf[down.id]) {
+          // 环保护（2026-11-22）：用户拖反向端口连线可与默认结构边成环（自定义边无
+          // link 标记、照进 structEdges），「最长路径」松弛在环上无限重放——frontier
+          // 涨到数组上限前页面已冻结。DAG 最长路径层 ≤ 节点数-1，next 越过该上界
+          // 即在绕圈：停止松弛，环成员按已得层排布；BFS 到不了的环成员由下面
+          // orphan 收口归末层（主画布分层 graph-render-layout.js 只认首条入边防环，
+          // 海报要保最长路径语义，用层上界截断替代）
+          if (next >= vis.length) continue;
           layerOf[down.id] = next;
           if (next > maxLayer) maxLayer = next;
           frontier.push(down);
@@ -285,8 +292,12 @@
     var cards = [];
     var rows = [];
     for (var L = 0; L <= orphanLayer; L++) {
-      var layerNodes = vis.filter(function (n) { return layerOf[n.id] === L; })
-        .sort(function (a, b) { return (a.x || 0) - (b.x || 0); });
+      // orphan 收口（2026-11-22）：BFS 到不了的节点（纯环成员、挂在环下游的链）
+      // layerOf 为 undefined，修前匹配不到任何层＝直接从海报上消失——277 行注释
+      // 声称的「归末层」从未实现。undefined 只在末层收口，避免重复入层。
+      var layerNodes = vis.filter(function (n) {
+        return layerOf[n.id] === L || (L === orphanLayer && layerOf[n.id] === undefined);
+      }).sort(function (a, b) { return (a.x || 0) - (b.x || 0); });
       for (var i = 0; i < layerNodes.length; i += maxPerRow) {
         rows.push(layerNodes.slice(i, i + maxPerRow));
       }

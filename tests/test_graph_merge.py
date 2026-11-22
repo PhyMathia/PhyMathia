@@ -362,3 +362,35 @@ def test_route_merge_atomic_against_concurrent_thread_writer(monkeypatch):
     final = storage_mod.kv_read("graph:sess_t525")
     contents = [n["content"] for n in final["customNodes"]]
     assert contents == ["并发设备新节点"]
+
+
+# ---- 脏 nodeSigs 不许打崩合并（2026-11-22）----
+
+def test_dirty_tombstone_values_do_not_bypass_merge():
+    """nodeSigs 可经 /api/kv 直写或 .pmu 备份导入带入任意形状（"x"/"inf"/列表）。
+
+    修前 _sigs_equal 的裸 int(float()) 抛 ValueError，路由兜底把异常当「合并失败」
+    整份照存——T360 的合并保护被畸形数据静默绕过（"inf" 还能穿透 _tombstone_fresh
+    后在 int() 处 OverflowError）。修后：脏值解不出按「签名不等」处理，走慢合并。"""
+    server = state([node("a", "服务端版本")], updated_at=1000,
+                   sigs={"a": {"d": "abc"}, "n": {"d": 1}})
+    incoming = state([node("a", "本端版本")], updated_at=2000,
+                     sigs={"a": {"d": 5}, "n": {"d": 7}})
+    base = {"a": {"d": "abc"}, "n": {"d": 1}}  # 与服务端同脏（前端原样回传）
+    merged, did = merge_graph_states(server, incoming, base)
+    assert did is True, "脏签名表必须落慢合并，不许退回整份照存"
+    # 慢合并的正常语义仍在：双端都改过 a、本端 updatedAt 新 → 内容留本端
+    assert [n["content"] for n in merged["customNodes"]] == ["本端版本"]
+    # 墓碑时间戳解不出的不落 {"d": None}（会废掉墓碑形状），数字墓碑照常保留
+    assert all(not (isinstance(v, dict) and v.get("d") is None)
+               for v in merged.get("nodeSigs", {}).values())
+
+
+def test_inf_tombstone_survives_int_cast():
+    """"inf" 能通过 _tombstone_fresh 的 float() 再在 int() 处 OverflowError——
+    同一枚 helper 兜底，inf 墓碑解不出就不写进合并结果。"""
+    server = state([], updated_at=1000, sigs={"gone": {"d": "inf"}})
+    incoming = state([], updated_at=2000, sigs={})
+    merged, did = merge_graph_states(server, incoming, {"gone": {"d": "inf"}})
+    assert did is True
+    assert "gone" not in merged.get("nodeSigs", {})

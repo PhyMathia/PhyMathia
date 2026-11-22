@@ -22,7 +22,9 @@ from typing import Any, Dict, List
 
 from .json_utils import extract_json
 from .prompts import HARNESS_WORKSHOP_CRITIC_SYSTEM_PROMPT
-from .review import HarnessError, _apply_thinking_default, _call_model, _resolve_model
+from .review import (
+    HarnessError, _apply_thinking_default, _call_model, _resolve_model, _supports_json_mode,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -122,8 +124,12 @@ async def workshop_critic_call(
         str(recipe_name or "").strip()[:WORKSHOP_CRITIC_NAME_MAX],
         str(materials_summary or "").strip()[:WORKSHOP_CRITIC_MATERIALS_MAX_CHARS],
     )
-    # HarnessError（上游传输层故障）照常上抛→路由 502；回包形状坏才降级
-    reply = await _call_model(messages, resolved, tokens, json_mode=True)
+    # HarnessError（上游传输层故障）照常上抛→路由 502；回包形状坏才降级。
+    # json_mode 过供应商能力门控（2026-11-22）：不认 response_format 的上游整请求
+    # 400 → 502，初筛全灭；主链调用点同款 _supports_json_mode 闸（review.py），
+    # 不支持时退回纯提示词约束，extract_json 照常捞 JSON。
+    reply = await _call_model(
+        messages, resolved, tokens, json_mode=_supports_json_mode(resolved["provider"]))
     payload = extract_json(str(reply.get("content") or ""))
     if isinstance(payload, list) and payload:
         payload = payload[0]

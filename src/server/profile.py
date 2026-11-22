@@ -164,9 +164,14 @@ def _timestamp(value, default=0):
 def _normalize_fact_item(item: dict) -> dict:
     """补齐旧字段；逐字段降级，保留扩展字段及未知历史时间。"""
     history = item.get("history")
+    # id 白名单（2026-11-22）：正常生成恒为 pf_<hex>；备份导入（save_profile 原样
+    # 落盘外来 JSON）可带入含引号/尖括号的脏 id，前端记忆面板把它拼进 onclick
+    # 属性——" 切断属性、' 切断 JS 字符串（HTML 实体解码先于 JS 词法，escapeHtml
+    # 救不了内联事件），剥净字符集同 517/519 拍板口径。剥空回退生成新 id。
+    raw_id = re.sub(r"[^A-Za-z0-9_-]", "", str(item.get("id") or ""))
     return {
         **item,
-        "id": str(item.get("id") or ("pf_" + uuid.uuid4().hex[:12])),
+        "id": raw_id or ("pf_" + uuid.uuid4().hex[:12]),
         "fact": str(item.get("fact") or "").strip(),
         "category": item.get("category") if item.get("category") in FACT_CATEGORIES else "other",
         "sourceSession": str(item.get("sourceSession") or "")[:64],
@@ -373,15 +378,22 @@ def apply_profile_ops(device_id: str, ops: list, source: str = "",
             return False
 
         def _archive_item(item, reason):
+            # pending 命中同样落 archive（2026-11-22 对齐契约）：docstring 与
+            # models-api.md 都写「remove：从 facts/pending 删除，落 archive（面板可
+            # 查看/恢复）」，修前 pending 分支无痕蒸发——AI 撤回候选后用户在面板
+            # 看不到也找不回，违背「可以推断，但必须可见可纠」。恢复链落 pending
+            # 重新走两击门槛，不存在绕过。
             if item in facts:
                 facts.remove(item)
-                profile["archive"].append({
-                    "id": item["id"], "fact": item["fact"], "category": item["category"],
-                    "removedAt": now, "source": reason,
-                })
-                profile["archive"] = profile["archive"][-MAX_ARCHIVE:]
             elif item in pending:
                 pending.remove(item)
+            else:
+                return
+            profile["archive"].append({
+                "id": item["id"], "fact": item["fact"], "category": item["category"],
+                "removedAt": now, "source": reason,
+            })
+            profile["archive"] = profile["archive"][-MAX_ARCHIVE:]
 
         def _new_fact(op):
             """落地新事实：规范化查重撞上已有按 confirm；stage/goal 一次直接固化。"""
