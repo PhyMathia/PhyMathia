@@ -72,12 +72,18 @@ try {
   page.on('close', () => { console.log('!!! 页面被关闭'); });
 
   await page.addInitScript((cfg) => {
-    localStorage.setItem('phymathia_user_models', JSON.stringify([cfg.model]));
-    const act = {};
-    for (const s of cfg.slots) act[s] = cfg.model.id;
-    localStorage.setItem('phymathia_active_models', JSON.stringify(act));
-    localStorage.setItem('phymathia_onboarding_done', '1');
-    localStorage.setItem('phymathia_guide_seen', '1');
+    // 572（2026-11-22）：515 给全屏 iframe 补 sandbox 后，playwright 会把本脚本也注入
+    // 沙盒 about:blank 文档（init script 进每一帧），opaque origin 读 localStorage 抛
+    // SecurityError 成 pageerror，顶红 ⑨「页面异常」闸门——沙盒内静默跳过（种子只属
+    // 主文档），体例与 verify_send_channels.mjs 的 try/catch 一致。
+    try {
+      localStorage.setItem('phymathia_user_models', JSON.stringify([cfg.model]));
+      const act = {};
+      for (const s of cfg.slots) act[s] = cfg.model.id;
+      localStorage.setItem('phymathia_active_models', JSON.stringify(act));
+      localStorage.setItem('phymathia_onboarding_done', '1');
+      localStorage.setItem('phymathia_guide_seen', '1');
+    } catch (e) { /* 沙盒 iframe（opaque origin）没有 localStorage：不种也不算异常 */ }
   }, {
     model: { id: 'e2e-model', name: 'E2E mock', provider: 'opencode', model: 'e2e-mock', apiKey: 'e2e', baseUrl: `http://127.0.0.1:${MOCK_PORT}/v1` },
     slots: ['agent_model', 'html_model', 'descriptor_model', 'quiz_model', 'graph_model', 'branch_model'],

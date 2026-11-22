@@ -145,6 +145,9 @@ async function _streamCustomNodeResponse(resp, node, opts) {
     setTimeout(() => {
       renderPending = false;
       const live = _findGraphNode(node.id);
+      // T299 同款闸（见分析流）：停收/结算后防抖补渲不回灌，且不得用闭包原文
+      // 冲掉收尾已结算的 cleaned 内容
+      if (live && !live.busy) return;
       if (live) live.content = content;
       const renderBox = graphInner?.querySelector('[data-node-id="' + node.id + '"] .graph-custom-node-render');
       // 可视化卡片一旦挂载就不再每帧重建 iframe（巨型可视化反复重载 = “全屏节点不停闪”的直接来源），
@@ -285,6 +288,10 @@ async function _streamAnalysisResponse(resp, node, question) {
       renderPending = false;
       const live = _findGraphNode(node.id);
       if (!live) return;
+      // T299（572 E2E 钉死）：停收/结算把 busy 翻 false 后，防抖补渲不得把停收前
+      // 已进闭包的最后一片回灌正文——250ms 防抖迟于结算，不加闸会把已冻结的
+      // analysis 冲长一片（E2E 实测 frozenLen 10 → afterLen 20）
+      if (!live.busy) return;
       live.analysis = _stripSkillPlanPartial(analysis);
       const renderBox = graphInner?.querySelector('[data-node-id="' + node.id + '"] .graph-custom-node-render');
       if (renderBox) {
