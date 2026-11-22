@@ -653,9 +653,14 @@
       return norm(a.provider) === norm(b.provider) && norm(a.baseUrl) === norm(b.baseUrl);
     }
 
-    async function _requestVisualizationHtml(sourceContent, signal, extraInstruction) {
-      const htmlModel = typeof getActiveModelForRole === 'function' ? getActiveModelForRole('html') : null;
-      const agentModel = typeof getActiveModelForRole === 'function' ? getActiveModelForRole('agent') : null;
+    async function _requestVisualizationHtml(sourceContent, signal, extraInstruction, options) {
+      const opts = options || {};
+      const pick = (key, fallback) => (Object.prototype.hasOwnProperty.call(opts, key) ? opts[key] : fallback);
+      const htmlModel = pick('htmlModel', typeof getActiveModelForRole === 'function' ? getActiveModelForRole('html') : null);
+      const agentModel = pick('agentModel', typeof getActiveModelForRole === 'function' ? getActiveModelForRole('agent') : null);
+      // 后台 viz 传 quiet：进度胶囊属于前台，不许被这条后台任务改写
+      // （E2E 2026-11-22 case 1）。
+      const quiet = !!opts.quiet;
       const models = [];
       if (htmlModel) models.push(htmlModel);
       if (agentModel && (!htmlModel || agentModel.id !== htmlModel.id)) models.push(agentModel);
@@ -670,14 +675,21 @@
             : '';
           const combinedInstruction = [extraInstruction, retryInstruction].filter(Boolean).join('\n');
           const prompt = _buildVisualizationPrompt(sourceContent, combinedInstruction);
-          // 槽位思考（2026-10-11）：本轮尝试用哪个槽的模型，就带哪个槽的思考档位
+          // 槽位思考（2026-10-11）：本轮尝试用哪个槽的模型，就带哪个槽的思考档位。
+          // 后台 viz 由快照冻结（options.htmlThinking/agentThinking），开跑后换档
+          // 不影响在跑的这条。
+          const isHtmlSlot = !!(htmlModel && model.id === htmlModel.id);
+          const thinkingKey = isHtmlSlot ? 'htmlThinking' : 'agentThinking';
+          const thinking = opts[thinkingKey] !== undefined
+            ? opts[thinkingKey]
+            : getSlotThinkingForRole(isHtmlSlot ? 'html' : 'agent');
           const resp = await proxyChatWithModel(model, {
             messages: [{ role: 'user', content: prompt + '\n\n' + String(sourceContent || '').slice(0, 12000) }],
             stream: true,
             session_bucket: 'phymathia-viz',
-            thinking: getSlotThinkingForRole(htmlModel && model.id === htmlModel.id ? 'html' : 'agent'),
+            thinking,
           }, signal);
-          const reply = await collectStreamText(resp, (progress, length) => {
+          const reply = await collectStreamText(resp, quiet ? null : (progress, length) => {
             const pct = progress !== null && progress !== undefined
               ? Math.max(88, Math.min(93, progress))
               : Math.min(93, 88 + Math.min(length / 20000, 1) * 5);
@@ -769,14 +781,23 @@
         if (!htmlModel && !agentModel) return;
 
         // 后台补齐，不阻塞主回答保存和下一次提问。
-        const html = await _requestVisualizationHtml(content, new AbortController().signal);
+        // 这条是真正的后台补生成：不写前台进度胶囊（模型槽也用刚才取到的这份，
+        // 别在补生成途中被换槽影响）。
+        const html = await _requestVisualizationHtml(content, new AbortController().signal, undefined, {
+          quiet: true, htmlModel, agentModel,
+          htmlThinking: typeof getSlotThinkingForRole === 'function' ? getSlotThinkingForRole('html') : undefined,
+          agentThinking: typeof getSlotThinkingForRole === 'function' ? getSlotThinkingForRole('agent') : undefined,
+        });
         onReady(_insertVisualizationHtml(content, html));
       } catch (err) {
         console.warn('Background HTML model generation failed:', err);
       }
     }
 
-    async function ensureVisualization(content, signal) {
+    async function ensureVisualization(content, signal, options) {
+      const opts = options || {};
+      const quiet = !!opts.quiet;
+      const pick = (key, fallback) => (Object.prototype.hasOwnProperty.call(opts, key) ? opts[key] : fallback);
       const sections = parseXmlSections(content);
       if (Object.keys(sections).length === 0) return content;
       if (_hasVisualizationHtml(sections.viz || '')) return content;
@@ -795,13 +816,18 @@
         }
       }
 
-      const htmlModel = typeof getActiveModelForRole === 'function' ? getActiveModelForRole('html') : null;
-      const agentModel = typeof getActiveModelForRole === 'function' ? getActiveModelForRole('agent') : null;
+      const htmlModel = pick('htmlModel', typeof getActiveModelForRole === 'function' ? getActiveModelForRole('html') : null);
+      const agentModel = pick('agentModel', typeof getActiveModelForRole === 'function' ? getActiveModelForRole('agent') : null);
       if (!htmlModel && !agentModel) return content;
 
-      showProgress('tool', 88, '正在生成交互可视化');
+      // 后台 viz 不碰前台胶囊（E2E 2026-11-22 case 1）：进度与终态都归前台任务。
+      if (!quiet) showProgress('tool', 88, '正在生成交互可视化');
       try {
-        const html = await _requestVisualizationHtml(content, signal);
+        const html = await _requestVisualizationHtml(content, signal, undefined, {
+          quiet, htmlModel, agentModel,
+          htmlThinking: opts.htmlThinking,
+          agentThinking: opts.agentThinking,
+        });
         return _insertVisualizationHtml(content, html);
       } catch (err) {
         console.warn('HTML model generation failed:', err);

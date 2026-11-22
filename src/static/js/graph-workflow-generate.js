@@ -335,8 +335,14 @@ async function _generateCustomNode(node, nodeSignal, opts) {
   try {
     let resp = null;
     // 模型槽也用开跑快照：下一条任务换了 html 槽模型不影响在跑的这条。
+    // 快照里有模型对象就直接用（约束①）；只有快照缺模型时才回落实时槽
+    // （旧任务/异常快照的兜底，不改变正常路径）。
     const slotCall = _bg && _bg.snapshot && _bg.snapshot.slotRole
-      ? { role: _bg.snapshot.slotRole, model: (typeof getActiveModelForRole === 'function' && getActiveModelForRole(_bg.snapshot.slotRole)) || null }
+      ? {
+          role: _bg.snapshot.slotRole,
+          model: _bg.snapshot.slotModel
+            || (typeof getActiveModelForRole === 'function' ? getActiveModelForRole(_bg.snapshot.slotRole) : null),
+        }
       : _slotCallForWorkflowNode(node);
     if (slotCall && typeof proxyChatWithModel === 'function') {
       const payload = {
@@ -344,7 +350,9 @@ async function _generateCustomNode(node, nodeSignal, opts) {
         level: _bg && _bg.snapshot ? _bg.snapshot.level : (typeof currentLevel !== 'undefined' ? currentLevel : 'university'),
         session_id: _bg && _bg.snapshot ? _bg.snapshot.sid : _workflowSessionId(),
         stream: true,
-        thinking: getSlotThinkingForRole(slotCall.role),
+        thinking: (_bg && _bg.snapshot && _bg.snapshot.slotThinking !== undefined)
+          ? _bg.snapshot.slotThinking
+          : getSlotThinkingForRole(slotCall.role),
         gen_task_id: node.genTaskId,
         parent_id: branchMeta.parentId,
         source_module: branchMeta.sourceModule,
@@ -411,10 +419,15 @@ async function _generateCustomNode(node, nodeSignal, opts) {
 
     // T419：成功/归一/重试各收口按生成收尾寻址结算（484：结算块抽成共享函数，
     // 调度路与续跑路共用同一把尺子，防两处口径漂移）
-    await _finishCustomNodeGeneration(node, { streamError, workflowContext, recipe, prompt, signal, nodeSignal });
+    await _finishCustomNodeGeneration(node, {
+      streamError, workflowContext, recipe, prompt, signal, nodeSignal,
+      background: !!_bg,
+      snapshot: _bg ? _bg.snapshot : null,
+    });
   } catch (err) {
-    // 484：连接死亡（刷新/断网掐死 fetch）不结算，延时探活收编
-    if (_maybeDeferOnConnectionDeath(node, err)) return;
+    // 484：连接死亡（刷新/断网掐死 fetch）不结算，延时探活收编。
+    // 返回 deferred 给后台 viz 的发射器：它凭这个别把「已交给续跑」记成失败。
+    if (_maybeDeferOnConnectionDeath(node, err)) return { deferred: true };
     const live = _findGraphNodeTail(node.id);
     if (live) {
       live.busy = false;
@@ -443,6 +456,9 @@ async function _finishCustomNodeGeneration(node, ctx) {
   const prompt = ctx.prompt || '';
   const signal = ctx.signal || null;
   const nodeSignal = ctx.nodeSignal || null;
+  // viz 后台（2026-11-22）：重试也走后台口径——不写前台胶囊、模型沿用开跑快照。
+  const background = !!ctx.background;
+  const snapshot = ctx.snapshot || null;
   const live = _findGraphNodeTail(node.id);
   // viz 式收口（官方交互可视化＋P2 配方 html_iframe 载体）：内容必须归一成完整
   // HTML 代码块；不合格时按配方声明的重试预算（on_incomplete.max_retries，官方 1 次）
@@ -466,7 +482,12 @@ async function _finishCustomNodeGeneration(node, ctx) {
       ].filter(Boolean).join('\n\n').slice(0, 12000);
       for (let attempt = 0; attempt < maxRetries && !normalized; attempt++) {
         try {
-          const retryHtml = await _requestVisualizationHtml(sourceText || prompt, signal, retryHint);
+          const retryOpts = { quiet: background };
+          if (snapshot && Object.prototype.hasOwnProperty.call(snapshot, 'htmlModel')) retryOpts.htmlModel = snapshot.htmlModel;
+          if (snapshot && Object.prototype.hasOwnProperty.call(snapshot, 'agentModel')) retryOpts.agentModel = snapshot.agentModel;
+          if (snapshot && snapshot.htmlThinking !== undefined) retryOpts.htmlThinking = snapshot.htmlThinking;
+          if (snapshot && snapshot.agentThinking !== undefined) retryOpts.agentThinking = snapshot.agentThinking;
+          const retryHtml = await _requestVisualizationHtml(sourceText || prompt, signal, retryHint, retryOpts);
           normalized = '```html\n' + retryHtml + '\n```';
         } catch (retryErr) {
           vizRetryMessage = retryErr && retryErr.message ? retryErr.message : String(retryErr || '');
@@ -566,15 +587,33 @@ async function _reattachOneNode(node, entry) {
     Object.assign(live, settled);
     _saveGraphNodeTail(live);
     _refreshWorkflowNodeStatusUi(live);
+    // 同页断网暂缓的后台 viz：任务已经不在服务端，结算它的任务行并让出名额；
+    // 刷新场景没有 job，这里是空转（行保持 interrupted）。
+    if (typeof _taskResumeSettleForNode === 'function') _taskResumeSettleForNode(node.id, false);
+    if (typeof _vizBgSettle === 'function') _vizBgSettle(node.id, 'error', '后台生成中断，可重试');
     return;
   }
   // running/done 照常重接收尾；interrupted/error 也重接——重放缓冲把「屏幕上见过
   // 的字」补到最新（盘上 400ms 拍总落后于服务端缓冲），流尾的 499 终帧让流抛错，
   // 落到下方 catch 的旧口径结算：内容已是最新，草稿一字不丢。
   // 只有还活着/刚跑完的任务才把面板行翻回「进行中」；重放已终态的不翻（假续跑）
+  let resumedTask = null;
   if ((status.state === 'running' || status.state === 'done')
-      && typeof _taskResumeGenerationForNode === 'function') _taskResumeGenerationForNode(node.id);
+      && typeof _taskResumeGenerationForNode === 'function') {
+    resumedTask = _taskResumeGenerationForNode(node.id);
+  }
   const controller = new AbortController();
+  // viz 后台续跑收编（2026-11-22）：续跑也要进 _vizBgJobs——占住上限名额，
+  // 并把 viz-bg 行的「停止」重绑到 vizBgCancel（E2E case 6b）。只认 viz-bg
+  // 行，别把工作流/普通节点行的 canceller 抢过来；同页断网暂缓的发射任务
+  // （vizBgHas 为真）也一并接管，避免它的 Promise 永远悬着、占住名额。
+  if (typeof vizBgAdopt === 'function' && typeof _vizBgIsVizNode === 'function' && _vizBgIsVizNode(live)) {
+    if (typeof vizBgHas === 'function' && vizBgHas(node.id)) {
+      vizBgAdopt(live, { genTaskId: entry.genTaskId, controller });
+    } else if (resumedTask && resumedTask.kind === 'viz-bg') {
+      vizBgAdopt(live, { genTaskId: entry.genTaskId, taskId: resumedTask.id, controller });
+    }
+  }
   if (typeof workflowInFlightControllers !== 'undefined') workflowInFlightControllers.add(controller);
   try {
     const resp = await fetch('/api/generations/' + encodeURIComponent(entry.genTaskId) + '/stream', {
@@ -595,9 +634,12 @@ async function _reattachOneNode(node, entry) {
       await _finishCustomNodeGeneration(live, {
         streamError: null, workflowContext, recipe, prompt,
         signal: controller.signal, nodeSignal: controller.signal,
+        // 续跑本质就是后台：重试也不许抢前台胶囊。
+        background: true,
       });
     }
     if (typeof _taskResumeSettleForNode === 'function') _taskResumeSettleForNode(node.id, true);
+    if (typeof _vizBgSettle === 'function') _vizBgSettle(node.id, 'done', '');
   } catch (err) {
     const cur = (typeof _findGraphNodeTail === 'function' ? _findGraphNodeTail(live.id) : null) || live;
     // 重放补的内容先落进节点：interrupted/error 任务的缓冲是毫秒级重放完的，
@@ -625,8 +667,13 @@ async function _reattachOneNode(node, entry) {
       }
     }
     if (typeof _taskResumeSettleForNode === 'function') _taskResumeSettleForNode(node.id, false);
+    // 同页断网暂缓的后台 viz：重接也失败了，结算任务行并让出名额（刷新场景无 job，空转）。
+    if (typeof _vizBgSettle === 'function') _vizBgSettle(node.id, 'error', '后台生成中断，可重试');
   } finally {
     if (typeof workflowInFlightControllers !== 'undefined') workflowInFlightControllers.delete(controller);
+    // 收编结束摘登记（成功/失败/用户停都走）；任务行已由 _taskResumeSettleForNode
+    // 或 vizBgCancel 结过，这里只让出上限名额。
+    if (typeof vizBgRelease === 'function') vizBgRelease(node.id);
   }
 }
 

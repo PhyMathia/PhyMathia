@@ -185,14 +185,49 @@ function _vizBgIsLeaf(node, subgraph) {
 }
 
 async function _runWorkflowNodeConcurrent(node, subgraph, force, processed, failed, blocked, runtime) {
+  const taskId = runtime ? runtime.taskId : null;
+  // shouldForce 白名单（2026-11-20 T508 补闭环反馈节点；2026-11-21 T509 抽 _workflowForceableKind
+  // 并补 direct/问题分析卡）——_processWorkflowChainItem 的各分支靠 force 区分「显式点名
+  // 重跑」与「被整链当上游依赖圈进来」，白名单缺 kind 时三角「从头生成」会静默空转。
+  // 提到 viz 分支之前：后台 viz 也要按同一口径判断「这轮是不是用户点名重跑」。
+  const shouldForce = force && _workflowForceableKind(node);
+  const shouldCount = _workflowItemNeedsProgress(node) || shouldForce;
   // viz 后台通道（2026-11-22，backlog 504 子集）：viz 是最长的一根，不该让整轮
   // 工作流（以及队列里的下一条）等它。叶子 viz（本轮子图里没有下游依赖它）在开跑
   // 瞬间转后台：vizBgLaunch 冻结快照、建独立任务行、发起生成，本 worker 立刻释放；
   // 有下游依赖的 viz 必须原地跑完——否则下游读到空内容（用户拍板的硬边界）。
   // 开关关/超限（最多 2 条）/非 viz 时 vizBgLaunch 返回 false，行为逐字节等于上线前。
   if (typeof vizBgLaunch === 'function' && vizBgEnabled() && _vizBgIsLeaf(node, subgraph)) {
-    const launched = vizBgLaunch(node, { force: !!force });
+    // 幂等闸（E2E 2026-11-22 case 3）：输入没变且已有成品时，任务「重试」不许
+    // 把已完成的 viz 再烧一遍。force 只作用显式目标（调用方已按 forceTargets
+    // 过滤），所以这里看到 shouldForce=false 就是「顺带重放」，该跳过。
+    if (!shouldForce && typeof vizNodeAlreadyGenerated === 'function'
+        && vizNodeAlreadyGenerated(node.id)) {
+      if (shouldCount && typeof _taskNodeFinish === 'function') {
+        _taskNodeFinish(taskId, node.id, 'done', '已完成');
+      }
+      processed.add(node.id);
+      return true;
+    }
+    const label = _workflowProgressLabel(node);
+    if (shouldCount) _markWorkflowCurrentNode(node);
+    const launched = vizBgLaunch(node, {
+      force: !!shouldForce,
+      // 后台 viz 的收尾落在发射器里：把工作流任务行的节点条目一起结掉，
+      // 否则条目永远停在 waiting（E2E case 2）。
+      onSettle: function(state) {
+        if (!shouldCount || typeof _taskNodeFinish !== 'function') return;
+        _taskNodeFinish(taskId, node.id,
+          state === 'done' ? 'done' : (state === 'stopped' ? 'stopped' : 'error'),
+          state === 'done' ? '' : (state === 'stopped' ? '已取消' : '失败'));
+      },
+    });
     if (launched) {
+      // 发射是同步登记、生成在微任务里起跑：这里紧接着把条目置 running，
+      // 结算一定晚于这一拍。canceller 传 null——单停走 viz-bg 行自己的停止。
+      if (shouldCount && typeof _taskNodeStart === 'function') {
+        _taskNodeStart(taskId, node.id, label, null);
+      }
       processed.add(node.id);
       return true;
     }
@@ -202,12 +237,6 @@ async function _runWorkflowNodeConcurrent(node, subgraph, force, processed, fail
   // 完成/进度都由在途请求自己的 worker 收尾，两次记账不会互相覆盖。正常路径
   // _workflowReadyNodes/入口 busy 门挡在前面，这里是双保险
   if (node.busy) return;
-  // shouldForce 白名单（2026-11-20 T508 补闭环反馈节点；2026-11-21 T509 抽 _workflowForceableKind
-  // 并补 direct/问题分析卡）——_processWorkflowChainItem 的各分支靠 force 区分「显式点名
-  // 重跑」与「被整链当上游依赖圈进来」，白名单缺 kind 时三角「从头生成」会静默空转
-  const shouldForce = force && _workflowForceableKind(node);
-  const shouldCount = _workflowItemNeedsProgress(node) || shouldForce;
-  const taskId = runtime ? runtime.taskId : null;
   if (shouldCount) _markWorkflowCurrentNode(node);
   // 每颗节点一个 controller：面板上的「停」只掐这一颗，不惊动同轮的其他节点
   const nodeController = new AbortController();

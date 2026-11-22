@@ -341,6 +341,11 @@ test('T61 重开页面：node 类任务不退化成 send，重放信息原样保
   assert.equal(restored.history[0].kind, 'node', 'node 类型重载后不能退化成 send（退化会丢掉正确的重放语义）');
   assert.equal(restored.history[0].replay.nodeJob.kind, 'blank');
   assert.equal(restored.history[0].replay.nodeJob.id, 'b1');
+  const vizRestored = run(`_taskSplitLoaded(${JSON.stringify([
+    { id: 'task_v1', kind: 'viz-bg', title: '生成交互可视化（后台）', state: 'interrupted',
+      sessionId: 'sess_A', createdAt: 2, replay: { nodeJob: { id: 'v1', kind: 'viz' } } },
+  ])})`);
+  assert.equal(vizRestored.history[0].kind, 'viz-bg', 'viz-bg 类型重载后不能退化');
 });
 
 test('T61 源码：空白入口委托工作流统一接账，工作流调度口的直呼不双份记账', () => {
@@ -350,7 +355,8 @@ test('T61 源码：空白入口委托工作流统一接账，工作流调度口�
   const tasksSrc = readSrc('src/static/js/tasks.js');
   // tasks.js：记账接口 + 重载保留 node 类型 + 重放分支
   assert.match(tasksSrc, /function _taskBeginNodeJob\(spec\)/);
-  assert.match(tasksSrc, /item\.kind === 'node' \? 'node' : 'send'/);
+  assert.match(tasksSrc, /item\.kind === 'node' \? 'node'/);
+  assert.match(tasksSrc, /item\.kind === 'viz-bg' \? 'viz-bg'/);
   assert.match(tasksSrc, /replay && replay\.nodeJob && replay\.nodeJob\.id/);
   // 空白节点（2026-10-24 T403）：独立生成路已薄封装成 runWorkflowNode 委托——排队、
   // 任务账、任务自己的 controller 全由工作流入口统一承担。旧断言钉的是那份副本

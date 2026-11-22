@@ -32,6 +32,17 @@ const VIZ_BG_ENABLED_KEY = 'phymathia_viz_background_enabled';
 // 这张表本身就是活跃计数——上限判断直接读 size，不另维护一份会漂移的计数器。
 const _vizBgJobs = new Map();
 
+// 刷新/导航卸载标记：pagehide 之后在途 fetch 会被掐死（TypeError），这属于
+// 「页面走了」而不是「生成失败」——不能结算成 error，留给下次加载按 interrupted
+// 收编（E2E 2026-11-22 复现：节点最终生成成功，任务行却永远停在「可视化未生成成功」）。
+let _vizBgPageUnloading = false;
+if (typeof window !== 'undefined' && window.addEventListener) {
+  window.addEventListener('pagehide', (event) => {
+    if (!event || event.persisted !== true) _vizBgPageUnloading = true;
+  });
+  window.addEventListener('pageshow', () => { _vizBgPageUnloading = false; });
+}
+
 function vizBgEnabled() {
   try { return localStorage.getItem(VIZ_BG_ENABLED_KEY) !== '0'; } catch (e) { return true; }
 }
@@ -61,6 +72,8 @@ function _vizBgSnapshot(node) {
   const prompt = socratic ? String(socratic.prompt || '')
     : (typeof _workflowPromptForNode === 'function' ? _workflowPromptForNode(node, workflowContext) : '');
   const slotCall = typeof _slotCallForWorkflowNode === 'function' ? _slotCallForWorkflowNode(node) : null;
+  const slotRole = slotCall ? slotCall.role : 'html';
+  const cloneModel = (m) => (m && typeof m === 'object' ? { ...m } : null);
   return {
     sid, prompt, workflowContext,
     branchMeta: {
@@ -75,7 +88,14 @@ function _vizBgSnapshot(node) {
       graphPath: typeof _blankNodeGraphPath === 'function' ? _blankNodeGraphPath(node) : [],
       wfStats: typeof _wfStatsForNode === 'function' ? _wfStatsForNode(node) : undefined,
     },
-    slotRole: slotCall ? slotCall.role : 'html',
+    slotRole,
+    // 约束①：模型对象本身也在开跑瞬间冻结。只存 role 的话，生成链会实时读槽，
+    // 用户开跑后换模型就会改到在跑的这条（E2E 2026-11-22 复现：mock-1 → mock-b）。
+    slotModel: slotCall ? cloneModel(slotCall.model) : null,
+    slotThinking: typeof getSlotThinkingForRole === 'function' ? getSlotThinkingForRole(slotRole) : undefined,
+    // viz 自动重试（_requestVisualizationHtml）走 html/agent 双模型，也一并冻结。
+    htmlModel: typeof getActiveModelForRole === 'function' ? cloneModel(getActiveModelForRole('html')) : null,
+    agentModel: typeof getActiveModelForRole === 'function' ? cloneModel(getActiveModelForRole('agent')) : null,
     level: typeof currentLevel !== 'undefined' ? currentLevel : 'university',
   };
 }
@@ -120,6 +140,9 @@ function vizBgLaunch(node, opts) {
   const job = {
     nodeId, taskId, controller, snapshot,
     genTaskId: '', startedAt: Date.now(), settled: false,
+    // 工作流任务行的节点条目靠它收尾（E2E 2026-11-22 case 2：后台分支早退后
+    // 条目永远停在 waiting）。
+    onSettle: typeof o.onSettle === 'function' ? o.onSettle : null,
   };
   // 同步占住 busy：发射与生成链之间隔着一个微任务，不占的话这一瞬手动重生成会
   // 开出第二条、两边烧 token。后台链凭 vizBgJob 认自己的 busy（见 generate.js）。
@@ -135,14 +158,21 @@ function vizBgLaunch(node, opts) {
   // 只是用 opts.foreground=false 把它从前台 6 开关与胶囊进度里摘出去。
   Promise.resolve().then(async () => {
     if (typeof _generateCustomNode !== 'function') throw new Error('viz 生成链未加载');
-    await _generateCustomNode(node, controller.signal, { foreground: false, snapshot, vizBgJob: job });
-  }).then(() => {
+    return await _generateCustomNode(node, controller.signal, { foreground: false, snapshot, vizBgJob: job });
+  }).then((result) => {
+    // 页面正在卸载（刷新/关标签）：在途 fetch 被掐死不是「生成失败」，不能把任务行
+    // 写成 error——留 running 进盘，下次加载由 484 按 interrupted 收编（E2E 6c）。
+    if (_vizBgPageUnloading) return;
+    // 连接死亡已交给 484 延时探活（_maybeDeferOnConnectionDeath 返回 deferred）：
+    // 这里结算会把还活着的服务端任务提前记成失败，续跑路就再也翻不回来。
+    if (result && result.deferred) return;
     // _generateCustomNode 内部吞错误（失败时只改节点 status 不抛），所以不能凭
     // Promise resolve 就记完成——读节点终态判成败，避免任务行虚报「已完成」。
     const live = (typeof _findGraphNodeTail === 'function' ? _findGraphNodeTail(nodeId) : null);
     const ok = !!(live && live.status === 'done' && String(live.content || '').trim());
     _vizBgSettle(nodeId, ok ? 'done' : 'error', ok ? '' : '可视化未生成成功');
   }).catch(err => {
+    if (_vizBgPageUnloading) return;
     if (controller.signal.aborted) { _vizBgSettle(nodeId, 'stopped', '已停止'); return; }
     _vizBgSettle(nodeId, 'error', (err && err.message) || '后台可视化失败');
   });
@@ -153,6 +183,13 @@ function vizBgLaunch(node, opts) {
 function _vizBgSettle(nodeId, state, note) {
   const job = _vizBgJobs.get(String(nodeId));
   if (!job || job.settled) return;
+  // 失败账不得压过已完成的活儿：节点/消息里已有完整可视化时，这条后台任务实际
+  // 是成功的（E2E 6c 的另一半——旧页写下的 error 不该盖住已落地的成品）。
+  if (state === 'error' && typeof vizNodeAlreadyGenerated === 'function'
+      && vizNodeAlreadyGenerated(String(nodeId))) {
+    state = 'done';
+    note = '';
+  }
   job.settled = true;
   if (job.taskId && typeof _taskFinish === 'function') _taskFinish(job.taskId, state, note);
   if (typeof job.onSettle === 'function') {
@@ -180,6 +217,49 @@ function vizBgCancelAll() {
   return ids.length;
 }
 
+// 刷新续跑收编：484 的 _reattachOneNode 探到服务端任务还活着时调用。
+// 让续跑也占住上限名额（_vizBgJobs.size），并把任务行的「停止」重新绑到
+// vizBgCancel——否则刷新后这两件事都只是账面动作（E2E 2026-11-22 case 6b）。
+function vizBgAdopt(node, opts) {
+  if (!node) return null;
+  const o = opts || {};
+  const id = String(node.id);
+  let job = _vizBgJobs.get(id);
+  if (job) {
+    if (o.genTaskId) job.genTaskId = String(o.genTaskId);
+    if (o.taskId && !job.taskId) job.taskId = o.taskId;
+    if (o.controller) job.controller = o.controller;
+    job.adopted = true;
+    return job;
+  }
+  job = {
+    nodeId: id,
+    taskId: o.taskId || node.vizBgTaskId || null,
+    genTaskId: o.genTaskId || node.genTaskId || '',
+    controller: o.controller || new AbortController(),
+    // 刷新后快照没进盘：续跑只重接服务端流，不再发新请求，因此不重建快照。
+    snapshot: null,
+    startedAt: Date.now(),
+    settled: false,
+    adopted: true,
+    onSettle: null,
+  };
+  _vizBgJobs.set(id, job);
+  if (job.taskId && typeof _taskBindCancel === 'function') {
+    _taskBindCancel(job.taskId, () => vizBgCancel(id, '手动停止'));
+  }
+  return job;
+}
+
+// 续跑收编结束（成功/失败/用户停都走）：只摘登记，不结账——任务行由
+// _taskResumeSettleForNode / vizBgCancel 各自结。
+function vizBgRelease(nodeId) {
+  const job = _vizBgJobs.get(String(nodeId));
+  if (!job || !job.adopted) return false;
+  _vizBgJobs.delete(String(nodeId));
+  return true;
+}
+
 // 484 收编联动：viz-bg 行靠 nodes 里的 nodeId 被现成的 _taskResumeGenerationForNode /
 // _taskResumeSettleForNode 认领（见 tasks.js:291/309），无需本文件另写恢复函数。
 // 节点上的 vizBgTaskId 仅作诊断留痕（刷新后哪条行接管了这颗 viz）。
@@ -194,6 +274,17 @@ function vizBgLaunchMessage(nodeId, run, onSettle) {
   if (_vizBgJobs.has(id) || _vizBgJobs.size >= VIZ_BG_MAX) return false;
   const controller = new AbortController();
   const sid = (typeof _taskSessionInfo === 'function' ? _taskSessionInfo() : {}).sessionId || '';
+  // 约束①：消息链的后台 viz 同样在开跑瞬间冻结 html/agent 双模型与思考档位。
+  // 生成器内部（_requestVisualizationHtml）会实时读槽，不冻结的话开跑后换模型
+  // 就会改到这条在跑的任务（E2E 2026-11-22 case 9）。
+  const cloneModel = (m) => (m && typeof m === 'object' ? { ...m } : null);
+  const snapshot = {
+    sid,
+    htmlModel: typeof getActiveModelForRole === 'function' ? cloneModel(getActiveModelForRole('html')) : null,
+    agentModel: typeof getActiveModelForRole === 'function' ? cloneModel(getActiveModelForRole('agent')) : null,
+    htmlThinking: typeof getSlotThinkingForRole === 'function' ? getSlotThinkingForRole('html') : undefined,
+    agentThinking: typeof getSlotThinkingForRole === 'function' ? getSlotThinkingForRole('agent') : undefined,
+  };
   const task = (typeof _taskCreate === 'function') ? _taskCreate({
     kind: 'viz-bg', title: '生成交互可视化（后台）', state: 'running',
     sessionId: sid || undefined, replay: { nodeJob: { id, kind: 'viz' } },
@@ -201,16 +292,20 @@ function vizBgLaunchMessage(nodeId, run, onSettle) {
     nodes: [{ id, label: '交互可视化', state: 'running', startedAt: Date.now() }],
   }) : null;
   const taskId = task ? task.id : null;
-  const job = { nodeId: id, taskId, genTaskId: '', controller,
-    snapshot: { sid }, startedAt: Date.now(), settled: false, onSettle };
+  const job = { nodeId: id, taskId, genTaskId: '', controller, snapshot,
+    startedAt: Date.now(), settled: false,
+    onSettle: typeof onSettle === 'function' ? onSettle : null };
   _vizBgJobs.set(id, job);
   if (taskId && typeof _taskBindCancel === 'function') {
     _taskBindCancel(taskId, () => vizBgCancel(id, '手动停止'));
   }
   if (taskId && typeof _taskMarkRunning === 'function') _taskMarkRunning(taskId);
-  Promise.resolve().then(() => run(controller.signal)).then(() => {
+  // 第二参数告诉调用方「这是后台」：进度胶囊与终态文案一律不许写（E2E case 1）。
+  Promise.resolve().then(() => run(controller.signal, true, job.snapshot)).then(() => {
+    if (_vizBgPageUnloading) return;
     _vizBgSettle(id, 'done', '');
   }).catch(err => {
+    if (_vizBgPageUnloading) return;
     if (controller.signal.aborted) { _vizBgSettle(id, 'stopped', '已停止'); return; }
     _vizBgSettle(id, 'error', (err && err.message) || '后台可视化失败');
   });

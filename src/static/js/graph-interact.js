@@ -1177,6 +1177,24 @@ async function _regenerateModuleContent(message, moduleKey, confusion) {
 
 const _generatingVizNodes = new Set();
 
+// 这颗 viz 是否已经有完整成品：消息链读回答的 <viz> 分节，工作流节点读 content＋
+// 输入哈希（人工定稿也算成品）。任务「重试」与后台发射前的幂等闸共用——活儿已经
+// 在时不再烧一次模型（E2E 2026-11-22 case 3）。
+function _vizNodeAlreadyGenerated(nodeId) {
+  const node = typeof _findGraphNode === 'function' ? _findGraphNode(String(nodeId)) : null;
+  if (!node) return false;
+  if (node.messageIndex >= 0) {
+    const message = (typeof _getChatHistory === 'function' ? _getChatHistory() : [])[node.messageIndex];
+    if (!message) return false;
+    const sections = typeof parseXmlSections === 'function' ? parseXmlSections(message.content || '') : {};
+    return typeof _hasVisualizationHtml === 'function' && _hasVisualizationHtml(sections.viz || '');
+  }
+  if (!String(node.content || '').trim()) return false;
+  if (node.humanDone) return true;
+  try { return node.inputHash === _nodeInputHash(node); } catch (e) { return false; }
+}
+window.vizNodeAlreadyGenerated = _vizNodeAlreadyGenerated;
+
 // 生成交互可视化。忙时排队（2026-10-11）：过去这里直接挡回去（「正在生成回答，稍候再
 // 生成可视化」）——用户点了只得到一句拒绝。现在收进队列，轮到它时队列把视图切回这张画布。
 // 它自己那颗 AbortController 也接上了任务账：面板上的「停」掐得掉这条流（过去是一颗
@@ -1188,12 +1206,25 @@ async function generateVizNode(nodeId, fromQueue = false, handoffTaskId = null) 
   const messages = _getChatHistory();
   const message = messages[node.messageIndex];
   if (!message) return;
+  // 幂等闸（E2E 2026-11-22 case 3）：成品已经在时（刷新续跑先完成、任务重试晚到）
+  // 不再发请求，只把账面收干净。
+  if (typeof _vizNodeAlreadyGenerated === 'function' && _vizNodeAlreadyGenerated(nodeId)) {
+    if (handoffTaskId && typeof _taskFinish === 'function') _taskFinish(handoffTaskId, 'done', '可视化已生成');
+    if (typeof showToast === 'function') showToast('可视化已生成，无需重跑');
+    return;
+  }
 
   // viz 后台通道（2026-11-22）：点「生成可视化」后前台立刻放行——不进队列、不挡
   // 接着提的问题。开关关/超限（≤2 条）时 vizBgLaunchMessage 返回 false，走下方旧路径
   // （排队 + 同步），行为逐字节等于上线前。
-  const _run = async (signal) => {
-    const nextContent = await ensureVisualization(message.content || '', signal);
+  // background=true 时进度胶囊/终态文案一律不写（E2E case 1），模型用后台快照。
+  const _run = async (signal, background, snapshot) => {
+    const vizOpts = { quiet: !!background };
+    if (snapshot && Object.prototype.hasOwnProperty.call(snapshot, 'htmlModel')) vizOpts.htmlModel = snapshot.htmlModel;
+    if (snapshot && Object.prototype.hasOwnProperty.call(snapshot, 'agentModel')) vizOpts.agentModel = snapshot.agentModel;
+    if (snapshot && snapshot.htmlThinking !== undefined) vizOpts.htmlThinking = snapshot.htmlThinking;
+    if (snapshot && snapshot.agentThinking !== undefined) vizOpts.agentThinking = snapshot.agentThinking;
+    const nextContent = await ensureVisualization(message.content || '', signal, vizOpts);
     if (nextContent === message.content) {
       throw new Error('模型未返回完整 HTML 页面，请检查模型配置后重试');
     }
@@ -1205,7 +1236,7 @@ async function generateVizNode(nodeId, fromQueue = false, handoffTaskId = null) 
     if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
     if (typeof renderCurrentChat === 'function') await renderCurrentChat();
     else if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
-    if (typeof window.setProgressTerminal === 'function') window.setProgressTerminal('可视化已生成');
+    if (!background && typeof window.setProgressTerminal === 'function') window.setProgressTerminal('可视化已生成');
     if (typeof showToast === 'function') showToast('交互可视化已生成');
   };
   if (!fromQueue && typeof vizBgLaunchMessage === 'function'

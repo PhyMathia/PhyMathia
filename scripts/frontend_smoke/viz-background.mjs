@@ -53,11 +53,26 @@ export async function run() {
     }
     // 调度器：叶子 viz 走后台、发射后立即返回；有下游的原地跑
     if (!run.includes('function _vizBgIsLeaf(node, subgraph)')) throw new Error('调度器没有 viz 叶子判定');
-    if (!run.includes('const launched = vizBgLaunch(node, { force: !!force })')) {
-      throw new Error('调度器没接 vizBgLaunch');
+    if (!run.includes('vizBgLaunch(node, {') || !run.includes('onSettle')) {
+      throw new Error('调度器没接 vizBgLaunch 收尾回调');
     }
     if (!/subgraph\.edges \|\| \[\]\)\.some\(edge => edge\.from === node\.id\)/.test(run)) {
       throw new Error('有下游的 viz 没排除在后台通道外');
+    }
+    // 2026-11-22 E2E 六修：模型快照 / 刷新不谎报 / 续跑收编 / 重试幂等
+    if (!gen.includes('_bg.snapshot.slotModel')) throw new Error('生成链没读快照里的模型对象');
+    if (!bg.includes('_vizBgPageUnloading')) throw new Error('刷新卸载标记没接');
+    if (!bg.includes('function vizBgAdopt') || !bg.includes('function vizBgRelease')) {
+      throw new Error('刷新续跑没有收编/释放');
+    }
+    if (!gen.includes('vizBgAdopt(live, { genTaskId: entry.genTaskId')) {
+      throw new Error('484 续跑没登记 viz 后台 job');
+    }
+    if (!run.includes('vizNodeAlreadyGenerated(node.id)')) throw new Error('工作流 viz 重试没有幂等闸');
+    if (!interact.includes('function _vizNodeAlreadyGenerated')) throw new Error('viz 幂等判定没定义');
+    if (!tasks.includes('vizNodeAlreadyGenerated(job.id)')) throw new Error('任务重试没接 viz 幂等闸');
+    if (!fs.readFileSync('src/static/js/chat-features.js', 'utf8').includes('quiet ? null : (progress, length)')) {
+      throw new Error('消息链后台 viz 仍写前台进度');
     }
     // 两个入口：单节点按钮 + 总闸
     if (!interact.includes('vizBgLaunchMessage(nodeId, _run')) throw new Error('单节点 viz 按钮没接后台通道');

@@ -238,8 +238,12 @@ function _taskNodeFinish(taskId, nodeId, state, note) {
   const task = _taskActive.find(t => t.id === taskId);
   const ctx = _taskActiveCtx;
   if (ctx && ctx.taskId === taskId && ctx.runtime) ctx.runtime.nodeControllers.delete(nodeId);
-  if (!task) return;
-  const entry = _taskNodeEnsure(task, nodeId, '');
+  // 后台 viz 的收尾可能晚于工作流任务行本身（viz 转后台后工作流当场收工，任务行
+  // 已挪进历史）：历史行里已有的条目也要能更新，否则条目永远停在 running（E2E
+  // 2026-11-22 case 2）。只更新既有条目，不往已结账的行里凭空补节点。
+  const row = task || _taskHistory.find(t => t.id === taskId);
+  if (!row) return;
+  const entry = task ? _taskNodeEnsure(row, nodeId, '') : _taskNodeFind(row, nodeId);
   if (!entry) return;
   entry.state = state || 'done';
   entry.endedAt = Date.now();
@@ -702,6 +706,25 @@ async function _taskRegenerate(id) {
         return;
       }
       if (job.kind === 'viz') {
+        // 幂等闸（E2E 2026-11-22 case 3）：成品已经在时重试只把账翻正，不再烧一次。
+        if (typeof window.vizNodeAlreadyGenerated === 'function' && window.vizNodeAlreadyGenerated(job.id)) {
+          task.state = 'done';
+          task.endedAt = Date.now();
+          task.note = '可视化已完成，无需重跑';
+          (task.nodes || []).forEach(n => {
+            if (n && String(n.id) === String(job.id)) { n.state = 'done'; n.endedAt = Date.now(); }
+          });
+          _taskChanged();
+          if (typeof showToast === 'function') showToast('可视化已完成，无需重跑');
+          return;
+        }
+        const node = _findGraphNode(job.id);
+        // 工作流里的 viz 节点没有消息下标，generateVizNode 对它是空转；回到工作流
+        // 入口（force=false，输入没变时调度器 hash 短路，不会白跑）。
+        if (node && node.messageIndex < 0) {
+          if (typeof runWorkflowNodes === 'function') return runWorkflowNodes([job.id], false);
+          return;
+        }
         if (typeof window.generateVizNode === 'function') return window.generateVizNode(job.id);
         return;
       }
