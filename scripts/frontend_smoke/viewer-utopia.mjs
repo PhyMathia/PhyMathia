@@ -81,6 +81,17 @@ check('utopia: 单文件网页导出（防截断转义 + 大图限流 + 双通�
   if (!uh.includes('/(^|\\/)viewer\\.js(?:\\?|$)/')) {
     throw new Error('查看器入口匹配退回钉死目录/查询串 → /dist/viewer.js?v= 注入不到内嵌快照');
   }
+  // 成品自检（2026-11-23，backlog 574）：资源取不到不再悄悄剔掉——记名、拦下交付。
+  // 这里钉静态契约；「真导出 → 真打开」在 scripts/verify_utopia_html_export.mjs（真机档）。
+  for (const need of ['function utopiaHtmlVerifyPacked', 'function _utopiaRenderCheck', 'window.utopiaHtmlVerifyPacked = utopiaHtmlVerifyPacked']) {
+    if (!uh.includes(need)) throw new Error('缺成品自检：' + need);
+  }
+  // 落盘动作恰好一处，且排在两道核对之后——挪到前面＝自检不通过也会交出文件
+  const deliverAt = uh.indexOf('a.click()');
+  if (deliverAt < 0 || uh.indexOf('a.click()', deliverAt + 1) >= 0) throw new Error('落盘动作应恰好一处');
+  if (deliverAt < uh.indexOf('utopiaHtmlVerifyPacked(html, snapshot,') || deliverAt < uh.indexOf('await _utopiaRenderCheck(')) {
+    throw new Error('落盘动作排到了自检前面——自检不通过也会交出文件');
+  }
   const shims = fs.readFileSync('src/static/js/viewer-shims.js', 'utf8');
   if (!shims.includes('window.__UTOPIA__.state = {}')) throw new Error('空查看器未补默认图状态（pan 缺失会抛 setting x）');
   if (!shims.includes('s.pan = { x: 80, y: 80 }')) throw new Error('空查看器默认 pan 缺失');
