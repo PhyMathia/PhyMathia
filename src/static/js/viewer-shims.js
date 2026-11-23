@@ -55,7 +55,18 @@ window.getChatHistory = function () {
 window.getStreamingAssistant = function () { return null; };
 
 // 图状态：只读内存态。saveGraphState 变空操作——查看器里的任何拖动/折叠都不回写任何地方。
-window.getGraphState = function () { return window.__UTOPIA__.state || {}; };
+// 空页（还没载入快照）也必须有 pan/zoom：滚轮缩放与拖拽平移直接写 state.pan.x，
+// 返回裸 {} 会在用户随手拖一下画布时抛
+// “Cannot set properties of undefined (setting 'x')” 并弹页面脚本异常。
+window.getGraphState = function () {
+  var s = window.__UTOPIA__.state;
+  if (!s || typeof s !== 'object') s = window.__UTOPIA__.state = {};
+  if (!s.pan || typeof s.pan !== 'object') s.pan = { x: 80, y: 80 };
+  if (typeof s.pan.x !== 'number' || !isFinite(s.pan.x)) s.pan.x = 80;
+  if (typeof s.pan.y !== 'number' || !isFinite(s.pan.y)) s.pan.y = 80;
+  if (typeof s.zoom !== 'number' || !(s.zoom > 0)) s.zoom = 0.9;
+  return s;
+};
 window.saveGraphState = function () {};
 
 // ---------- 提示与进度（查看器自绘 toast） ----------

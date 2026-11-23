@@ -76,6 +76,14 @@ check('utopia: 单文件网页导出（防截断转义 + 大图限流 + 双通�
   if (!uh.includes('<!--')) throw new Error('缺 <!-- 脚本数据转义状态防护');
   if (!uh.includes('IMAGE_INLINE_LIMIT')) throw new Error('缺大图内联上限（背景照片不进包）');
   if (!uh.includes("fetch('/viewer.html'")) throw new Error('应以 viewer.html 为模板');
+  // T64 起查看器入口是 /dist/viewer.js?v=<hash>。识别必须按文件名、不钉目录/查询串——
+  // 退回 /js/viewer.js 会让内嵌快照整段不注入，导出页永远空白（2026-11-23 实故）。
+  if (!uh.includes('/(^|\\/)viewer\\.js(?:\\?|$)/')) {
+    throw new Error('查看器入口匹配退回钉死目录/查询串 → /dist/viewer.js?v= 注入不到内嵌快照');
+  }
+  const shims = fs.readFileSync('src/static/js/viewer-shims.js', 'utf8');
+  if (!shims.includes('window.__UTOPIA__.state = {}')) throw new Error('空查看器未补默认图状态（pan 缺失会抛 setting x）');
+  if (!shims.includes('s.pan = { x: 80, y: 80 }')) throw new Error('空查看器默认 pan 缺失');
   const bf = fs.readFileSync('scripts/build_frontend.mjs', 'utf8');
   if (!bf.includes("'utopia-html.js'")) throw new Error('主包缺 utopia-html.js');
   return true;

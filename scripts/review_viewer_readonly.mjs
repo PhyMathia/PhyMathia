@@ -100,6 +100,22 @@ async function run() {
     await page.goto(BASE + '/viewer.html', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => !!window.utopiaViewer, null, { timeout: 15000 });
 
+    // --- 空页（还没载入快照）视角手势：state 还没有 pan 时也不能抛 ---
+    // 2026-11-23 实故：单文件网页内嵌快照没注入（入口脚本匹配钉死 /js/viewer.js），
+    // 用户打开空白导出页随手滚轮/拖画布 → zoomGraph/平移写 state.pan.x 抛
+    // “Cannot set properties of undefined (setting 'x')”，页面弹「脚本异常」。
+    const emptyView = await page.evaluate(() => {
+      let err = null;
+      try { window.zoomGraph(1.2); } catch (e) { err = String(e && e.message || e); }
+      const s = window.__UTOPIA__.state;
+      return { err, pan: s && s.pan, zoom: s && s.zoom };
+    });
+    if (emptyView.err) throw new Error('空查看器缩放抛错：' + emptyView.err);
+    if (!emptyView.pan || typeof emptyView.pan.x !== 'number') {
+      throw new Error('空查看器未补默认 pan（' + JSON.stringify(emptyView) + '）');
+    }
+    ok('空查看器（无快照）默认 pan/zoom 就位，缩放不抛异常');
+
     // 装载快照
     const loaded = await page.evaluate(snap => window.utopiaViewer.loadText(JSON.stringify(snap), 'regression.pmu'),
                                       makeSnapshot());

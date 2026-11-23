@@ -277,7 +277,10 @@
           return r.text();
         }).catch(function () { return null; });
         if (code == null) { sc.remove(); continue; }
-        if (/\/js\/viewer\.js/.test(sc.getAttribute('src') || '')) {
+        // 视图入口脚本按「文件名 viewer.js」识别，不钉目录与查询串：
+        // T64 起产物住 /dist/、src 带 ?v=<hash>，旧口径 /js/viewer.js 已不存在，
+        // 钉死会让内嵌快照整段不注入（导出页永远空白）。
+        if (/(^|\/)viewer\.js(?:\?|$)/.test(sc.getAttribute('src') || '')) {
           if (vizAssets) {
             var assets = doc.createElement('script');
             assets.textContent = 'window.__PM_VIZ_ASSETS__ = {'
