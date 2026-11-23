@@ -13,6 +13,8 @@
     let progressLabel = '';
     let progressHidden = false;
     let progressStatusHideTimer = null;
+    // 生成速度读数（2026-11-23）：流式过程中按字数估算，结束帧带 usage 时换精确值。
+    let _streamMeter = null;
 
     const PROGRESS_PHASE = {
       thinking: { percent: 8, label: '正在理解问题' },
@@ -84,6 +86,7 @@
       if (statusEl) { statusEl.classList.add('active'); updateProgressText(stage, percent, label); }
       if (!progressTimer) {
         progressStartTime = Date.now();
+        _streamMeterClearText();
         progressTimer = setInterval(() => {
           updateElapsedTime();
         }, 500);
@@ -110,6 +113,7 @@
       const min = Math.floor(elapsed / 60);
       const sec = elapsed % 60;
       timeEl.textContent = min > 0 ? `${min}m${sec.toString().padStart(2,'0')}s` : `${sec}s`;
+      _streamMeterRender();
     }
     function hideProgress() {
       if (progressHidden) return;
@@ -122,6 +126,7 @@
           _setProgress(0, '待命');
           const timeEl = document.querySelector('#progressStatus .elapsed-time');
           if (timeEl) timeEl.textContent = '';
+          _streamMeterClearText();
           progressStatusHideTimer = null;
         }, 1500);
       }
@@ -139,8 +144,163 @@
       _setProgress(100, label);
       const timeEl = document.querySelector('#progressStatus .elapsed-time');
       if (timeEl) timeEl.textContent = '';
+      _streamMeterClearText();
     }
     window.setProgressTerminal = setProgressTerminal;
+
+    // ===== 生成速度读数（2026-11-23，用户拍板只在胶囊）=====
+    // 过程中拿不到真实 token 数：按已收到的字数估（中文 1 字≈1 token，ASCII 4 字符≈1 token），
+    // 标 ≈；上游结束帧带 usage.completion_tokens 时，收尾换成精确值（不标 ≈）。
+    // 计时窗取「首片→末片」，不含排队与提示词处理；首片到达后先亮 1 秒多「首字 Xs」，
+    // 再切速率，避免开头两拍数字乱跳。工作流多路并行时这里是合计吞吐。
+    const STREAM_TTFT_GAP_MS = 1200;
+    const STREAM_TTFT_MIN_SEC = 0.1;
+    const STREAM_RATE_MIN_SEC = 0.4;
+
+    function _streamSpeedEl() {
+      return document.querySelector('#progressStatus .stream-speed');
+    }
+
+    function _estimateStreamTokens(text) {
+      const s = String(text || '');
+      let cjk = 0;
+      let ascii = 0;
+      for (let i = 0; i < s.length; i++) {
+        if (/[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/.test(s[i])) cjk++;
+        else ascii++;
+      }
+      return cjk + ascii / 4;
+    }
+
+    function _formatStreamSpeed(tps, exact) {
+      const n = Number(tps);
+      if (!Number.isFinite(n) || n <= 0) return '';
+      const shown = n >= 10 ? Math.round(n) : Math.round(n * 10) / 10;
+      return (exact ? '' : '≈') + shown + ' tok/s';
+    }
+
+    function _streamMeterState() {
+      if (!_streamMeter) {
+        _streamMeter = {
+          active: 0,
+          startedAt: 0,
+          firstDeltaAt: 0,
+          lastDeltaAt: 0,
+          liveTokens: 0,
+          usageTokens: 0,
+          usageStreams: 0,
+          finishedStreams: 0,
+          finalText: '',
+        };
+      }
+      return _streamMeter;
+    }
+
+    function _streamMeterSetText(text) {
+      const el = _streamSpeedEl();
+      if (el) el.textContent = text || '';
+    }
+
+    function _streamMeterClearText() {
+      if (_streamMeter) _streamMeter.finalText = '';
+      _streamMeterSetText('');
+    }
+
+    // 胶囊不在进行态（例如工坊试跑、后台 viz）就不记：读数属于前台胶囊。
+    function _streamMeterBegin() {
+      const statusEl = document.getElementById('progressStatus');
+      if (!statusEl || !statusEl.classList || !statusEl.classList.contains('active')) return null;
+      const m = _streamMeterState();
+      if (!m.active) {
+        m.startedAt = Date.now();
+        m.firstDeltaAt = 0;
+        m.lastDeltaAt = 0;
+        m.liveTokens = 0;
+        m.usageTokens = 0;
+        m.usageStreams = 0;
+        m.finishedStreams = 0;
+        m.finalText = '';
+        _streamMeterSetText('');
+      }
+      m.active += 1;
+      return { ended: false, usage: 0, hasUsage: false };
+    }
+
+    function _streamMeterAdd(handle, text) {
+      if (!handle || handle.ended || !text) return;
+      const tokens = _estimateStreamTokens(text);
+      if (tokens <= 0) return;
+      const m = _streamMeterState();
+      const now = Date.now();
+      if (!m.firstDeltaAt) m.firstDeltaAt = now;
+      m.lastDeltaAt = now;
+      m.liveTokens += tokens;
+    }
+
+    // 正文与思维链都算生成量（只用于读数，不改变「思维链不进正文」的通道口径）。
+    function _streamMeterAddDelta(handle, delta) {
+      if (!handle || !delta) return;
+      if (delta.content) _streamMeterAdd(handle, delta.content);
+      if (delta.reasoning_content) _streamMeterAdd(handle, delta.reasoning_content);
+    }
+
+    function _streamMeterUsage(handle, usage) {
+      if (!handle || handle.ended || !usage) return;
+      const n = Number(usage.completion_tokens);
+      if (!Number.isFinite(n) || n <= 0) return;
+      handle.usage = n;
+      handle.hasUsage = true;
+    }
+
+    function _streamMeterEnd(handle) {
+      if (!handle || handle.ended) return;
+      handle.ended = true;
+      const m = _streamMeter;
+      if (!m) return;
+      m.active = Math.max(0, m.active - 1);
+      m.finishedStreams += 1;
+      if (handle.hasUsage) {
+        m.usageStreams += 1;
+        m.usageTokens += handle.usage;
+      }
+      if (m.active > 0) return;
+      const secs = (m.lastDeltaAt - m.firstDeltaAt) / 1000;
+      if (!m.liveTokens || !(secs >= STREAM_RATE_MIN_SEC)) {
+        m.finalText = '';
+        _streamMeterSetText('');
+        return;
+      }
+      // 只有「每条流都报了 usage」才用精确值；缺一条就退回估算，别拿半截分母冒充精确。
+      const exact = m.usageStreams === m.finishedStreams && m.usageTokens > 0;
+      m.finalText = _formatStreamSpeed((exact ? m.usageTokens : m.liveTokens) / secs, exact);
+      _streamMeterSetText(m.finalText);
+    }
+
+    function _streamMeterRender(now) {
+      const m = _streamMeter;
+      if (!m) return '';
+      const ts = Number.isFinite(now) ? now : Date.now();
+      let text = '';
+      if (m.active > 0) {
+        if (m.firstDeltaAt) {
+          const ttft = Math.max(0, m.firstDeltaAt - m.startedAt) / 1000;
+          // 工作流的读流从响应头到达才开始计，首字常是 0.0s——那种「假首字」不亮，
+          // 直接等速率；真等过模型的（分支/苏格拉底）才值得看这一眼。
+          if (ttft >= STREAM_TTFT_MIN_SEC && ts - m.firstDeltaAt < STREAM_TTFT_GAP_MS) {
+            text = '首字 ' + (ttft < 10 ? ttft.toFixed(1) : String(Math.round(ttft))) + 's';
+          } else {
+            const secs = (m.lastDeltaAt - m.firstDeltaAt) / 1000;
+            if (m.liveTokens > 0 && secs >= 0.2) {
+              text = _formatStreamSpeed(m.liveTokens / secs, false);
+            }
+          }
+        }
+      } else {
+        text = m.finalText || '';
+      }
+      _streamMeterSetText(text);
+      return text;
+    }
 
     const PROGRESS_POS_KEY = 'phymathia_progress_pos';
     function _applySavedProgressPosition() {
@@ -348,6 +508,7 @@
       // 拒绝提取，这条概念就永远进不了知识库，大陆上也就永远没有这座岛
       // （真机复现：推理模型答「旋度」→ 知识库无旋度 → 大陆无旋度岛）。
       let assistantReasoning = '';
+      let streamMeter = null;
       let graphRenderPending = false;
       let graphRenderFrame = null;
 
@@ -364,6 +525,7 @@
         let resp;
         if (agentModel) {
           showProgress('tool', 26, '正在连接 AI 服务');
+          streamMeter = _streamMeterBegin();
           // 寒暄快捷通道已随线性主聊天退役：分支/苏格拉底请求一律走完整回答路径，
           // 不再带 quick/max_tokens（此前这里引用了未定义的 isCasual，请求发出前即抛 ReferenceError）
           resp = await proxyChat(text, currentLevel, sendSessionId, true, abortController.signal, branchMeta);
@@ -426,6 +588,7 @@
                       : (progressLabel || '正在生成回答');
                     _setProgress(pct, label);
                   }
+                  if (data.usage) _streamMeterUsage(streamMeter, data.usage);
                   const choice = data.choices?.[0];
                   const delta = choice?.delta;
                   if (!delta) continue;
@@ -456,6 +619,7 @@
                   }
                   if (delta.content || delta.reasoning_content) {
                     if (currentStage !== 'generating') showProgress('generating', Math.max(progressPercent, PROGRESS_PHASE.generating.percent), '正在生成回答');
+                    _streamMeterAddDelta(streamMeter, delta);
                     // 两个通道分开攒：只有 content 进正文，reasoning_content 留在旁边
                     // （旧写法 `delta.content || delta.reasoning_content` 会把思维链灌进正文）
                     if (delta.content) assistantContent += delta.content;
@@ -474,6 +638,8 @@
           }
         }
 
+        _streamMeterEnd(streamMeter);
+        streamMeter = null;
         _setProgress(90, '正在整理回答');
 
         // 模型只吐了推理通道、正文一个字都没有时退回思维链：宁可显示思维链，也别给一个
@@ -580,6 +746,8 @@
         }
 
       } catch (err) {
+        _streamMeterEnd(streamMeter);
+        streamMeter = null;
         hideProgress();
         sendTaskState = err.name === 'AbortError' ? 'stopped' : 'error';
         sendTaskNote = err.name === 'AbortError' ? '手动停止' : (err.message || '发送失败');

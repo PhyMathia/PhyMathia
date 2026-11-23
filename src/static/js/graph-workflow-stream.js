@@ -98,36 +98,49 @@ function _cancelBusyNodesServerGenerations() {
 
 // 每 4 帧让出一次事件循环：流式期间合成 DOM 渲染有帧预算，别让读流饿死它。
 // （让出的时机从「渲染前」挪到了「渲染后」——两者都是每 4 帧喘一次，语义等价。）
-async function* _sseContentFrames(resp) {
-  const reader = resp.body.getReader();
+async function* _sseContentFrames(resp, opts) {
+  // 胶囊速度读数（2026-11-23）：共享读取口是工作流各流唯一看得到 usage 的地方，
+  // 在这里记一笔；后台 viz 传 { meter:false }，不把后台吞吐算进前台胶囊。
+  const meter = (!opts || opts.meter !== false) && typeof _streamMeterBegin === 'function'
+    ? _streamMeterBegin()
+    : null;
   const decoder = new TextDecoder();
   let buffer = '';
   let frameCount = 0;
-  while (true) {
-    const { done, value } = await _readStreamChunk(reader);
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const parts = buffer.split('\n\n');
-    buffer = parts.pop();   // 最后一段可能不完整，留到下一轮再拼
-    for (const part of parts) {
-      for (const line of part.split('\n')) {
-        if (!line.startsWith('data: ')) continue;
-        const dataStr = line.slice(6).trim();
-        if (dataStr === '[DONE]') continue;
-        let data = null;
-        try { data = JSON.parse(dataStr); } catch (e) {}
-        if (data && data.error) {
-          const message = data.detail || data.error.detail || data.error.message || JSON.stringify(data.error);
-          throw new Error('AI 流式返回错误：' + message);
-        }
-        const delta = data && data.choices && data.choices[0] && data.choices[0].delta;
-        if (delta && delta.content) {
-          yield delta.content;
-          frameCount++;
-          if (frameCount % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+  try {
+    const reader = resp.body.getReader();
+    while (true) {
+      const { done, value } = await _readStreamChunk(reader);
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop();   // 最后一段可能不完整，留到下一轮再拼
+      for (const part of parts) {
+        for (const line of part.split('\n')) {
+          if (!line.startsWith('data: ')) continue;
+          const dataStr = line.slice(6).trim();
+          if (dataStr === '[DONE]') continue;
+          let data = null;
+          try { data = JSON.parse(dataStr); } catch (e) {}
+          if (data && data.error) {
+            const message = data.detail || data.error.detail || data.error.message || JSON.stringify(data.error);
+            throw new Error('AI 流式返回错误：' + message);
+          }
+          if (data && data.usage && typeof _streamMeterUsage === 'function') {
+            _streamMeterUsage(meter, data.usage);
+          }
+          const delta = data && data.choices && data.choices[0] && data.choices[0].delta;
+          if (delta && typeof _streamMeterAddDelta === 'function') _streamMeterAddDelta(meter, delta);
+          if (delta && delta.content) {
+            yield delta.content;
+            frameCount++;
+            if (frameCount % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+          }
         }
       }
     }
+  } finally {
+    if (typeof _streamMeterEnd === 'function') _streamMeterEnd(meter);
   }
 }
 
@@ -178,7 +191,7 @@ async function _streamCustomNodeResponse(resp, node, opts) {
   }
 
   try {
-    for await (const piece of _sseContentFrames(resp)) {
+    for await (const piece of _sseContentFrames(resp, { meter: !_bg })) {
       content += piece;
       if (!_bg) _scheduleWorkflowStreamProgress(content.length);
       scheduleRender();

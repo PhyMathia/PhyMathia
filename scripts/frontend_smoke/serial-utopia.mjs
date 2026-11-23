@@ -120,10 +120,10 @@ check('graph-workflow: 三个流式通道共用一份 SSE 读取（作用域限�
     throw new Error('工作流族五件里 getReader() 出现 ' + readers
       + ' 次（应为 1）——有人在这些通道之外又把 SSE 读取抄了一份');
   }
-  if (!/async function\* _sseContentFrames\(resp\)/.test(gwCode)) {
+  if (!/async function\* _sseContentFrames\(resp(?:, opts)?\)/.test(gwCode)) {
     throw new Error('共享读取口 _sseContentFrames 不见了');
   }
-  const users = (gwCode.match(/for await \(const piece of _sseContentFrames\(resp\)\)/g) || []).length;
+  const users = (gwCode.match(/for await \(const piece of _sseContentFrames\(resp(?:, [^)]*)?\)\)/g) || []).length;
   if (users !== 3) {
     throw new Error('_sseContentFrames 的调用点 ' + users + ' 处（应为 3：模块节点（含空白节点，T403 合一）/ 问题分析 / 配方双阶段概要 P2）');
   }
@@ -140,7 +140,7 @@ check('graph-workflow: 三个流式通道共用一份 SSE 读取（作用域限�
     const i = gwCode.indexOf('async function ' + fn + '(');
     if (i < 0) throw new Error('找不到 ' + fn);
     const seg = gwCode.slice(i, i + 4000);
-    if (!seg.includes('_sseContentFrames(resp)')) {
+    if (!seg.includes('_sseContentFrames(resp')) {
       throw new Error(fn + ' 没走共享读取口');
     }
     // T218：流式卡片渲染 250ms 节流（原每 rAF 帧整卡 innerHTML 重建＋KaTeX 全量

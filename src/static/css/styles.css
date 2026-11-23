@@ -4065,6 +4065,16 @@
       font-variant-numeric: tabular-nums;
       opacity: 0.5;
     }
+    /* 生成速度（2026-11-23）：与耗时同一档的附注读数，过程中是≈估算、结束时去掉≈。
+       空态不占位（:empty），窄到放不下时由 .status-text 先让位。 */
+    .progress-status .stream-speed {
+      flex: 0 0 auto;
+      font-size: var(--fs-sm);
+      font-variant-numeric: tabular-nums;
+      opacity: 0.5;
+      white-space: nowrap;
+    }
+    .progress-status .stream-speed:empty { display: none; }
     /* 「待发送 N」：AI 忙时排队中的请求数（send-queue.js）。挂进胶囊是因为用户
        盯着等的时候本来就在看这儿，不用去学一个全新位置。点它 = 全部丢弃，
        是这条链路上唯一的反悔出口。宽度短到不参与收缩——胶囊的唯一收缩位仍是

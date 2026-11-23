@@ -934,6 +934,7 @@
   .app-container .progress-status .status-progress { flex: 1 1 90px; min-width: 0; }
   .app-container .progress-status .status-text { min-width: 3.5em; }
   .app-container .progress-status .elapsed-time { display: none; }
+  .app-container .progress-status .stream-speed { display: none; }
 }
 
 /* ---------- 糖果·进度胶囊：节点卡质感（2026-11-21 用户拍板）----------

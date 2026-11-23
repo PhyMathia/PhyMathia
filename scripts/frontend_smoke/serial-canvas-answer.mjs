@@ -1444,6 +1444,72 @@ check('发送排队：模块已注册进构建顺序，且「待发送 N」标�
   }
 });
 
+// 生成速度读数（2026-11-23，用户拍板只在胶囊）：静态接线＋三段行为口径。
+check('生成速度胶囊（2026-11-23）：实时估算 tok/s＋结束精确值，后台 viz 不混入', () => {
+  const html = fs.readFileSync('src/static/index.html', 'utf8');
+  const capsule = html.slice(html.indexOf('id="progressStatus"'), html.indexOf('id="progressStatus"') + 2200);
+  if (!capsule.includes('class="stream-speed"')) {
+    throw new Error('胶囊里没有 .stream-speed 读数位——速度没地方显示');
+  }
+  const css = fs.readFileSync('src/static/css/styles.css', 'utf8');
+  if (!css.includes('.progress-status .stream-speed')) {
+    throw new Error('styles.css 缺 .stream-speed 规则');
+  }
+  const override = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  if (!/\.progress-status \.stream-speed \{ display: none; \}/.test(override)) {
+    throw new Error('小屏没隐藏速度读数，窄胶囊会被挤爆');
+  }
+  const chat = fs.readFileSync('src/static/js/chat.js', 'utf8');
+  for (const needle of ['function _streamMeterBegin', 'function _streamMeterAddDelta',
+    'function _streamMeterUsage', 'function _streamMeterEnd', '_streamMeterRender()']) {
+    if (!chat.includes(needle)) throw new Error('chat.js 缺 ' + needle);
+  }
+  if (!/if \(data\.usage\) _streamMeterUsage\(streamMeter, data\.usage\)/.test(chat)) {
+    throw new Error('chat.js 没把结束帧的 usage 接给速度读数——精确值永远出不来');
+  }
+  const stream = fs.readFileSync('src/static/js/graph-workflow-stream.js', 'utf8');
+  if (!/_sseContentFrames\(resp, \{ meter: !_bg \}\)/.test(stream)) {
+    throw new Error('后台 viz 没被排除在胶囊读数外——前台速度会把后台吞吐算进去');
+  }
+  if (!stream.includes('_streamMeterAddDelta(meter, delta)')) {
+    throw new Error('工作流共享读取口没记字数——工作流里的胶囊速度永远是空的');
+  }
+});
+
+check('生成速度读数（2026-11-23）：首字→≈速率→精确 tok/s 三段口径', () => {
+  try {
+    if (Math.abs(sandbox._estimateStreamTokens('中文abc') - 2.75) > 1e-9) {
+      throw new Error('token 估算口径不对（中文 1 字≈1、ASCII 4 字符≈1）');
+    }
+    if (sandbox._formatStreamSpeed(32.4, false) !== '≈32 tok/s') throw new Error('过程值应带 ≈');
+    if (sandbox._formatStreamSpeed(32.4, true) !== '32 tok/s') throw new Error('精确值不该带 ≈');
+    if (sandbox._formatStreamSpeed(9.42, false) !== '≈9.4 tok/s') throw new Error('个位数应留一位小数');
+    vm.runInContext('var __T = Date.now(); _streamMeter = { active: 1, startedAt: __T - 4000, firstDeltaAt: __T - 3000, lastDeltaAt: __T, liveTokens: 90, usageTokens: 0, usageStreams: 0, finishedStreams: 0, finalText: "" };', sandbox);
+    const T = vm.runInContext('__T', sandbox);
+    if (sandbox._streamMeterRender(T) !== '≈30 tok/s') throw new Error('实时速率没按 90 token / 3 秒算');
+    vm.runInContext('_streamMeter.firstDeltaAt = __T - 500; _streamMeter.startedAt = __T - 2000;', sandbox);
+    if (sandbox._streamMeterRender(T) !== '首字 1.5s') throw new Error('首片到达后的首字延迟读数不对');
+    vm.runInContext('_streamMeter.firstDeltaAt = __T - 950; _streamMeter.startedAt = __T - 1000; _streamMeter.lastDeltaAt = __T;', sandbox);
+    const fastTtft = sandbox._streamMeterRender(T);
+    if (!/^≈\d/.test(fastTtft)) {
+      throw new Error('首字不足 0.1s 时不该亮假首字，应直接给速率（实际 ' + JSON.stringify(fastTtft) + '）');
+    }
+    vm.runInContext('_streamMeter = { active: 1, startedAt: __T - 5000, firstDeltaAt: __T - 2000, lastDeltaAt: __T, liveTokens: 100, usageTokens: 0, usageStreams: 0, finishedStreams: 0, finalText: "" };', sandbox);
+    sandbox._streamMeterEnd({ ended: false, usage: 128, hasUsage: true });
+    if (vm.runInContext('_streamMeter.active', sandbox) !== 0) throw new Error('最后一条流结束后读数没交账');
+    if (vm.runInContext('_streamMeter.finalText', sandbox) !== '64 tok/s') {
+      throw new Error('结束值没按 usage.completion_tokens / 2 秒算');
+    }
+    vm.runInContext('_streamMeter = { active: 1, startedAt: __T - 4000, firstDeltaAt: __T - 3000, lastDeltaAt: __T, liveTokens: 90, usageTokens: 0, usageStreams: 0, finishedStreams: 0, finalText: "" };', sandbox);
+    sandbox._streamMeterEnd({ ended: false, usage: 0, hasUsage: false });
+    if (vm.runInContext('_streamMeter.finalText', sandbox) !== '≈30 tok/s') {
+      throw new Error('上游不报 usage 时结束值应退回估算并保留 ≈');
+    }
+  } finally {
+    vm.runInContext('_streamMeter = null;', sandbox);
+  }
+});
+
 // ===== 串行边界追加：画布多选与批量删除（2026-09-30）=====
 // 多选改的是模块级 sessions / currentSessionId 词法绑定，还会 await 一串 fetch、
 // 写共享的 phymathia_sessions 与 phymathia_msgs_*/graph_* 键——与在途异步用例互踩，

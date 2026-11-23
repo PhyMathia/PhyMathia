@@ -43,9 +43,9 @@
     })();
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
-  <link rel="stylesheet" href="/dist/styles.min.css?v=bdd34661">
+  <link rel="stylesheet" href="/dist/styles.min.css?v=e1e55049">
   <link rel="stylesheet" href="/dist/styles-panels.min.css?v=ac2c07be">
-  <link rel="stylesheet" href="/dist/graph-override.min.css?v=6d5c938e">
+  <link rel="stylesheet" href="/dist/graph-override.min.css?v=52c78e8d">
   <link rel="stylesheet" href="/dist/phi-pet.min.css?v=73efc06a">
   <script defer src="/vendor/katex/katex.min.js"></script>
   <script defer src="/vendor/katex/contrib/auto-render.min.js"></script>
@@ -227,6 +227,7 @@
       <button class="send-queue-chip" id="sendQueueChip" hidden aria-live="polite"></button>
       <div class="status-progress"><div class="status-progress-fill" id="statusProgressFill"></div></div>
       <span class="elapsed-time"></span>
+      <span class="stream-speed"></span>
     </div>
 
     <div class="socratic-modal-overlay" id="socraticModal" hidden>
@@ -267,7 +268,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/dist/app.js?v=d83c4e1e" defer></script>
+  <script src="/dist/app.js?v=8f355ede" defer></script>
   <script>
     // app.js 改 defer 后本脚本先于它执行，而 APP_VERSION 是 config.js 的顶层
     // const——内联脚本无法加 defer，只能等 DOMContentLoaded：所有 defer 脚本
