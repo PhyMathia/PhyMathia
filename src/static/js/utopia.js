@@ -16,7 +16,15 @@
 const UTOPIA_FORMAT = 'phymath-utopia/graph';
 const UTOPIA_VERSION = 1;
 const UTOPIA_EXT = '.pmu';
-const UTOPIA_APP = 'PhyMathia/1.4.1';
+
+// 来源版本跟着 config.js 的 APP_VERSION 走（backlog 577，2026-11-23）：此前这里写死
+// 了一个旧版本号，.pmu 与单文件网页的来源版本一直失真。调用期才取：utopia.js 同时进
+// 主包与查看器包，加载顺序不该成为它的前提。
+function _utopiaAppTag() {
+  try {
+    return 'PhyMathia/' + (typeof APP_VERSION !== 'undefined' && APP_VERSION ? APP_VERSION : '未知版本');
+  } catch (e) { return 'PhyMathia/未知版本'; }
+}
 
 // ---------- 纯函数（smoke 断言 / 查看器复用） ----------
 
@@ -117,12 +125,24 @@ function parseUtopiaSnapshot(input) {
   return { ok: true, snapshot: data };
 }
 
-function utopiaSnapshotFilename(title) {
+// 文件名里的时间戳：<年月日>_<时分>
+function _utopiaFileStamp() {
   const d = new Date();
   const p = function (n) { return String(n).padStart(2, '0'); };
-  const stamp = '' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes());
+  return '' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes());
+}
+
+function utopiaSnapshotFilename(title) {
+  const stamp = _utopiaFileStamp();
   const safe = String(title || '').replace(/[\\/:*?"<>|\n\r]/g, '_').trim().slice(0, 40);
   return 'PhyMathUtopia_' + (safe || stamp) + (safe ? '_' + stamp : '') + UTOPIA_EXT;
+}
+
+// 单文件网页与 .pmu 同一款命名（<名>_<日期_时分>，2026-11-23）：此前不带时间，
+// 同一张图导第二次就在「下载」里静默覆盖。
+function utopiaHtmlFilename(title) {
+  const safe = String(title || '').replace(/[\\/:*?"<>|\n\r]/g, '_').trim().slice(0, 40);
+  return 'PhyMathia_' + (safe || '探索网') + '_' + _utopiaFileStamp() + '.html';
 }
 
 // ---------- 导出（主应用侧） ----------
@@ -180,6 +200,23 @@ function _utopiaGraphState() {
 // meta.omittedMessages=省略条数。缺省（或 true）＝完整存档，与 2026-09-22 起的现状完全一致。
 // 为什么轻量也必须带「引用到的消息」而不是零消息：查看器走 _buildGraphData(messages, state)
 // 同一构建路径，模块节点正文要从消息复算，完全不带消息会只剩空画布（canvas-modules.md 硬约束）。
+//
+// options.stripVersions === true → 快照不带节点旧版本（单文件网页外发用，backlog 579）：
+// versions 是编辑侧的版本账本（重新生成/从头生成的旧文），只对「拖回主应用继续编辑」有意义；
+// 只读外发用不上，却随 graph.customNodes 与 nodes 各带一份（齿轮会话两份合计 597KB、占成品 14%）。
+// 带着它还有个副作用：查看器会把版本导航画出来，而那几个按钮不在只读护栏里（538 的盲区）。
+// .pmu 存档缺省照旧全带（拖回要靠它恢复版本历史）。只动快照里的克隆，画布原件一字不碰。
+function _utopiaWithoutVersions(snapshot) {
+  const strip = function (list) {
+    (Array.isArray(list) ? list : []).forEach(function (item) {
+      if (item && typeof item === 'object' && Array.isArray(item.versions)) delete item.versions;
+    });
+  };
+  strip(snapshot.graph && snapshot.graph.customNodes);
+  strip(snapshot.nodes);
+  return snapshot;
+}
+
 function buildUtopiaSnapshot(options) {
   const includeAll = !(options && options.includeAllMessages === false);
   const rawNodes = (typeof graphView !== 'undefined' && graphView && graphView.nodes) || [];
@@ -220,11 +257,11 @@ function buildUtopiaSnapshot(options) {
     nodes.push(copy);
   });
 
-  return {
+  const snapshot = {
     format: UTOPIA_FORMAT,
     version: UTOPIA_VERSION,
     exportedAt: new Date().toISOString(),
-    app: UTOPIA_APP,
+    app: _utopiaAppTag(),
     title: _utopiaCurrentTitle(),
     meta: {
       sessionId: (typeof window.getCurrentSessionId === 'function' ? window.getCurrentSessionId() : '') || '',
@@ -244,6 +281,7 @@ function buildUtopiaSnapshot(options) {
     groups: (_utopiaClone((graphView && graphView.groups) || []) || []),
     messages: messages,
   };
+  return (options && options.stripVersions) ? _utopiaWithoutVersions(snapshot) : snapshot;
 }
 
 // 导出成功浮卡：给一条明确的「下一步」——一键在查看器里打开刚导出的存档。
@@ -316,22 +354,30 @@ function showUtopiaExportCard(summary) {
   card.className = 'aurora-glass aurora-glass--dialog';
   card.setAttribute('role', 'status');
   var isLight = summary.mode === 'light';
-  var htmlRow = (typeof window.exportUtopiaStandaloneHtml === 'function')
+  // 单文件网页的完成卡（2026-11-23，backlog 580 的一角）：同一张卡换个说法——网页版只读
+  // 外发，没有「拖回继续编辑」，也不该再给一个「再存网页版」按钮。
+  var isHtml = summary.kind === 'html';
+  var htmlRow = (!isHtml && typeof window.exportUtopiaStandaloneHtml === 'function')
     ? '<button type="button" class="utopia-export-card-btn" id="utopiaExportHtmlBtn">'
       + (isLight ? '再存网页版（完整对话）' : '再存网页版') + '</button>'
     : '';
-  var subLine = summary.nodes + ' 节点 · ' + summary.edges + ' 连线 · '
-    + summary.messages + ' 条会话消息 · ' + _utopiaFmtSize(summary.bytes)
-    + (isLight && summary.omittedMessages ? ' · 省略 ' + summary.omittedMessages + ' 条未引用消息' : '');
-  card.innerHTML = '<div class="utopia-export-card-title">' + (isLight ? '轻量存档已保存' : '存档已保存') + '</div>'
+  var subLine = isHtml
+    ? summary.nodes + ' 节点 · ' + summary.edges + ' 连线 · ' + _utopiaFmtSize(summary.bytes)
+    : summary.nodes + ' 节点 · ' + summary.edges + ' 连线 · '
+      + summary.messages + ' 条会话消息 · ' + _utopiaFmtSize(summary.bytes)
+      + (isLight && summary.omittedMessages ? ' · 省略 ' + summary.omittedMessages + ' 条未引用消息' : '');
+  card.innerHTML = '<div class="utopia-export-card-title">'
+    + (isHtml ? '网页版已保存' : (isLight ? '轻量存档已保存' : '存档已保存')) + '</div>'
     + '<div class="utopia-export-card-sub">' + subLine + '</div>'
     + '<div class="utopia-export-card-hint">已存到「下载」：<b>' + _utopiaEsc(summary.fileName) + '</b><br>'
-    + (isLight
-      ? '轻量存档只带画布引用的消息，拖回只能恢复这部分对话；'
-      : '拖回 PhyMathia 可继续编辑；')
-    + '发给别人建议用单文件网页</div>'
+    + (isHtml ? '双击即可离线打开，可直接发给别人'
+      : (isLight
+        ? '轻量存档只带画布引用的消息，拖回只能恢复这部分对话；'
+        : '拖回 PhyMathia 可继续编辑；')
+        + '发给别人建议用单文件网页')
+    + '</div>'
     + '<div class="utopia-export-card-actions">'
-    + '<button type="button" class="utopia-export-card-btn primary" id="utopiaOpenViewerBtn">在查看器中打开</button>'
+    + (isHtml ? '' : '<button type="button" class="utopia-export-card-btn primary" id="utopiaOpenViewerBtn">在查看器中打开</button>')
     + htmlRow
     + '<button type="button" class="utopia-export-card-btn" id="utopiaCopyNameBtn">复制文件名</button>'
     + '<button type="button" class="utopia-export-card-btn" id="utopiaDismissCardBtn">知道了</button>'
@@ -349,7 +395,8 @@ function showUtopiaExportCard(summary) {
       if (ok) setTimeout(function () { if (copyBtn.isConnected) copyBtn.textContent = '复制文件名'; }, 1600);
     });
   });
-  card.querySelector('#utopiaOpenViewerBtn').addEventListener('click', function () {
+  var openBtn = card.querySelector('#utopiaOpenViewerBtn');
+  if (openBtn) openBtn.addEventListener('click', function () {
     card.remove();
     clearTimeout(_utopiaCardTimer);
     _utopiaOpenHandoffViewer();
@@ -454,6 +501,7 @@ if (typeof window !== 'undefined') {
   window.parseUtopiaSnapshot = parseUtopiaSnapshot;
   window.utopiaSnapshotSummary = utopiaSnapshotSummary;
   window.utopiaSnapshotFilename = utopiaSnapshotFilename;
+  window.utopiaHtmlFilename = utopiaHtmlFilename;
   window.exportUtopiaSnapshot = exportUtopiaSnapshot;
   window.previewUtopiaInViewer = previewUtopiaInViewer;
 }

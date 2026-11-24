@@ -92,6 +92,28 @@ check('utopia: 单文件网页导出（防截断转义 + 大图限流 + 双通�
   if (deliverAt < uh.indexOf('utopiaHtmlVerifyPacked(html, snapshot,') || deliverAt < uh.indexOf('await _utopiaRenderCheck(')) {
     throw new Error('落盘动作排到了自检前面——自检不通过也会交出文件');
   }
+  // 577/578/579/580 瘦身提速轮（2026-11-23）静态契约：
+  const uj = fs.readFileSync('src/static/js/utopia.js', 'utf8');
+  if (uj.includes('PhyMathia/1.4.1') || !uj.includes('APP_VERSION')) {
+    throw new Error('快照 app 标签须读 config.js 的 APP_VERSION（577），不得写死版本号');
+  }
+  if (!uh.includes('{ stripVersions: true }')) throw new Error('外发快照须带 stripVersions（579：节点旧版本不进单文件网页）');
+  if (!uj.includes('function _utopiaWithoutVersions') || !uj.includes('strip(snapshot.nodes)')) {
+    throw new Error('579：剔除旧版本须同时覆盖 graph.customNodes 与 nodes 两份（齿轮会话两份合计占成品 14%）');
+  }
+  if (!uh.includes('data-pm-katex') || !uh.includes('function _utopiaVizBridgeScript')) {
+    throw new Error('578①：可视化 KaTeX 走「现取现转」引导脚本（认 data-pm-katex 标记），不得重复内联第二份字节');
+  }
+  if (uh.includes('_collectVizAssets')) throw new Error('旧的串行 KaTeX 收集器应已移除（578①）');
+  if (!uh.includes('cssJobs.concat(jsJobs)')) throw new Error('578②：模板样式表与脚本须并行收集，一次 Promise.all 汇合');
+  if (!uj.includes('function utopiaHtmlFilename')) throw new Error('580：单文件网页文件名须带日期（utopiaHtmlFilename），重复导出不互相覆盖');
+  if (!uh.includes("if (typeof showUtopiaExportCard === 'function') showUtopiaExportCard(summary);")
+      || !/showUtopiaExportCard\(summary\);\s*else\s*toastMsg\('单文件网页已导出/.test(uh)) {
+    throw new Error('完成反馈应走 .pmu 同款浮卡（580）——成功 toast 只许当浮卡缺席时的兜底');
+  }
+  if (!uh.includes("summary.kind = 'html'") && !uh.includes('summary.kind = "html"')) {
+    throw new Error('网页版交付须标 summary.kind=html 复用导出浮卡（580）');
+  }
   const shims = fs.readFileSync('src/static/js/viewer-shims.js', 'utf8');
   if (!shims.includes('window.__UTOPIA__.state = {}')) throw new Error('空查看器未补默认图状态（pan 缺失会抛 setting x）');
   if (!shims.includes('s.pan = { x: 80, y: 80 }')) throw new Error('空查看器默认 pan 缺失');
@@ -263,6 +285,9 @@ check('utopia: .pmu 快照格式（解析校验/摘要/文件名 + 导出接线 
   const fn = sandbox.utopiaSnapshotFilename('会话 名/带*字符?');
   if (!fn.endsWith('.pmu')) throw new Error('文件名缺扩展名');
   if (/[\\/:*?"<>|]/.test(fn)) throw new Error('文件名残留非法字符：' + fn);
+  // 单文件网页同名口径（580，2026-11-23）：<名>_<日期_时分>.html，重复导出不互相覆盖
+  const hfn = String(sandbox.utopiaHtmlFilename('齿轮 啮合')).trim();
+  if (!/^PhyMathia_.+_\d{8}_\d{4}\.html$/.test(hfn)) throw new Error('网页版文件名没带日期戳：' + hfn);
   // 主应用接线：产物含 utopia.js、导出菜单有入口
   if (!code.includes('buildUtopiaSnapshot') || !code.includes('exportUtopiaSnapshot')) throw new Error('主包未注册快照模块');
   const ge = fs.readFileSync('src/static/js/graph-export.js', 'utf8');

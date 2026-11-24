@@ -4,9 +4,10 @@
 // 可开）、可发给没装 PhyMathia 的人。查看器 boot 优先读内嵌快照（见 viewer-main.js）。
 // 管线复刻 graph-export 的 CSS url() 内联策略：字体必内联（KaTeX 只留 woff2 源减重）。
 // file:// 三件套（用户实测）：① 壁纸照片深浅两张内联进包，随主题按钮一起切换；② 可视化
-// 节点的 KaTeX 资产以 window.__PM_VIZ_ASSETS__ 预内联（桥接走 postMessage 来取，绝对路径在
-// file:// 下全被拦）；③ pmu 通道残留界面（打开快照/拖拽卡/.pmu 文案）打包时剔除，
-// viewer.html 模板本身不动——恢复 pmu 时无需回滚本文件。
+// 节点的 KaTeX 走「现取现转」引导脚本——外发页本身已为会话记录面板内联了整套 KaTeX
+//（css+katex.min.js+auto-render），引导脚本在运行时把这三样转成 data URI 答给公式桥，
+// 不再重复内联第二份（2026-11-23 前：齿轮会话光这一项就多背 859KB）；③ pmu 通道残留界面
+//（打开快照/拖拽卡/.pmu 文案）打包时剔除，viewer.html 模板本身不动——恢复 pmu 时无需回滚本文件。
 // 交付一律落下载文件（用户拍板 2026-09-26：要的是文件不是弹窗），window.open 通道已拆除。
 // 成品自检（2026-11-23，backlog 574）：坏文件不交出去。打包时哪个样式/脚本/字体没取到
 // 一律记名；交付前过两道核对——① 结构核对（成品文本按浏览器的方式重新解析一遍），
@@ -16,7 +17,7 @@
 (function () {
   var IMAGE_INLINE_LIMIT = 96 * 1024; // 图片内联上限（背景照片等大图不进包）
 
-  var _resCache = {}; // url -> dataURL | ''（大图不进包时也是 ''）
+  var _resCache = {}; // url -> dataURL | ''（大图不进包时也是 ''）| Promise（在途，同 url 并发去重）
   var _resErrors = {}; // url -> 失败原因，只给自检点名用。失败不进 _resCache：下次导出会重试
 
   function _utopiaErrText(e) {
@@ -29,9 +30,11 @@
       .replace(/\?$/, '') || '未知文件';
   }
 
+  // 返回 Promise（dataURL 或 ''）。并发安全：同一 url 的在途请求直接复用（backlog 578，
+  // 2026-11-23——此前这里缓存结果、逐个 await，脚本/KaTeX/壁纸全程串行排队）
   function _fetchDataUrl(url, mustInline) {
     if (_resCache[url] !== undefined) return Promise.resolve(_resCache[url]);
-    return fetch(url, { cache: 'force-cache' }).then(function (r) {
+    var job = fetch(url, { cache: 'force-cache' }).then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.arrayBuffer().then(function (buf) {
         if (!mustInline && buf.byteLength > IMAGE_INLINE_LIMIT) return ''; // 大图跳过
@@ -49,6 +52,10 @@
       _resErrors[url] = _utopiaErrText(e);
       return '';
     });
+    _resCache[url] = job;
+    // 落定后把缓存槽从 Promise 换成终值（内存里不留悬挂的 Promise 链）
+    job.then(function (v) { if (_resCache[url] === job) _resCache[url] = v; });
+    return job;
   }
 
   // CSS 里的 url(...) 全部换成 data URI（字体必内联，图片按大小）。
@@ -200,56 +207,68 @@
     doc.body.appendChild(sync);
   }
 
-  // 文本 → data URI（css 里的 base64 走 utf8 安全转换）
-  function _textToDataUrl(text, mime) {
-    try {
-      return 'data:' + mime + ';base64,' + btoa(unescape(encodeURIComponent(String(text))));
-    } catch (e) {
-      return 'data:' + mime + ';charset=utf-8,' + encodeURIComponent(String(text));
-    }
-  }
-
-  // 可视化节点需要的 KaTeX 资产：css（woff2 字体内联）+ 两个 js，全部转 data URI。
-  // 桥接在 iframe 里通过 postMessage 向宿主取（render.js 侧监听）——file:// 下绝对路径
-  // 全被拦，必须把字节预埋进包。没有可视化节点的图零开销。
-  // 注意 css 必须包成 data URI 再交出去：桥接侧是 <link href>，裸 CSS 文本会被当 URL 解析。
-  // 返回 null 有两种情况，调用方靠 failures 区分：① 没有可视化节点，不必带 KaTeX（failures 不变）；
-  // ② 有节点但资产没取全——逐项记进 failures，自检据此拦下。2026-11-23 前这里任何一步失败都
-  // 静默返回 null，交出去的文件里可视化公式渲染不出来，却照样提示「已导出」。
-  async function _collectVizAssets(snapshot, failures) {
-    var hasViz = false;
-    try { hasViz = /```html/i.test(JSON.stringify(snapshot)); } catch (e) { hasViz = false; }
-    if (!hasViz) return null;
-    var base = location.origin;
-    var cssUrl = base + '/vendor/katex/katex.min.css';
-    var fontMisses = [];
-    var css = await fetch(cssUrl, { cache: 'force-cache' })
-      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
-      .then(function (t) {
-        if (!t || !t.trim()) throw new Error('内容为空');
-        return _inlineCssAssets(_woff2OnlyCss(t), cssUrl, fontMisses);
-      })
-      .then(function (t) { return _textToDataUrl(t, 'text/css'); })
-      .catch(function (e) {
-        failures.push({ kind: '可视化公式样式表', name: 'katex.min.css', error: _utopiaErrText(e) });
-        return null;
-      });
-    fontMisses.forEach(function (f) { failures.push({ kind: '样式表字体', name: f.name, error: f.error }); });
-    var katexUrl = base + '/vendor/katex/katex.min.js';
-    var katexJs = await _fetchDataUrl(katexUrl, true);
-    if (!katexJs) failures.push({ kind: '可视化公式脚本', name: 'katex.min.js', error: _resErrors[katexUrl] || '原因不明' });
-    var autoUrl = base + '/vendor/katex/contrib/auto-render.min.js';
-    var autoJs = await _fetchDataUrl(autoUrl, true);
-    if (!autoJs) failures.push({ kind: '可视化公式脚本', name: 'auto-render.min.js', error: _resErrors[autoUrl] || '原因不明' });
-    if (!css || !katexJs || !autoJs) return null;
-    return { css: css, katex: katexJs, auto: autoJs };
+  // 可视化节点的 KaTeX 资产供给（backlog 578①，2026-11-23 改「现取现转」）：
+  // 外发页为会话记录面板本来就内联了整套 KaTeX（katex.min.css + katex.min.js + auto-render）。
+  // 桥接协议照旧（render.js 注入的公式桥 postMessage 向宿主要 {css,katex,auto} 三个 data URI，
+  // file:// 下绝对路径全被拦）——但不再打包时重复内联第二份字节，而是埋一段引导脚本：
+  // 打包后运行时把页面自己的 <style>/<script> 字节现转成 data URI 再应答。
+  //   js：innerHTML 正是原始源码（内联脚本无 textContent 转义损益）；
+  //   css：textContent 是文本值，引号/&#39; 等字符引用会被解码——但 KaTeX css 不含引号/&)，
+  //       base64 层各引一半，双方拼回的都是合法 data URI，等价处可安全汇合。
+  // 没有可视化节点的图：整个 <script> 都不注入，零开销。真机回归 file:// 步骤会等
+  // 可视化卡里 .katex 真渲出来——「转化没跑/缺资产」这类运行期故障由它兜住。
+  // 返回值是纯 JS（不含 <script> 外壳——调用方创建 script 元素、textContent 塞入）：
+  // 内容里绝不能出现 </script 序列，否则成品序列化时会把元素提前截断。
+  // 必须同步应答（2026-11-24）：查看器包 render.js 自带的应答器也在监听同一请求——
+  // 它读 window.__PM_VIZ_ASSETS__，外发页已不打包这份资产，它会「立即回空」；本引导脚本
+  // 是更早注册的监听器（插在 viewer.js 入口之前），同步应答必先到，对方的那次回空会被
+  // 公式桥的 got 闸门丢掉。曾用 setTimeout(100) 异步应答，实测被同步空应答抢跑，
+  // file:// 下公式全裸奔（真机回归「公式真渲」当场抓包）。
+  function _utopiaVizBridgeScript() {
+    return '(function(){'
+      + 'function toData(mime,text){try{return "data:"+mime+";base64,"+btoa(unescape(encodeURIComponent(text)));}'
+      + 'catch(e){return "data:"+mime+";charset=utf-8,"+encodeURIComponent(text);}}'
+      + 'function nodeOf(sel){var n=document.querySelector(sel);return n||null;}'
+      // 找齐三样：带 data-pm-katex 标记的 KaTeX 样式表、katex.min.js（UMD 头、大、无
+      // renderMathInElement——那个词只属于 auto-render 与查看器包）、auto-render（小）。
+      + 'function answer(ev){'
+      + 'var css=nodeOf("style[data-pm-katex]");'
+      + 'var katex=null,auto=null;'
+      + 'var scripts=document.getElementsByTagName("script");'
+      + 'for(var i=scripts.length-1;i>=0;i--){'
+      + 'var s=scripts[i];if(s.getAttribute("src"))continue;'
+      // 必须 hasAttribute：setAttribute(x,'') 的空值让 getAttribute 返回 ''（falsy），跳过失效
+      + 'if(s.hasAttribute("data-pm-skip"))continue;'
+      + 'var t=s.textContent||"";'
+      + 'if(!katex&&t.indexOf("!function(e,t)")===0&&t.indexOf("katex")>=0&&t.length>100000'
+      + '&&t.indexOf("renderMathInElement")<0)katex=t;'
+      + 'else if(!auto&&t.indexOf("renderMathInElement")>=0&&t.length<20000)auto=t;'
+      + '}'
+      + 'if(!css||!katex||!auto)return false;'
+      + 'try{ev.source.postMessage({__pmVizAssets:true,'
+      + 'css:toData("text/css",css.textContent),'
+      + 'katex:toData("text/javascript",katex),'
+      + 'auto:toData("text/javascript",auto)},"*");}catch(e){return false;}'
+      + 'return true;}'
+      + 'window.addEventListener("message",function(ev){'
+      + 'var d=ev&&ev.data||{};'
+      + 'if(d.__pmVizAssetsRequest!==true)return;'
+      + 'if(document.readyState==="loading"){'
+      + 'document.addEventListener("DOMContentLoaded",function(){answer(ev);});'
+      + 'return;'
+      + '}'
+      + 'answer(ev);'
+      + '});'
+      + '})();';
   }
 
   // ===== 成品自检 =====
 
   var EMBED_PREFIX = 'window.__UTOPIA_EMBEDDED__ = ';
   var EMBED_KEY = '__UTOPIA_EMBEDDED__';
-  var VIZ_PREFIX = 'window.__PM_VIZ_ASSETS__ = ';
+  // 可视化公式资源的认记号（2026-11-23 起）：不再打包第二份 KaTeX 字节，改埋「现取现转」
+  // 引导脚本，样式表自带 data-pm-katex 标记——有可视化节点的成品里必须找得到它
+  var VIZ_MARKER = 'data-pm-katex';
   var ENTRY_RE = /(^|\/)viewer\.js(?:\?|$)/;
 
   // ① 结构核对（纯函数，回归脚本直接调）：把成品文本按浏览器的方式重新解析一遍，对照快照
@@ -292,7 +311,7 @@
       } else if (text.indexOf(EMBED_KEY) >= 0 && entryAt < 0) {
         entryAt = i; // 入口脚本＝会读内嵌快照的那一段（查看器包）
       }
-      if (text.indexOf(VIZ_PREFIX) === 0) hasVizBlock = true;
+      if (text.indexOf(VIZ_MARKER) >= 0) hasVizBlock = true;
     });
     if (embedCount === 0) problems.push('内嵌快照没打进文件（打开会是空白）');
     else if (embedCount > 1) problems.push('内嵌快照打进了 ' + embedCount + ' 份');
@@ -399,12 +418,15 @@
     _exporting = true;
     try {
       var snapshot;
-      try { snapshot = window.buildUtopiaSnapshot(); } catch (e) {
+      try {
+        // 外发只读：不带节点旧版本账本（.pmu 存档不受影响），这是 579 的体积大头
+        snapshot = window.buildUtopiaSnapshot({ stripVersions: true });
+      } catch (e) {
         toastMsg('快照生成失败：' + (e && e.message ? e.message : e));
         return false;
       }
 
-      toastMsg('正在收集查看器资源（首次约几秒）…');
+      toastMsg('正在收集查看器资源…');
       // 取不到/内联不了的资源逐个记名，交给自检点名（2026-11-23 前是悄悄剔掉、照常「已导出」）
       var failures = [];
       var tplText = await fetch('/viewer.html', { cache: 'no-store' }).then(function (r) {
@@ -416,40 +438,6 @@
       // pmu 残留剔除 + 主题按钮显眼化（只动产物 DOM，模板不动）
       _stripPmuUi(doc);
 
-      // CSS：<link rel=stylesheet> → 内联 <style>
-      var cssJobs = [];
-      var links = Array.prototype.slice.call(doc.querySelectorAll('link[rel="stylesheet"]'));
-      links.forEach(function (link) {
-        var href = link.getAttribute('href') || '';
-        var abs;
-        try { abs = new URL(href, location.origin + '/viewer.html').href; } catch (e) { abs = href; }
-        var job = fetch(abs, { cache: 'force-cache' }).then(function (r) {
-          if (!r.ok) throw new Error('CSS HTTP ' + r.status);
-          return r.text();
-        }).then(function (text) {
-          if (!text || !text.trim()) throw new Error('内容为空');
-          var fontMisses = [];
-          return _inlineCssAssets(_woff2OnlyCss(text), abs, fontMisses).then(function (inlined) {
-            fontMisses.forEach(function (f) {
-              failures.push({ kind: '样式表字体', name: f.name, error: f.error });
-            });
-            return inlined;
-          });
-        }).then(function (inlined) {
-          var style = doc.createElement('style');
-          style.textContent = inlined;
-          link.replaceWith(style);
-        }).catch(function (e) {
-          // 样式表取不到：移除引用，不携带外链（离线打不开更糟）；记名后自检会拦下交付
-          failures.push({ kind: '样式表', name: _utopiaResName(href), error: _utopiaErrText(e) });
-          link.remove();
-        });
-        cssJobs.push(job);
-      });
-      await Promise.all(cssJobs);
-
-      // 可视化 KaTeX 资产与深浅两张壁纸逐个收集（都在模板 CSS 内联之后，与打包正文无关）
-      var vizAssets = await _collectVizAssets(snapshot, failures);
       // 壁纸跟随「深浅各自所选」（2026-10-02 挑选器按模式记忆；拿不到挑选器回退内置星夜）
       var bgDarkUrl = '/bg_dark_landscape.jpg';
       var bgLightUrl = '/bg_light_landscape.jpg';
@@ -467,50 +455,107 @@
           bgLightUrl = _bgPick('light') || bgLightUrl;
         }
       } catch (eBg) {}
-      var bgDark = await _fetchDataUrl(location.origin + bgDarkUrl, true);
-      var bgLight = await _fetchDataUrl(location.origin + bgLightUrl, true);
 
-      // JS：<script src> → 内联；viewer.js 前注入内嵌快照
-      var scripts = Array.prototype.slice.call(doc.querySelectorAll('script[src]'));
-      var entrySeen = 0;
-      for (var i = 0; i < scripts.length; i++) {
-        var sc = scripts[i];
+      // ===== 并行收集（backlog 578，2026-11-23 前是逐个 await 串行排队）=====
+      // 模板里的样式表、全部脚本、深浅壁纸一次并发取齐，Promise.all 汇合后再统一回填 DOM。
+      // CSS 里的字体必内联、@font-face 只留 woff2 源；取不到的逐个记名给自检拦下。
+      var cssJobs = Array.prototype.map.call(doc.querySelectorAll('link[rel="stylesheet"]'), function (link) {
+        var href = link.getAttribute('href') || '';
+        var abs;
+        try { abs = new URL(href, location.origin + '/viewer.html').href; } catch (e) { abs = href; }
+        return fetch(abs, { cache: 'force-cache' }).then(function (r) {
+          if (!r.ok) throw new Error('CSS HTTP ' + r.status);
+          return r.text();
+        }).then(function (text) {
+          if (!text || !text.trim()) throw new Error('内容为空');
+          var fontMisses = [];
+          return _inlineCssAssets(_woff2OnlyCss(text), abs, fontMisses).then(function (inlined) {
+            fontMisses.forEach(function (f) {
+              failures.push({ kind: '样式表字体', name: f.name, error: f.error });
+            });
+            return inlined;
+          });
+        }).then(
+          function (inlined) { return { link: link, inlined: inlined }; },
+          function (e) {
+            // 样式表取不到：移除引用，不携带外链（离线打不开更糟）；记名后自检会拦下交付
+            failures.push({ kind: '样式表', name: _utopiaResName(href), error: _utopiaErrText(e) });
+            return { link: link, failed: true };
+          }
+        );
+      });
+      var jsJobs = Array.prototype.map.call(doc.querySelectorAll('script[src]'), function (sc) {
         var scName = _utopiaResName(sc.getAttribute('src'));
         var sAbs;
         try { sAbs = new URL(sc.getAttribute('src'), location.origin + '/viewer.html').href; } catch (e) { sAbs = sc.getAttribute('src'); }
-        var code = await fetch(sAbs, { cache: 'force-cache' }).then(function (r) {
+        return fetch(sAbs, { cache: 'force-cache' }).then(function (r) {
           if (!r.ok) throw new Error('JS HTTP ' + r.status);
           return r.text();
-        }).catch(function (e) {
-          failures.push({ kind: '脚本', name: scName, error: _utopiaErrText(e) });
-          return null;
-        });
-        if (!code || !code.trim()) {
-          if (code) failures.push({ kind: '脚本', name: scName, error: '内容为空' });
+        }).then(
+          function (code) { return { sc: sc, scName: scName, code: code }; },
+          function (e) {
+            failures.push({ kind: '脚本', name: scName, error: _utopiaErrText(e) });
+            return { sc: sc, scName: scName, failed: true };
+          }
+        );
+      });
+      var bgDarkJob = _fetchDataUrl(location.origin + bgDarkUrl, true);
+      var bgLightJob = _fetchDataUrl(location.origin + bgLightUrl, true);
+      var settled = await Promise.all(cssJobs.concat(jsJobs).concat([bgDarkJob, bgLightJob]));
+      var cssDone = settled.slice(0, cssJobs.length);
+      var jsDone = settled.slice(cssJobs.length, cssJobs.length + jsJobs.length);
+      var bgDark = await bgDarkJob;
+      var bgLight = await bgLightJob;
+
+      // 回填 CSS：<link rel=stylesheet> → 内联 <style>；主 KaTeX 样式表带 data-pm-katex
+      // 标记——可视化引导脚本运行时按它找到这份 css 现转 data URI（backlog 578①）
+      cssDone.forEach(function (job) {
+        if (job.failed) { job.link.remove(); return; }
+        var style = doc.createElement('style');
+        style.textContent = job.inlined;
+        if (/katex\.min\.css/i.test(job.link.getAttribute('href') || '')) {
+          style.setAttribute('data-pm-katex', '');
+        }
+        job.link.replaceWith(style);
+      });
+
+      // 回填 JS：<script src> → 内联；viewer.js 前注入内嵌快照（与可视化引导脚本）
+      var hasViz = false;
+      try { hasViz = /```html/i.test(JSON.stringify(snapshot)); } catch (e) { hasViz = false; }
+      var entrySeen = 0;
+      jsDone.forEach(function (job) {
+        var sc = job.sc;
+        if (job.failed || !job.code || !job.code.trim()) {
+          if (job.code) failures.push({ kind: '脚本', name: job.scName, error: '内容为空' });
           sc.remove(); // 脚本取不到：移除引用；记名后自检会拦下交付
-          continue;
+          return;
         }
         // 视图入口脚本按「文件名 viewer.js」识别（ENTRY_RE），不钉目录与查询串：
         // T64 起产物住 /dist/、src 带 ?v=<hash>，旧口径 /js/viewer.js 已不存在，
         // 钉死会让内嵌快照整段不注入（导出页永远空白）。
         if (ENTRY_RE.test(sc.getAttribute('src') || '')) {
           entrySeen++;
-          if (vizAssets) {
+          if (hasViz) {
             var assets = doc.createElement('script');
-            assets.textContent = 'window.__PM_VIZ_ASSETS__ = {'
-              + 'css:' + _embedJsLiteral(vizAssets.css) + ','
-              + 'katex:' + _embedJsLiteral(vizAssets.katex) + ','
-              + 'auto:' + _embedJsLiteral(vizAssets.auto) + '};';
+            // data-pm-skip：引导脚本自己含「renderMathInElement」特征词且体长 <20K，
+            // 不跳过会被下面的识别逻辑当成 auto-render 抓走（真机实踩：公式全裸奔）
+            assets.setAttribute('data-pm-skip', '');
+            assets.textContent = _utopiaVizBridgeScript();
             sc.parentNode.insertBefore(assets, sc);
           }
           var embed = doc.createElement('script');
+          embed.setAttribute('data-pm-skip', ''); // 快照正文是任意文本，不参与脚本识别
           embed.textContent = 'window.__UTOPIA_EMBEDDED__ = ' + _embedJsLiteral(snapshot) + ';';
           sc.parentNode.insertBefore(embed, sc);
         }
         var inline = doc.createElement('script');
         if (sc.hasAttribute('defer')) inline.setAttribute('defer', '');
-        inline.textContent = _escapeScriptEnd(code);
+        inline.textContent = _escapeScriptEnd(job.code);
         sc.replaceWith(inline);
+      });
+      if (hasViz && entrySeen === 0) {
+        // 引导脚本挂在入口前面，入口没认出来＝引导段也没机会注入——让结构核对该点点名
+        failures.push({ kind: '可视化公式脚本', name: 'viewer.js（入口没认出，引导脚本无处注入）', error: 'ENTRY_RE 未命中' });
       }
 
       // 兜底样式收尾（放在 body 末尾的 style：壁纸 + 遮罩 + 渐变兜底底色）；挑选器不可用
@@ -523,7 +568,7 @@
       var html = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
 
       // ① 结构核对：不过就不往下走，更不出文件
-      var report = utopiaHtmlVerifyPacked(html, snapshot, { failed: failures, entrySeen: entrySeen, hasViz: !!vizAssets });
+      var report = utopiaHtmlVerifyPacked(html, snapshot, { failed: failures, entrySeen: entrySeen, hasViz: hasViz });
       if (!report.ok) {
         _utopiaSelfCheckFail(report);
         return false;
@@ -547,22 +592,33 @@
         }
         window.__utopiaLastSelfCheck = { ok: true, problems: [], render: render };
 
-        // 交付只落下载文件（用户拍板 2026-09-26：要的是能分享的 .html 文件，不是弹出的页面；
-        // 弹窗通道已整体拆除）。落盘用 a[download]：与前面的资源收集一样在异步等待之后触发，
-        // 不经弹窗权限
+        // 交付（2026-11-23 起）：按用户拍板走「导出完成浮卡」——与 .pmu 存档同一张卡
+        //（showUtopiaExportCard），网页版只读外发，按钮只剩「复制文件名／知道了」；
+        // 浮卡出手前撤掉收集期的进行中提示条（两者都在底部，会互相压）。
+        // 落盘用 a[download]：在异步等待之后触发，不经弹窗权限。
+        try { _toastDismiss(document.getElementById('phymathia_toast')); } catch (e) {}
         var a = document.createElement('a');
-        var safe = String(snapshot.title || '探索网').replace(/[\\/:*?"<>|\n\r]/g, '_').slice(0, 40);
+        var fileName = (typeof window.utopiaHtmlFilename === 'function')
+          ? window.utopiaHtmlFilename(snapshot.title) // <名>_<日期_时分>.html，重复导出不互相覆盖
+          : 'PhyMathia_' + String(snapshot.title || '探索网').replace(/[\\/:*?"<>|\n\r]/g, '_').slice(0, 40) + '.html';
         a.href = url;
-        a.download = 'PhyMathia_' + safe + '.html';
+        a.download = fileName;
         document.body.appendChild(a);
         a.click();
         a.remove();
+        var summary = window.utopiaSnapshotSummary
+          ? window.utopiaSnapshotSummary(snapshot)
+          : { mode: 'full', nodes: expected, edges: 0, messages: 0 };
+        summary.bytes = blob.size;
+        summary.fileName = fileName;
+        summary.kind = 'html';
+        summary.edges = (snapshot.edges || []).length;
+        if (typeof showUtopiaExportCard === 'function') showUtopiaExportCard(summary);
+        else toastMsg('单文件网页已导出（' + _utopiaFmtSize(blob.size) + '）——双击即可离线打开', TOAST_MS_LONG);
+        return true;
       } finally {
         setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
       }
-      // 体积按 Blob 实际字节报（旧实现拿字符数当 KB，中文内容少报 2–3 倍）
-      toastMsg('单文件网页已导出（' + _utopiaFmtSize(blob.size) + '）——双击即可离线打开', TOAST_MS_LONG);
-      return true;
     } catch (err) {
       console.error('[utopia-html]', err);
       toastMsg('单文件网页导出失败：' + (err && err.message ? err.message : err));

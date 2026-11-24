@@ -115,7 +115,8 @@ async function run() {
         const doc = (body) => '<!DOCTYPE html><html><head></head><body>' + body + '</body></html>';
         const out = {};
         const run = (name, html, opts) => { out[name] = verify(html, snap, opts); };
-        const vizBlock = '<script>window.__PM_VIZ_ASSETS__ = {css:"data:text/css;base64,e30="};</script>';
+        // 可视化段按「引导脚本」认（含 data-pm-katex 标记查找），不再按字节块
+        const vizBlock = '<script>var q=document.querySelector("style[data-pm-katex]");</script>';
         const good = '<script>' + embedOf(snap) + '</script><script>' + reader + '</script>';
         run('ok', doc(good), { entrySeen: 1 });
         run('vizOk', doc(vizBlock + good), { entrySeen: 1, hasViz: true });
@@ -172,7 +173,15 @@ async function run() {
     }));
     expected = shape.nodes;
     if (shape.viz < 1) throw new Error('夹具里没长出可视化卡，测不到 KaTeX 资产这条路：' + JSON.stringify(shape));
-    ok('夹具导入成真实画布（' + shape.nodes + ' 节点 / ' + shape.edges + ' 连线，可视化卡 ' + shape.viz + ' 张）');
+    // 577：导出元信息的 app 标签必须跟 config.js 的 APP_VERSION 走，不再写死
+    const appTag = await page.evaluate(() => {
+      try { const s = window.buildUtopiaSnapshot(); return { app: s && s.app, ver: typeof APP_VERSION !== 'undefined' ? APP_VERSION : '' }; }
+      catch (e) { return { app: 'ERR ' + e.message, ver: '' }; }
+    });
+    if (appTag.app !== 'PhyMathia/' + appTag.ver || !/^\d+\.\d+\.\d+$/.test(appTag.ver)) {
+      throw new Error('快照 app 标签没跟着 APP_VERSION 走：' + JSON.stringify(appTag));
+    }
+    ok('夹具导入成真实画布（' + shape.nodes + ' 节点 / ' + shape.edges + ' 连线，可视化卡 ' + shape.viz + ' 张）；app 标签 ' + appTag.app);
 
     // ===== ③ 真导出：走导出菜单的真按钮 =====
     // 用 DOM 级点击：隔离实例是全新浏览器配置，首访引导层可能浮在菜单上方挡住真鼠标
@@ -186,20 +195,48 @@ async function run() {
     const costMs = Date.now() - startedAt;
     await download.saveAs(okPath);
     const selfCheck = await page.evaluate(() => window.__utopiaLastSelfCheck || null);
-    const toast = await toastTextOf(page);
+    const card = await page.evaluate(() => {
+      const c = document.getElementById('utopiaExportCard');
+      if (!c) return null;
+      const pick = (sel) => { const el = c.querySelector(sel); return el ? String(el.textContent || '').trim() : ''; };
+      return {
+        title: pick('.utopia-export-card-title'),
+        sub: pick('.utopia-export-card-sub'),
+        hint: pick('.utopia-export-card-hint'),
+        hasOpenViewer: !!c.querySelector('#utopiaOpenViewerBtn'),
+        hasReHtml: !!c.querySelector('#utopiaExportHtmlBtn'),
+      };
+    });
     const text = readFileSync(okPath, 'utf8');
     const bytes = statSync(okPath).size;
     if (!selfCheck || selfCheck.ok !== true) throw new Error('导出通过却没留下自检报告：' + JSON.stringify(selfCheck));
     if (!selfCheck.render || selfCheck.render.domNodes !== expected) {
       throw new Error('自检窗口里数到的节点与画布不一致：' + JSON.stringify(selfCheck.render) + '，应有 ' + expected);
     }
-    if (download.suggestedFilename() !== 'PhyMathia_单文件导出回归.html') {
-      throw new Error('文件名不对：' + download.suggestedFilename());
+    // 580 一角（2026-11-23）：完成反馈走 .pmu 同款浮卡，文件名带日期不互相覆盖
+    if (!/^PhyMathia_单文件导出回归_\d{8}_\d{4}\.html$/.test(download.suggestedFilename())) {
+      throw new Error('文件名没按「<名>_<日期_时分>」走：' + download.suggestedFilename());
     }
-    if (!/单文件网页已导出（[\d.]+ (KB|MB)）/.test(toast)) throw new Error('完成提示没按真实体积报："' + toast + '"');
+    if (!card || card.title !== '网页版已保存') {
+      throw new Error('完成浮卡没弹或标题不对：' + JSON.stringify(card));
+    }
+    if (!new RegExp('[\\d.]+ (KB|MB)').test(card.sub)) {
+      throw new Error('完成浮卡没按真实体积报："' + card.sub + '"');
+    }
+    if (card.hasOpenViewer || card.hasReHtml) {
+      throw new Error('网页版浮卡不该有「在查看器中打开／再存网页版」按钮：' + JSON.stringify(card));
+    }
+    if (!card.hint.includes('双击即可离线打开')) throw new Error('浮卡提示没交代怎么用："' + card.hint + '"');
     const embeds = text.split('window.__UTOPIA_EMBEDDED__ = ').length - 1;
     if (embeds !== 1) throw new Error('成品里内嵌快照有 ' + embeds + ' 份');
-    if (text.indexOf('window.__PM_VIZ_ASSETS__ = {') < 0) throw new Error('成品里没有可视化公式资源');
+    // 578①：KaTeX 不再重复内联——成品里只该有「现取现转」引导脚本（认 data-pm-katex 标记），
+    // 不该再出现打包好的资产块
+    if (text.indexOf('data-pm-katex') < 0) throw new Error('成品里没有可视化公式资源（引导脚本没注入）');
+    if (/window\.__PM_VIZ_ASSETS__\s*=\s*\{/.test(text)) throw new Error('成品里还在重复打包 KaTeX 资产块');
+    // 579：外发快照不带节点旧版本账本（versions 两份合计是齿轮会话 14% 的体积）
+    if (text.slice(text.indexOf('window.__UTOPIA_EMBEDDED__'), text.indexOf('</script>', text.indexOf('window.__UTOPIA_EMBEDDED__'))).includes('"versions"')) {
+      throw new Error('外发快照还带着节点旧版本（versions）');
+    }
     if (/class="utopia-bar/.test(text)) throw new Error('成品里还留着查看器顶栏');
     // 内联器不得碰 data URI 内部：大陆噪点纹理的内嵌 SVG 自带 filter='url(%23g)'，
     // 修坏的特征是整个 URI 被换成空地址 url("data:,")
@@ -296,6 +333,8 @@ async function run() {
           searchBtn: !!document.getElementById('utopiaSearchBtn'),
           themeBtn: !!document.getElementById('utopiaThemeBtn'),
           title: document.title,
+          versionNavs: document.querySelectorAll('.graph-version-nav').length,
+          versionsInSnap: JSON.stringify(snap).includes('"versions"'),
         };
       });
       if (opened.domNodes !== expected || opened.dataNodes !== expected || opened.snapNodes !== expected) {
@@ -305,6 +344,9 @@ async function run() {
       if (opened.externalRefs) throw new Error('还留着 ' + opened.externalRefs + ' 个外链');
       if (opened.bar || !opened.searchBtn || !opened.themeBtn) throw new Error('界面口径不对：' + JSON.stringify(opened));
       if (!String(opened.title).startsWith('单文件导出回归')) throw new Error('标题不对：' + opened.title);
+      // 579 外发口径：旧版本账本不进快照——只读页既不渲染版本导航，快照里也没有 versions
+      if (opened.versionNavs) throw new Error('只读页渲染出了版本导航（' + opened.versionNavs + ' 个，538 护栏盲区的入口）');
+      if (opened.versionsInSnap) throw new Error('装载后的快照里还有 versions');
     });
 
     await step('file:// 打开：可视化卡里的公式用包里的 KaTeX 真渲出来', async () => {
