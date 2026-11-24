@@ -34,6 +34,7 @@ const SETTINGS_GROUPS = [
     { id: 'phi', label: 'Φ 助手', icon: 'bot' },
     { id: 'quiz', label: '知识检测', icon: 'clipboardCheck' },
     { id: 'canvas', label: '画布与追问', icon: 'layers' },
+    { id: 'selection', label: '划词助手', icon: 'selectAll' },
     { id: 'skills', label: '技能', icon: 'puzzle' },
     { id: 'hotkeys', label: '快捷键', icon: 'keyboard' }
   ]},
@@ -59,6 +60,19 @@ const _SETTINGS_READOUT_KEYS = {
   progress: 'phymathia_readout_progress',
   percent: 'phymathia_readout_percent'
 };
+
+// 划词助手六键（2026-11-24）：与 config.js 的 STORAGE_KEY_SELECTION_* 一字对应。
+// 本文件在离线设置页回归里单独执行（不加载 config.js），这里用字面量映射＋本地读取
+// 兜底；真实页面仍优先走 config.js 的 selectionPrefOn/selectionActionOn 等读函数。
+const _SETTINGS_SELECTION_KEYS = {
+  master: 'phymathia_selection_assistant',
+  fullscreen: 'phymathia_selection_scope_fullscreen',
+  preview: 'phymathia_selection_scope_preview',
+  actions: 'phymathia_selection_actions',
+  question: 'phymathia_selection_question',
+  lines: 'phymathia_selection_quote_lines'
+};
+const _SETTINGS_SELECTION_ACTIONS = ['followup', 'copy', 'bold', 'search'];
 
 let _settingsOpen = false;
 let _settingsTab = 'appearance';
@@ -373,6 +387,71 @@ function _settingsPageDisplay() {
         on(_SETTINGS_READOUT_KEYS.percent), "settingsSetReadout('percent', this.checked)")
     ) +
     '<div class="settings-note">只影响显示，不影响生成与保存；关掉的读数不占位置。</div>';
+}
+
+// ====== 划词助手页（2026-11-24 用户拍板）======
+// 管节点全屏／新窗口预览里划词浮条的总开关、出现位置、按钮、默认问句与引文行数。
+// 键用上方 _SETTINGS_SELECTION_KEYS 字面量映射：本文件在离线设置页回归里单独执行、
+// 不加载 config.js；真实页面优先走 config.js 的 selection* 读函数，读不到再本地兜底。
+function _settingsSelectionPrefOn(key) {
+  if (typeof selectionPrefOn === 'function') { try { return selectionPrefOn(key); } catch (e) {} }
+  try { return _settingsLsGet(key, '') !== '0'; } catch (e) { return true; }
+}
+function _settingsSelectionActionOn(name) {
+  if (typeof selectionActionOn === 'function') { try { return selectionActionOn(name); } catch (e) {} }
+  try {
+    const raw = _settingsLsGet(_SETTINGS_SELECTION_KEYS.actions, '');
+    if (raw === '') return true;
+    return (',' + raw + ',').indexOf(',' + name + ',') !== -1;
+  } catch (e) { return true; }
+}
+function _settingsSelectionQuestion() {
+  if (typeof selectionQuestionText === 'function') { try { return selectionQuestionText(); } catch (e) {} }
+  try { return String(_settingsLsGet(_SETTINGS_SELECTION_KEYS.question, '') || '').trim(); } catch (e) { return ''; }
+}
+function _settingsSelectionQuoteLines() {
+  if (typeof selectionQuoteLines === 'function') { try { return selectionQuoteLines(); } catch (e) {} }
+  try {
+    const v = parseInt(_settingsLsGet(_SETTINGS_SELECTION_KEYS.lines, ''), 10);
+    return (v === 1 || v === 5) ? v : 3;
+  } catch (e) { return 3; }
+}
+function _settingsPageSelection() {
+  const K = _SETTINGS_SELECTION_KEYS;
+  const master = _settingsSelectionPrefOn(K.master);
+  const lines = _settingsSelectionQuoteLines();
+  const act = (name) => _settingsSelectionActionOn(name);
+  return _sHead('划词助手', '在节点全屏和新窗口预览里选中文字，就地追问、复制或查找。') +
+    _sSection('总开关', _sSwitch('划词助手', '关闭后不弹浮条；复制公式仍会还原 LaTeX',
+      master, 'settingsSetSelectionEnabled(this.checked)')) +
+    _sSection('出现位置',
+      _sSwitch('本页全屏', '全屏阅读层里选中文字时弹浮条', _settingsSelectionPrefOn(K.fullscreen),
+        "settingsSetSelectionScope('fullscreen', this.checked)") +
+      _sSwitch('新窗口预览', '预览页里选中文字时弹浮条；下次打开预览时生效', _settingsSelectionPrefOn(K.preview),
+        "settingsSetSelectionScope('preview', this.checked)")
+    ) +
+    _sSection('按钮',
+      _sSwitch('追问', '选中文字直接向 AI 追问', act('followup'), "settingsSetSelectionAction('followup', this.checked)") +
+      _sSwitch('复制', '复制选段，公式还原成 LaTeX', act('copy'), "settingsSetSelectionAction('copy', this.checked)") +
+      _sSwitch('加粗', '只在可编辑节点出现', act('bold'), "settingsSetSelectionAction('bold', this.checked)") +
+      _sSwitch('查找', '在画布中查找这段文字', act('search'), "settingsSetSelectionAction('search', this.checked)")
+    ) +
+    _sSection('追问',
+      '<div class="settings-row" style="display:block">' +
+      '<span class="settings-row-text" style="display:block"><span class="settings-row-label">默认问句</span>' +
+      '<span class="settings-row-desc">留空＝「请把这段再展开讲讲」</span></span>' +
+      '<input type="text" maxlength="200" value="' + _settingsEsc(_settingsSelectionQuestion()) + '"' +
+      ' placeholder="请把这段再展开讲讲" onchange="settingsSetSelectionQuestion(this.value)"' +
+      ' style="width:100%;margin-top:8px;background:transparent;color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:var(--fs-sm)"></div>' +
+      _sRow('引文最多几行', '追问自动带的【聚焦选段】行数',
+        _sChoices([
+          { label: '1 行', active: lines === 1, onclick: 'settingsSetSelectionQuoteLines(1)' },
+          { label: '3 行', active: lines === 3, onclick: 'settingsSetSelectionQuoteLines(3)' },
+          { label: '5 行', active: lines === 5, onclick: 'settingsSetSelectionQuoteLines(5)' }
+        ]))
+    ) +
+    _sActions([{ label: '恢复默认', onclick: 'settingsSelectionReset()' }]) +
+    (!master ? '<div class="settings-note">总开关已关：出现位置和按钮的设置暂不生效，重开总开关后恢复。</div>' : '');
 }
 
 function _settingsPageLevel() {
@@ -1774,7 +1853,7 @@ function settingsSkillDelete(id, isOverride) {
 const _SETTINGS_PAGES = {
   appearance: _settingsPageAppearance, display: _settingsPageDisplay, level: _settingsPageLevel, model: _settingsPageModel,
   memory: _settingsPageMemory, phi: _settingsPagePhi, quiz: _settingsPageQuiz,
-  canvas: _settingsPageCanvas, hotkeys: _settingsPageHotkeys, skills: _settingsPageSkills,
+  canvas: _settingsPageCanvas, selection: _settingsPageSelection, hotkeys: _settingsPageHotkeys, skills: _settingsPageSkills,
   data: _settingsPageData, account: _settingsPageAccount, trash: _settingsPageTrash,
   about: _settingsPageAbout, help: _settingsPageHelp
 };
@@ -1845,6 +1924,59 @@ function settingsSetReadout(key, enabled) {
   try {
     if (typeof applyProgressReadoutPrefs === 'function') applyProgressReadoutPrefs();
   } catch (e) {}
+}
+// ====== 划词助手 setter（2026-11-24）：只写 localStorage；浮条侧读 config.js 的
+// selection* 函数即时生效（本页全屏当场、预览窗下次打开）。查阅模式走 _settingsGuard。
+function settingsSetSelectionEnabled(on) {
+  if (_settingsGuard()) return;
+  _settingsLsSet(_SETTINGS_SELECTION_KEYS.master, on ? '1' : '0');
+  _settingsToast('划词助手：' + (on ? '开' : '关'));
+  renderSettingsPage();
+}
+function settingsSetSelectionScope(which, on) {
+  if (_settingsGuard()) return;
+  const key = which === 'fullscreen' ? _SETTINGS_SELECTION_KEYS.fullscreen
+    : (which === 'preview' ? _SETTINGS_SELECTION_KEYS.preview : '');
+  if (!key) return;
+  _settingsLsSet(key, on ? '1' : '0');
+  renderSettingsPage();
+}
+function settingsSetSelectionAction(name, on) {
+  if (_settingsGuard()) return;
+  if (_SETTINGS_SELECTION_ACTIONS.indexOf(name) === -1) return;
+  // 浮条至少保留一个按钮：关最后一枚不落盘，提示后重画回原态
+  if (!on) {
+    const rest = _SETTINGS_SELECTION_ACTIONS.filter(k => k !== name && _settingsSelectionActionOn(k));
+    if (!rest.length) { _settingsToast('至少保留一个按钮'); renderSettingsPage(); return; }
+  }
+  // 现值展开 → 改这一枚 → 按固定顺序落盘（全开也写显式名单，读侧空值回全开，不冲突）
+  const flags = {};
+  for (const k of _SETTINGS_SELECTION_ACTIONS) {
+    flags[k] = (k === name) ? !!on : _settingsSelectionActionOn(k);
+  }
+  _settingsLsSet(_SETTINGS_SELECTION_KEYS.actions, _SETTINGS_SELECTION_ACTIONS.filter(k => flags[k]).join(','));
+  renderSettingsPage();
+}
+function settingsSetSelectionQuestion(value) {
+  if (_settingsGuard()) return;
+  const v = String(value == null ? '' : value).trim().slice(0, 200);
+  _settingsLsSet(_SETTINGS_SELECTION_KEYS.question, v);
+}
+function settingsSetSelectionQuoteLines(n) {
+  if (_settingsGuard()) return;
+  const v = parseInt(n, 10);
+  if (v !== 1 && v !== 3 && v !== 5) return;
+  _settingsLsSet(_SETTINGS_SELECTION_KEYS.lines, String(v));
+  renderSettingsPage();
+}
+function settingsSelectionReset() {
+  if (_settingsGuard()) return;
+  // 恢复默认＝删六键（缺键＝默认行为），比逐键写默认值更稳——默认值日后调整也自动跟上
+  try {
+    Object.values(_SETTINGS_SELECTION_KEYS).forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+  } catch (e) {}
+  _settingsToast('划词助手已恢复默认');
+  renderSettingsPage();
 }
 function settingsSetLevel(key) {
   if (_settingsGuard()) return;

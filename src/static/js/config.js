@@ -285,6 +285,45 @@ function progressReadoutEnabled(storageKey) {
 // 跟账号走；值与画布追问卡的 routeMode 同词（auto / analysis / direct）。预览页读不到
 // 主应用的账号命名空间，所以那份选择在生成内嵌脚本时当初始值带过去（不各存一份）。
 const STORAGE_KEY_NODE_FS_ROUTE = 'phymathia_node_fs_followup_route';
+// 划词助手设置（2026-11-24 用户拍板六键，设置→划词助手）：全局键，经账号垫片自然分账号。
+// 全部缺键＝默认行为（总开关/两位置/四按钮＝开、问句＝内置默认、行数＝3），老用户界面零变化。
+// 读侧统一走下面四个函数，别在各调用点自己 getItem 比字符串。
+const STORAGE_KEY_SELECTION_ASSISTANT = 'phymathia_selection_assistant';
+const STORAGE_KEY_SELECTION_SCOPE_FULLSCREEN = 'phymathia_selection_scope_fullscreen';
+const STORAGE_KEY_SELECTION_SCOPE_PREVIEW = 'phymathia_selection_scope_preview';
+const STORAGE_KEY_SELECTION_ACTIONS = 'phymathia_selection_actions';
+const STORAGE_KEY_SELECTION_QUESTION = 'phymathia_selection_question';
+const STORAGE_KEY_SELECTION_QUOTE_LINES = 'phymathia_selection_quote_lines';
+// 总开关与两个出现位置（'1'/'0'，缺键＝开）：与 progressReadoutEnabled 同款
+// ——只有显式存 '0' 才关，try 崩了按开算。
+function selectionPrefOn(storageKey) {
+  try {
+    const v = localStorage.getItem(storageKey);
+    return v == null || v !== '0';
+  } catch (e) { return true; }
+}
+// 浮条四按钮（追问/复制/加粗/查找）：值＝逗号名单 'followup,copy,bold,search'，
+// 缺键/空＝全开；「至少留一个按钮」由设置侧把关（关最后一枚提示并回退），读侧不兜底。
+function selectionActionOn(name) {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_SELECTION_ACTIONS);
+    if (raw == null || raw === '') return true;
+    return (',' + raw + ',').indexOf(',' + name + ',') !== -1;
+  } catch (e) { return true; }
+}
+// 默认问句（最多 200 字）：空/缺键＝用内置默认问句（调用方兜底，见 node-fs-toolbar.js
+// 的 NODE_FS_FOLLOWUP_DEFAULT——本文件不引用它，保持 config 无下游依赖）。
+function selectionQuestionText() {
+  try { return String(localStorage.getItem(STORAGE_KEY_SELECTION_QUESTION) || '').trim(); }
+  catch (e) { return ''; }
+}
+// 引文行数（'1'/'3'/'5'）：其他值/缺键一律回落 3。
+function selectionQuoteLines() {
+  try {
+    const v = parseInt(localStorage.getItem(STORAGE_KEY_SELECTION_QUOTE_LINES), 10);
+    return (v === 1 || v === 5) ? v : 3;
+  } catch (e) { return 3; }
+}
 
 // ===== Φ助手独立会话（2026-09-30 与画布解耦）======
 // Φ 会话有独立 id 空间（phi_<uuid>），与画布会话（sess_<uuid>）互不隶属：

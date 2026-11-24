@@ -68,6 +68,42 @@ function _nodeFsRouteSet(route) {
   return _nfsRoute;
 }
 
+// ---------- 划词助手设置门控（2026-11-24 设置页，键与读函数在 config.js）----------
+// 键名走 config.js 常量、缺失时用字面量兜底（与 _nodeFsRouteStoreKey 同款姿势）；
+// 读函数缺席（极端沙箱）按开算＝默认行为不变。
+function _nodeFsSelectionMasterOn() {
+  const key = (typeof STORAGE_KEY_SELECTION_ASSISTANT === 'string' && STORAGE_KEY_SELECTION_ASSISTANT)
+    ? STORAGE_KEY_SELECTION_ASSISTANT : 'phymathia_selection_assistant';
+  return (typeof selectionPrefOn === 'function') ? selectionPrefOn(key) : true;
+}
+function _nodeFsScopeFullscreenOn() {
+  const key = (typeof STORAGE_KEY_SELECTION_SCOPE_FULLSCREEN === 'string' && STORAGE_KEY_SELECTION_SCOPE_FULLSCREEN)
+    ? STORAGE_KEY_SELECTION_SCOPE_FULLSCREEN : 'phymathia_selection_scope_fullscreen';
+  return (typeof selectionPrefOn === 'function') ? selectionPrefOn(key) : true;
+}
+function _nodeFsScopePreviewOn() {
+  const key = (typeof STORAGE_KEY_SELECTION_SCOPE_PREVIEW === 'string' && STORAGE_KEY_SELECTION_SCOPE_PREVIEW)
+    ? STORAGE_KEY_SELECTION_SCOPE_PREVIEW : 'phymathia_selection_scope_preview';
+  return (typeof selectionPrefOn === 'function') ? selectionPrefOn(key) : true;
+}
+// 预览窗浮条的总闸＝总开关 ∧ 「新窗口预览」位置（生成内嵌脚本时算好带过去）
+function _nodeFsSelectionAllowedPreview() {
+  return _nodeFsSelectionMasterOn() && _nodeFsScopePreviewOn();
+}
+// 四按钮各自开关；设置只做「要不要出现」，不绕过只读与节点资格闸
+function _nodeFsActionOn(name) {
+  return (typeof selectionActionOn === 'function') ? selectionActionOn(name) : true;
+}
+// 默认问句：设置页留空＝内置默认
+function _nodeFsDefaultQuestion() {
+  const custom = (typeof selectionQuestionText === 'function') ? selectionQuestionText() : '';
+  return custom || NODE_FS_FOLLOWUP_DEFAULT;
+}
+// 引文行数：1/3/5（config 侧已归一），读不到回落本文件缺省 3
+function _nodeFsExcerptLines() {
+  return (typeof selectionQuoteLines === 'function') ? selectionQuoteLines() : NODE_FS_EXCERPT_LINES;
+}
+
 // 三枚胶囊的 HTML（本页浮条与预览页内嵌脚本同款文案／同款 title；类名各自前缀）
 function _nodeFsRouteButtonsHtml(cls) {
   const cur = _nodeFsRouteCurrent();
@@ -200,18 +236,25 @@ function _nodeFsCopySelectionText() {
   return out.replace(/\n{3,}/g, '\n\n').trim();
 }
 
-// 追问引文：掐头去尾空行 → 最多 3 行 → 最多 2000 字，返回 { excerpt, truncated }
+// 追问引文：掐头去尾空行 → 最多 N 行（设置页引文行数）→ 最多 2000 字，
+// 返回 { excerpt, truncated, truncBy }。truncBy＝最后一刀切在哪（2026-11-24 设置页
+// 口径）：'lines' 按行截断 / 'chars' 按字数截断——浮条的截断提示据此分
+// 「已取前 N 行 / 已取前 2000 字」两种文案（行数超了字数也超时按字数说）。
 function _nodeFsBuildExcerpt(text) {
   const lines = String(text || '').split('\n');
   while (lines.length && !lines[0].replace(/\s/g, '')) lines.shift();
   while (lines.length && !lines[lines.length - 1].replace(/\s/g, '')) lines.pop();
-  let truncated = lines.length > NODE_FS_EXCERPT_LINES;
-  let excerpt = lines.slice(0, NODE_FS_EXCERPT_LINES).join('\n');
+  const maxLines = _nodeFsExcerptLines();
+  let truncated = false;
+  let truncBy = '';
+  if (lines.length > maxLines) { truncated = true; truncBy = 'lines'; }
+  let excerpt = lines.slice(0, maxLines).join('\n');
   if (excerpt.length > NODE_FS_EXCERPT_MAX) {
     excerpt = excerpt.slice(0, NODE_FS_EXCERPT_MAX);
     truncated = true;
+    truncBy = 'chars';
   }
-  return { excerpt, truncated };
+  return { excerpt, truncated, truncBy };
 }
 
 // ---------- 选段加粗（2026-11-17 用户拍板：不是只改显示，是改内容） ----------
@@ -679,17 +722,20 @@ function _nodeFsShowBar(overlay, container, picked) {
   bar.setAttribute('aria-label', '划词快捷工具');
   // 三件平铺（2026-10-25 拍板收窄）：追问（主色，只读隐藏）/ 复制 / 查找（只读保留，
   // 搜索面板是读操作）。加粗（2026-11-17）＝会改内容的动作，只读与围栏模块都不给。
+  // 按钮开关（2026-11-24 设置页）：设置只做「要不要出现」，不绕过只读与节点资格闸；
+  // 四枚全被关时不出空浮条（设置侧已拦最后一枚，这里是历史脏数据兜底）。
   let html = '';
-  if (!readonly) html += _nodeFsButtonHtml('followup', '追问', '？', true);
-  html += _nodeFsButtonHtml('copy', '复制', '⧉', false);
-  if (!readonly && _nodeFsBoldAvailable(typeof _findGraphNode === 'function' ? _findGraphNode(nodeId) : null)) {
+  if (!readonly && _nodeFsActionOn('followup')) html += _nodeFsButtonHtml('followup', '追问', '？', true);
+  if (_nodeFsActionOn('copy')) html += _nodeFsButtonHtml('copy', '复制', '⧉', false);
+  if (!readonly && _nodeFsActionOn('bold') && _nodeFsBoldAvailable(typeof _findGraphNode === 'function' ? _findGraphNode(nodeId) : null)) {
     // 加粗钮不写中文（2026-11-17 用户拍板，T507 并回）：一枚粗衬线 B，所见即「加粗」本身；
     // 语义留给 aria-label/title。不挂 data-icon——窄屏图标化不会给它叠出第二个 B
     html += '<button type="button" class="node-fs-btn" data-act="bold" aria-label="加粗" '
       + 'title="选段加粗（粗体文字上再点一次取消）">'
       + '<span class="node-fs-btn-b" aria-hidden="true">B</span></button>';
   }
-  html += _nodeFsButtonHtml('search', '查找', '⌕', false, '在画布中查找');
+  if (_nodeFsActionOn('search')) html += _nodeFsButtonHtml('search', '查找', '⌕', false, '在画布中查找');
+  if (!html) { _nfsState = null; return; }
   bar.innerHTML = html;
   bar.style.visibility = 'hidden';
   overlayNode.appendChild(bar);
@@ -750,6 +796,10 @@ function _nodeFsExpandInput() {
   st.expanded = true;
   bar.classList.add('node-fs-bar--expanded');
   const q = _nodeFsBuildExcerpt(st.fullText);
+  // 截断提示分两种（2026-11-24 设置页口径）：行数超＝「已取前 N 行」、字数超＝「已取前 2000 字」
+  const truncLabel = q.truncated
+    ? (q.truncBy === 'chars' ? '已取前 ' + NODE_FS_EXCERPT_MAX + ' 字' : '已取前 ' + _nodeFsExcerptLines() + ' 行')
+    : '';
   const chip = q.excerpt
     ? '<div class="node-fs-quote-row"><span class="node-fs-quote-chip" title="'
       + _nodeFsEscAttr(q.excerpt) + '">【聚焦选段】' + _nodeFsEscHtml(String(q.excerpt).replace(/\s+/g, ' ').slice(0, 60)) + '</span>'
@@ -758,7 +808,7 @@ function _nodeFsExpandInput() {
   bar.innerHTML = chip
     + '<div class="node-fs-input-row">'
     + '<input type="text" class="node-fs-input" aria-label="追问内容" placeholder="想追问什么？（留空用默认问句）">'
-    + (q.truncated ? '<span class="node-fs-trunc">已取前 2000 字</span>' : '')
+    + (truncLabel ? '<span class="node-fs-trunc">' + truncLabel + '</span>' : '')
     + '<button type="button" class="node-fs-btn node-fs-btn--primary" data-act="send">发送</button>'
     + '</div>'
     + _nodeFsRouteButtonsHtml('node-fs-route');
@@ -800,7 +850,7 @@ function _nodeFsSendFollowup() {
   const bar = _nfsBar;
   if (!st) return;
   const input = bar ? bar.querySelector('.node-fs-input') : null;
-  const question = (((input && input.value) || '').trim()) || NODE_FS_FOLLOWUP_DEFAULT;
+  const question = (((input && input.value) || '').trim()) || _nodeFsDefaultQuestion();
   const quote = st.quoteDropped ? '' : _nodeFsBuildExcerpt(st.fullText).excerpt;
   const composed = _nodeFsComposeFollowup(question, quote);
   const nodeId = st.nodeId;
@@ -1070,6 +1120,9 @@ function attachNodeFsSelectionBar(overlay) {
 function _nodeFsOnSelectionSettled() {
   const overlay = document.querySelector('.graph-node-fs-overlay');
   if (!overlay) { _nodeFsHideBar(); return; }
+  // 设置门控（2026-11-24）：总开关或「本页全屏」位置关掉就不弹——改动即时生效，
+  // 已开的浮条一并收掉；「新窗口预览」位置在生成内嵌脚本时判（下次开窗生效）
+  if (!_nodeFsSelectionMasterOn() || !_nodeFsScopeFullscreenOn()) { _nodeFsHideBar(); return; }
   if (_nfsState && _nfsState.expanded) return; // 输入行展开时不重判（用户在打字）
   // 渲染态编辑中不弹浮条（2026-11-18）：划词是在改正文，追问/加粗那套动作会打架；
   // 退出编辑后浮条自动恢复
@@ -1178,6 +1231,19 @@ function _buildNodeFsPreviewScript(cfg) {
     // 真值才给铅笔；srcSig＝开窗时原文指纹，保存时随消息过桥对账，开窗后原文变过就拒整篇覆盖
     editable: !!(cfg && cfg.editable),
     srcSig: String((cfg && cfg.srcSig) || ''),
+    // 划词助手设置（2026-11-24）：总开关∧「新窗口预览」位置关掉时窗内不弹浮条
+    // （脚本仍要注入——渲染态编辑的铅笔同住这份脚本，不能整体缺席）。四按钮名单、
+    // 默认问句与引文行数也一并当初始值带过去：预览页读不到主应用的账号命名空间
+    // （非 default 账号键带 u<id8>_ 前缀），同 route 的道理
+    enabled: _nodeFsSelectionAllowedPreview(),
+    actions: {
+      followup: _nodeFsActionOn('followup'),
+      copy: _nodeFsActionOn('copy'),
+      bold: _nodeFsActionOn('bold'),
+      search: _nodeFsActionOn('search')
+    },
+    defQ: _nodeFsDefaultQuestion(),
+    qLines: _nodeFsExcerptLines(),
   };
   const json = JSON.stringify(conf).replace(/<\//g, '<\\/'); // 防标题带 </script> 提前闭合
   return '(function(){'
@@ -1186,8 +1252,12 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'var SEQ=0;'
     + 'var BRIDGE=!!CFG.bridge;'
     + 'var READONLY=!!CFG.readonly;'
-    + 'var MAX_TEXT=' + NODE_FS_BRIDGE_TEXT_MAX + ',EXCERPT_MAX=' + NODE_FS_EXCERPT_MAX + ',EXCERPT_LINES=' + NODE_FS_EXCERPT_LINES + ';'
-    + 'var DEFAULT_Q=' + JSON.stringify(NODE_FS_FOLLOWUP_DEFAULT) + ';'
+    // 划词助手设置（2026-11-24）：SELON＝总开关∧预览位置（主应用生成时算好）；
+    // actOn＝四按钮名单；EXCERPT_LINES/DEFAULT_Q 按设置带值（qLines 已归一 1/3/5）
+    + 'var MAX_TEXT=' + NODE_FS_BRIDGE_TEXT_MAX + ',EXCERPT_MAX=' + NODE_FS_EXCERPT_MAX + ',EXCERPT_LINES=' + (conf.qLines || NODE_FS_EXCERPT_LINES) + ';'
+    + 'var DEFAULT_Q=' + JSON.stringify(String(conf.defQ || NODE_FS_FOLLOWUP_DEFAULT)) + ';'
+    + 'var SELON=!!CFG.enabled;'
+    + 'function actOn(n){return !CFG.actions||CFG.actions[n]!==false;}'
     // 回答方式：主应用带过来的初始值（见上方 conf.route 注释）；窗内可再切
     + 'var ROUTE=(CFG.route==="direct"||CFG.route==="analysis"||(CFG.route==="auto"&&CFG.auto))?CFG.route:(CFG.auto?"auto":"analysis");'
     + 'var ROUTE_AUTO=!!CFG.auto;'
@@ -1419,10 +1489,11 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'function buildExcerpt(text){var lines=String(text||"").split("\\n");'
     + 'while(lines.length&&!lines[0].replace(/\\s/g,""))lines.shift();'
     + 'while(lines.length&&!lines[lines.length-1].replace(/\\s/g,""))lines.pop();'
-    + 'var truncated=lines.length>EXCERPT_LINES;'
+    + 'var truncated=false,truncBy="";'
+    + 'if(lines.length>EXCERPT_LINES){truncated=true;truncBy="lines";}'
     + 'var excerpt=lines.slice(0,EXCERPT_LINES).join("\\n");'
-    + 'if(excerpt.length>EXCERPT_MAX){excerpt=excerpt.slice(0,EXCERPT_MAX);truncated=true;}'
-    + 'return {excerpt:excerpt,truncated:truncated};}'
+    + 'if(excerpt.length>EXCERPT_MAX){excerpt=excerpt.slice(0,EXCERPT_MAX);truncated=true;truncBy="chars";}'
+    + 'return {excerpt:excerpt,truncated:truncated,truncBy:truncBy};}'
     + 'function hideBar(){if(bar){if(bar.remove)bar.remove();else if(bar.parentNode)bar.parentNode.removeChild(bar);bar=null;}state=null;}'
     + 'function placeBar(rect){if(!bar)return;'
     + 'var vw=window.innerWidth||1200,vh=window.innerHeight||800;'
@@ -1458,15 +1529,18 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'var inp=bar?bar.querySelector(".cp-nfs-input"):null;if(inp)inp.focus();}'
     + 'function showBar(pk){hideBar();picked=pk;state={expanded:false,quoteDropped:false};'
     + 'bar=document.createElement("div");bar.className="cp-nfs-bar";bar.setAttribute("role","toolbar");'
+    // 按钮开关（2026-11-24 设置页随 CFG.actions 带过来）：设置不绕只读/无桥资格闸；
+    // 全关时不出空浮条（设置侧已拦最后一枚，这里是兜底）
     + 'var html="";'
-    + 'if(BRIDGE&&!READONLY)html+=btnHtml("followup","追问","？",true);'
-    + 'html+=btnHtml("copy","复制","⧉",false);'
+    + 'if(BRIDGE&&!READONLY&&actOn("followup"))html+=btnHtml("followup","追问","？",true);'
+    + 'if(actOn("copy"))html+=btnHtml("copy","复制","⧉",false);'
     // 加粗要回主应用写原文：file:// 单文件（无桥）给不了，只读也不给。
     // 钮面不写中文（2026-11-17 用户拍板，T507 并回，与主应用浮条同款）：一枚粗衬线 B；
     // 语义走 aria/title。不挂 data-icon——窄屏图标化不会叠出第二个 B
-    + 'if(BRIDGE&&!READONLY)html+="<button type=\\"button\\" class=\\"cp-nfs-btn\\" data-act=\\"bold\\" '
+    + 'if(BRIDGE&&!READONLY&&actOn("bold"))html+="<button type=\\"button\\" class=\\"cp-nfs-btn\\" data-act=\\"bold\\" '
     + 'aria-label=\\"加粗\\" title=\\"选段加粗（粗体文字上再点一次取消）\\"><span class=\\"cp-nfs-btn-b\\">B</span></button>";'
-    + 'if(BRIDGE)html+=btnHtml("search","查找","⌕",false,"在画布中查找");'
+    + 'if(BRIDGE&&actOn("search"))html+=btnHtml("search","查找","⌕",false,"在画布中查找");'
+    + 'if(!html){bar=null;state=null;return;}'
     + 'bar.innerHTML=html;bar.style.visibility="hidden";document.body.appendChild(bar);'
     + 'placeBar(pk.rect);bar.style.visibility="";}'
     + 'function expandInput(){if(!state||state.expanded||!picked)return;state.expanded=true;'
@@ -1475,7 +1549,9 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'if(q.excerpt&&!state.quoteDropped)html+="<div class=\\"cp-nfs-quote-row\\"><span class=\\"cp-nfs-quote-chip\\" title=\\""+escAttr(q.excerpt)+"\\">【聚焦选段】"+escHtml(oneLine(q.excerpt))+"</span>"'
     + '+"<button type=\\"button\\" class=\\"cp-nfs-quote-del\\" data-act=\\"delquote\\" aria-label=\\"移除引文\\" title=\\"发送时不带这段引文\\">×</button></div>";'
     + 'html+="<div class=\\"cp-nfs-input-row\\"><input type=\\"text\\" class=\\"cp-nfs-input\\" aria-label=\\"追问内容\\" placeholder=\\"想追问什么？（留空用默认问句）\\">"'
-    + '+(q.truncated?"<span class=\\"cp-nfs-trunc\\">已取前 2000 字</span>":"")'
+    // 截断提示分两种（2026-11-24 设置页口径，与主应用浮条同款）：行数超＝「已取前 N 行」、
+    // 字数超＝「已取前 2000 字」
+    + '+(q.truncated?"<span class=\\"cp-nfs-trunc\\">"+(q.truncBy==="chars"?"已取前 2000 字":"已取前 "+EXCERPT_LINES+" 行")+"</span>":"")'
     + '+"<button type=\\"button\\" class=\\"cp-nfs-btn cp-nfs-btn--primary\\" data-act=\\"send\\">发送</button></div>";'
     // 回答方式（2026-11-17）：与主应用浮条、画布追问卡同一套三档口径
     + 'html+=routeHtml();'
@@ -1626,8 +1702,10 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'window.addEventListener("resize",function(){if(!bar)return;'
     + 'if(state&&state.expanded){placeBar(picked?picked.rect:null);return;}hideBar();});'
     + 'document.addEventListener("selectionchange",function(){clearTimeout(selTimer);'
-    // 渲染态编辑中浮条收声（口径同主应用 _nodeFsOnSelectionSettled 的 _nodeFsEditActive 守卫）
-    + 'selTimer=setTimeout(function(){if(EDITING)return;if(state&&state.expanded)return;var pk=pickSelection();'
-    + 'if(pk)showBar(pk);else hideBar();},180);});'
+    // 渲染态编辑中浮条收声（口径同主应用 _nodeFsOnSelectionSettled 的 _nodeFsEditActive 守卫）；
+    // 划词助手总开关∧「新窗口预览」位置关掉不弹（SELON，主应用生成脚本时算好，下次开窗生效）
+    + 'selTimer=setTimeout(function(){if(EDITING)return;if(state&&state.expanded)return;'
+    + 'if(!SELON){hideBar();return;}'
+    + 'var pk=pickSelection();if(pk)showBar(pk);else hideBar();},180);});'
     + '})();';
 }

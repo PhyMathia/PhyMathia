@@ -213,8 +213,8 @@ export function run() {
     if (!script.includes('inBold:stEl?true:false') || !script.includes('unwrapBold(stEl)')) return false;
     if (!script.includes('wrapBold(range)')) return false;
     if (!script.includes('onDone(!!d.ok,d.message||"",d.undo===true,d)')) return false; // 2026-11-20 起第 4 参＝完整 ack（edit 拿成品 html）
-    // file:// 单文件（无桥）不给这颗钮：写不回原文的粗体是假的
-    if (!script.includes('if(BRIDGE&&!READONLY)html+="<button type=\\"button\\" class=\\"cp-nfs-btn\\" data-act=\\"bold\\"')) return false;
+    // file:// 单文件（无桥）不给这颗钮：写不回原文的粗体是假的；设置按钮开关（2026-11-24）也拦
+    if (!script.includes('if(BRIDGE&&!READONLY&&actOn("bold"))html+="<button type=\\"button\\" class=\\"cp-nfs-btn\\" data-act=\\"bold\\"')) return false;
     return true;
   });
 
@@ -596,6 +596,134 @@ export function run() {
     const css = readSrc('src/static/css/graph-override.css');
     if (!css.includes('.node-fs-route-btn.is-current')) return false;
     return true;
+  });
+
+  // ---------- 划词助手设置门控（2026-11-24 设置页；键与读函数在 config.js）----------
+  // 沙箱里 config.js 已载（followupAutoRouteEnabled 先例），直接写 localStorage 驱动；
+  // 各用例 try/finally 清键，别把设置残留漏给后续用例。
+
+  const SEL_KEYS = ['phymathia_selection_assistant', 'phymathia_selection_scope_fullscreen',
+    'phymathia_selection_scope_preview', 'phymathia_selection_actions',
+    'phymathia_selection_question', 'phymathia_selection_quote_lines'];
+  const selClean = () => SEL_KEYS.forEach(k => sandbox.localStorage.removeItem(k));
+
+  check('node-fs-toolbar: 划词助手读函数——六键缺省＝默认行为，显式值才变（config.js）', () => {
+    for (const fn of ['selectionPrefOn', 'selectionActionOn', 'selectionQuestionText', 'selectionQuoteLines']) {
+      if (typeof sandbox[fn] !== 'function') throw new Error(fn + ' 未暴露（config.js）');
+    }
+    selClean();
+    try {
+      if (!sandbox.selectionPrefOn('phymathia_selection_assistant')) throw new Error('总开关缺键应为开');
+      sandbox.localStorage.setItem('phymathia_selection_assistant', '0');
+      if (sandbox.selectionPrefOn('phymathia_selection_assistant')) throw new Error('显式 0 没关掉总开关');
+      if (!sandbox.selectionActionOn('copy')) throw new Error('按钮名单缺键应全开');
+      sandbox.localStorage.setItem('phymathia_selection_actions', 'followup,search');
+      if (!sandbox.selectionActionOn('followup') || sandbox.selectionActionOn('copy')
+        || sandbox.selectionActionOn('bold') || !sandbox.selectionActionOn('search')) {
+        throw new Error('按钮名单过滤错');
+      }
+      if (sandbox.selectionQuestionText() !== '') throw new Error('问句缺键应为空（用内置默认）');
+      sandbox.localStorage.setItem('phymathia_selection_question', '  自定义问一下  ');
+      if (sandbox.selectionQuestionText() !== '自定义问一下') throw new Error('问句没去首尾空白');
+      if (sandbox.selectionQuoteLines() !== 3) throw new Error('行数缺键应为 3');
+      sandbox.localStorage.setItem('phymathia_selection_quote_lines', '5');
+      if (sandbox.selectionQuoteLines() !== 5) throw new Error('行数 5 没生效');
+      sandbox.localStorage.setItem('phymathia_selection_quote_lines', '7');
+      if (sandbox.selectionQuoteLines() !== 3) throw new Error('非法行数应回落 3');
+      return true;
+    } finally { selClean(); }
+  });
+
+  check('node-fs-toolbar: 划词助手门控——总开关/本页全屏拦浮条不拦复制纠错；预览窗 SELON 生成时算好', () => {
+    const src = readSrc('src/static/js/node-fs-toolbar.js');
+    // 选区停稳处的闸＝总开关 ∧ 本页全屏，关时连已开浮条一起收
+    if (!src.includes('if (!_nodeFsSelectionMasterOn() || !_nodeFsScopeFullscreenOn()) { _nodeFsHideBar(); return; }')) return false;
+    // 复制纠错恒生效：copy 监听里没有设置门控
+    const copySeg = src.slice(src.indexOf("document.addEventListener('copy'"), src.indexOf("document.addEventListener('copy'") + 400);
+    if (!copySeg.includes('_nodeFsCopySelectionText()')) return false;
+    if (copySeg.includes('SelectionMasterOn')) return false;
+    // 预览脚本：SELON 随脚本带过去；关掉时 selectionchange 不弹；编辑铅笔不受牵连（同住一份脚本）
+    selClean();
+    try {
+      const script = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
+      if (!script.includes('"enabled":true') || !script.includes('var SELON=!!CFG.enabled;')) return false;
+      if (!script.includes('if(!SELON){hideBar();return;}')) return false;
+      if (!script.includes('function enterEdit()')) return false;
+      sandbox.localStorage.setItem('phymathia_selection_assistant', '0');
+      const off = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
+      if (!off.includes('"enabled":false')) throw new Error('总开关关了脚本还带 enabled:true');
+      selClean();
+      sandbox.localStorage.setItem('phymathia_selection_scope_preview', '0');
+      const off2 = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
+      if (!off2.includes('"enabled":false')) throw new Error('只关预览位置脚本仍 enabled:true');
+      return true;
+    } finally { selClean(); }
+  });
+
+  check('node-fs-toolbar: 按钮开关过滤——四枚各自可关、全关不出空浮条（双端同款）', () => {
+    const src = readSrc('src/static/js/node-fs-toolbar.js');
+    if (!src.includes("if (!readonly && _nodeFsActionOn('followup'))")) return false;
+    if (!src.includes("if (_nodeFsActionOn('copy'))")) return false;
+    if (!src.includes("if (!readonly && _nodeFsActionOn('bold') && _nodeFsBoldAvailable(")) return false;
+    if (!src.includes("if (_nodeFsActionOn('search'))")) return false;
+    if (!src.includes('if (!html) { _nfsState = null; return; }')) return false;
+    selClean();
+    try {
+      const script = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
+      if (!script.includes('function actOn(n){return !CFG.actions||CFG.actions[n]!==false;}')) return false;
+      if (!script.includes('if(BRIDGE&&!READONLY&&actOn("followup"))')) return false;
+      if (!script.includes('if(actOn("copy"))')) return false;
+      if (!script.includes('if(BRIDGE&&!READONLY&&actOn("bold"))')) return false;
+      if (!script.includes('if(BRIDGE&&actOn("search"))')) return false;
+      if (!script.includes('if(!html){bar=null;state=null;return;}')) return false;
+      // 名单真生效：只留 followup,bold 时脚本带出 copy/search=false
+      sandbox.localStorage.setItem('phymathia_selection_actions', 'followup,bold');
+      const filtered = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
+      if (!filtered.includes('"copy":false') || !filtered.includes('"search":false')) {
+        throw new Error('按钮名单没带进脚本');
+      }
+      new Function(filtered);
+      return true;
+    } finally { selClean(); }
+  });
+
+  check('node-fs-toolbar: 默认问句与引文行数——设置值进 excerpt/发送链（双端），截断提示两种文案', () => {
+    const src = readSrc('src/static/js/node-fs-toolbar.js');
+    selClean();
+    try {
+      // 默认问句：留空＝内置默认；设了＝自定义（发送链走 _nodeFsDefaultQuestion）
+      if (sandbox._nodeFsDefaultQuestion() !== '请把这段再展开讲讲') throw new Error('内置默认问句丢了');
+      sandbox.localStorage.setItem('phymathia_selection_question', '用费曼技巧讲一遍');
+      if (sandbox._nodeFsDefaultQuestion() !== '用费曼技巧讲一遍') throw new Error('自定义问句没生效');
+      if (!src.includes("|| _nodeFsDefaultQuestion()")) return false;
+      // 引文行数行为：5/1/缺省 3 各自生效，truncBy 按最后一刀分
+      sandbox.localStorage.setItem('phymathia_selection_quote_lines', '5');
+      const five = sandbox._nodeFsBuildExcerpt('一\n二\n三\n四\n五\n六');
+      if (five.excerpt !== '一\n二\n三\n四\n五' || five.truncBy !== 'lines') throw new Error('5 行截断错：' + JSON.stringify(five));
+      sandbox.localStorage.setItem('phymathia_selection_quote_lines', '1');
+      const one = sandbox._nodeFsBuildExcerpt('一\n二');
+      if (one.excerpt !== '一' || one.truncBy !== 'lines') throw new Error('1 行截断错：' + JSON.stringify(one));
+      sandbox.localStorage.removeItem('phymathia_selection_quote_lines');
+      const three = sandbox._nodeFsBuildExcerpt('一\n二\n三\n四');
+      if (three.excerpt !== '一\n二\n三' || three.truncBy !== 'lines') throw new Error('缺省 3 行丢了');
+      const chars = sandbox._nodeFsBuildExcerpt('x'.repeat(2100));
+      if (chars.truncated !== true || chars.truncBy !== 'chars' || chars.excerpt.length !== 2000) {
+        throw new Error('字数截断错：' + JSON.stringify(chars));
+      }
+      // 截断文案双端分两种：主应用按 truncBy 拼，预览脚本内嵌同款
+      if (!src.includes("q.truncBy === 'chars' ? '已取前 ' + NODE_FS_EXCERPT_MAX + ' 字' : '已取前 ' + _nodeFsExcerptLines() + ' 行'")) return false;
+      // 设置值带进预览脚本（defQ/qLines），坏拼接当场炸
+      sandbox.localStorage.setItem('phymathia_selection_question', '预览窗问句');
+      sandbox.localStorage.setItem('phymathia_selection_quote_lines', '1');
+      const script = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
+      if (!script.includes('"defQ":"预览窗问句"') || !script.includes('"qLines":1')) throw new Error('设置没带进脚本');
+      new Function(script);
+      sandbox.localStorage.removeItem('phymathia_selection_question');
+      sandbox.localStorage.removeItem('phymathia_selection_quote_lines');
+      const script2 = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
+      if (!script2.includes('truncBy==="chars"?"已取前 2000 字":"已取前 "+EXCERPT_LINES+" 行"')) return false;
+      return true;
+    } finally { selClean(); }
   });
 
   check('node-fs-toolbar: 浮条样式进 graph-override.css（胶囊＋引文输入行＋窄屏图标化＋加粗 B 字形）', () => {

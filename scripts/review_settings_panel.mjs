@@ -194,12 +194,13 @@ try {
   ctx.openSettingsDrawer();
   overlay.classList.contains('show') ? ok('打开抽屉：show 类就位') : bad('打开抽屉', '缺 show');
   const navItems = (nav.innerHTML.match(/settings-nav-item/g) || []).length;
-  navItems === 15 ? ok('左栏渲染 15 个入口（含显示读数/快捷键与技能）') : bad('左栏入口数', String(navItems));
+  navItems === 16 ? ok('左栏渲染 16 个入口（含显示读数/划词助手/快捷键与技能）') : bad('左栏入口数', String(navItems));
   content.innerHTML.includes('外观') ? ok('默认停在「外观」页') : bad('默认页', content.innerHTML.slice(0, 80));
 
   const expect = {
     appearance: '深浅模式', display: '生成速度', level: '难度等级', model: '模型设置', memory: '记忆与画像',
     phi: '深度思考', quiz: '出题素材源', canvas: '允许 AI 自动判断回答方式',
+    selection: '划词助手',
     skills: '技能',
     hotkeys: '只读浏览',
     data: '数据管理', account: '账号与查阅',
@@ -316,6 +317,59 @@ try {
   ctx.settingsSaveTrashRetention('30');
   calls.includes('setTrashRetentionDays:30')
     ? ok('回收站天数：转交唯一写入口 setTrashRetentionDays（T451 自绘下拉）') : bad('回收站天数', calls.join(','));
+
+  // 2026-11-24：划词助手页（总开关/出现位置/按钮/默认问句/引文行数/恢复默认）。
+  // 离线桩不载 config.js——这里顺带覆盖 settings.js 的本地兜底读取路径。
+  ctx.settingsSelectTab('selection');
+  const selSwitches = (content.innerHTML.match(/settings-switch-row/g) || []).length;
+  selSwitches === 7
+    ? ok('划词助手页：总开关＋两位置＋四按钮共 7 枚开关') : bad('划词助手开关数', String(selSwitches));
+  !content.innerHTML.includes('总开关已关')
+    ? ok('划词助手页：默认全开（无总开关关闭说明）') : bad('划词助手默认态', '不该有关闭说明');
+  ctx.settingsSetSelectionEnabled(false);
+  store.get('phymathia_selection_assistant') === '0' && content.innerHTML.includes('总开关已关')
+    ? ok('划词助手总开关：关闭写 0 并出说明行') : bad('划词助手总开关关', String(store.get('phymathia_selection_assistant')));
+  ctx.settingsSetSelectionEnabled(true);
+  store.get('phymathia_selection_assistant') === '1' && !content.innerHTML.includes('总开关已关')
+    ? ok('划词助手总开关：重开写 1、说明行收起') : bad('划词助手总开关开', String(store.get('phymathia_selection_assistant')));
+  ctx.settingsSetSelectionScope('fullscreen', false);
+  store.get('phymathia_selection_scope_fullscreen') === '0'
+    ? ok('本页全屏位置：关闭写 0') : bad('全屏位置关', String(store.get('phymathia_selection_scope_fullscreen')));
+  ctx.settingsSetSelectionScope('preview', false);
+  store.get('phymathia_selection_scope_preview') === '0'
+    ? ok('新窗口预览位置：关闭写 0') : bad('预览位置关', String(store.get('phymathia_selection_scope_preview')));
+  ctx.settingsSetSelectionAction('copy', false);
+  ctx.settingsSetSelectionAction('search', false);
+  store.get('phymathia_selection_actions') === 'followup,bold'
+    ? ok('按钮开关：名单按固定顺序落盘（followup,bold）') : bad('按钮名单', String(store.get('phymathia_selection_actions')));
+  ctx.settingsSetSelectionAction('bold', false);
+  store.get('phymathia_selection_actions') === 'followup'
+    ? ok('按钮开关：关到只剩一枚也放行') : bad('按钮剩一枚', String(store.get('phymathia_selection_actions')));
+  const blockToasts = calls.filter(c => c === 'toast:至少保留一个按钮').length;
+  ctx.settingsSetSelectionAction('followup', false);
+  calls.filter(c => c === 'toast:至少保留一个按钮').length === blockToasts + 1
+    && store.get('phymathia_selection_actions') === 'followup'
+    ? ok('按钮开关：关最后一枚被拦（提示并回退）') : bad('最后一枚拦截', String(store.get('phymathia_selection_actions')));
+  ctx.settingsSetSelectionQuestion('  用生活的类比再讲一遍  ');
+  store.get('phymathia_selection_question') === '用生活的类比再讲一遍'
+    ? ok('默认问句：去首尾空白后落盘') : bad('默认问句', String(store.get('phymathia_selection_question')));
+  ctx.settingsSetSelectionQuestion('x'.repeat(260));
+  (store.get('phymathia_selection_question') || '').length === 200
+    ? ok('默认问句：超长截到 200 字') : bad('问句上限', String((store.get('phymathia_selection_question') || '').length));
+  ctx.settingsSetSelectionQuoteLines(5);
+  store.get('phymathia_selection_quote_lines') === '5'
+    ? ok('引文行数：5 行落盘') : bad('引文行数5', String(store.get('phymathia_selection_quote_lines')));
+  ctx.settingsSetSelectionQuoteLines(9);
+  store.get('phymathia_selection_quote_lines') === '5'
+    ? ok('引文行数：非法值拒收') : bad('引文行数9', String(store.get('phymathia_selection_quote_lines')));
+  ctx.settingsSelectionReset();
+  ['phymathia_selection_assistant', 'phymathia_selection_scope_fullscreen', 'phymathia_selection_scope_preview',
+    'phymathia_selection_actions', 'phymathia_selection_question', 'phymathia_selection_quote_lines']
+    .every(k => !store.has(k))
+    ? ok('恢复默认：划词助手六键全部清除（缺键＝默认行为）') : bad('恢复默认', '仍有残留键');
+  const selActive = (content.innerHTML.match(/class="settings-choice active"[^>]*onclick="([^"]+)"/) || [])[1];
+  selActive === 'settingsSetSelectionQuoteLines(3)' && !content.innerHTML.includes('总开关已关')
+    ? ok('恢复默认：重画回默认观感（3 行选中、无关闭说明）') : bad('恢复默认重画', String(selActive));
 
   ctx.settingsOpenLegacy('model');
   calls.includes('toggleModelPanel') && !overlay.classList.contains('show')
@@ -457,6 +511,18 @@ try {
   const cfgSrc = readFileSync(ROOT + 'src/static/js/config.js', 'utf8');
   cfgSrc.includes('github:') && cfgSrc.includes('viewBox="0 0 16 16"')
     ? ok('config.js 有 GitHub 实心章鱼猫标') : bad('GitHub 图标', '缺 github 条目');
+  // 2026-11-24 划词助手：config.js 六键＋读函数，node-fs-toolbar 门控接线
+  cfgSrc.includes("STORAGE_KEY_SELECTION_ASSISTANT = 'phymathia_selection_assistant'")
+    && cfgSrc.includes("'phymathia_selection_scope_fullscreen'") && cfgSrc.includes("'phymathia_selection_scope_preview'")
+    && cfgSrc.includes("'phymathia_selection_actions'") && cfgSrc.includes("'phymathia_selection_question'")
+    && cfgSrc.includes("'phymathia_selection_quote_lines'")
+    ? ok('config.js：划词助手六键就位') : bad('划词助手键', '缺键');
+  cfgSrc.includes('function selectionPrefOn(') && cfgSrc.includes('function selectionActionOn(')
+    && cfgSrc.includes('function selectionQuestionText(') && cfgSrc.includes('function selectionQuoteLines(')
+    ? ok('config.js：划词助手读函数就位') : bad('划词助手读函数', '缺函数');
+  const nfsSrc = readFileSync(ROOT + 'src/static/js/node-fs-toolbar.js', 'utf8');
+  nfsSrc.includes('if (!_nodeFsSelectionMasterOn() || !_nodeFsScopeFullscreenOn()) { _nodeFsHideBar(); return; }')
+    ? ok('node-fs-toolbar：本页全屏吃总开关∧位置闸') : bad('划词助手门控', '缺闸');
   const css = readFileSync(ROOT + 'src/static/css/styles-panels.css', 'utf8');
   css.includes('.settings-model-switch input:checked + .settings-switch-track')
     ? ok('开关样式复用抽屉轨道与 --accent 令牌') : bad('开关样式', '缺选中态规则');
