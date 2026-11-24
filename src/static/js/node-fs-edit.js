@@ -62,6 +62,12 @@ function _nodeFsEditInline(node) {
   if (tag === 'STRONG' || tag === 'B') return inner ? '**' + inner + '**' : '';
   if (tag === 'EM' || tag === 'I') return inner ? '*' + inner + '*' : '';
   if (tag === 'DEL' || tag === 'S') return inner ? '~~' + inner + '~~' : '';
+  // 下划线与上下标（591，2026-11-24）：此前走「拆壳取内容」＝存完静默丢。markdown 无
+  // 原生记号，走 HTML 直写——marked 原样透传、DOMPurify 默认白名单放行 u/ins/sup/sub，
+  // 存回后重开往返校验两侧同形（sig walk 本就认未知 tag，两侧一致）
+  if (tag === 'U' || tag === 'INS') return inner ? '<u>' + inner + '</u>' : '';
+  if (tag === 'SUP') return inner ? '<sup>' + inner + '</sup>' : '';
+  if (tag === 'SUB') return inner ? '<sub>' + inner + '</sub>' : '';
   if (tag === 'CODE') {
     const t = String(node.textContent || '');
     if (!t) return '';
@@ -158,7 +164,11 @@ function _nodeFsEditTableMd(el) {
         if (!td || td.nodeType !== 1) continue;
         const tdTag = String(td.tagName || '').toUpperCase();
         if (tdTag !== 'TD' && tdTag !== 'TH') continue;
-        cells.push(_nodeFsEditInlineChildren(td).replace(/\s*\n\s*/g, ' ').trim());
+        // 单元格里的 | 与 \ 必须转义（591，2026-11-24）：多出的管道会被当列分隔撑坏
+        // 表格（绝对值 |x| 手打进单元格即中招），自检②只比可见文本拦不住；转义后
+        // marked 按字面还原（\| → |），往返同形
+        cells.push(_nodeFsEditInlineChildren(td).replace(/\s*\n\s*/g, ' ').trim()
+          .replace(/\\/g, '\\\\').replace(/\|/g, '\\|'));
         if (isHeadRow) headAligns.push(_nodeFsEditTableAlign(td));
       }
       if (cells.length) rows.push(cells);

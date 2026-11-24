@@ -796,6 +796,32 @@ export function run() {
     return true;
   });
 
+  // 591（2026-11-24）：下划线/上下标此前拆壳取内容＝存完静默丢，现在 HTML 直写存得下；
+  // 表格单元格里的 | 与 \ 转义，绝对值 |x| 打进单元格不再撑坏表格
+  check('node-fs-edit: 下划线/上下标直写＋表格单元格竖线转义（591）', () => {
+    const ser = sandbox._nodeFsSerializeContent;
+    const doc = editEl('DIV', [
+      editEl('P', [
+        editT('下划线 '),
+        editEl('U', [editT('重点')]),
+        editT('、上标 '),
+        editEl('SUP', [editT('2')]),
+        editT('、下标 '),
+        editEl('SUB', [editT('0')]),
+        editT('。'),
+      ]),
+      editEl('TABLE', [
+        editEl('THEAD', [editEl('TR', [editEl('TH', [editT('表达式')]), editEl('TH', [editT('备注')])])]),
+        editEl('TBODY', [editEl('TR', [editEl('TD', [editT('|x| > 0')]), editEl('TD', [editT('a\\b')])])]),
+      ]),
+    ]);
+    const got = ser(doc);
+    const want = '下划线 <u>重点</u>、上标 <sup>2</sup>、下标 <sub>0</sub>。\n\n'
+      + '| 表达式 | 备注 |\n| --- | --- |\n| \\|x\\| > 0 | a\\\\b |';
+    if (got !== want) throw new Error('591 序列化不一致：\n【得】' + got + '\n【期】' + want);
+    return true;
+  });
+
   check('node-fs-edit: 管道表/mermaid/viz 原子块还原（viz 存的是成品 iframe 源，桥剥离由源码口径守）', () => {
     const ser = sandbox._nodeFsSerializeContent;
     const doc = editEl('DIV', [
