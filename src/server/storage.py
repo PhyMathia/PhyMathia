@@ -131,18 +131,50 @@ def _resolve_messages_path(session_id: str, account: str = DEFAULT_ACCOUNT) -> P
 # 判断会得出「历史全丢了」的错误结论（2026-11-19 自己踩过，用户当场纠正）。
 # 归档是纯派生副本：删了可由 kv/消息重建（scripts/backfill_history_archive.py），
 # 不参与任何读写决策。
+#
+# 归档只在消息保存链重写，节点改动不触发（2026-11-24 拍板不加：改画布就重写是在保存
+# 热路上添活，产物用户也找不到）。要「此刻」的可读副本走知识菜单「导出会话历史」
+# （note-export.js，当场按内存态生成）。两侧正文口径一字对齐——_history_text /
+# _HISTORY_KIND_LABEL 改了必须同步改前端，冒烟与单测钉同一组夹具。
 
 _HISTORY_ROLE_LABEL = {"user": "我", "assistant": "AI", "system": "系统"}
+# 节点类型 → 时间线上的叫法。名字跟画布叫法走（GRAPH_NODE_ATTRIBUTES／graph-recipes.js）；
+# 存量 7 个不改名——既有归档已用它。
 _HISTORY_KIND_LABEL = {
     "user": "我", "human_note": "我的笔记", "module": "模块", "direct": "AI",
     "source": "素材", "answer": "回答", "analysis": "分析",
+    "note": "我的总结", "summary": "AI 总结", "relation": "联系", "blank": "AI 生成空白",
+    "hub": "汇聚", "junction": "中转", "ai_eval": "AI 评价", "draft": "草稿",
+    "manual": "我的回答", "question": "问题", "followup": "追问", "recipe": "配方",
+    "viz": "交互可视化", "image": "图片", "mermaid": "图表", "html_iframe": "网页",
 }
+# 「问题分析」卡正文在 node.analysis 不在 node.content（graph-render.js 同口径）
+_HISTORY_ANALYSIS_HEAD = "问题分析"
+_HISTORY_ITEM_KIND_LABEL = {"image": "图片", "text": "文本", "file": "文件"}
 _HISTORY_ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _HISTORY_TITLE_MAX = 40
 # 单条正文上限：交互可视化的 HTML 不写进来（几十 KB 代码不是历史），其它长文
 # 超限截断并注明——归档要「翻得动」，不是第二份全量数据。
 _HISTORY_ENTRY_MAX = 8000
 _HISTORY_HTML_RE = re.compile(r'^\s*(```html|<!DOCTYPE\s+html|<html[\s>])', re.IGNORECASE)
+
+# 正文规范化（口径对齐前端 renderMarkdown：思考块/结构标签不显示给用户）
+_HISTORY_THINK_RE = re.compile(r"<(think|thinking|reasoning|thought)>[\s\S]*?</\s*\1\s*>", re.IGNORECASE)
+_HISTORY_THINK_OPEN_RE = re.compile(r"<(think|thinking|reasoning|thought)>", re.IGNORECASE)
+_HISTORY_SOCRATIC_META_RE = re.compile(r"<socratic_meta\b[^>]*>[\s\S]*?</socratic_meta>|<socratic_meta\b[^>]*/?>", re.IGNORECASE)
+_HISTORY_SUMMARY_RE = re.compile(r"<summary>[\s\S]*?</summary>", re.IGNORECASE)
+_HISTORY_VIZ_SECTION_RE = re.compile(r"<viz\b[^>]*>([\s\S]*?)</viz\s*>", re.IGNORECASE)
+_HISTORY_HTML_FENCE_RE = re.compile(r"```html\s*\n([\s\S]*?)```", re.IGNORECASE)
+# 完整网页才算可视化（renderMarkdown 转可视化卡的同一道闸：太短的片段保留为代码块）
+_HISTORY_PAGE_RE = re.compile(r"<!doctype|<html[\s>]|<body[\s>]", re.IGNORECASE)
+_HISTORY_STRUCT_TAG_RE = re.compile(r"</?(?:physics|math|graph|extend|analysis)\b[^>]*>", re.IGNORECASE)
+_HISTORY_FORMULA_WRAPPED_RE = re.compile(r"\${1,2}\s*<formula>([\s\S]*?)</formula>\s*\${1,2}", re.IGNORECASE)
+_HISTORY_FORMULA_RE = re.compile(r"<formula>([\s\S]*?)</formula>", re.IGNORECASE)
+_HISTORY_FORMULA_OPEN_RE = re.compile(r"<formula>(?![\s\S]*</formula>)", re.IGNORECASE)
+_HISTORY_ENTITY_RE = re.compile(r"&gt;|&lt;|&quot;|&nbsp;|&amp;", re.IGNORECASE)
+_HISTORY_ENTITY_MAP = {"&gt;": ">", "&lt;": "<", "&quot;": '"', "&nbsp;": " ", "&amp;": "&"}
+_HISTORY_LEADING_DOLLAR_RE = re.compile(r"^\$+|\$+$")
+_HISTORY_BLANK_RE = re.compile(r"\s+")
 
 
 def history_dir(account: str = DEFAULT_ACCOUNT) -> Path:
@@ -193,37 +225,130 @@ def _graph_nodes(session_id: str, account: str) -> list:
     return [n for n in (nodes or []) if isinstance(n, dict)]
 
 
+def _history_viz_note(code) -> str:
+    return f"（交互可视化，{len(code):,} 字代码，正文见画布）"
+
+
+def _history_formula_clean(latex) -> str:
+    s = _HISTORY_ENTITY_RE.sub(lambda m: _HISTORY_ENTITY_MAP[m.group(0).lower()], str(latex or "").strip())
+    s = _HISTORY_LEADING_DOLLAR_RE.sub("", s).strip()
+    # 只清 PowerShell 转义垃圾 \=；\, \; \: 是合法间距命令（render.js T422 同口径）
+    return s.replace("\\$", "$").replace("\\=", "=").strip()
+
+
+def _history_formula_sub(s: str, m: re.Match) -> str:
+    """<formula> → Markdown 数学定界符：独占一行的是 display（$$ 块），夹在句中的是 inline（$）。
+    所有阅读器都认这两种；<formula> 标签原样落盘只会显示成带尖括号的 LaTeX 源码。"""
+    latex = _history_formula_clean(m.group(1))
+    if not latex:
+        return ""
+    before, after = s[: m.start()], s[m.end():]
+    if before.rsplit("\n", 1)[-1].strip() or after.split("\n", 1)[0].strip():
+        return "$" + _HISTORY_BLANK_RE.sub(" ", latex) + "$"
+    # 独占一行：前后补足空行，display 块在严格按段落判定的阅读器里才不会粘进上一段
+    pad_before = "\n\n" if before and not before.endswith("\n\n") else ""
+    pad_after = "\n\n" if after and not after.startswith("\n\n") else ""
+    return pad_before + "$$\n" + latex + "\n$$" + pad_after
+
+
+def _history_fence_sub(m: re.Match) -> str:
+    code = m.group(1)
+    if len(code.strip()) >= 100 and _HISTORY_PAGE_RE.search(code):
+        return _history_viz_note(code)
+    return m.group(0)
+
+
+def _history_text(text) -> str:
+    """归档/导出共用的正文规范化（前端 _historyText 是同一份口径）：整条是可视化网页的
+    只留一句说明；剥思考块、socratic_meta、<summary> 与分节标签；<viz> 段和完整网页代码块
+    换成说明；<formula> 转成 $$／$。未闭合的 <formula>（流式截断）从标签起截掉。"""
+    s = str(text or "").strip()
+    if not s:
+        return ""
+    if _HISTORY_HTML_RE.match(s):
+        return _history_viz_note(s)
+    s = _HISTORY_THINK_RE.sub("", s)
+    think_open = _HISTORY_THINK_OPEN_RE.search(s)
+    if think_open:
+        s = s[: think_open.start()]
+    s = _HISTORY_SOCRATIC_META_RE.sub("", s)
+    s = _HISTORY_SUMMARY_RE.sub("", s)
+    s = _HISTORY_VIZ_SECTION_RE.sub(lambda m: _history_viz_note(m.group(1)), s)
+    s = _HISTORY_HTML_FENCE_RE.sub(_history_fence_sub, s)
+    s = _HISTORY_STRUCT_TAG_RE.sub("", s)
+    # AI 把 <formula> 包在 $$..$$ 里的双层定界：先收成单层
+    s = _HISTORY_FORMULA_WRAPPED_RE.sub(lambda m: "<formula>" + m.group(1) + "</formula>", s)
+    unclosed = _HISTORY_FORMULA_OPEN_RE.search(s)
+    if unclosed and s.count("```", 0, unclosed.start()) % 2 == 0:
+        s = s[: unclosed.start()]
+    return _HISTORY_FORMULA_RE.sub(lambda m: _history_formula_sub(s, m), s).strip()
+
+
+def _history_items_text(items) -> str:
+    """清单类节点的条目（建议追问、素材附件）压成无序列表——正文为空时才用它。"""
+    lines = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        question = str(item.get("question") or "").strip()
+        name = str(item.get("fileName") or item.get("name") or "").strip()
+        body = str(item.get("text") or "").strip()
+        if question:
+            level = str(item.get("levelName") or "").strip()
+            lines.append(f"- {'[' + level + '] ' if level else ''}{question}")
+        elif name or body:
+            kind = _HISTORY_ITEM_KIND_LABEL.get(str(item.get("kind") or ""), "素材")
+            lines.append(f"- {kind}「{name}」" + (f"：{body}" if body else ""))
+    return "\n".join(lines)
+
+
+def _history_norm(text) -> str:
+    return _HISTORY_BLANK_RE.sub("", str(text or ""))
+
+
 def _clip_entry(text) -> str:
-    text = str(text or "").strip()
-    if _HISTORY_HTML_RE.match(text):
-        return f"（交互可视化，{len(text):,} 字代码，正文见画布）"
     if len(text) > _HISTORY_ENTRY_MAX:
         return text[:_HISTORY_ENTRY_MAX].rstrip() + f"\n\n…（已截断，共 {len(text):,} 字，完整内容见画布）"
     return text
 
 
 def _archive_entries(messages, nodes) -> list:
-    """消息与画布节点合成一条时间线：[(ts, 角色/类型, 小标题, 正文), ...]。"""
+    """消息与画布节点合成一条时间线：[(ts, 角色/类型, 小标题, 正文), ...]。
+
+    与某个节点正文（去空白后）完全相同的消息不重复列——节点就是它在画布上的样子。"""
     entries = []
+    node_entries = []
+    node_norm = set()
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        kind = str(node.get("kind") or "")
+        head = _HISTORY_KIND_LABEL.get(kind, kind or "节点")
+        content = _history_text(node.get("content"))
+        if not content and kind == "answer" and not node.get("manual"):
+            content = _history_text(node.get("analysis"))
+            if content:
+                head = _HISTORY_ANALYSIS_HEAD
+        if not content:
+            content = _history_text(_history_items_text(node.get("items")))
+        label = str(node.get("label") or "").strip()
+        if not content and not label:
+            continue
+        content = _clip_entry(content)
+        node_norm.add(_history_norm(content))
+        node_entries.append((_ts_of(node.get("timestamp")), head, label, content))
     for msg in messages or []:
         if not isinstance(msg, dict):
             continue
         role = str(msg.get("role") or "")
         if role == "system":
             continue
-        content = _clip_entry(msg.get("content"))
-        if not content:
+        content = _clip_entry(_history_text(msg.get("content")))
+        if not content or _history_norm(content) in node_norm:
             continue
         entries.append((_ts_of(msg.get("timestamp")),
                         _HISTORY_ROLE_LABEL.get(role, role or "记录"), "", content))
-    for node in nodes:
-        kind = str(node.get("kind") or "")
-        label = str(node.get("label") or "").strip()
-        content = _clip_entry(node.get("content"))
-        if not content and not label:
-            continue
-        entries.append((_ts_of(node.get("timestamp")),
-                        _HISTORY_KIND_LABEL.get(kind, kind or "节点"), label, content))
+    entries.extend(node_entries)
     entries.sort(key=lambda e: e[0])
     return entries
 

@@ -172,3 +172,61 @@ def test_backfill_helper_rebuilds_archive(acc_env):
     files = _archives("sess_hist_f")
     assert len(files) == 1
     assert "重建我" in files[0].read_text(encoding="utf-8")
+
+
+def test_archive_kinds_formula_and_materials():
+    """575（2026-11-24）：类型中文名补全、<formula> 转成 $$／$（前端导出同夹具，见
+    frontend_smoke/notes-export.mjs）、问题分析与清单取材、与节点正文完全相同的消息不重复列。"""
+    text = ("力 <formula>F=-kx</formula> 作用\n\n"
+            "<formula>\nT=2\\pi\\sqrt{\\frac{m}{k}}\n</formula>\n\n"
+            "收尾 <formula> a &lt; b </formula>")
+    nodes = [
+        {"kind": "user", "content": "简谐运动是什么", "timestamp": 1000},
+        {"kind": "hub", "content": "", "timestamp": 2000},  # 空节点：不列
+        {"kind": "summary", "content": text, "timestamp": 3000},
+        {"kind": "note", "content": "# 齿轮基本参数", "timestamp": 4000},
+        {"kind": "answer", "content": "", "analysis": "题意歧义：……", "timestamp": 5000},
+        {"kind": "module", "content": "", "timestamp": 6000,
+         "items": [{"levelName": "基础", "question": "为什么周期与振幅无关？"},
+                   {"kind": "image", "fileName": "a.png"}]},
+    ]
+    messages = [
+        {"role": "user", "content": "简谐运动\n是什么", "timestamp": 1000},  # 与节点同文：不重复列
+        {"role": "assistant", "content": "好问题", "timestamp": 1500},
+        {"role": "system", "content": "系统提示不进归档", "timestamp": 1600},
+    ]
+    md = storage.message_archive_markdown("sess_x", messages, "简谐运动", nodes)
+    heads = [line.split(" · ")[0] for line in md.splitlines() if line.startswith("## ")]
+    assert heads == ["## 1. 我", "## 2. AI", "## 3. AI 总结", "## 4. 我的总结", "## 5. 问题分析", "## 6. 模块"]
+    assert "力 $F=-kx$ 作用" in md                      # 夹在句中 → inline
+    assert "$$\nT=2\\pi\\sqrt{\\frac{m}{k}}\n$$" in md  # 独占一行 → display
+    assert "收尾 $a < b$" in md                         # 实体解码、首尾空白剥掉
+    assert "<formula>" not in md
+    assert "题意歧义：……" in md                        # 「问题分析」卡正文取自 analysis
+    assert "- [基础] 为什么周期与振幅无关？" in md and "- 图片「a.png」" in md
+    assert "系统提示不进归档" not in md
+    assert md.count("简谐运动是什么") == 1
+
+
+def test_history_text_normalization():
+    """口径对齐前端 renderMarkdown：思考块／summary／分节标签不显示，<viz> 段与完整网页代码块
+    换成说明（短片段保留为代码块），双层定界收成单层，未闭合 <formula> 从标签起截掉。"""
+    page = "<!DOCTYPE html><html><body>" + "x" * 120 + "</body></html>"
+    viz_inner = "\n```html\n" + page + "\n```\n"
+    raw = ("<think>内部推理</think>正文<physics>甲</physics><summary>摘要标签</summary>"
+           f"<viz>{viz_inner}</viz>后文\n\n```html\n<b>片段</b>\n```\n"
+           "$$<formula>E=mc^2</formula>$$\n\n结尾 <formula>\\frac{a}{b}")
+    out = storage._history_text(raw)
+    assert "内部推理" not in out and "摘要标签" not in out
+    assert "正文甲" in out
+    assert f"（交互可视化，{len(viz_inner):,} 字代码，正文见画布）" in out
+    assert "```html\n<b>片段</b>\n```" in out
+    assert "$$\nE=mc^2\n$$" in out
+    assert "\\frac{a}{b}" not in out and out.endswith("结尾")
+
+
+def test_archive_truncates_long_entry():
+    md = storage.message_archive_markdown("sess_y", [], "长文", [{"kind": "module", "content": "字" * 9000, "timestamp": 1}])
+    body = md.split("\n\n…（已截断")[0]
+    assert body.endswith("…") is False and body.count("字") == storage._HISTORY_ENTRY_MAX
+    assert "…（已截断，共 9,000 字，完整内容见画布）" in md
