@@ -169,8 +169,8 @@ async def api_backup_preview(request: Request):
     if mode not in ("merge", "replace"):
         raise HTTPException(status_code=400, detail="mode must be merge or replace")
     conflict = str(payload.get("conflict") or "newer").lower()
-    if conflict not in ("newer", "backup"):
-        raise HTTPException(status_code=400, detail="conflict must be newer or backup")
+    if conflict not in ("newer", "backup", "manual"):
+        raise HTTPException(status_code=400, detail="conflict must be newer, backup or manual")
     account = _account_id(request, payload)
     device_id = str(payload.get("device_id") or "")
     return await asyncio.to_thread(
@@ -224,8 +224,9 @@ async def api_backup_import(request: Request):
     if mode not in ("merge", "replace"):
         raise HTTPException(status_code=400, detail="mode must be merge or replace")
     conflict = str(payload.get("conflict") or "newer").lower()
-    if conflict not in ("newer", "backup"):
-        raise HTTPException(status_code=400, detail="conflict must be newer or backup")
+    if conflict not in ("newer", "backup", "manual"):
+        raise HTTPException(status_code=400, detail="conflict must be newer, backup or manual")
+    decisions = payload.get("decisions")
     account = _account_id(request, payload)
     device_id = str(payload.get("device_id") or "")
     if device_id:
@@ -244,7 +245,8 @@ async def api_backup_import(request: Request):
         # T201：导入是全量写（会话/消息/知识/公式/KV），挪 to_thread 防卡事件循环
         result = await asyncio.to_thread(
             _restore_backup, backup, mode == "replace", account=account,
-            device_id=device_id, conflict="backup" if mode == "replace" else conflict)
+            device_id=device_id, conflict="backup" if mode == "replace" else conflict,
+            decisions=decisions)
     except HTTPException:
         raise
     except Exception as exc:

@@ -546,14 +546,107 @@ function _forgetImportedTombstones(data) {
   _forgetDeletedIds('phymathia_formulas_deleted', Object.keys((data && data.formulas) || {}));
 }
 
-function _applyLocalBackup(data, replace) {
+// 逐项选择（manual）与服务端口径一致：未翻面的条目按「保留较新」，用户明确
+// 选了 current/backup 的条目才偏离时间规则。本地缓存必须同口径回放——否则
+// 下一页的 saveSessions/同步会把较新的本地版本再推回服务端，抹掉刚做的选择。
+function _localConflictSide(conflict, decisions, kind, id, current, incoming) {
+  if (conflict === 'backup') return 'backup';
+  if (conflict === 'manual') {
+    const map = (decisions && decisions[kind]) || {};
+    if (map[id] === 'backup' || map[id] === 'current') return map[id];
+  }
+  if (current && _backupItemTs(current) > _backupItemTs(incoming)) return 'current';
+  return 'backup';
+}
+
+function _messageIdentity(msg) {
+  const ts = msg && msg.timestamp;
+  if (typeof ts === 'number' && ts) return 'ts:' + ts;
+  return 'raw:' + String((msg && msg.role) || '') + '|' + String((msg && msg.content) || '');
+}
+
+function _fillMessageFields(base, extra) {
+  const out = { ...(base || {}) };
+  for (const [field, value] of Object.entries(extra || {})) {
+    const current = out[field];
+    const empty = current === undefined || current === null || current === ''
+      || (Array.isArray(current) && current.length === 0)
+      || (current && typeof current === 'object' && !Array.isArray(current)
+          && Object.keys(current).length === 0);
+    if (empty && value !== null && value !== '') out[field] = value;
+  }
+  return out;
+}
+
+function _applyManualMessageDecisions(merged, existing, incoming, sid, overrides) {
+  if (!overrides || typeof overrides !== 'object') return merged;
+  const curById = new Map();
+  (Array.isArray(existing) ? existing : []).forEach(msg => {
+    if (msg && typeof msg === 'object') curById.set(_messageIdentity(msg), msg);
+  });
+  const incById = new Map();
+  (Array.isArray(incoming) ? incoming : []).forEach(msg => {
+    if (msg && typeof msg === 'object') incById.set(_messageIdentity(msg), msg);
+  });
+  return merged.map(msg => {
+    const identity = _messageIdentity(msg);
+    const side = overrides[sid + '|' + identity];
+    if (side === 'backup' && incById.has(identity)) {
+      return _fillMessageFields(incById.get(identity), curById.get(identity));
+    }
+    if (side === 'current' && curById.has(identity)) {
+      return _fillMessageFields(curById.get(identity), incById.get(identity));
+    }
+    return msg;
+  });
+}
+
+// 服务端导入失败后的兜底直推：把用户选了「当前」的备份条目剔掉，别让兜底
+// 通道再把它们写回服务端。
+function _filterBackupByDecisions(data, decisions) {
+  if (!decisions || !Object.keys(decisions).length) return data;
+  const keep = (kind, id) => !(decisions[kind] && decisions[kind][id] === 'current');
+  const copy = { ...data };
+  copy.sessions = Object.fromEntries(
+    Object.entries(data.sessions || {}).filter(([id]) => keep('sessions', id)));
+  copy.knowledge = Object.fromEntries(
+    Object.entries(data.knowledge || {}).filter(([id]) => keep('knowledge', id)));
+  copy.formulas = Object.fromEntries(
+    Object.entries(data.formulas || {}).filter(([id]) => keep('formulas', id)));
+  const graphs = {};
+  Object.entries(data.graphs || {}).forEach(([sid, state]) => {
+    if (keep('graphs', 'graph:' + sid)) graphs[sid] = state;
+  });
+  copy.graphs = graphs;
+  const messages = {};
+  Object.entries(data.messages || {}).forEach(([sid, list]) => {
+    if (!Array.isArray(list)) { messages[sid] = list; return; }
+    messages[sid] = list.filter(msg => {
+      const side = (decisions.messages || {})[sid + '|' + _messageIdentity(msg)];
+      return side !== 'current';
+    });
+  });
+  copy.messages = messages;
+  if (data.kv && typeof data.kv === 'object') {
+    const kv = { ...data.kv };
+    Object.keys(kv).forEach(key => {
+      if ((decisions.graphs || {})[key] === 'current') delete kv[key];
+    });
+    copy.kv = kv;
+  }
+  return copy;
+}
+
+function _applyLocalBackup(data, replace, conflict, decisions) {
+  conflict = conflict === 'backup' || conflict === 'manual' ? conflict : 'newer';
+  decisions = decisions && typeof decisions === 'object' ? decisions : {};
   _importCacheMisses.length = 0; // 每次回放重算没写进的键，返回给 confirmImport 拼说明
   if (replace) _clearLocalDataForReplace();
   const sessions = _safeParseJSON(localStorage.getItem('phymathia_sessions'), {});
   for (const [sid, session] of Object.entries(data.sessions || {})) {
     if (!session || typeof session !== 'object') continue;
-    // 584：合并模式下同名会话按 updatedAt 取新；replace 与「以备份为准」直接写
-    if (!replace && sessions[sid] && _backupItemTs(sessions[sid]) > _backupItemTs(session)) continue;
+    const side = _localConflictSide(conflict, decisions, 'sessions', sid, sessions[sid], session);
+    if (!replace && side === 'current' && sessions[sid]) continue;
     sessions[sid] = session;
   }
   _importCacheSet('phymathia_sessions', JSON.stringify(sessions));
@@ -562,14 +655,20 @@ function _applyLocalBackup(data, replace) {
     if (!Array.isArray(msgs)) continue;
     const key = 'phymathia_msgs_' + sid;
     const existing = _safeParseJSON(localStorage.getItem(key), []);
-    const merged = replace ? _mergeMessageArrays([], msgs) : _mergeMessageArrays(existing, msgs);
+    let merged;
+    if (replace || conflict === 'backup') merged = _mergeMessageArrays([], msgs);
+    else merged = _mergeMessageArrays(existing, msgs);
+    if (conflict === 'manual') {
+      merged = _applyManualMessageDecisions(merged, existing, msgs, sid, decisions.messages);
+    }
     _importCacheSet(key, JSON.stringify(merged));
   }
 
   const knowledge = _safeParseJSON(localStorage.getItem('phymathia_knowledge'), {});
   for (const [id, item] of Object.entries(data.knowledge || {})) {
     if (!item || typeof item !== 'object') continue;
-    if (!replace && knowledge[id] && _backupItemTs(knowledge[id]) > _backupItemTs(item)) continue;
+    const side = _localConflictSide(conflict, decisions, 'knowledge', id, knowledge[id], item);
+    if (!replace && side === 'current' && knowledge[id]) continue;
     knowledge[id] = item;
   }
   _importCacheSet('phymathia_knowledge', JSON.stringify(knowledge));
@@ -577,7 +676,8 @@ function _applyLocalBackup(data, replace) {
   const formulas = _safeParseJSON(localStorage.getItem('phymathia_formulas'), {});
   for (const [id, item] of Object.entries(data.formulas || {})) {
     if (!item || typeof item !== 'object') continue;
-    if (!replace && formulas[id] && _backupItemTs(formulas[id]) > _backupItemTs(item)) continue;
+    const side = _localConflictSide(conflict, decisions, 'formulas', id, formulas[id], item);
+    if (!replace && side === 'current' && formulas[id]) continue;
     formulas[id] = item;
   }
   // setFormulaCache 内部 try/catch 吞掉写入失败——写前后比对原串，认出「没写进」
@@ -599,17 +699,16 @@ function _applyLocalBackup(data, replace) {
       continue;
     }
     const graphKey = 'phymathia_graph_' + sid;
-    if (!replace) {
-      const current = _safeParseJSON(localStorage.getItem(graphKey), null);
-      if (current && _backupItemTs(current) > _backupItemTs(state)) continue;
-    }
+    const current = replace ? null : _safeParseJSON(localStorage.getItem(graphKey), null);
+    const side = _localConflictSide(conflict, decisions, 'graphs', 'graph:' + sid, current, state);
+    if (!replace && side === 'current' && current) continue;
     _importCacheSet(graphKey, JSON.stringify(state));
   }
   for (const [sid, arr] of Object.entries(data.graphHistories || {})) {
     // T365：历史键可以是旧裸数组，也可以是 v2 信封 {v:2,e,c,l}（游标随盘）——两者原样回放
     if (!(Array.isArray(arr) || (arr && Array.isArray(arr.e)))) continue;
     const historyKey = 'phymathia_graph_history_' + sid;
-    if (!replace) {
+    if (!replace && conflict !== 'backup') {
       const current = _safeParseJSON(localStorage.getItem(historyKey), null);
       const currentTs = Number(current && current.t) || 0;
       const incomingTs = Number(arr && arr.t) || 0;
@@ -693,6 +792,70 @@ let _importConflict = 'newer';
 let _pendingImport = null;
 let _importBusy = false;
 let _importPreviewSeq = 0;
+// 逐项选择（manual）：只记录与「保留较新」默认不同的翻面条目——预览里可能
+// 有上千项，默认全按较新，用户改一项才多一条请求数据。
+const _IMPORT_CONFLICT_KINDS = ['sessions', 'messages', 'knowledge', 'formulas', 'graphs'];
+const _IMPORT_CONFLICT_KIND_LABELS = {
+  sessions: '会话', messages: '消息', knowledge: '知识点', formulas: '公式', graphs: '画布'
+};
+let _importDecisions = _emptyImportDecisions();
+let _importConflictRows = [];
+let _importConflictGroups = [];
+
+function _emptyImportDecisions() {
+  const out = {};
+  _IMPORT_CONFLICT_KINDS.forEach(kind => { out[kind] = {}; });
+  return out;
+}
+
+function _importConflictDefaultSide(item) {
+  // 与服务端「保留较新」同口径：会话/知识/公式/画布打平时取备份；消息走
+  // merge_message_lists 的「现有在前」，同时间戳冲突时现有内容赢，故默认当前。
+  if (item && item.kind === 'messages') return 'current';
+  return (Number(item && item.backupTs) || 0) >= (Number(item && item.currentTs) || 0)
+    ? 'backup' : 'current';
+}
+
+function _importConflictSide(kind, item) {
+  const map = _importDecisions[kind] || {};
+  return map[item.id] || _importConflictDefaultSide(item);
+}
+
+function _setImportConflictSide(kind, item, side) {
+  const map = _importDecisions[kind] || (_importDecisions[kind] = {});
+  if (side === _importConflictDefaultSide(item)) delete map[item.id];
+  else map[item.id] = side;
+}
+
+function _importDecisionsPayload() {
+  const out = {};
+  _IMPORT_CONFLICT_KINDS.forEach(kind => {
+    const map = _importDecisions[kind] || {};
+    if (Object.keys(map).length) out[kind] = { ...map };
+  });
+  return out;
+}
+
+function _resetImportDecisions() {
+  _importDecisions = _emptyImportDecisions();
+  _importConflictRows = [];
+  _importConflictGroups = [];
+  const box = document.getElementById('importConflictItems');
+  if (box) { box.hidden = true; box.textContent = ''; }
+}
+
+function _formatConflictTs(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return '无时间';
+  const date = new Date(number);
+  if (isNaN(date.getTime())) return '无时间';
+  const pad = n => String(n).padStart(2, '0');
+  // 跨年备份要能一眼看出年份，同年只留月日省宽度（面板 360px）。
+  const year = date.getFullYear() === new Date().getFullYear()
+    ? '' : (date.getFullYear() + '-');
+  return year + pad(date.getMonth() + 1) + '-' + pad(date.getDate())
+    + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes());
+}
 
 function _importModeGet() {
   return _importMode === 'replace' ? 'replace' : 'merge';
@@ -724,8 +887,13 @@ function pickImportMode(mode) {
 }
 
 function pickImportConflict(value) {
-  _importConflict = value === 'backup' ? 'backup' : 'newer';
+  _importConflict = value === 'backup' ? 'backup'
+    : (value === 'manual' ? 'manual' : 'newer');
   _setSegActive('importConflictSeg', _importConflict);
+  if (_importConflict === 'manual') {
+    const box = document.getElementById('importConflictItems');
+    if (box) { box.hidden = false; box.textContent = '正在读取冲突条目…'; }
+  }
   _refreshPendingImportPreview();
 }
 
@@ -818,9 +986,15 @@ function _renderImportPreview() {
       const older = conflicts.olderInBackup || {};
       const olderCount = (older.sessions || 0) + (older.knowledge || 0) + (older.formulas || 0) + (older.graphs || 0);
       if (olderCount) {
-        lines.push(_importConflict === 'backup'
-          ? ('其中 ' + olderCount + ' 项备份版本比当前旧，将按你的选择以备份为准。')
-          : ('其中 ' + olderCount + ' 项备份版本比当前旧，将保留当前较新版本。'));
+        if (_importConflict === 'backup') {
+          lines.push('其中 ' + olderCount + ' 项备份版本比当前旧，将按你的选择以备份为准。');
+        } else if (_importConflict === 'manual') {
+          lines.push('其中 ' + olderCount + ' 项备份版本比当前旧，默认保留较新，可在下方逐项改选。');
+        } else {
+          lines.push('其中 ' + olderCount + ' 项备份版本比当前旧，将保留当前较新版本。');
+        }
+      } else if (_importConflict === 'manual') {
+        lines.push('默认保留较新，可在下方逐项改选。');
       }
     }
     if (!preview.serverAvailable) {
@@ -832,6 +1006,14 @@ function _renderImportPreview() {
   const conflictBox = document.getElementById('importPreviewConflict');
   if (conflictBox) conflictBox.style.display = mode === 'merge' ? '' : 'none';
   _setSegActive('importConflictSeg', _importConflict);
+  if (mode === 'merge' && _importConflict === 'manual') {
+    _renderImportConflictItems(preview.items);
+  } else {
+    const itemsBox = document.getElementById('importConflictItems');
+    if (itemsBox) { itemsBox.hidden = true; itemsBox.textContent = ''; }
+    _importConflictRows = [];
+    _importConflictGroups = [];
+  }
 
   const note = document.getElementById('importPreviewNote');
   if (note) {
@@ -850,9 +1032,203 @@ function _renderImportPreview() {
   if (box.scrollIntoView) { try { box.scrollIntoView({ block: 'nearest' }); } catch (e) {} }
 }
 
+// ===== 逐项选择：冲突条目清单（2026-11-24）=====
+// 只列内容确有差异的冲突（服务端已过滤相同条目）。默认按「保留较新」高亮，
+// 用户改一项才记一条决定；全部/筛选都在本地完成，不重新请求预览。
+function _syncImportConflictRow(row, item, kind) {
+  const side = _importConflictSide(kind, item);
+  Array.prototype.slice.call(row.querySelectorAll('button[data-side]')).forEach(btn => {
+    const on = btn.dataset.side === side;
+    btn.classList.toggle('active', on);
+    if (btn.setAttribute) btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+}
+
+function _updateImportConflictSummary() {
+  const el = document.getElementById('importConflictSummary');
+  if (!el) return;
+  let changed = 0;
+  _IMPORT_CONFLICT_KINDS.forEach(kind => {
+    changed += Object.keys(_importDecisions[kind] || {}).length;
+  });
+  el.textContent = '共 ' + _importConflictRows.length + ' 项 · 已调整 ' + changed + ' 项';
+}
+
+function _onImportConflictClick(event) {
+  const btn = event.target && event.target.closest ? event.target.closest('button[data-side]') : null;
+  if (!btn) return;
+  const row = btn.closest('.import-conflict-item');
+  if (!row) return;
+  const kind = row.dataset.kind;
+  const id = row.dataset.id;
+  const entry = _importConflictRows.find(item => item.kind === kind && item.item.id === id);
+  if (!entry) return;
+  _setImportConflictSide(kind, entry.item, btn.dataset.side);
+  _syncImportConflictRow(row, entry.item, kind);
+  _updateImportConflictSummary();
+}
+
+function bulkImportConflict(kind, side) {
+  _importConflictRows.forEach(entry => {
+    if (entry.kind !== kind) return;
+    _setImportConflictSide(kind, entry.item, side);
+    _syncImportConflictRow(entry.row, entry.item, kind);
+  });
+  _updateImportConflictSummary();
+}
+
+function filterImportConflictItems(value) {
+  const query = String(value || '').trim().toLowerCase();
+  _importConflictRows.forEach(entry => {
+    entry.row.hidden = !!query && !(entry.row.dataset.text || '').includes(query);
+  });
+  _importConflictGroups.forEach(group => {
+    group.group.hidden = !_importConflictRows.some(
+      entry => entry.kind === group.kind && !entry.row.hidden);
+  });
+}
+
+function _renderImportConflictItems(items) {
+  const box = document.getElementById('importConflictItems');
+  if (!box) return;
+  box.hidden = false;
+  box.textContent = '';
+  _importConflictRows = [];
+  _importConflictGroups = [];
+  if (!Array.isArray(items)) {
+    // 预览拿不到条目时不能沿用上一轮的翻面决定——提示说按「保留较新」，
+    // 请求里却夹带旧决定会让导入结果与用户看到的说明不一致。
+    _IMPORT_CONFLICT_KINDS.forEach(kind => { _importDecisions[kind] = {}; });
+    box.textContent = '服务端预览不可用，逐项选择暂时不可用；将按「保留较新」合并。';
+    return;
+  }
+  // 预览重算后只保留仍存在的条目决定，避免切模式/换文件时旧决定混进请求。
+  const validIds = new Set(items.map(item => item.kind + '\u0000' + item.id));
+  _IMPORT_CONFLICT_KINDS.forEach(kind => {
+    Object.keys(_importDecisions[kind] || {}).forEach(id => {
+      if (!validIds.has(kind + '\u0000' + id)) delete _importDecisions[kind][id];
+    });
+  });
+  if (!items.length) {
+    box.textContent = '没有需要手动判断的差异条目，将按「保留较新」合并。';
+    return;
+  }
+
+  const tools = document.createElement('div');
+  tools.className = 'import-conflict-tools';
+  const filter = document.createElement('input');
+  filter.type = 'search';
+  filter.className = 'import-conflict-filter';
+  filter.id = 'importConflictFilter';
+  filter.placeholder = '筛选条目（标题或内容）';
+  filter.addEventListener('input', () => filterImportConflictItems(filter.value));
+  const summary = document.createElement('span');
+  summary.className = 'import-conflict-summary';
+  summary.id = 'importConflictSummary';
+  tools.appendChild(filter);
+  tools.appendChild(summary);
+  box.appendChild(tools);
+
+  const list = document.createElement('div');
+  list.className = 'import-conflict-list';
+  list.id = 'importConflictList';
+  list.addEventListener('click', _onImportConflictClick);
+  box.appendChild(list);
+
+  const byKind = {};
+  items.forEach(item => {
+    if (!byKind[item.kind]) byKind[item.kind] = [];
+    byKind[item.kind].push(item);
+  });
+
+  _IMPORT_CONFLICT_KINDS.forEach(kind => {
+    const groupItems = byKind[kind] || [];
+    if (!groupItems.length) return;
+    const group = document.createElement('div');
+    group.className = 'import-conflict-group';
+    group.dataset.kind = kind;
+    const head = document.createElement('div');
+    head.className = 'import-conflict-group-head';
+    const name = document.createElement('span');
+    name.className = 'import-conflict-group-name';
+    name.textContent = (_IMPORT_CONFLICT_KIND_LABELS[kind] || kind) + ' · ' + groupItems.length;
+    const actions = document.createElement('span');
+    actions.className = 'import-conflict-group-actions';
+    [['current', '全部当前'], ['backup', '全部备份']].forEach(pair => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'import-conflict-bulk';
+      btn.textContent = pair[1];
+      btn.addEventListener('click', () => bulkImportConflict(kind, pair[0]));
+      actions.appendChild(btn);
+    });
+    head.appendChild(name);
+    head.appendChild(actions);
+    group.appendChild(head);
+
+    groupItems.forEach(item => {
+      const row = document.createElement('div');
+      row.className = 'import-conflict-item';
+      row.dataset.kind = kind;
+      row.dataset.id = item.id;
+      row.dataset.text = [item.label, item.currentLabel, item.id].join(' ').toLowerCase();
+
+      const main = document.createElement('div');
+      main.className = 'import-conflict-main';
+      const label = document.createElement('div');
+      label.className = 'import-conflict-label';
+      label.textContent = item.label || item.id;
+      label.title = item.label || item.id;
+      main.appendChild(label);
+      if (item.currentLabel && item.currentLabel !== item.label) {
+        const currentLabel = document.createElement('div');
+        currentLabel.className = 'import-conflict-label import-conflict-label--current';
+        currentLabel.textContent = '当前：' + item.currentLabel;
+        main.appendChild(currentLabel);
+      }
+      const meta = document.createElement('div');
+      meta.className = 'import-conflict-meta';
+      meta.textContent = '当前 ' + _formatConflictTs(item.currentTs)
+        + ' · 备份 ' + _formatConflictTs(item.backupTs);
+      main.appendChild(meta);
+      row.appendChild(main);
+
+      const choice = document.createElement('div');
+      choice.className = 'import-conflict-choice';
+      [['current', '当前'], ['backup', '备份']].forEach(pair => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.dataset.side = pair[0];
+        btn.textContent = pair[1];
+        choice.appendChild(btn);
+      });
+      row.appendChild(choice);
+      group.appendChild(row);
+      _importConflictRows.push({ row, item, kind });
+      _syncImportConflictRow(row, item, kind);
+    });
+
+    list.appendChild(group);
+    _importConflictGroups.push({ group, kind });
+  });
+
+  _updateImportConflictSummary();
+}
+
+function _reloadAfterDataWrite(delay) {
+  // 导入/恢复已把结果写进服务端与本机缓存；beforeunload 的卸载冲刷用的是导入前
+  // 的内存副本，放它发出去会把刚导入的版本盖回（2026-11-24 真机踩到：逐项选择
+  // 翻成备份后，刷新又被旧标题/旧消息顶回去）。一次性标志让卸载冲刷跳过网络回写。
+  try {
+    if (typeof window !== 'undefined') window.__phySkipUnloadFlush = true;
+  } catch (e) {}
+  setTimeout(() => location.reload(), delay);
+}
+
 function cancelImport() {
   _importPreviewSeq++;
   _pendingImport = null;
+  _resetImportDecisions();
   const box = document.getElementById('importPreview');
   if (box) box.hidden = true;
   const input = document.getElementById('importFileInput');
@@ -893,6 +1269,7 @@ async function importData(event) {
       alert('导入失败：文件格式不正确，缺少有效数据');
       return;
     }
+    _resetImportDecisions();
     const mode = _importModeGet();
     const conflict = mode === 'replace' ? 'backup' : _importConflict;
     const preview = await _requestImportPreview(data, mode, conflict);
@@ -915,6 +1292,7 @@ async function confirmImport() {
   const data = pending.data;
   const mode = _importModeGet();
   const conflict = mode === 'replace' ? 'backup' : _importConflict;
+  const decisions = conflict === 'manual' ? _importDecisionsPayload() : {};
   _importBusy = true;
   const confirmBtn = document.getElementById('importConfirmBtn');
   const cancelBtn = document.getElementById('importCancelBtn');
@@ -930,7 +1308,7 @@ async function confirmImport() {
       headers: { 'Content-Type': 'application/json' },
       // device_id 同导出：服务端据此圈定 replace 清除范围与本账号画像归属；
       // auto_backup 让服务端在写入前把当前账号存到 data/backups/
-      body: JSON.stringify({ mode, conflict, auto_backup: true, device_id: getDeviceId(), backup: data }),
+      body: JSON.stringify({ mode, conflict, decisions, auto_backup: true, device_id: getDeviceId(), backup: data }),
       signal: AbortSignal.timeout(120000)
     });
   } catch (serverErr) {
@@ -962,9 +1340,11 @@ async function confirmImport() {
   let applyError = null;
   let misses = [];
   try {
-    misses = _applyLocalBackup(data, mode === 'replace') || [];
+    misses = _applyLocalBackup(data, mode === 'replace', conflict, decisions) || [];
     _forgetImportedTombstones(data);
-    if (!serverResp) await _pushBackupToExistingApis(data);
+    if (!serverResp) {
+      await _pushBackupToExistingApis(_filterBackupByDecisions(data, decisions));
+    }
     if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
     if (typeof setFormulaCache === 'function') setFormulaCache(_safeParseJSON(localStorage.getItem('phymathia_formulas'), {}));
     updateDataStats();
@@ -991,7 +1371,7 @@ async function confirmImport() {
     } else if (typeof showToast === 'function') showToast(text, 6000);
     if (resultEl) { resultEl.textContent = text; resultEl.style.color = 'var(--text-secondary)'; }
     updateBackupSnapshots(true);
-    setTimeout(() => location.reload(), (applyError || misses.length) ? 3600 : 1400);
+    _reloadAfterDataWrite((applyError || misses.length) ? 3600 : 1400);
     return;
   }
   // 服务端没收到（离线兜底路）：本机缓存是唯一落点，没存全就得照实说、让人重试
@@ -1010,7 +1390,7 @@ async function confirmImport() {
   if (resultEl) { resultEl.textContent = text; resultEl.style.color = 'var(--text-secondary)'; }
   if (typeof showToast === 'function') showToast(text, 6000);
   updateBackupSnapshots(true);
-  setTimeout(() => location.reload(), 1400);
+  _reloadAfterDataWrite(1400);
 }
 
 // ====== 自动备份列表（583）======
@@ -1089,7 +1469,7 @@ async function restoreBackupSnapshot(id) {
     // 本地缓存先清掉，刷新后以服务端恢复结果为准；设置与设备编号保留
     _clearLocalDataForReplace();
     if (typeof showToast === 'function') showToast('已恢复自动备份，页面即将刷新', 5000);
-    setTimeout(() => location.reload(), 800);
+    _reloadAfterDataWrite(800);
   } catch (e) {
     alert('恢复失败：' + e.message);
   }

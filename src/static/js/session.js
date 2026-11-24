@@ -554,6 +554,9 @@
       // 自删账号（2026-10-07 删账号回收站化）：reload 前已置标志——此刻冲刷信封
       // 还带着已删账号的 account_id，服务端墓碑闸门兜底，这里主动掐断不白发 500
       if (typeof window !== 'undefined' && window.__phyAccountJustDeleted) return;
+      // 备份导入/恢复（2026-11-24）：服务端与 localStorage 已写成新版本，内存里
+      // 还是导入前的旧副本——卸载冲刷会把逐项选择/以备份为准刚写下的版本盖回去
+      if (typeof window !== 'undefined' && window.__phySkipUnloadFlush) return;
       // ★ 信封必须自带 account_id：sendBeacon 不走 config.js 的 fetch 包装（P2 盲区），
       // 曾把所有账号的卸载冲刷都按缺省落进 default 账号域——妹妹退出时她的会话
       // 元数据会写进「我的」。fetch keepalive 兜底路径手动补同样的参数（包装见已带不重补）。

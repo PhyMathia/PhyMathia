@@ -43,7 +43,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
-  <link rel="stylesheet" href="/dist/styles.min.css?v=33d0562b">
+  <link rel="stylesheet" href="/dist/styles.min.css?v=8bd2a692">
   <link rel="stylesheet" href="/dist/styles-panels.min.css?v=ac2c07be">
   <link rel="stylesheet" href="/dist/graph-override.min.css?v=52c78e8d">
   <link rel="stylesheet" href="/dist/phi-pet.min.css?v=73efc06a">
@@ -268,7 +268,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/dist/app.js?v=ebe4f332" defer></script>
+  <script src="/dist/app.js?v=cc5e54a2" defer></script>
   <script>
     // app.js 改 defer 后本脚本先于它执行，而 APP_VERSION 是 config.js 的顶层
     // const——内联脚本无法加 defer，只能等 DOMContentLoaded：所有 defer 脚本
@@ -832,7 +832,9 @@
           <div class="pm-seg" id="importConflictSeg" role="radiogroup" aria-label="冲突处理">
             <button type="button" class="pm-seg-btn active" role="radio" aria-checked="true" data-value="newer" onclick="pickImportConflict('newer')">保留较新</button>
             <button type="button" class="pm-seg-btn" role="radio" aria-checked="false" data-value="backup" onclick="pickImportConflict('backup')">以备份为准</button>
+            <button type="button" class="pm-seg-btn" role="radio" aria-checked="false" data-value="manual" onclick="pickImportConflict('manual')">逐项选择</button>
           </div>
+          <div id="importConflictItems" hidden></div>
         </div>
         <div id="importPreviewNote" class="data-import-mode-hint"></div>
         <div id="importPreviewResult" style="font-size:12px;line-height:1.5;margin-top:6px;white-space:pre-line;"></div>
@@ -878,28 +880,51 @@
     </div>
   </div>
 
-  <!-- 模型配置向导（2026-10-26 简化计划 3）：没配模型时首屏一屏配通——选预设 → 填 key →
-       测通即自动入列并坐进主模型槽。触发/保存逻辑在 models.js 尾部段；「测通」复用 T60
-       的 /api/models/probe（真发一条最小消息）。行为红线：打开向导本身零网络请求。 -->
+  <!-- 模型配置向导（2026-10-26 简化计划 3；2026-11-24 视觉重做）：没配模型时首屏一屏配通——
+       选预设 → 填 key → 测通即自动入列并坐进主模型槽。触发/保存逻辑在 models.js 尾部段；
+       「测通」复用 T60 的 /api/models/probe（真发一条最小消息）。行为红线：打开向导本身零网络请求。
+       服务商有 17 个，窄卡墙会顶到滚动区外：这里改成可换行的胶囊，说明只在选中后出一行。 -->
   <div class="model-dialog-overlay" id="modelWizardOverlay" onclick="if(event.target===this)modelWizardSkip()">
-    <div class="model-dialog model-wizard aurora-glass aurora-glass--dialog">
-      <h3>先配一个 AI 模型</h3>
-      <p class="mw-lede">PhyMathia 靠 AI 工作：选一个服务商，填上密钥，测通就能开聊。只需配这一次，之后随时在「模型设置」里改。</p>
-      <div class="mw-step-title"><span class="mw-step-num">1</span>选服务商</div>
+    <div class="model-dialog model-wizard aurora-glass aurora-glass--dialog" role="dialog" aria-modal="true" aria-labelledby="mwTitle">
+      <header class="mw-head">
+        <span class="mw-emblem" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="6.5" y="6.5" width="11" height="11" rx="2.5"></rect>
+            <rect x="10" y="10" width="4" height="4" rx="1"></rect>
+            <path d="M9.5 3.5v3M14.5 3.5v3M9.5 17.5v3M14.5 17.5v3M3.5 9.5h3M3.5 14.5h3M17.5 9.5h3M17.5 14.5h3"></path>
+          </svg>
+        </span>
+        <div class="mw-head-text">
+          <h3 id="mwTitle">先配一个 AI 模型</h3>
+          <p class="mw-lede">选服务商、填密钥、测通，约半分钟。之后随时可在「模型设置」里改。</p>
+        </div>
+        <button type="button" class="mw-close" onclick="modelWizardSkip()" aria-label="关闭">✕</button>
+      </header>
+
+      <div class="mw-step-title"><span class="mw-step-num">1</span><span>选择服务商</span><span class="mw-step-rule"></span></div>
       <div class="mw-provider-grid" id="mwProviderGrid"></div>
-      <div class="am-provider-meta" id="mwProviderMeta"></div>
-      <div class="mw-step-title"><span class="mw-step-num">2</span>填 API 密钥</div>
-      <input type="password" id="mwApiKey" placeholder="sk-..." autocomplete="off" spellcheck="false">
-      <div class="mw-hint" id="mwKeyHint"></div>
-      <div class="mw-step-title"><span class="mw-step-num">3</span>测通并开始使用</div>
-      <select id="mwModelSelect" class="model-select"></select>
-      <input type="text" id="mwModelInput" class="mw-model-input" placeholder="填写模型 ID，例如 doubao-seed-…" autocomplete="off" spellcheck="false" hidden>
-      <button class="md-btn md-btn-save mw-go-btn" id="mwGoBtn" onclick="modelWizardGo()">测通并开始使用</button>
-      <div class="mw-status" id="mwStatus"></div>
-      <div class="md-actions">
-        <button class="md-btn md-btn-cancel" onclick="modelWizardOpenManual()">高级：手动添加模型</button>
-        <button class="md-btn md-btn-cancel" onclick="modelWizardSkip()">稍后再说</button>
+      <div class="mw-provider-meta" id="mwProviderMeta"></div>
+
+      <div class="mw-step-title"><span class="mw-step-num">2</span><span>填入 API 密钥</span><span class="mw-step-rule"></span><span class="mw-step-aside" id="mwKeyAside"></span></div>
+      <div class="mw-field">
+        <svg class="mw-field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="7.5" cy="12" r="3.5"></circle>
+          <path d="M11 12h9.5"></path><path d="M17.5 12v3"></path><path d="M20.5 12v2"></path>
+        </svg>
+        <input type="password" id="mwApiKey" placeholder="粘贴 API 密钥，例如 sk-..." autocomplete="off" spellcheck="false" aria-label="API 密钥">
       </div>
+      <div class="mw-hint" id="mwKeyHint"></div>
+
+      <div class="mw-step-title"><span class="mw-step-num">3</span><span>选择模型并测通</span><span class="mw-step-rule"></span></div>
+      <select id="mwModelSelect" class="model-select" aria-label="模型"></select>
+      <input type="text" id="mwModelInput" class="mw-model-input" placeholder="填写模型 ID，例如 doubao-seed-…" autocomplete="off" spellcheck="false" aria-label="模型 ID" hidden>
+      <button class="md-btn md-btn-save mw-go-btn" id="mwGoBtn" onclick="modelWizardGo()">测通并开始使用</button>
+      <div class="mw-status" id="mwStatus" aria-live="polite"></div>
+
+      <footer class="mw-foot">
+        <button type="button" class="mw-link" onclick="modelWizardOpenManual()">高级：手动添加模型</button>
+        <button type="button" class="mw-link mw-link-muted" onclick="modelWizardSkip()">稍后再说</button>
+      </footer>
     </div>
   </div>
 

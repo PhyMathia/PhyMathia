@@ -146,13 +146,184 @@ class BackupMergeTest(RouteTestBase):
         self.assertEqual(preview["conflicts"]["sessions"], 1)
         self.assertEqual(preview["conflicts"]["olderInBackup"]["sessions"], 1)
         self.assertEqual(preview["incoming"]["messages"], 1)
+        self.assertNotIn("items", preview)
         self.assertEqual((self.root / "sessions.json").read_bytes(), before)
+
+    def test_manual_preview_lists_only_differing_items(self):
+        self._write("sessions.json", {
+            "s1": {"id": "s1", "title": "现有标题", "updatedAt": 300},
+            "s2": {"id": "s2", "title": "相同", "updatedAt": 100},
+        })
+        self._write("knowledge.json", {
+            "k1": {"id": "k1", "title": "现有知识", "updatedAt": 300},
+            "k2": {"id": "k2", "title": "相同", "updatedAt": 100},
+        })
+        self._write("formulas.json", {
+            "f1": {"id": "f1", "latex": "$a$", "updatedAt": 300},
+        })
+        self._write("messages/s1.json", [
+            {"role": "user", "content": "现有内容", "timestamp": 100},
+            {"role": "assistant", "content": "相同", "timestamp": 200},
+        ])
+        storage_mod.kv_write("graph:s1", {"updatedAt": 300, "customNodes": ["new"]})
+        preview = backup_mod._preview_backup({
+            "sessions": {
+                "s1": {"id": "s1", "title": "备份标题", "updatedAt": 200},
+                "s2": {"id": "s2", "title": "相同", "updatedAt": 100},
+            },
+            "knowledge": {
+                "k1": {"id": "k1", "title": "备份知识", "updatedAt": 200},
+                "k2": {"id": "k2", "title": "相同", "updatedAt": 100},
+            },
+            "formulas": {"f1": {"id": "f1", "latex": "$b$", "updatedAt": 200}},
+            "messages": {"s1": [
+                {"role": "user", "content": "备份内容", "timestamp": 100},
+                {"role": "assistant", "content": "相同", "timestamp": 200},
+            ]},
+            "kv": {"graph:s1": {"updatedAt": 200, "customNodes": ["old"]}},
+        }, replace=False, conflict="manual")
+        self.assertEqual(preview["conflict"], "manual")
+        items = preview["items"]
+        by_id = {(item["kind"], item["id"]): item for item in items}
+        self.assertEqual(set(by_id), {
+            ("sessions", "s1"), ("knowledge", "k1"), ("formulas", "f1"),
+            ("messages", "s1|ts:100"), ("graphs", "graph:s1"),
+        })
+        self.assertEqual(by_id[("sessions", "s1")]["label"], "备份标题")
+        self.assertEqual(by_id[("sessions", "s1")]["currentLabel"], "现有标题")
+        self.assertEqual(by_id[("sessions", "s1")]["currentTs"], 300)
+        self.assertEqual(by_id[("sessions", "s1")]["backupTs"], 200)
+        self.assertEqual(by_id[("messages", "s1|ts:100")]["label"], "我：备份内容")
+        self.assertEqual(by_id[("messages", "s1|ts:100")]["currentLabel"], "我：现有内容")
+
+    def test_manual_decisions_override_newer_per_item(self):
+        self._write("sessions.json", {
+            "s1": {"id": "s1", "title": "当前 s1", "updatedAt": 300},
+            "s2": {"id": "s2", "title": "当前 s2", "updatedAt": 300},
+        })
+        self._write("knowledge.json", {
+            "k1": {"id": "k1", "title": "当前 k1", "updatedAt": 300},
+            "k2": {"id": "k2", "title": "当前 k2", "updatedAt": 300},
+        })
+        self._write("formulas.json", {
+            "f1": {"id": "f1", "latex": "$current$", "updatedAt": 300},
+            "f2": {"id": "f2", "latex": "$current2$", "updatedAt": 300},
+        })
+        storage_mod.kv_write("graph:s1", {"updatedAt": 300, "customNodes": ["current"]})
+        storage_mod.kv_write("graph:s2", {"updatedAt": 300, "customNodes": ["current2"]})
+
+        backup_mod._restore_backup({
+            "sessions": {
+                "s1": {"id": "s1", "title": "备份 s1", "updatedAt": 200},
+                "s2": {"id": "s2", "title": "备份 s2", "updatedAt": 200},
+            },
+            "knowledge": {
+                "k1": {"id": "k1", "title": "备份 k1", "updatedAt": 200},
+                "k2": {"id": "k2", "title": "备份 k2", "updatedAt": 200},
+            },
+            "formulas": {
+                "f1": {"id": "f1", "latex": "$backup$", "updatedAt": 200},
+                "f2": {"id": "f2", "latex": "$backup2$", "updatedAt": 200},
+            },
+            "kv": {
+                "graph:s1": {"updatedAt": 200, "customNodes": ["backup"]},
+                "graph:s2": {"updatedAt": 200, "customNodes": ["backup2"]},
+            },
+        }, replace=False, conflict="manual", decisions={
+            "sessions": {"s1": "backup"},
+            "knowledge": {"k1": "backup"},
+            "formulas": {"f1": "backup"},
+            "graphs": {"graph:s1": "backup"},
+        })
+
+        sessions = _read(self.root / "sessions.json")
+        self.assertEqual(sessions["s1"]["title"], "备份 s1")
+        self.assertEqual(sessions["s2"]["title"], "当前 s2")
+        knowledge = _read(self.root / "knowledge.json")
+        self.assertEqual(knowledge["k1"]["title"], "备份 k1")
+        self.assertEqual(knowledge["k2"]["title"], "当前 k2")
+        formulas = _read(self.root / "formulas.json")
+        self.assertEqual(formulas["f1"]["latex"], "$backup$")
+        self.assertEqual(formulas["f2"]["latex"], "$current2$")
+        self.assertEqual(storage_mod.kv_read("graph:s1")["customNodes"], ["backup"])
+        self.assertEqual(storage_mod.kv_read("graph:s2")["customNodes"], ["current2"])
+
+    def test_manual_decisions_can_force_current_for_newer_backup(self):
+        self._write("knowledge.json", {
+            "k1": {"id": "k1", "title": "当前旧版", "updatedAt": 200},
+        })
+        backup_mod._restore_backup({
+            "sessions": {},
+            "knowledge": {"k1": {"id": "k1", "title": "备份新版", "updatedAt": 300}},
+        }, replace=False, conflict="manual", decisions={
+            "knowledge": {"k1": "current"},
+        })
+        self.assertEqual(_read(self.root / "knowledge.json")["k1"]["title"], "当前旧版")
+
+    def test_decisions_ignored_outside_manual_mode(self):
+        self._write("knowledge.json", {
+            "k1": {"id": "k1", "title": "当前较新", "updatedAt": 300},
+        })
+        backup_mod._restore_backup({
+            "sessions": {},
+            "knowledge": {"k1": {"id": "k1", "title": "备份较旧", "updatedAt": 200}},
+        }, replace=False, conflict="newer", decisions={
+            "knowledge": {"k1": "backup"},
+        })
+        self.assertEqual(_read(self.root / "knowledge.json")["k1"]["title"], "当前较新")
+
+    def test_manual_message_decision_picks_content_per_message(self):
+        self._write("sessions.json", {
+            "s1": {"id": "s1", "title": "会话", "updatedAt": 100},
+        })
+        self._write("messages/s1.json", [
+            {"role": "user", "content": "当前同刻", "timestamp": 100},
+            {"role": "assistant", "content": "当前独有", "timestamp": 200},
+        ])
+        backup_mod._restore_backup({
+            "sessions": {},
+            "messages": {"s1": [
+                {"role": "user", "content": "备份同刻", "timestamp": 100},
+                {"role": "assistant", "content": "备份独有", "timestamp": 300},
+            ]},
+        }, replace=False, conflict="manual", decisions={
+            "messages": {"s1|ts:100": "backup"},
+        })
+        msgs = _read(self.root / "messages" / "s1.json")
+        self.assertEqual([m["timestamp"] for m in msgs], [100, 200, 300])
+        by_ts = {m["timestamp"]: m["content"] for m in msgs}
+        self.assertEqual(by_ts[100], "备份同刻")
+        self.assertEqual(by_ts[200], "当前独有")
+        self.assertEqual(by_ts[300], "备份独有")
 
 
 class AutoBackupRouteTest(RouteTestBase):
     def setUp(self):
         super().setUp()
         self.root = Path(self._td.name) / "users" / "default"
+
+    def test_import_route_accepts_manual_conflict_and_decisions(self):
+        self.root.mkdir(parents=True, exist_ok=True)
+        storage_mod._write_json(self.root / "sessions.json", {
+            "s1": {"id": "s1", "title": "当前", "updatedAt": 300},
+        })
+        backup = {
+            "sessions": {"s1": {"id": "s1", "title": "备份", "updatedAt": 200}},
+        }
+        preview = self.client.post("/api/backup/preview", json={
+            "mode": "merge", "conflict": "manual", "backup": backup,
+        })
+        self.assertEqual(preview.status_code, 200, preview.text)
+        self.assertEqual(preview.json()["items"][0]["id"], "s1")
+
+        imported = self.client.post("/api/backup/import", json={
+            "mode": "merge", "conflict": "manual",
+            "decisions": {"sessions": {"s1": "backup"}},
+            "auto_backup": False,
+            "backup": backup,
+        })
+        self.assertEqual(imported.status_code, 200, imported.text)
+        self.assertEqual(_read(self.root / "sessions.json")["s1"]["title"], "备份")
 
     def test_import_creates_snapshot_and_restore_brings_it_back(self):
         self.root.mkdir(parents=True, exist_ok=True)

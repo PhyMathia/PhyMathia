@@ -9,7 +9,7 @@ from pathlib import Path
 
 from . import accounts, config, trash
 from .accounts import DEFAULT_ACCOUNT
-from .context import _message_identity, merge_message_lists
+from .context import _merge_message_fields, _message_identity, merge_message_lists
 from .knowledge import (
     _dedupe_formula_map,
     _dedupe_knowledge,
@@ -50,6 +50,17 @@ _AUTO_BACKUP_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,96}$")
 _BACKUP_SID_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 
+def _finite_ts(value) -> float:
+    """把时间戳字段归一成有限浮点；布尔/非数值/NaN/Inf 一律 0。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return number if math.isfinite(number) else 0.0
+
+
 def _item_ts(item) -> float:
     """条目更新时间：updatedAt 优先、createdAt 兜底；非数值/非有限一律 0。
 
@@ -59,16 +70,59 @@ def _item_ts(item) -> float:
     if not isinstance(item, dict):
         return 0.0
     for field in ("updatedAt", "createdAt"):
-        value = item.get(field)
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            continue
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            continue
-        if math.isfinite(number):
+        number = _finite_ts(item.get(field))
+        if number:
             return number
     return 0.0
+
+
+def _message_ts(message) -> float:
+    """消息时间戳（毫秒）；缺字段时 0。仅用于逐项选择列表的展示与排序。"""
+    if not isinstance(message, dict):
+        return 0.0
+    return _finite_ts(message.get("timestamp"))
+
+
+def _conflict_text(value, limit: int = 80) -> str:
+    """冲突列表的单行标签：压空白、截断，避免手编备份里的超长文本撑爆预览。"""
+    text = " ".join(str(value or "").split())
+    return text[:limit] + ("…" if len(text) > limit else "")
+
+
+def _message_conflict_label(message) -> str:
+    role = {"user": "我", "assistant": "AI"}.get(
+        str((message or {}).get("role") or ""), str((message or {}).get("role") or "消息"))
+    return role + "：" + _conflict_text((message or {}).get("content"), 60)
+
+
+def _normalize_decisions(raw) -> dict:
+    """逐项选择的用户决定：{类型: {条目 id: "backup"|"current"}}。
+
+    未出现的条目沿用「保留较新」——只把用户明确翻面的条目传上来，
+    预览里有上千项时请求体仍然很小。
+    """
+    out = {}
+    if not isinstance(raw, dict):
+        return out
+    for kind in ("sessions", "messages", "knowledge", "formulas", "graphs"):
+        part = raw.get(kind)
+        if not isinstance(part, dict):
+            continue
+        chosen = {}
+        for key, value in part.items():
+            if value in ("backup", "current"):
+                chosen[str(key)] = value
+        if chosen:
+            out[kind] = chosen
+    return out
+
+
+def _manual_side(decisions: dict, kind: str, key: str) -> str | None:
+    part = decisions.get(kind) if isinstance(decisions, dict) else None
+    if not isinstance(part, dict):
+        return None
+    value = part.get(str(key))
+    return value if value in ("backup", "current") else None
 
 
 def _sessions_map(data) -> dict:
@@ -121,11 +175,13 @@ def _preview_backup(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
     """导入预览：只读，不改任何文件。条数 + 同名冲突 + 备份里较旧的条数。
 
     预览与真正导入分开，前端先给用户看「会动多少、哪些会被较旧备份盖回去」，
-    再让用户确认（583 的确认＋自动备份前置）。
+    再让用户确认（583 的确认＋自动备份前置）。逐项选择（manual）额外返回
+    内容确有差异的冲突条目清单，供前端逐项翻面；相同条目不需要判断，不列。
     """
     current = _build_backup_payload(account, device_id)
     incoming = backup if isinstance(backup, dict) else {}
-    effective_conflict = "backup" if replace else ("backup" if conflict == "backup" else "newer")
+    effective_conflict = "backup" if replace else (
+        conflict if conflict in ("backup", "manual") else "newer")
 
     cur_sessions = _sessions_map(current.get("sessions"))
     inc_sessions = _sessions_map(incoming.get("sessions"))
@@ -150,7 +206,89 @@ def _preview_backup(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
     graph_keys = {str(k) for k in inc_kv if str(k).startswith("graph:")} & \
                  {str(k) for k in cur_kv if str(k).startswith("graph:")}
 
-    return {
+    items = []
+    if effective_conflict == "manual":
+        def add_item(kind, item_id, label, current_label, current_ts, backup_ts):
+            entry = {
+                "kind": kind,
+                "id": item_id,
+                "label": label or "",
+                "currentTs": current_ts,
+                "backupTs": backup_ts,
+            }
+            if current_label and current_label != label:
+                entry["currentLabel"] = current_label
+            items.append(entry)
+
+        session_titles = {}
+        for source in (cur_sessions, inc_sessions):
+            for sid, session in source.items():
+                title = session.get("title") if isinstance(session, dict) else None
+                if title:
+                    session_titles[sid] = str(title)
+
+        for sid in session_ids:
+            cur = cur_sessions.get(sid) or {}
+            inc = inc_sessions.get(sid) or {}
+            if cur == inc:
+                continue
+            add_item("sessions", sid, _conflict_text(inc.get("title") or sid),
+                     _conflict_text(cur.get("title") or sid),
+                     _item_ts(cur), _item_ts(inc))
+
+        for sid in sorted(set(cur_msgs) & set(inc_msgs)):
+            cur_list = cur_msgs.get(sid)
+            inc_list = inc_msgs.get(sid)
+            if not isinstance(cur_list, list) or not isinstance(inc_list, list):
+                continue
+            cur_by_id = {_message_identity(msg): msg for msg in cur_list if isinstance(msg, dict)}
+            inc_by_id = {_message_identity(msg): msg for msg in inc_list if isinstance(msg, dict)}
+            for identity in set(cur_by_id) & set(inc_by_id):
+                cur = cur_by_id[identity]
+                inc = inc_by_id[identity]
+                if cur == inc:
+                    continue
+                add_item("messages", str(sid) + "|" + identity,
+                         _message_conflict_label(inc), _message_conflict_label(cur),
+                         _message_ts(cur), _message_ts(inc))
+
+        for kid in knowledge_ids:
+            cur = cur_knowledge.get(kid) or {}
+            inc = inc_knowledge.get(kid) or {}
+            if cur == inc:
+                continue
+            add_item("knowledge", kid,
+                     _conflict_text(inc.get("title") or inc.get("concept") or kid),
+                     _conflict_text(cur.get("title") or cur.get("concept") or kid),
+                     _item_ts(cur), _item_ts(inc))
+
+        for fid in formula_ids:
+            cur = cur_formulas.get(fid) or {}
+            inc = inc_formulas.get(fid) or {}
+            if cur == inc:
+                continue
+            add_item("formulas", fid,
+                     _conflict_text(inc.get("latex") or inc.get("concept") or fid),
+                     _conflict_text(cur.get("latex") or cur.get("concept") or fid),
+                     _item_ts(cur), _item_ts(inc))
+
+        for key in graph_keys:
+            cur = cur_kv.get(key) or {}
+            inc = inc_kv.get(key) or {}
+            if cur == inc:
+                continue
+            sid = key[len("graph:"):]
+            label = _conflict_text(session_titles.get(sid) or sid)
+            add_item("graphs", key, label, label, _item_ts(cur), _item_ts(inc))
+
+        kind_order = {"sessions": 0, "messages": 1, "knowledge": 2, "formulas": 3, "graphs": 4}
+        items.sort(key=lambda item: (
+            kind_order.get(item["kind"], 9),
+            -max(item["currentTs"], item["backupTs"]),
+            item["label"],
+        ))
+
+    result = {
         "ok": True,
         "mode": "replace" if replace else "merge",
         "conflict": effective_conflict,
@@ -175,6 +313,9 @@ def _preview_backup(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
             },
         },
     }
+    if effective_conflict == "manual":
+        result["items"] = items
+    return result
 
 
 def _backup_dir(account: str = DEFAULT_ACCOUNT) -> Path:
@@ -303,7 +444,7 @@ def _build_backup_payload(account: str = DEFAULT_ACCOUNT, device_id: str = None)
 
 
 def _restore_sessions(data: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
-                      conflict: str = "newer") -> int:
+                      conflict: str = "newer", decisions: dict = None) -> int:
     paths = accounts.resolve_paths(account)
     existing = _read_json(paths.sessions_path, {})
     sessions = {} if replace or not isinstance(existing, dict) else existing
@@ -331,11 +472,16 @@ def _restore_sessions(data: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
         }
         # 584：合并模式下同名会话按 updatedAt 取新——旧设备/旧缓存导出的备份
         # 不能把服务端后来改过的标题与活动时间盖回去。replace 与显式「以备份
-        # 为准」仍按备份写。
+        # 为准」仍按备份写。逐项选择（manual）只在用户明确翻面的条目上偏离
+        # 较新规则，其余仍按时间取新。
         current = sessions.get(sid)
-        if (not replace and conflict != "backup" and isinstance(current, dict)
-                and _item_ts(current) > _item_ts(incoming)):
-            continue
+        side = _manual_side(decisions or {}, "sessions", sid) if conflict == "manual" else None
+        if not replace and conflict != "backup":
+            if side == "current" and isinstance(current, dict):
+                continue
+            if side != "backup" and isinstance(current, dict) \
+                    and _item_ts(current) > _item_ts(incoming):
+                continue
         sessions[sid] = incoming
         count += 1
         restored.append(sid)
@@ -350,7 +496,7 @@ def _restore_sessions(data: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
 
 
 def _restore_messages(data: dict, sessions: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
-                      conflict: str = "newer") -> int:
+                      conflict: str = "newer", decisions: dict = None) -> int:
     paths = accounts.resolve_paths(account)
     if replace:
         paths.messages_dir.mkdir(parents=True, exist_ok=True)
@@ -381,6 +527,29 @@ def _restore_messages(data: dict, sessions: dict, replace: bool, account: str = 
                 existing = []
             if conflict == "backup":
                 final_msgs = merge_message_lists(msgs, existing)
+            elif conflict == "manual":
+                final_msgs = merge_message_lists(existing, msgs)
+                overrides = (decisions or {}).get("messages") or {}
+                if isinstance(overrides, dict) and overrides:
+                    cur_by_id = {_message_identity(msg): msg
+                                 for msg in existing if isinstance(msg, dict)}
+                    inc_by_id = {_message_identity(msg): msg
+                                 for msg in msgs if isinstance(msg, dict)}
+                    rebuilt = []
+                    for msg in final_msgs:
+                        identity = _message_identity(msg)
+                        side = overrides.get(str(raw_sid) + "|" + identity)
+                        if side is None and sid != raw_sid:
+                            side = overrides.get(str(sid) + "|" + identity)
+                        if side == "backup" and identity in inc_by_id:
+                            rebuilt.append(_merge_message_fields(
+                                inc_by_id[identity], cur_by_id.get(identity, {})))
+                        elif side == "current" and identity in cur_by_id:
+                            rebuilt.append(_merge_message_fields(
+                                cur_by_id[identity], inc_by_id.get(identity, {})))
+                        else:
+                            rebuilt.append(msg)
+                    final_msgs = rebuilt
             else:
                 final_msgs = merge_message_lists(existing, msgs)
         _write_json(msgs_path, final_msgs)
@@ -455,13 +624,17 @@ def _rollback_restore_targets(snap: dict, account: str = DEFAULT_ACCOUNT) -> lis
 
 
 def _restore_backup(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
-                    device_id: str = None, conflict: str = "newer") -> dict:
+                    device_id: str = None, conflict: str = "newer",
+                    decisions: dict = None) -> dict:
     # 恢复按 sessions→消息→知识→公式→kv→画像 依次落盘，中途异常（文件被占用/
     # 磁盘满）会留下半恢复状态。这里先做内容级快照，任一环节失败即整体回滚。
+    # 决定只在逐项选择模式下生效——newer/backup 收到 decisions 也不改口径
+    # （旧客户端或手改请求不该借此越过「保留较新」）。
+    decisions = _normalize_decisions(decisions) if conflict == "manual" else {}
     snapshot = _snapshot_restore_targets(account)
     try:
         return _apply_restore(backup, replace, account=account, device_id=device_id,
-                              conflict=conflict)
+                              conflict=conflict, decisions=decisions)
     except Exception as exc:
         rollback_failed = _rollback_restore_targets(snapshot, account)
         detail = f"恢复失败，已回滚到导入前状态：{exc}"
@@ -471,13 +644,16 @@ def _restore_backup(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
 
 
 def _apply_restore(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
-                   device_id: str = None, conflict: str = "newer") -> dict:
+                   device_id: str = None, conflict: str = "newer",
+                   decisions: dict = None) -> dict:
     paths = accounts.resolve_paths(account)
+    decisions = _normalize_decisions(decisions) if conflict == "manual" else {}
     sessions = backup.get("sessions") or {}
-    session_count = _restore_sessions(sessions, replace, account, conflict=conflict)
+    session_count = _restore_sessions(sessions, replace, account, conflict=conflict,
+                                      decisions=decisions)
     saved_sessions = _read_json(paths.sessions_path, {})
     message_count = _restore_messages(backup.get("messages") or {}, saved_sessions, replace,
-                                      account, conflict=conflict)
+                                      account, conflict=conflict, decisions=decisions)
 
     knowledge = _normalize_knowledge(backup.get("knowledge") or {})
     # 手编备份 JSON 能带 NaN/Infinity（json.loads 收得进）——恢复回写前统一落
@@ -498,10 +674,15 @@ def _apply_restore(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
         for item_id, item in knowledge.items():
             current = merged_knowledge.get(item_id)
             # 584：合并时同 id 按 updatedAt/createdAt 取新；备份版本更旧就保留
-            # 现有条目。replace 与「以备份为准」仍直接写备份版本。
-            if (not replace and conflict != "backup" and isinstance(current, dict)
-                    and _item_ts(current) > _item_ts(item)):
-                continue
+            # 现有条目。replace 与「以备份为准」仍直接写备份版本；逐项选择
+            # 只覆盖用户明确翻面的条目。
+            side = _manual_side(decisions, "knowledge", item_id)
+            if not replace and conflict != "backup":
+                if side == "current" and isinstance(current, dict):
+                    continue
+                if side != "backup" and isinstance(current, dict) \
+                        and _item_ts(current) > _item_ts(item):
+                    continue
             merged_knowledge[item_id] = item
         _write_json(paths.knowledge_path, _dedupe_knowledge(merged_knowledge))
         # 备份导入是用户明确要回来的数据，等同回收站恢复（会话侧 T271 同款纪律）：
@@ -520,9 +701,13 @@ def _apply_restore(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
         merged_formulas = dict(existing_formulas)
         for item_id, item in formulas.items():
             current = merged_formulas.get(item_id)
-            if (not replace and conflict != "backup" and isinstance(current, dict)
-                    and _item_ts(current) > _item_ts(item)):
-                continue
+            side = _manual_side(decisions, "formulas", item_id)
+            if not replace and conflict != "backup":
+                if side == "current" and isinstance(current, dict):
+                    continue
+                if side != "backup" and isinstance(current, dict) \
+                        and _item_ts(current) > _item_ts(item):
+                    continue
             merged_formulas[item_id] = item
         _write_json(paths.formulas_path, _dedupe_formula_map(merged_formulas))
         trash.formula_tombstone_unregister(paths, list(formulas.keys()))
@@ -559,7 +744,10 @@ def _apply_restore(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
             filtered_kv = {}
             for key, value in kv_data.items():
                 current = existing_kv.get(key)
-                if isinstance(current, dict) and isinstance(value, dict):
+                side = _manual_side(decisions, "graphs", key)
+                if side == "current" and isinstance(current, dict):
+                    continue
+                if side != "backup" and isinstance(current, dict) and isinstance(value, dict):
                     if str(key).startswith("graph:") and _item_ts(current) > _item_ts(value):
                         continue
                     if (str(key).startswith("graph_history:")

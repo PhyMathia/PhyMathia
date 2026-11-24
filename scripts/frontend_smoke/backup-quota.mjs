@@ -144,6 +144,35 @@ function runApply(quota) {
   return env.out;
 }
 
+// 逐项选择（2026-11-24）：本机回放要和服务端同口径——用户翻面的条目按决定走，
+// 没翻面的仍按「保留较新」。本地种子故意都比备份新，翻面才有可观测差异。
+function runApplyManual(decisions) {
+  const env = enter({});
+  const T = 1700000000000;
+  const newer = T + 1000;
+  storageData['phymathia_sessions'] = JSON.stringify({
+    [SID]: { id: SID, title: '当前会话', updatedAt: newer },
+  });
+  storageData['phymathia_knowledge'] = JSON.stringify({
+    ki_1: { id: 'ki_1', title: '当前知识', source: 'manual', updatedAt: newer },
+  });
+  storageData['phymathia_msgs_' + SID] = JSON.stringify([
+    { role: 'user', content: '当前同刻', timestamp: T },
+  ]);
+  try {
+    env.out.misses = vm.runInContext(
+      '_applyLocalBackup(__bqBackup, false, "manual", ' + JSON.stringify(decisions) + ')', sandbox);
+    env.out.after = {
+      sessions: JSON.parse(storageData['phymathia_sessions'] || '{}'),
+      knowledge: JSON.parse(storageData['phymathia_knowledge'] || '{}'),
+      messages: JSON.parse(storageData['phymathia_msgs_' + SID] || '[]'),
+    };
+  } finally {
+    env.restore();
+  }
+  return env.out;
+}
+
 export async function run() {
   // 本域整体换全局桩：先等前面各域在途的异步用例落地，再串行跑自己的
   await drain();
@@ -237,13 +266,38 @@ export async function run() {
   });
   await drain();
 
-  check('backup-quota: 静态契约（_applyLocalSettings 无裸 setItem；confirmImport 结论看服务端）', () => {
+  check('backup-quota: 逐项选择回放——翻面项按决定取备份（本地较新也让步），消息同刻按内容翻面', () => {
+    const r = runApplyManual({
+      sessions: { [SID]: 'backup' },
+      knowledge: { ki_1: 'backup' },
+      messages: { [SID + '|ts:1700000000000']: 'backup' },
+    });
+    if (r.after.sessions[SID].title !== '配额用例') throw new Error('会话翻面没生效：' + r.after.sessions[SID].title);
+    if (r.after.knowledge.ki_1.concept !== '动量') throw new Error('知识点翻面没生效：' + JSON.stringify(r.after.knowledge.ki_1));
+    if (r.after.messages[0].content !== '问题') throw new Error('消息翻面没生效：' + JSON.stringify(r.after.messages));
+    return true;
+  });
+  await drain();
+
+  check('backup-quota: 逐项选择回放——没翻面的条目仍按「保留较新」，同刻消息保留现有', () => {
+    const r = runApplyManual({});
+    if (r.after.sessions[SID].title !== '当前会话') throw new Error('未翻面的会话应保留当前：' + r.after.sessions[SID].title);
+    if (r.after.knowledge.ki_1.title !== '当前知识') throw new Error('未翻面的知识点应保留当前：' + r.after.knowledge.ki_1.title);
+    if (r.after.messages[0].content !== '当前同刻') throw new Error('同刻消息应保留现有：' + JSON.stringify(r.after.messages));
+    return true;
+  });
+  await drain();
+
+  check('backup-quota: 静态契约（_applyLocalSettings 无裸 setItem；confirmImport 结论看服务端；导入后卸载冲刷不回写旧副本）', () => {
     const src = fs.readFileSync('src/static/js/ui-backup.js', 'utf8');
     const start = src.indexOf('function _applyLocalSettings');
     const body = src.slice(start, src.indexOf('function _clearLocalDataForReplace'));
     if (start < 0 || body.length < 100) throw new Error('找不到 _applyLocalSettings 函数体');
     if (body.includes('localStorage.setItem(')) throw new Error('_applyLocalSettings 出现裸 localStorage.setItem——写满即抛、整段导入被误报失败');
     if (!src.includes('const serverImported = !!(serverResp && serverResp.ok);')) throw new Error('confirmImport 缺「结论看服务端」判据 serverImported');
+    if (!src.includes('window.__phySkipUnloadFlush = true')) throw new Error('导入/恢复后的刷新没有立「跳过卸载冲刷」标志——旧内存副本会把导入结果盖回去');
+    const sessionSrc = fs.readFileSync('src/static/js/session.js', 'utf8');
+    if (!sessionSrc.includes('window.__phySkipUnloadFlush')) throw new Error('beforeunload 冲刷未认「跳过卸载冲刷」标志');
     return true;
   });
   await drain();

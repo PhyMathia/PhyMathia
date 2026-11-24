@@ -2042,10 +2042,6 @@ function modelWizardMaybeShow(afterReady) {
   _wizardAfterReady = typeof afterReady === 'function' ? afterReady : null;
   modelWizardRenderProviders();
   document.getElementById('modelWizardOverlay').classList.add('show');
-  setTimeout(() => {
-    const key = document.getElementById('mwApiKey');
-    if (key && !key.hidden) key.focus();
-  }, 80);
   return true;
 }
 
@@ -2060,15 +2056,25 @@ function modelWizardSkip() {
   _wizardRunAfterReady();
 }
 
+// 胶囊里只放短名：括号里的补充说明（本地/聚合/公司名）放 title 与选中后的说明行，
+// 否则 17 个服务商在 620px 里要占五六行，又把表单顶到滚动区外。
+function _wizardShortName(name) {
+  const full = String(name || '').trim();
+  const short = full.replace(/[（(][^）)]*[）)]/g, '').trim();
+  return short || full;
+}
+
 function modelWizardRenderProviders() {
   const grid = document.getElementById('mwProviderGrid');
   if (!grid) return;
   if (!_wizardState) _wizardState = { provider: Object.keys(MODEL_PRESETS)[0] };
-  grid.innerHTML = Object.entries(MODEL_PRESETS).map(([id, p]) =>
-    `<button type="button" class="mw-provider-card${id === _wizardState.provider ? ' active' : ''}" data-provider="${escapeHtml(id)}" onclick="modelWizardPickProvider('${escapeHtml(id)}')">
-      <span class="mw-provider-name">${escapeHtml(p.name)}</span>
-      <span class="mw-provider-desc">${escapeHtml(p.tagline || '')}</span>
-    </button>`).join('');
+  const check = '<svg class="mw-chip-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="5 12.5 10 17.5 19 7"></polyline></svg>';
+  grid.innerHTML = Object.entries(MODEL_PRESETS).map(([id, p]) => {
+    const local = p.keyOptional ? '<span class="mw-chip-tag">本地</span>' : '';
+    return `<button type="button" class="mw-provider-card${id === _wizardState.provider ? ' active' : ''}" data-provider="${escapeHtml(id)}" title="${escapeHtml(p.name)}" onclick="modelWizardPickProvider('${escapeHtml(id)}')">
+      <span class="mw-provider-name">${escapeHtml(_wizardShortName(p.name))}</span>${local}${check}
+    </button>`;
+  }).join('');
   _wizardApplyProvider();
 }
 
@@ -2076,11 +2082,10 @@ function modelWizardPickProvider(id) {
   if (!MODEL_PRESETS[id]) return;
   _wizardState = { provider: id };
   _wizardApplyProvider();
-  const key = document.getElementById('mwApiKey');
-  if (key) key.focus();
+  _setMwStatus('', false);
 }
 
-// 选中供应商后的就地刷新：卡高亮 / meta 文案 / 密钥提示（带申请链接）/ 模型清单
+// 选中供应商后的就地刷新：胶囊高亮 / meta 文案 / 密钥提示（带申请链接）/ 模型清单
 // （热门档排前；注册表没列模型的供应商如豆包改手填，进阶拉全量清单去模型设置）
 function _wizardApplyProvider() {
   const id = _wizardState ? _wizardState.provider : '';
@@ -2091,11 +2096,21 @@ function _wizardApplyProvider() {
   });
   const meta = document.getElementById('mwProviderMeta');
   if (meta) meta.textContent = preset.tagline || '';
+  const aside = document.getElementById('mwKeyAside');
+  if (aside) aside.textContent = preset.keyOptional ? '本地服务可留空' : '';
+  const keyInput = document.getElementById('mwApiKey');
+  if (keyInput) {
+    keyInput.placeholder = preset.keyOptional
+      ? '无需密钥，可留空'
+      : '粘贴 API 密钥，例如 sk-...';
+  }
   const hint = document.getElementById('mwKeyHint');
   if (hint) {
-    hint.innerHTML = preset.docs
-      ? '还没有密钥？<a href="' + escapeHtml(preset.docs) + '" target="_blank" rel="noopener">去 ' + escapeHtml(preset.name) + ' 控制台申请</a>' + (preset.apiKeyHint ? '（' + escapeHtml(preset.apiKeyHint) + '）' : '')
-      : escapeHtml(preset.apiKeyHint || '');
+    hint.innerHTML = preset.keyOptional
+      ? ''
+      : (preset.docs
+        ? '还没有密钥？<a href="' + escapeHtml(preset.docs) + '" target="_blank" rel="noopener">去 ' + escapeHtml(preset.name) + ' 控制台申请</a>' + (preset.apiKeyHint ? '（' + escapeHtml(preset.apiKeyHint) + '）' : '')
+        : escapeHtml(preset.apiKeyHint || ''));
   }
   const sel = document.getElementById('mwModelSelect');
   const input = document.getElementById('mwModelInput');
@@ -2113,11 +2128,12 @@ function _wizardApplyProvider() {
   }
 }
 
-function _setMwStatus(msg, isErr) {
+function _setMwStatus(msg, kind) {
   const el = document.getElementById('mwStatus');
   if (!el) return;
   el.textContent = msg || '';
-  el.classList.toggle('error', !!isErr);
+  el.classList.toggle('error', kind === true || kind === 'error');
+  el.classList.toggle('ok', kind === 'ok');
 }
 
 // 「测通并开始使用」：本地先校验（供应商/模型/密钥），过了就真发一条最小消息；
@@ -2136,7 +2152,7 @@ async function modelWizardGo() {
   const apiKey = String(document.getElementById('mwApiKey').value || '').trim();
   if (!apiKey && !preset.keyOptional && !getGroupKey(provider)) {
     _setMwStatus('先填 API 密钥' + (preset.apiKeyHint ? '（' + preset.apiKeyHint + '）' : ''), true);
-    document.getElementById('mwApiKey').focus();
+    document.getElementById('mwApiKey').focus({ preventScroll: true });
     return;
   }
   const baseUrl = preset.baseUrl || '';
@@ -2163,7 +2179,7 @@ async function modelWizardGo() {
     persistActiveModels();
     renderModelSelects();
   }
-  _setMwStatus('✓ 测通了！模型已就位，开始提问吧。', false);
+  _setMwStatus('✓ 测通了！模型已就位，开始提问吧。', 'ok');
   setTimeout(() => {
     document.getElementById('modelWizardOverlay').classList.remove('show');
     _wizardRunAfterReady();
