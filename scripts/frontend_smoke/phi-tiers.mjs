@@ -101,6 +101,48 @@ check('harness：体验级八件套 T99–T106（停止续接/内容diff/时间�
   return true;
 });
 
+// ===== backlog 567：Φ 切画布作废收尾（2026-11-20 主修复＋2026-11-24 余项）静态契约 =====
+// 锁住「不许回退」的形态：忙位复位必须排在 stillCurrent 早退之前（11-20：否则 harnessBusy
+// 永久为 true，主聊天/Φ 全员卡「等待中」）；三处切画布早退（焦点解析后／大陆共享点拉取后／
+// finally）都必须走 settleAbandonedRun——放行队列、状态行落终态、指令还回（11-24：否则排队
+// 消息没人叫、状态行停在「审阅中…」）。try/catch 里的 stillCurrent 早退不在此列，它们本就
+// 落进 finally。行为回归在 serial-phi-canvas-switch.mjs。
+check('harness：567 切画布作废收尾——复位先于早退＋三处早退都走 settleAbandonedRun（放行队列/落终态/还指令）', () => {
+  const rsrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
+  const runStart = rsrc.indexOf('async function runGraphHarness(');
+  const runEnd = rsrc.indexOf('function _startHarnessClarify', runStart);
+  if (runStart < 0 || runEnd < 0) throw new Error('定位不到 runGraphHarness 函数体');
+  const run = rsrc.slice(runStart, runEnd);
+  // 作废收尾函数本体：三件事一件都不能少；指令只在输入框空着时还
+  const settleStart = run.indexOf('const settleAbandonedRun = (statusText) => {');
+  const settleEnd = run.indexOf('};', settleStart);
+  if (settleStart < 0) throw new Error('缺 settleAbandonedRun（切画布作废收尾函数）');
+  const settle = run.slice(settleStart, settleEnd);
+  if (!settle.includes("_setHarnessStatus(statusText, 'ok')")) throw new Error('作废收尾没落状态行终态');
+  if (!settle.includes('restoreInstruction()')) throw new Error('作废收尾没还回指令');
+  if (!settle.includes('_flushSendQueue()')) throw new Error('作废收尾没放行队列');
+  if (!settle.includes('inputEl.value')) throw new Error('指令回填缺「输入框空着才还」的守卫');
+  // 三处早退：焦点解析后、大陆共享点拉取后、finally
+  const calls = run.match(/settleAbandonedRun\(/g) || [];
+  if (calls.length !== 3) throw new Error('settleAbandonedRun 应恰好被三处早退各调一次（实际 ' + calls.length + ' 处）');
+  if (!run.includes('if (!stillCurrent()) { clearHarnessBusy(); settleAbandonedRun(')) {
+    throw new Error('焦点解析后的切画布早退没走作废收尾');
+  }
+  if (!/if \(!stillCurrent\(\)\) \{\s*if \(requestRunId === _harnessRunSeq\) harnessSingleEvalId = null;\s*(?:\/\/[^\n]*\n\s*)*settleAbandonedRun\(/.test(run)) {
+    throw new Error('大陆共享点拉取后的切画布早退没走作废收尾');
+  }
+  const fin = run.slice(run.lastIndexOf('} finally {'));
+  const iClear = fin.indexOf('clearHarnessBusy();');
+  const iSettle = fin.indexOf("settleAbandonedRun('生成时已切走画布，本轮回答未显示')");
+  if (iClear < 0 || iSettle < 0 || iClear > iSettle) {
+    throw new Error('finally 里忙位复位必须先于作废收尾（11-20 主修复回退）');
+  }
+  if (fin.includes('if (!stillCurrent()) return;')) {
+    throw new Error('finally 又变回切画布裸早退（忙位归零了，排队消息却没人放行）');
+  }
+  return true;
+});
+
 check('render: renderMarkdown 剥离段认 <think>（T85 全站纵深防御，口径对齐 strip_reasoning）', () => {
   const savedPurify = sandbox.window.DOMPurify;
   const savedMarked = sandbox.marked;

@@ -416,6 +416,24 @@ var _harnessRunSeq = 0;
       harnessAbortController = null;
       return true;
     };
+    // 2026-11-24（backlog 567 余项）：本轮被 stillCurrent 拦下作废后的收尾，三处早退
+    // （焦点解析后、大陆共享点拉取后、finally）共用。回答不落笔——改图结果不能跨画布，
+    // 这是上方 stillCurrent 守卫的既定语义；但收尾不能只是 return，旧实现连带跳过了：
+    //   ① 队列放行：Φ 生成期间在别的画布上发的消息都排在队里，忙位归零后没人叫，要等
+    //      下一个任务跑完才被动放行（「等待中」不会自己开始）。队列项自带来处（2026-10-11
+    //      起），_sendQueueReady 会先把视图带回它所属的画布，与主聊天/工作流收尾同一口径。
+    //      T90「新会话的视图不该被旧指令继续刷」说的是旧指令的结果渲染，不是队列。
+    //   ② 状态行终态：否则文案停在「审阅中…」且仍是 running 样式，而停止按钮已隐藏。
+    //   ③ 指令回填：指令被收走却没换来回答。只在输入框空着时还（用户可能正在打字）。
+    // ②③ 只归最新一轮（被新请求取代的旧一轮不碰它的状态行与输入框）；放行不分轮次，
+    // 它自带「忙／放行中」两道闸，新请求占着时是空转。必须排在忙位复位之后调用。
+    const settleAbandonedRun = (statusText) => {
+      if (requestRunId === _harnessRunSeq) {
+        _setHarnessStatus(statusText, 'ok');
+        if (inputEl && !String(inputEl.value || '').trim()) restoreInstruction();
+      }
+      if (typeof _flushSendQueue === 'function') { try { _flushSendQueue(); } catch (e) {} }
+    };
     if (presetFocusIds) {
       focusIds = presetFocusIds;
     } else if (harnessPhase !== 'preset' && !harnessSingleEvalId && !pureQuestion) {
@@ -433,7 +451,8 @@ var _harnessRunSeq = 0;
           resolved = await _resolveHarnessFocus(candidateFocusIds, instruction);
           // 切画布/切 Φ 会话后这里会早退：忙态必须先归位。早退只该跳过后续请求，
           // 不能把复位一起跳过——否则 harnessBusy 永久为 true，发送队列全员卡死。
-          if (!stillCurrent()) { clearHarnessBusy(); return; }
+          // 请求还没发出就作废：指令还回去、队列放行（2026-11-24，settleAbandonedRun）。
+          if (!stillCurrent()) { clearHarnessBusy(); settleAbandonedRun('已切走画布，本轮未发出'); return; }
         } catch (err) {
           resolved = null;
           focusIds = [];
@@ -476,6 +495,8 @@ var _harnessRunSeq = 0;
     if (requestRunId === _harnessRunSeq) _setHarnessBusy(false);
     if (!stillCurrent()) {
       if (requestRunId === _harnessRunSeq) harnessSingleEvalId = null;
+      // 同焦点解析那处：请求还没发出就作废，指令还回去、队列放行（2026-11-24）
+      settleAbandonedRun('已切走画布，本轮未发出');
       return;
     }
     let snapshot = canvasReady
@@ -802,14 +823,16 @@ var _harnessRunSeq = 0;
       // 2026-11-20：忙态/控制器/单节点目标必须在 stillCurrent 早退之前复位。切画布会
       // 让 stillCurrent 变 false，旧实现把复位放在早退之后，harnessBusy 永久停在 true，
       // 主聊天/分支/Φ 全被 send-queue 当成「AI 仍在生成」，只能点停止按钮才恢复。
-      // 早退只该跳过 flush 与状态渲染（T90 的既定语义），不该跳过清理。
+      // 早退只该跳过结果落笔，不该跳过清理。
       clearHarnessBusy();
-      if (!stillCurrent()) return;
+      // 2026-11-24（backlog 567 余项）：本轮结束时人已切到别的画布——回答不落笔，但
+      // 队列要放行、状态行要落终态、指令要还回去（见 settleAbandonedRun）。旧实现这里
+      // 是裸 return：忙位归零了，等它的排队消息却没人叫，状态行停在「审阅中…」。
+      if (!stillCurrent()) { settleAbandonedRun('生成时已切走画布，本轮回答未显示'); return; }
       if (!ownsRun) return;
       // T90：本轮结束放行排队消息（排队时收下的 Φ 指令）。放在 busy 归位与状态清理
       // 之后——不 await，与主聊天外层 finally 的用法一致；排队那条在本调用栈返回后的
-      // 微任务里才真正开跑，不会撞上上面的清理。会话已切换时上面的早退已经挡住：
-      // 那是刻意的，新会话的视图不该被旧指令继续刷。
+      // 微任务里才真正开跑，不会撞上上面的清理。
       if (typeof _flushSendQueue === 'function') { try { _flushSendQueue(); } catch (e) {} }
       // 兜底：任何“进行中”状态都必须落定，避免一直显示“审阅中...”
       const _statusEl = document.getElementById('graphHarnessStatus');

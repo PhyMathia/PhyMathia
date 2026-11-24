@@ -36,6 +36,7 @@
 //   storage-fetch           会话存储层 fetch 超时契约（T237：session.js 每处 fetch 必带 AbortSignal.timeout 的静态守卫）
 //   storage-lru             本机会话缓存 LRU（T348：保留窗口＝当前＋最近 N；T342 删除回收 history 键）
 //   serial-session-msg-gap  串行边界：T356 补传竞态（打开缺口画布后立刻切走，不得把后一张的对话写进前一张）
+//   serial-phi-canvas-switch 串行边界：backlog 567 余项（Φ 请求在途切画布，作废收尾放行队列/落终态/还指令；行为链独占 fetch/getElementById 桩，域尾收口）
 //   graph-stub-sentinel     T411 跨域桩位传染哨兵（graph 系开门＋全量收尾各一条：不带桩跑 _graphState 实链，loose 占位当场红）
 //   graph-busy-sweep        生成中断电清扫（T275：busy/running 残留的启动清扫＋历史回放清洗）
 //   graph-mirror-slim       服务端镜像体量治理（T212：只减重不删条目＋读回水合丢弃）
@@ -90,6 +91,7 @@ import { run as _load_order } from './frontend_smoke/load-order.mjs';
 import { run as _storage_fetch } from './frontend_smoke/storage-fetch.mjs';
 import { run as _storage_lru } from './frontend_smoke/storage-lru.mjs';
 import { run as _serial_session_msg_gap } from './frontend_smoke/serial-session-msg-gap.mjs';
+import { run as _serial_phi_canvas_switch } from './frontend_smoke/serial-phi-canvas-switch.mjs';
 import { run as _graph_stub_sentinel } from './frontend_smoke/graph-stub-sentinel.mjs';
 import { run as _graph_busy_sweep } from './frontend_smoke/graph-busy-sweep.mjs';
 import { run as _graph_mirror_slim } from './frontend_smoke/graph-mirror-slim.mjs';
@@ -153,6 +155,7 @@ _load_order();
 _storage_fetch();
 await _storage_lru();
 await _serial_session_msg_gap(); // T356 补传竞态：缺口画布 A 加载中切 B，A 不得收下 B 的对话
+await _serial_phi_canvas_switch(); // 567 余项：Φ 请求在途切画布，作废收尾要放行队列、落终态、还指令
 // T411 传染哨兵（graph 系开门）：serial-source-input 清桩之后、graph 系第一读点之前
 _graph_stub_sentinel('graph 系开门'); // 纯同步注册、不换任何全局桩
 await _graph_busy_sweep();
