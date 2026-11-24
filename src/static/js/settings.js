@@ -25,6 +25,7 @@ const SETTINGS_GROUPS = [
   // ✦ 不在侧栏出现：它在 knowledge.js 是 ai_extract 来源标记、新手引导拿它当「AI」记号。
   { label: '设置', items: [
     { id: 'appearance', label: '外观', icon: 'sun' },
+    { id: 'display', label: '显示读数', icon: 'monitor' },
     { id: 'level', label: '难度等级', icon: 'gauge' },
     { id: 'model', label: '模型', icon: 'sliders' }
   ]},
@@ -47,6 +48,17 @@ const SETTINGS_GROUPS = [
   ]}
 ];
 const SETTINGS_TAB_IDS = SETTINGS_GROUPS.reduce((a, g) => a.concat(g.items.map(i => i.id)), []);
+
+// 显示读数五键（2026-11-24）：与 config.js 的 STORAGE_KEY_READOUT_* 一字对应。
+// 本文件在离线设置页回归里单独执行（不加载 config.js），故这里用字面量映射；
+// 真实页面仍由 config.js 的 progressReadoutEnabled 读同一批键。
+const _SETTINGS_READOUT_KEYS = {
+  speed: 'phymathia_readout_speed',
+  ttft: 'phymathia_readout_ttft',
+  elapsed: 'phymathia_readout_elapsed',
+  progress: 'phymathia_readout_progress',
+  percent: 'phymathia_readout_percent'
+};
 
 let _settingsOpen = false;
 let _settingsTab = 'appearance';
@@ -335,6 +347,32 @@ function _settingsPageAppearance() {
   html += _sSection('风格家族 · 面板与节点同进退', _sChoices(famList));
   html += _sSwitch('深浅模式各自挑主题', '关着时深浅共用一套；打开后两种模式各记各的', split, 'settingsSetThemeSplit(this.checked)');
   return html;
+}
+
+function _settingsPageDisplay() {
+  // 2026-11-24 用户拍板：胶囊读数各自开关，默认全开（缺键＝开），保持 11-23 观感。
+  // 键用字面量映射（下方 _SETTINGS_READOUT_KEYS）：本文件在离线设置页回归里单独
+  // 执行、不加载 config.js；五键与 config.js 的 STORAGE_KEY_READOUT_* 一字对应。
+  const on = (key) => {
+    try { return typeof progressReadoutEnabled === 'function' ? progressReadoutEnabled(key) : true; }
+    catch (e) { return true; }
+  };
+  return _sHead('显示读数', '控制进度胶囊上显示哪些读数，改动即时生效。') +
+    _sSection('生成过程',
+      _sSwitch('生成速度', '过程中显示 ≈N tok/s，结束时换成精确值',
+        on(_SETTINGS_READOUT_KEYS.speed), "settingsSetReadout('speed', this.checked)") +
+      _sSwitch('首字延迟', '第一段内容到达时短暂显示「首字 X.Xs」',
+        on(_SETTINGS_READOUT_KEYS.ttft), "settingsSetReadout('ttft', this.checked)") +
+      _sSwitch('运行用时', '胶囊右侧显示本次已用时间',
+        on(_SETTINGS_READOUT_KEYS.elapsed), "settingsSetReadout('elapsed', this.checked)")
+    ) +
+    _sSection('进度',
+      _sSwitch('进度条', '状态文字下方的进度刻度',
+        on(_SETTINGS_READOUT_KEYS.progress), "settingsSetReadout('progress', this.checked)") +
+      _sSwitch('百分比数字', '状态文字末尾的「· 62%」',
+        on(_SETTINGS_READOUT_KEYS.percent), "settingsSetReadout('percent', this.checked)")
+    ) +
+    '<div class="settings-note">只影响显示，不影响生成与保存；关掉的读数不占位置。</div>';
 }
 
 function _settingsPageLevel() {
@@ -1734,7 +1772,7 @@ function settingsSkillDelete(id, isOverride) {
 }
 
 const _SETTINGS_PAGES = {
-  appearance: _settingsPageAppearance, level: _settingsPageLevel, model: _settingsPageModel,
+  appearance: _settingsPageAppearance, display: _settingsPageDisplay, level: _settingsPageLevel, model: _settingsPageModel,
   memory: _settingsPageMemory, phi: _settingsPagePhi, quiz: _settingsPageQuiz,
   canvas: _settingsPageCanvas, hotkeys: _settingsPageHotkeys, skills: _settingsPageSkills,
   data: _settingsPageData, account: _settingsPageAccount, trash: _settingsPageTrash,
@@ -1798,6 +1836,15 @@ function settingsSetThemeSplit(on) {
   if (_settingsGuard()) return;
   try { if (typeof setThemeSplit === 'function') setThemeSplit(!!on); } catch (e) {}
   renderSettingsPage();
+}
+// 显示读数开关（2026-11-24）：只写 localStorage，再让 chat.js 的读侧缓存立即刷新。
+function settingsSetReadout(key, enabled) {
+  if (_settingsGuard()) return;
+  if (!_SETTINGS_READOUT_KEYS[key]) return;
+  _settingsLsSet(_SETTINGS_READOUT_KEYS[key], enabled ? '1' : '0');
+  try {
+    if (typeof applyProgressReadoutPrefs === 'function') applyProgressReadoutPrefs();
+  } catch (e) {}
 }
 function settingsSetLevel(key) {
   if (_settingsGuard()) return;

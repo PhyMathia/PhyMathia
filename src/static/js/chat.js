@@ -15,6 +15,41 @@
     let progressStatusHideTimer = null;
     // 生成速度读数（2026-11-23）：流式过程中按字数估算，结束帧带 usage 时换精确值。
     let _streamMeter = null;
+    // 显示读数开关（2026-11-24）：设置→显示读数写入，读侧缓存成对象，
+    // 500ms 的渲染循环不再碰 localStorage；开关变化由 applyProgressReadoutPrefs 刷新。
+    // 五个键与 config.js 的 STORAGE_KEY_READOUT_* 一字对应（本文件在阶段0夹具里
+    // 单独执行、不加载 config.js，故这里不引用常量）。
+    let _readoutPrefs = { speed: true, ttft: true, elapsed: true, progress: true, percent: true };
+
+    function applyProgressReadoutPrefs() {
+      const enabled = (key) => {
+        try {
+          if (typeof progressReadoutEnabled === 'function') return progressReadoutEnabled(key);
+        } catch (e) {}
+        return true;
+      };
+      _readoutPrefs = {
+        speed: enabled('phymathia_readout_speed'),
+        ttft: enabled('phymathia_readout_ttft'),
+        elapsed: enabled('phymathia_readout_elapsed'),
+        progress: enabled('phymathia_readout_progress'),
+        percent: enabled('phymathia_readout_percent')
+      };
+      const statusEl = document.getElementById('progressStatus');
+      if (statusEl && statusEl.classList) {
+        statusEl.classList.toggle('readout-off-speed', !_readoutPrefs.speed);
+        statusEl.classList.toggle('readout-off-ttft', !_readoutPrefs.ttft);
+        statusEl.classList.toggle('readout-off-elapsed', !_readoutPrefs.elapsed);
+        statusEl.classList.toggle('readout-off-progress', !_readoutPrefs.progress);
+      }
+      // 百分比拼在状态文字里，CSS 管不到，立即按新开关重画一次；速度读数同理。
+      try { _setProgress(progressPercent, progressLabel); } catch (e) {}
+      try { _streamMeterRender(); } catch (e) {}
+      try {
+        if (typeof window._taskPanelDockFollow === 'function') window._taskPanelDockFollow();
+      } catch (e) {}
+    }
+    window.applyProgressReadoutPrefs = applyProgressReadoutPrefs;
 
     const PROGRESS_PHASE = {
       thinking: { percent: 8, label: '正在理解问题' },
@@ -47,7 +82,7 @@
       const textEl = document.querySelector('#progressStatus .status-text');
       if (textEl) {
         // 0% 后缀只在实际跑起来后出现（thinking 起步 8%）：闲时 0% 会读成卡死
-        const suffix = progressPercent > 0 && progressPercent < 100 ? ' · ' + progressPercent + '%' : '';
+        const suffix = _readoutPrefs.percent && progressPercent > 0 && progressPercent < 100 ? ' · ' + progressPercent + '%' : '';
         textEl.textContent = progressLabel + suffix;
       }
     }
@@ -273,7 +308,7 @@
       // 只有「每条流都报了 usage」才用精确值；缺一条就退回估算，别拿半截分母冒充精确。
       const exact = m.usageStreams === m.finishedStreams && m.usageTokens > 0;
       m.finalText = _formatStreamSpeed((exact ? m.usageTokens : m.liveTokens) / secs, exact);
-      _streamMeterSetText(m.finalText);
+      _streamMeterSetText(_readoutPrefs.speed ? m.finalText : '');
     }
 
     function _streamMeterRender(now) {
@@ -286,9 +321,9 @@
           const ttft = Math.max(0, m.firstDeltaAt - m.startedAt) / 1000;
           // 工作流的读流从响应头到达才开始计，首字常是 0.0s——那种「假首字」不亮，
           // 直接等速率；真等过模型的（分支/苏格拉底）才值得看这一眼。
-          if (ttft >= STREAM_TTFT_MIN_SEC && ts - m.firstDeltaAt < STREAM_TTFT_GAP_MS) {
+          if (_readoutPrefs.ttft && ttft >= STREAM_TTFT_MIN_SEC && ts - m.firstDeltaAt < STREAM_TTFT_GAP_MS) {
             text = '首字 ' + (ttft < 10 ? ttft.toFixed(1) : String(Math.round(ttft))) + 's';
-          } else {
+          } else if (_readoutPrefs.speed) {
             const secs = (m.lastDeltaAt - m.firstDeltaAt) / 1000;
             if (m.liveTokens > 0 && secs >= 0.2) {
               text = _formatStreamSpeed(m.liveTokens / secs, false);
@@ -296,7 +331,7 @@
           }
         }
       } else {
-        text = m.finalText || '';
+        text = _readoutPrefs.speed ? (m.finalText || '') : '';
       }
       _streamMeterSetText(text);
       return text;
@@ -380,6 +415,7 @@
       status.addEventListener('pointercancel', onUp);
     }
     initProgressDragging();
+    applyProgressReadoutPrefs();
 
     function _syncProgressMiniButtons(running) {
       const runBtn = document.getElementById('statusRunBtn');

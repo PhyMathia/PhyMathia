@@ -194,11 +194,11 @@ try {
   ctx.openSettingsDrawer();
   overlay.classList.contains('show') ? ok('打开抽屉：show 类就位') : bad('打开抽屉', '缺 show');
   const navItems = (nav.innerHTML.match(/settings-nav-item/g) || []).length;
-  navItems === 14 ? ok('左栏渲染 14 个入口（含快捷键与技能）') : bad('左栏入口数', String(navItems));
+  navItems === 15 ? ok('左栏渲染 15 个入口（含显示读数/快捷键与技能）') : bad('左栏入口数', String(navItems));
   content.innerHTML.includes('外观') ? ok('默认停在「外观」页') : bad('默认页', content.innerHTML.slice(0, 80));
 
   const expect = {
-    appearance: '深浅模式', level: '难度等级', model: '模型设置', memory: '记忆与画像',
+    appearance: '深浅模式', display: '生成速度', level: '难度等级', model: '模型设置', memory: '记忆与画像',
     phi: '深度思考', quiz: '出题素材源', canvas: '允许 AI 自动判断回答方式',
     skills: '技能',
     hotkeys: '只读浏览',
@@ -437,7 +437,9 @@ try {
   // 三轮：开关的数据与生效链（只存一份配置，停用会真的从聊天下拉里消失）
   modelsSrc.includes('function setModelEnabled(') ? ok('models.js 有统一启用/停用写出口') : bad('统一写出口', '缺 setModelEnabled');
   modelsSrc.includes('enabled: cfg.enabled !== false') ? ok('getAllModels 带出 enabled（缺省按启用）') : bad('enabled 出参', '缺字段');
-  modelsSrc.includes('getAllModels().filter(m => m.enabled !== false)') ? ok('槽位下拉过滤停用模型（开关真生效）') : bad('下拉过滤', '缺过滤');
+  // 2026-11-21 起槽位下拉同时过滤条目级与供应商级开关（providerOn）；
+  // 断言跟着现码走，只守「两个开关都真的参与过滤」。
+  modelsSrc.includes('getAllModels().filter(m => m.enabled !== false && m.providerOn !== false)') ? ok('槽位下拉过滤停用模型（条目与供应商开关真生效）') : bad('下拉过滤', '缺过滤');
   modelsSrc.includes('已停用（设置→模型 里可重新启用）') ? ok('旧式模型面板也标注停用态（两处一致）') : bad('旧面板标注', '缺标记');
   const settingsSrc = readFileSync(ROOT + 'src/static/js/settings.js', 'utf8');
   settingsSrc.includes("kind === 'toggle'") ? ok('设置抽屉把开关转发给 setModelEnabled') : bad('开关转发契约', '缺 toggle 分支');

@@ -266,6 +266,21 @@ const STORAGE_KEY_FOLLOWUP_AUTO_ROUTE = 'phymathia_followup_auto_route';
 function followupAutoRouteEnabled() {
   try { return localStorage.getItem(STORAGE_KEY_FOLLOWUP_AUTO_ROUTE) === '1'; } catch (e) { return false; }
 }
+// 进度胶囊显示读数（2026-11-24 用户拍板）：设置→显示读数控制胶囊上哪些读数出现。
+// 全局键（不带会话后缀），经账号垫片自然分账号。一律默认开（缺键＝开），只有显式
+// 存 '0' 才关——保持 2026-11-23 速度读数落地时的默认观感，老用户界面零变化。
+// 读侧统一走 progressReadoutEnabled，别在各调用点自己比字符串。
+const STORAGE_KEY_READOUT_SPEED = 'phymathia_readout_speed';
+const STORAGE_KEY_READOUT_TTFT = 'phymathia_readout_ttft';
+const STORAGE_KEY_READOUT_ELAPSED = 'phymathia_readout_elapsed';
+const STORAGE_KEY_READOUT_PROGRESS = 'phymathia_readout_progress';
+const STORAGE_KEY_READOUT_PERCENT = 'phymathia_readout_percent';
+function progressReadoutEnabled(storageKey) {
+  try {
+    const v = localStorage.getItem(storageKey);
+    return v == null || v !== '0';
+  } catch (e) { return true; }
+}
 // 划词追问浮条（节点全屏／新窗口预览）的「回答方式」上次选择（2026-11-17）：全局键，
 // 跟账号走；值与画布追问卡的 routeMode 同词（auto / analysis / direct）。预览页读不到
 // 主应用的账号命名空间，所以那份选择在生成内嵌脚本时当初始值带过去（不各存一份）。

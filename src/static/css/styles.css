@@ -4075,6 +4075,11 @@
       white-space: nowrap;
     }
     .progress-status .stream-speed:empty { display: none; }
+    /* 显示读数开关（2026-11-24）：设置→显示读数。默认全开；关掉的读数不占位。
+       速度与首字共用 .stream-speed，两个都关才整位隐藏（只关速度仍要留首字位）。 */
+    .progress-status.readout-off-elapsed .elapsed-time { display: none; }
+    .progress-status.readout-off-progress .status-progress { display: none; }
+    .progress-status.readout-off-speed.readout-off-ttft .stream-speed { display: none; }
     /* 「待发送 N」：AI 忙时排队中的请求数（send-queue.js）。挂进胶囊是因为用户
        盯着等的时候本来就在看这儿，不用去学一个全新位置。点它 = 全部丢弃，
        是这条链路上唯一的反悔出口。宽度短到不参与收缩——胶囊的唯一收缩位仍是

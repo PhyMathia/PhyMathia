@@ -1510,6 +1510,69 @@ check('生成速度读数（2026-11-23）：首字→≈速率→精确 tok/s �
   }
 });
 
+// 显示读数开关（2026-11-24，用户拍板）：设置页逐项开关，默认全开，读侧立即让位。
+check('显示读数开关（2026-11-24）：默认全开，设置页可逐项关闭', () => {
+  const config = fs.readFileSync('src/static/js/config.js', 'utf8');
+  const keys = ['phymathia_readout_speed', 'phymathia_readout_ttft', 'phymathia_readout_elapsed',
+    'phymathia_readout_progress', 'phymathia_readout_percent'];
+  for (const key of keys) {
+    if (!config.includes("'" + key + "'")) throw new Error('config.js 缺读数开关键 ' + key);
+  }
+  const settings = fs.readFileSync('src/static/js/settings.js', 'utf8');
+  if (!settings.includes("id: 'display'")) throw new Error('设置侧栏没有「显示读数」入口');
+  for (const label of ['生成速度', '首字延迟', '运行用时', '进度条', '百分比数字']) {
+    if (!settings.includes("'" + label + "'")) throw new Error('显示读数页缺「' + label + '」开关');
+  }
+  if (!settings.includes('function settingsSetReadout')) throw new Error('缺显示读数写入函数');
+  const css = fs.readFileSync('src/static/css/styles.css', 'utf8');
+  for (const cls of ['.readout-off-elapsed .elapsed-time', '.readout-off-progress .status-progress',
+    '.readout-off-speed.readout-off-ttft .stream-speed']) {
+    if (!css.includes(cls)) throw new Error('styles.css 缺 ' + cls + ' 隐藏规则');
+  }
+  const chat = fs.readFileSync('src/static/js/chat.js', 'utf8');
+  if (!chat.includes('applyProgressReadoutPrefs();')) throw new Error('页面启动没应用读数开关');
+
+  const saved = {};
+  for (const key of keys) { saved[key] = storageData[key]; storageData[key] = '0'; }
+  const hadQuery = Object.prototype.hasOwnProperty.call(sandbox.document, 'querySelector');
+  const prevQuery = sandbox.document.querySelector;
+  try {
+    sandbox.applyProgressReadoutPrefs();
+    for (const name of ['speed', 'ttft', 'elapsed', 'progress', 'percent']) {
+      if (vm.runInContext('_readoutPrefs.' + name, sandbox) !== false) {
+        throw new Error('关掉 ' + name + ' 后读侧仍是开');
+      }
+    }
+    vm.runInContext('var __RT = Date.now(); _streamMeter = { active: 1, startedAt: __RT - 4000, firstDeltaAt: __RT - 3000, lastDeltaAt: __RT, liveTokens: 90, usageTokens: 0, usageStreams: 0, finishedStreams: 0, finalText: "" };', sandbox);
+    if (sandbox._streamMeterRender(vm.runInContext('__RT', sandbox)) !== '') {
+      throw new Error('速度和首字都关掉后仍在渲染读数');
+    }
+    // 百分比后缀拼在状态文字里，CSS 管不到：临时接管 querySelector 验证真消失/真回来。
+    const textEl = { textContent: '' };
+    sandbox.document.querySelector = (sel) => (String(sel).indexOf('.status-text') >= 0 ? textEl : null);
+    vm.runInContext('progressPercent = 0; progressLabel = "";', sandbox);
+    sandbox._setProgress(62, '正在生成回答');
+    if (textEl.textContent !== '正在生成回答') {
+      throw new Error('百分比开关关掉后仍拼了后缀：' + textEl.textContent);
+    }
+    storageData.phymathia_readout_percent = '1';
+    sandbox.applyProgressReadoutPrefs();
+    sandbox._setProgress(62, '正在生成回答');
+    if (textEl.textContent !== '正在生成回答 · 62%') {
+      throw new Error('百分比开关打开后没恢复后缀：' + textEl.textContent);
+    }
+  } finally {
+    if (hadQuery) sandbox.document.querySelector = prevQuery;
+    else delete sandbox.document.querySelector;
+    for (const key of keys) {
+      if (saved[key] === undefined) delete storageData[key];
+      else storageData[key] = saved[key];
+    }
+    vm.runInContext('_streamMeter = null; progressPercent = 0; progressLabel = "";', sandbox);
+    sandbox.applyProgressReadoutPrefs();
+  }
+});
+
 // ===== 串行边界追加：画布多选与批量删除（2026-09-30）=====
 // 多选改的是模块级 sessions / currentSessionId 词法绑定，还会 await 一串 fetch、
 // 写共享的 phymathia_sessions 与 phymathia_msgs_*/graph_* 键——与在途异步用例互踩，
