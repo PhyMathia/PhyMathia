@@ -1667,9 +1667,17 @@ function _measureNodes() {
     // 「存盘值→下次占位→再存回」的自我强化（自动排版间距与分组边界跟着偏）。
     const ph = el.__cvPlaceholder;
     if (ph && Math.abs(w - ph.w) <= 1 && Math.abs(h - ph.h) <= 1) return;
+    const prevW = Number(node.w) || 0;
+    const prevH = Number(node.h) || 0;
     node.w = w;
     node.h = h;
     if (node.kind === 'ai_eval') zigzagNodes.push(node);
+    // 实体落座的「先落座」名单（2026-11-24）：量过真身之后尺寸又变了的才是「刚长高/
+    // 变宽」——它原地不动，被它压到的邻居让位。首测（0→真身，从没量过的新节点）不算：
+    // 新卡给老卡让位，不反过来。
+    if (prevW > 0 && prevH > 0 && (Math.abs(w - prevW) > 0.5 || Math.abs(h - prevH) > 0.5)) {
+      if (typeof _noteGraphNodeResized === 'function') _noteGraphNodeResized(node.id);
+    }
   });
   for (const node of zigzagNodes) _updateAiEvalZigzag(node);
   _syncGroupMembersByContainment();
@@ -1702,9 +1710,16 @@ function _scheduleEdgeResync() {
     _measureNodes();
     // 卡真身尺寸到位（KaTeX/图片等）也可能改变最宽节点：列宽跟着重算。
     if (typeof _realignGraphColumns === 'function') _realignGraphColumns({ silentUpdate: true, silentEdges: true });
+    // 实体落座（2026-11-24）：刚变尺寸的卡先落座（原地不动），被它压到的邻居让位——
+    // 卡长高不再盖住下面的卡。正在拖着的卡拿在手里，不挡路也不被推。
+    let pushed = [];
+    if (typeof _resolveGraphNodeOverlaps === 'function') {
+      const grown = _takeGraphResizedNodeIds();
+      pushed = _resolveGraphNodeOverlaps({ prior: grown, grown, skip: _graphNodesInGesture() });
+    }
     _updateNodeTransforms();
     if (typeof _scheduleGraphLayerBands === 'function') _scheduleGraphLayerBands();
-    const keys = _edgesTouchingNodeIds(ids);
+    const keys = _edgesTouchingNodeIds(pushed.length ? ids.concat(pushed) : ids);
     if (!keys.length || !_refreshEdgeGeometry(keys)) _redrawEdges();
   });
 }

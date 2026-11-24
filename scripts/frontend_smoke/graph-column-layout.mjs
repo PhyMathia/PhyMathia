@@ -770,5 +770,629 @@ check('接线: 拖动/改尺寸/测量全接列重算；归属提交与持久化
   return true;
 });
 
+// ====== 实体落座（2026-11-24）：卡片当实体，任何两张卡不许压在一起 ======
+// 与自动整理并存：整理管列（成员回列心、按 y 排、48 缝居中），落座只管「别压着」。
+// 期望值全是手算整数：单列时列框从 0 起、列宽 = 最宽 + 80（300 宽卡 → 列心 190）。
+function overlapFree(list) {
+  for (let i = 0; i < list.length; i++) {
+    for (let j = i + 1; j < list.length; j++) {
+      const p = list[i];
+      const q = list[j];
+      if (Math.abs(p.x - q.x) < (p.w + q.w) / 2 + 16 - 0.5
+        && Math.abs(p.y - q.y) < (p.h + q.h) / 2 + 16 - 0.5) return false;
+    }
+  }
+  return true;
+}
+function posOf(list) { return JSON.stringify(list.map(n => [n.id, n.x, n.y])); }
+function resolveWith(opts) {
+  return JSON.parse(vm.runInContext('JSON.stringify(_resolveGraphNodeOverlaps(' + JSON.stringify(opts || {}) + '))', sandbox));
+}
+
+check('实体落座: 没压叠就一个不动（同列 20px 紧缝、自由卡贴着 16 净距都算合法）', () => {
+  const prev = capture();
+  try {
+    const nodes = seed({
+      nodes: [
+        { id: 'a', x: 190, y: 0, w: 300, h: 500 },
+        { id: 'b', x: 190, y: 520, w: 300, h: 500 },
+        { id: 'f', x: 506, y: 0, w: 300, h: 200 },
+      ],
+      layerOf: { a: 1, b: 1 },
+      freeNodes: { f: 1 },
+    });
+    vm.runInContext('_realignGraphColumns({ force: true })', sandbox);
+    const before = posOf(nodes);
+    const moved = resolveWith({});
+    if (moved.length) throw new Error('不该动任何卡：' + JSON.stringify(moved));
+    if (posOf(nodes) !== before) throw new Error('坐标被动了：' + posOf(nodes));
+    return true;
+  } finally { restore(prev); }
+});
+
+check('实体落座: 同列两张卡压着 → 后落座的沿列滑开（缝回 48），x 不离列心', () => {
+  const prev = capture();
+  try {
+    const nodes = seed({
+      nodes: [
+        { id: 'a', x: 190, y: 0, w: 300, h: 500 },
+        { id: 'b', x: 190, y: 100, w: 300, h: 500 },
+      ],
+      layerOf: { a: 1, b: 1 },
+    });
+    vm.runInContext('_realignGraphColumns({ force: true })', sandbox);
+    const moved = resolveWith({});
+    if (JSON.stringify(moved) !== '["b"]') throw new Error('应只动 b：' + JSON.stringify(moved));
+    if (nodes[0].y !== 0 || nodes[1].y !== 548 || nodes[1].x !== 190) {
+      throw new Error('a 应不动、b 应落到 a 正下方 48 缝（y=548）：' + posOf(nodes));
+    }
+    if (!overlapFree(nodes)) throw new Error('落座后仍压着');
+    return true;
+  } finally { restore(prev); }
+});
+
+check('实体落座: 刚长高的卡先落座原地不动，上下邻居对称让位、缝保持 48', () => {
+  const prev = capture();
+  try {
+    const nodes = seed({
+      nodes: [
+        { id: 'a', x: 190, y: -548, w: 300, h: 500 },
+        { id: 'n', x: 190, y: 0, w: 300, h: 500 },
+        { id: 'b', x: 190, y: 548, w: 300, h: 500 },
+      ],
+      layerOf: { a: 1, n: 1, b: 1 },
+    });
+    vm.runInContext('_realignGraphColumns({ force: true })', sandbox);
+    nodes[1].h = 700; // n 长高 200：上下各压进 52
+    const moved = resolveWith({ prior: ['n'], grown: ['n'] });
+    if (JSON.stringify(moved) !== '["a","b"]') throw new Error('应只动上下邻居：' + JSON.stringify(moved));
+    if (nodes[1].y !== 0) throw new Error('长高的卡自己不动：' + nodes[1].y);
+    if (nodes[0].y !== -648 || nodes[2].y !== 648) throw new Error('邻居应各让 100：' + posOf(nodes));
+    if (!overlapFree(nodes)) throw new Error('落座后仍压着');
+    return true;
+  } finally { restore(prev); }
+});
+
+check('实体落座: 让位是链式下推、不越过下面的卡（列内上下顺序不变）；再跑一遍是空操作', () => {
+  const prev = capture();
+  try {
+    const nodes = seed({
+      nodes: [
+        { id: 'a', x: 190, y: -548, w: 300, h: 500 },
+        { id: 'n', x: 190, y: 0, w: 300, h: 500 },
+        { id: 'b', x: 190, y: 548, w: 300, h: 500 },
+        { id: 'c', x: 190, y: 1096, w: 300, h: 500 },
+      ],
+      layerOf: { a: 1, n: 1, b: 1, c: 1 },
+    });
+    vm.runInContext('_realignGraphColumns({ force: true })', sandbox);
+    nodes[1].h = 700;
+    const moved = resolveWith({ prior: ['n'], grown: ['n'] });
+    if (JSON.stringify(moved) !== '["a","b","c"]') throw new Error('应动三张邻居：' + JSON.stringify(moved));
+    if (nodes[0].y !== -648 || nodes[2].y !== 648 || nodes[3].y !== 1196) {
+      throw new Error('b、c 应整体各下推 100（不越过）：' + posOf(nodes));
+    }
+    if (!(nodes[0].y < nodes[1].y && nodes[1].y < nodes[2].y && nodes[2].y < nodes[3].y)) {
+      throw new Error('列内顺序被改：' + posOf(nodes));
+    }
+    const again = resolveWith({ prior: ['n'], grown: ['n'] });
+    if (again.length) throw new Error('已落座不该再动：' + JSON.stringify(again));
+    return true;
+  } finally { restore(prev); }
+});
+
+check('实体落座: 自由卡最后落座 → 压到列成员就自己滑到最近空位，四向取最近、列成员不动', () => {
+  const prev = capture();
+  try {
+    const nodes = seed({
+      nodes: [
+        { id: 'b', x: 190, y: 0, w: 300, h: 100 },
+        { id: 'f', x: 190, y: 0, w: 300, h: 100 },
+      ],
+      layerOf: { b: 1 },
+      freeNodes: { f: 1 },
+    });
+    vm.runInContext('_realignGraphColumns({ force: true })', sandbox);
+    // ① 完全重合：四向平手 → 纵向优先、先下（后落的卡落到下方，合阅读顺序）→ b 脚下 16 净距
+    let moved = resolveWith({ last: ['f'] });
+    if (JSON.stringify(moved) !== '["f"]' || nodes[1].y !== 116 || nodes[1].x !== 190) {
+      throw new Error('重合时应滑到正下方：' + posOf(nodes) + JSON.stringify(moved));
+    }
+    // ② 压进 b 六成：往回退 76 最短（往下要整张越过 b）
+    nodes[1].y = -40;
+    resolveWith({ last: ['f'] });
+    if (nodes[1].y !== -116) throw new Error('压六成应退回 76：' + nodes[1].y);
+    // ③ 大半在 b 右侧：横向只需 68 → 往右滑到贴着 16 净距
+    nodes[1].y = 0;
+    nodes[1].x = 438;
+    resolveWith({ last: ['f'] });
+    if (nodes[1].x !== 506 || nodes[1].y !== 0) throw new Error('侧压应横滑 68：' + posOf(nodes));
+    if (nodes[0].x !== 190 || nodes[0].y !== 0) throw new Error('先落座的列成员被动了：' + posOf(nodes));
+    return true;
+  } finally { restore(prev); }
+});
+
+check('实体落座: 列成员给自由卡让位时只沿列上下滑，x 恒为列心', () => {
+  const prev = capture();
+  try {
+    const nodes = seed({
+      nodes: [
+        { id: 'b', x: 190, y: 0, w: 300, h: 100 },
+        { id: 'f', x: 190, y: 0, w: 300, h: 100 },
+      ],
+      layerOf: { b: 1 },
+      freeNodes: { f: 1 },
+    });
+    vm.runInContext('_realignGraphColumns({ force: true })', sandbox);
+    nodes[1].x = 240; // 自由卡偏右压着 b
+    const moved = resolveWith({ prior: ['f'] });
+    if (JSON.stringify(moved) !== '["b"]') throw new Error('应只动 b：' + JSON.stringify(moved));
+    if (nodes[0].x !== 190 || Math.abs(nodes[0].y) !== 116) {
+      throw new Error('b 只许沿列滑（x=190、y=±116）：' + posOf(nodes));
+    }
+    if (nodes[1].x !== 240) throw new Error('先落座的自由卡被动了：' + posOf(nodes));
+    return true;
+  } finally { restore(prev); }
+});
+
+check('实体落座: 一摞自由卡按给定顺序逐张落座，最终两两不压且是定点', () => {
+  const prev = capture();
+  try {
+    const nodes = seed({
+      nodes: [
+        { id: 'f1', x: 0, y: 0, w: 300, h: 200 },
+        { id: 'f2', x: 20, y: 30, w: 260, h: 180 },
+        { id: 'f3', x: -15, y: -10, w: 320, h: 240 },
+        { id: 'f4', x: 40, y: 60, w: 200, h: 300 },
+        { id: 'f5', x: 0, y: 0, w: 300, h: 200 },
+      ],
+      layerOf: {},
+      freeNodes: { f1: 1, f2: 1, f3: 1, f4: 1, f5: 1 },
+    });
+    const moved = resolveWith({});
+    if (JSON.stringify(moved) !== '["f2","f3","f4","f5"]') throw new Error('首张不动、其余逐张落座：' + JSON.stringify(moved));
+    if (nodes[0].x !== 0 || nodes[0].y !== 0) throw new Error('最先落座的 f1 不该动');
+    if (!overlapFree(nodes)) throw new Error('落座后仍有压叠：' + posOf(nodes));
+    const settled = posOf(nodes);
+    if (resolveWith({}).length || posOf(nodes) !== settled) throw new Error('再跑一遍不是空操作');
+    return true;
+  } finally { restore(prev); }
+});
+
+check('实体落座: 让位的钉住卡同步 fixedX/fixedY；skip 的卡不挡路也不被推', () => {
+  const prev = capture();
+  try {
+    const nodes = seed({
+      nodes: [
+        { id: 'a', x: 190, y: 100, w: 300, h: 500 },
+        { id: 'b', x: 190, y: 0, w: 300, h: 500 },
+      ],
+      layerOf: {},
+      freeNodes: { a: 1, b: 1 },
+    });
+    nodes[0].pinned = true;
+    nodes[0].fixedX = 190;
+    nodes[0].fixedY = 100;
+    const moved = resolveWith({ prior: ['b'] });
+    if (JSON.stringify(moved) !== '["a"]') throw new Error('应只动 a：' + JSON.stringify(moved));
+    // 两张都是自由卡：横滑 316（贴 16 净距）比纵向 416/616 都近；左右平手取先列的右
+    if (nodes[0].x !== 506 || nodes[0].y !== 100 || nodes[0].fixedX !== 506 || nodes[0].fixedY !== 100) {
+      throw new Error('钉住卡让位后 fixedX/fixedY 必须同步：' + JSON.stringify([nodes[0].x, nodes[0].y, nodes[0].fixedX, nodes[0].fixedY]));
+    }
+    // skip：正在拖着的卡不算实体
+    const nodes2 = seed({
+      nodes: [
+        { id: 'a', x: 190, y: 100, w: 300, h: 500 },
+        { id: 'b', x: 190, y: 0, w: 300, h: 500 },
+      ],
+      layerOf: {},
+      freeNodes: { a: 1, b: 1 },
+    });
+    const skipped = resolveWith({ skip: ['b'] });
+    if (skipped.length || posOf(nodes2) !== JSON.stringify([['a', 190, 100], ['b', 190, 0]])) {
+      throw new Error('被 skip 的卡不该挡路也不该被推：' + JSON.stringify(skipped) + posOf(nodes2));
+    }
+    return true;
+  } finally { restore(prev); }
+});
+
+check('实体落座: 被推的组员 → 组框当场贴回成员，包含同步不掉组；noRefitFor 的照旧掉组', () => {
+  const prev = capture();
+  try {
+    const mk = () => seed({
+      nodes: [
+        { id: 'n', x: 190, y: 0, w: 300, h: 500 },
+        { id: 'b', x: 190, y: 548, w: 300, h: 500 },
+      ],
+      groups: [{ id: 'g1', name: 'g', nodeIds: ['b'], x: 0, y: 0, width: 100, height: 100 }],
+      layerOf: { n: 1, b: 1 },
+    });
+    // ① 默认：组员 b 被推走，框跟过去，同步后仍在组里
+    let nodes = mk();
+    vm.runInContext('_realignGraphColumns({ force: true }); _fitAllGroupsToMembers();', sandbox);
+    const frameBefore = JSON.stringify(vm.runInContext('graphView.groups[0]', sandbox));
+    nodes[0].h = 700;
+    const moved = resolveWith({ prior: ['n'], grown: ['n'] });
+    if (JSON.stringify(moved) !== '["b"]' || nodes[1].y !== 648) throw new Error('b 应被推到 648：' + posOf(nodes));
+    const g1 = vm.runInContext('_syncGroupMembersByContainment(); graphView.groups[0]', sandbox);
+    if (JSON.stringify(g1.nodeIds) !== '["b"]') throw new Error('被推的组员掉组了：' + JSON.stringify(g1.nodeIds));
+    if (JSON.stringify(vm.runInContext('graphView.groups[0]', sandbox)) === frameBefore) throw new Error('组框没贴回成员');
+    // ② noRefitFor（用户亲手拖出组的卡）：框不贴，同步照旧按「拖出组框」减成员
+    nodes = mk();
+    vm.runInContext('_realignGraphColumns({ force: true }); _fitAllGroupsToMembers();', sandbox);
+    const frameKept = JSON.stringify(vm.runInContext('graphView.groups[0]', sandbox));
+    nodes[0].h = 700;
+    resolveWith({ prior: ['n'], grown: ['n'], noRefitFor: ['b'] });
+    if (JSON.stringify(vm.runInContext('graphView.groups[0]', sandbox)) !== frameKept) throw new Error('noRefitFor 的组框不该被贴');
+    vm.runInContext('_syncGroupMembersByContainment()', sandbox);
+    const g2 = vm.runInContext('graphView.groups[0]', sandbox);
+    if (g2.nodeIds.length !== 0) throw new Error('noRefitFor 的卡应照旧掉组：' + JSON.stringify(g2.nodeIds));
+    return true;
+  } finally { restore(prev); }
+});
+
+check('实体落座: 挪了人 → 内存态存档位当场跟上（不等存盘）', () => {
+  const prev = capture();
+  try {
+    const nodes = seed({
+      nodes: [
+        { id: 'a', x: 190, y: 0, w: 300, h: 500 },
+        { id: 'b', x: 190, y: 100, w: 300, h: 500 },
+      ],
+      layerOf: { a: 1, b: 1 },
+    });
+    resolveWith({});
+    const st = vm.runInContext('__gcState', sandbox);
+    if (!st.positions.b || st.positions.b.y !== 548 || st.positions.b.x !== 190) {
+      throw new Error('存档位没跟上落座：' + JSON.stringify(st.positions));
+    }
+    return true;
+  } finally { restore(prev); }
+});
+
+check('实体落座: 一小步一小步长高，同列的缝每一步都保持 48（grown 名单）；不长高时同列 20px 紧缝不碰', () => {
+  const prev = capture();
+  try {
+    const nodes = seed({
+      nodes: [
+        { id: 'n', x: 190, y: 0, w: 300, h: 500 },
+        { id: 'b', x: 190, y: 520, w: 300, h: 500 },
+      ],
+      layerOf: { n: 1, b: 1 },
+    });
+    vm.runInContext('_realignGraphColumns({ force: true })', sandbox);
+    // ① 没人长高：同列 20px 紧缝是旧档里的合法摆法，一个不动
+    const idle = resolveWith({});
+    if (idle.length || nodes[1].y !== 520) throw new Error('不长高时不该动紧缝的卡：' + JSON.stringify(idle) + posOf(nodes));
+    // ② 从 48 缝起，每次只长 10px、长 20 次：每一步之后缝都必须还是 48
+    nodes[1].y = 548;
+    for (let step = 1; step <= 20; step++) {
+      nodes[0].h += 10;
+      resolveWith({ prior: ['n'], grown: ['n'] });
+      const gap = (nodes[1].y - nodes[1].h / 2) - (nodes[0].y + nodes[0].h / 2);
+      if (Math.abs(gap - 48) > 0.01) {
+        throw new Error('第 ' + step + ' 步长高后缝变成 ' + gap + '（应保持 48）：' + posOf(nodes));
+      }
+    }
+    if (nodes[0].y !== 0 || nodes[1].y !== 648) throw new Error('终态应是 n 不动、b=648：' + posOf(nodes));
+    return true;
+  } finally { restore(prev); }
+});
+
+function clearHomes() {
+  vm.runInContext('Object.keys(_graphPushedHome).forEach(function(k){ delete _graphPushedHome[k]; });', sandbox);
+}
+function homes() { return JSON.parse(vm.runInContext('JSON.stringify(_graphPushedHome)', sandbox)); }
+// 改尺寸松手那一下：原位表当期望位
+function resolveHome(prior) {
+  return JSON.parse(vm.runInContext('JSON.stringify(_resolveGraphNodeOverlaps({ prior: ' + JSON.stringify(prior)
+    + ', grown: ' + JSON.stringify(prior) + ', restore: _graphPushedHome }))', sandbox));
+}
+
+check('实体落座: 改尺寸弹性回位——被推开的卡记住原位，松手时路让开了就弹回（跨手势也行）；亲手拖过后原位作废', () => {
+  const prev = capture();
+  try {
+    const nodes = seed({
+      nodes: [
+        { id: 'n', x: 190, y: 100, w: 300, h: 100 },
+        { id: 'b', x: 190, y: 300, w: 300, h: 100 },
+      ],
+      layerOf: {},
+      freeNodes: { n: 1, b: 1 },
+    });
+    // 手势一：n 长高压到 b → b 让到 316，并记下原位 300
+    nodes[0].h = 300;
+    resolveWith({ prior: ['n'], grown: ['n'], rememberHome: true });
+    if (nodes[1].y !== 316) throw new Error('b 应让到 316：' + nodes[1].y);
+    if (JSON.stringify(homes()) !== '{"b":{"x":190,"y":300}}') throw new Error('被推开的卡应记下原位：' + JSON.stringify(homes()));
+    // 松手（n 还是大卡）：想回也回不去 → 留在 316 且不算动过；原位记录保留
+    let moved = resolveHome(['n']);
+    if (moved.length || nodes[1].y !== 316) throw new Error('回不去应原位不动：' + JSON.stringify(moved) + nodes[1].y);
+    if (!homes().b) throw new Error('没回到原位，记录不该作废');
+    // 又推远一步：原位只记头一次（仍是 300）
+    nodes[0].h = 400;
+    resolveWith({ prior: ['n'], grown: ['n'], rememberHome: true });
+    if (!homes().b || homes().b.y !== 300) throw new Error('原位只该记头一次：' + JSON.stringify(homes()));
+    // 手势二（另一次改尺寸）：n 缩回去了 → 松手时 b 弹回 300，记录作废
+    nodes[0].h = 100;
+    moved = resolveHome(['n']);
+    if (JSON.stringify(moved) !== '["b"]' || nodes[1].y !== 300) throw new Error('缩回去后 b 应弹回 300：' + posOf(nodes));
+    if (homes().b) throw new Error('回到原位后记录应作废：' + JSON.stringify(homes()));
+    // 用户亲手拖过 b 之后：原位作废，之后即使路让开了也不弹回
+    nodes[0].h = 300;
+    resolveWith({ prior: ['n'], grown: ['n'], rememberHome: true });
+    vm.runInContext('_forgetGraphNodeHome(["b"])', sandbox);
+    nodes[0].h = 100;
+    moved = resolveHome(['n']);
+    if (moved.length || nodes[1].y !== 316) throw new Error('原位作废后不该弹回：' + JSON.stringify(moved) + posOf(nodes));
+    // AI 长高（不带 rememberHome）不记原位
+    nodes[0].h = 300;
+    resolveWith({ prior: ['n'], grown: ['n'] });
+    if (Object.keys(homes()).length) throw new Error('长高推开的卡不该记原位：' + JSON.stringify(homes()));
+    return true;
+  } finally { clearHomes(); restore(prev); }
+});
+
+check('接线·自动整理: 列成员按整理结果一格不动，压到它的自由卡让位；不压的自由卡不动；连整理两次是定点', () => {
+  const prev = capture();
+  try {
+    const nodes = seed({
+      nodes: [
+        { id: 'a', x: 140, y: 0, w: 200, h: 80 },
+        { id: 'b', x: 502, y: 0, w: 300, h: 500 },
+        { id: 'c', x: 502, y: 548, w: 300, h: 500 },
+        { id: 'e', x: 502, y: 100, w: 300, h: 200 },  // 自由卡压在 b、c 身上
+        { id: 'k', x: 502, y: 1500, w: 300, h: 200 }, // 自由卡离得远
+      ],
+      layerOf: { a: 0, b: 1, c: 1 },
+      freeNodes: { e: 1, k: 1 },
+    });
+    vm.runInContext('autoArrangeGraph()', sandbox);
+    // 列成员＝纯整理结果：列1 总高 1048 居中 → b=-274、c=274
+    if (nodes[1].y !== -274 || nodes[2].y !== 274 || nodes[1].x !== 502 || nodes[2].x !== 502) {
+      throw new Error('列成员应是整理结果（b=-274、c=274、x=502）：' + posOf(nodes));
+    }
+    // e 四向里横滑 316 最近（上 740、下 540、左要越过 a 列 628）→ 落到列1 右侧贴 16 净距
+    if (nodes[3].x !== 818 || nodes[3].y !== 100) throw new Error('e 应横滑到 (818,100)：' + posOf(nodes));
+    if (nodes[4].x !== 502 || nodes[4].y !== 1500) throw new Error('不压的自由卡不该动：' + posOf(nodes));
+    if (!overlapFree(nodes)) throw new Error('整理后仍有压叠');
+    const once = posOf(nodes);
+    vm.runInContext('autoArrangeGraph()', sandbox);
+    if (posOf(nodes) !== once) throw new Error('第二次整理改了坐标：' + posOf(nodes) + ' vs ' + once);
+    return true;
+  } finally { restore(prev); }
+});
+
+function dragSetup(node, from, to, alt) {
+  node.x = to.x;
+  node.y = to.y;
+  vm.runInContext([
+    '_syncGraphSelectionClasses = function(){};',
+    'graphView.dragNodeId = ' + JSON.stringify(node.id) + ';',
+    'graphView.dragStartPositions = ' + JSON.stringify({ [node.id]: from }) + ';',
+    'graphView.pointerId = 7; graphView.moved = true; graphView.dragWasSelected = true;',
+    'graphView.dragModifier = false; graphView.altFree = ' + (alt ? 'true' : 'false') + ';',
+    'graphView.selectedNodeIds = new Set([' + JSON.stringify(node.id) + ']);',
+    'graphView.linkDrag = null; graphView.boxSelect = null;',
+    'graphView.resizeNodeId = null; graphView.resizeGroupId = null;',
+    'graphView.paintRaf = 0; graphView.paintPending = false; graphView.symbolsPausedForDrag = false;',
+    '_endPointerDrag({ pointerId: 7, target: null });',
+  ].join('\n'), sandbox);
+}
+function dragCleanup(prevSync) {
+  vm.runInContext([
+    '_syncGraphSelectionClasses = __gcPrevSync;',
+    'graphView.dragStartPositions = {}; graphView.dragWasSelected = false;',
+    'graphView.dragModifier = false; graphView.altFree = false;',
+    'graphView.pointerId = null; graphView.moved = false; graphView.selectedNodeIds = new Set();',
+  ].join('\n'), Object.assign(sandbox, { __gcPrevSync: prevSync }));
+}
+
+check('接线·拖拽: Alt 落成自由的卡压到列成员 → 自己往上滑开 166，列成员一格不动、落盘记新位', () => {
+  const prev = capture();
+  let prevSync;
+  try {
+    const nodes = seed({
+      nodes: [
+        { id: 'a', x: 140, y: 0, w: 200, h: 80 },
+        { id: 'b', x: 502, y: 0, w: 300, h: 500 },
+        { id: 'e', x: 1500, y: 0, w: 300, h: 200 },
+      ],
+      layerOf: { a: 0, b: 1 },
+      freeNodes: { e: 1 },
+    });
+    vm.runInContext('_realignGraphColumns({ force: true })', sandbox);
+    prevSync = vm.runInContext('_syncGraphSelectionClasses', sandbox);
+    vm.runInContext('__gcUpdates.length = 0;', sandbox);
+    dragSetup(nodes[2], { x: 1500, y: 0 }, { x: 502, y: -200 }, true);
+    if (nodes[2].x !== 502 || nodes[2].y !== -366) throw new Error('e 应滑到 b 上方 16 净距（y=-366）：' + posOf(nodes));
+    if (nodes[1].x !== 502 || nodes[1].y !== 0) throw new Error('列成员 b 被动了：' + posOf(nodes));
+    if (!vm.runInContext('__gcState.freeNodes.e', sandbox)) throw new Error('Alt 落点应仍是自由卡');
+    const updates = JSON.parse(vm.runInContext('JSON.stringify(__gcUpdates)', sandbox));
+    if (!updates.some(u => u.indexOf('e') !== -1)) throw new Error('让位后没刷 transform：' + JSON.stringify(updates));
+    const saved = vm.runInContext('__gcSavedState', sandbox);
+    if (!saved || !saved.positions.e || saved.positions.e.y !== -366) {
+      throw new Error('存档应记让位后的坐标：' + JSON.stringify(saved && saved.positions.e));
+    }
+    return true;
+  } finally { dragCleanup(prevSync); restore(prev); }
+});
+
+check('接线·拖拽: 单卡拖进列 → 卡落在松手位（先落座），挡路的自由卡让位', () => {
+  const prev = capture();
+  let prevSync;
+  try {
+    const nodes = seed({
+      nodes: [
+        { id: 'b', x: 190, y: 0, w: 300, h: 500 },
+        { id: 'f', x: 190, y: 548, w: 300, h: 100 },
+        { id: 'a', x: 1200, y: 548, w: 300, h: 250 },
+      ],
+      layerOf: { b: 1 },
+      freeNodes: { f: 1, a: 1 },
+    });
+    vm.runInContext('_realignGraphColumns({ force: true })', sandbox);
+    prevSync = vm.runInContext('_syncGraphSelectionClasses', sandbox);
+    // 把自由卡 a 拖进列框、正好落在自由卡 f 停着的位置
+    dragSetup(nodes[2], { x: 1200, y: 548 }, { x: 190, y: 548 }, false);
+    if (vm.runInContext('__gcState.layerOf.a', sandbox) !== 1) throw new Error('a 应归列');
+    // a 落在行槽 560 原地不动；f 上滑 179 让出位置（下滑 203、横滑 316 都更远）
+    if (nodes[2].x !== 190 || nodes[2].y !== 560) throw new Error('a 应留在松手位：' + posOf(nodes));
+    if (nodes[1].x !== 190 || nodes[1].y !== 369) throw new Error('f 应让到 369：' + posOf(nodes));
+    if (nodes[0].y !== 0) throw new Error('同列的 b 不该动：' + posOf(nodes));
+    if (!overlapFree(nodes)) throw new Error('落座后仍压着');
+    return true;
+  } finally { dragCleanup(prevSync); restore(prev); }
+});
+
+check('接线·卡片长高: 尺寸真变的卡先落座、下面的卡被推走；首测的新节点不算长高（给老卡让位）', () => {
+  const prev = capture();
+  const realMeasure = vm.runInContext('_measureNodes', sandbox);
+  const prevRaf = vm.runInContext('requestAnimationFrame', sandbox);
+  const prevZoom = vm.runInContext('graphView.zoom', sandbox);
+  try {
+    const nodes = seed({
+      nodes: [
+        { id: 'n', x: 190, y: 0, w: 300, h: 500 },
+        { id: 'b', x: 190, y: 548, w: 300, h: 500 },
+        { id: 'm', x: 190, y: 0, w: 0, h: 0 },
+      ],
+      layerOf: { n: 1, b: 1, m: 1 },
+    });
+    vm.runInContext('_realignGraphColumns({ force: true })', sandbox);
+    // 假 DOM：只有 n 一张卡的矩形，量出来 700 高；真 _measureNodes 记「尺寸真变过」名单
+    const fakeEl = { dataset: { nodeId: 'n' }, getBoundingClientRect: () => ({ width: 300, height: 700 }) };
+    sandbox.__gcFakeInner = { offsetWidth: 0, querySelectorAll: () => [fakeEl] };
+    sandbox.__gcRealMeasure = realMeasure;
+    vm.runInContext([
+      'graphInner = __gcFakeInner;',
+      '_graphCompositeScaleCache.valid = false;',
+      '_measureNodes = __gcRealMeasure;',
+      'graphView.zoom = 1;',
+    ].join('\n'), sandbox);
+    vm.runInContext('_measureNodes()', sandbox);
+    if (nodes[0].h !== 700) throw new Error('测量应把 n 量成 700 高');
+    if (!vm.runInContext('_graphResizedNodeIds.has("n")', sandbox)) throw new Error('尺寸真变的卡应进先落座名单');
+    // 首测的 m（0→真身）不算长高
+    fakeEl.dataset.nodeId = 'm';
+    fakeEl.getBoundingClientRect = () => ({ width: 300, height: 60 });
+    vm.runInContext('_measureNodes()', sandbox);
+    if (vm.runInContext('_graphResizedNodeIds.has("m")', sandbox)) throw new Error('首测不该算长高');
+    fakeEl.dataset.nodeId = 'n';
+    fakeEl.getBoundingClientRect = () => ({ width: 300, height: 700 });
+    vm.runInContext([
+      '__gcUpdates.length = 0;',
+      'requestAnimationFrame = function(cb){ cb(); return 1; };',
+      '_nodeGeomPending.add("n");',
+      '_scheduleEdgeResync();',
+    ].join('\n'), sandbox);
+    if (nodes[1].y !== 648) throw new Error('长高后 b 应被推到 648：' + posOf(nodes));
+    if (nodes[0].y !== 0) throw new Error('长高的卡自己不动：' + posOf(nodes));
+    if (vm.runInContext('_graphResizedNodeIds.size', sandbox) !== 0) throw new Error('名单取走后应清空');
+    const st = vm.runInContext('__gcState', sandbox);
+    if (!st.positions.b || st.positions.b.y !== 648) throw new Error('存档位应跟上：' + JSON.stringify(st.positions));
+    return true;
+  } finally {
+    vm.runInContext([
+      'requestAnimationFrame = __gcPrevRaf;',
+      'graphView.zoom = __gcPrevZoom;',
+      '_nodeGeomPending.clear();',
+      '_graphResizedNodeIds.clear();',
+    ].join('\n'), Object.assign(sandbox, { __gcPrevRaf: prevRaf, __gcPrevZoom: prevZoom }));
+    restore(prev);
+  }
+});
+
+check('接线·画布重建: 有存档位的先落座，新节点给老节点让位；挪了人就落盘', () => {
+  const prev = capture();
+  const prevCanvas = vm.runInContext('typeof graphCanvas !== "undefined" ? graphCanvas : null', sandbox);
+  const prevRaf = vm.runInContext('requestAnimationFrame', sandbox);
+  const prevMarked = vm.runInContext('typeof marked !== "undefined" ? marked : null', sandbox);
+  const prevPurify = vm.runInContext('typeof DOMPurify !== "undefined" ? DOMPurify : null', sandbox);
+  const prevKatexPass = vm.runInContext('typeof _graphKatexVisiblePass !== "undefined" ? _graphKatexVisiblePass : null', sandbox);
+  const prevVizInit = vm.runInContext('typeof _initVizIframes !== "undefined" ? _initVizIframes : null', sandbox);
+  try {
+    seed({ nodes: [], layerOf: {}, freeNodes: {} });
+    vm.runInContext([
+      'var __raf = []; requestAnimationFrame = function(cb){ __raf.push(cb); return __raf.length; };',
+      'marked = { parse: function(s){ return String(s == null ? "" : s); } };',
+      'DOMPurify = { sanitize: function(s){ return String(s == null ? "" : s); } };',
+      // n1 有存档位（老节点）；n2 没存过位（新节点，建在 n1 身上）
+      '__gcState.customNodes = [',
+      '  { id: "n1", kind: "blank", x: 190, y: 0, content: "甲", customWidth: 300, customHeight: 500 },',
+      '  { id: "n2", kind: "blank", x: 190, y: 100, content: "乙", customWidth: 300, customHeight: 500 }];',
+      '__gcState.positions = { n1: { x: 190, y: 0 } }; __gcState.layoutVersion = ' + vm.runInContext('LAYOUT_VERSION', sandbox) + ';',
+      '__gcState.layerOf = { n1: 1, n2: 1 };',
+      '__gcState.pan = { x: 0, y: 0 }; __gcState.zoom = 1;',
+      '__gcState.removedEdges = []; __gcState.collapsed = {}; __gcState.hidden = {};',
+      '__gcState.connections = null; __gcState.portCounts = {}; __gcState.inputPortCounts = {};',
+      '__gcState.harnessDeleted = {}; __gcState.harnessCheckpoint = null;',
+      '__gcSnaps = [];',
+      '_updateNodeTransforms = function(ids){ __gcSnaps.push(graphView.nodes.map(function(n){ return [n.id, n.x, n.y]; })); };',
+      '_graphKatexVisiblePass = function(){};',
+      '_initVizIframes = function(){};',
+      'renderGraphCanvas();',
+      '__raf.splice(0).forEach(function(cb){ cb(); });',
+    ].join('\n'), sandbox);
+    const r = JSON.parse(vm.runInContext([
+      'JSON.stringify({ model: graphView.nodes.map(function(n){ return [n.id, n.x, n.y]; }),',
+      '  saved: __gcState.positions, snaps: __gcSnaps })',
+    ].join('\n'), sandbox));
+    const byId = Object.fromEntries(r.model.map(([id, x, y]) => [id, [x, y]]));
+    if (JSON.stringify(byId.n1) !== '[190,0]') throw new Error('老节点不该动：' + JSON.stringify(r.model));
+    if (JSON.stringify(byId.n2) !== '[190,548]') throw new Error('新节点应给老节点让位（落到 48 缝下 548）：' + JSON.stringify(r.model));
+    if (!r.saved.n2 || r.saved.n2.y !== 548) throw new Error('让位结果应落盘：' + JSON.stringify(r.saved));
+    const last = r.snaps[r.snaps.length - 1];
+    if (JSON.stringify(last) !== JSON.stringify(r.model)) throw new Error('DOM 最后快照与模型脱节：' + JSON.stringify({ last, model: r.model }));
+    return true;
+  } finally {
+    vm.runInContext([
+      'requestAnimationFrame = __gcPrevRaf;',
+      'if (__gcPrevMarked) marked = __gcPrevMarked; else delete marked;',
+      'if (__gcPrevPurify) DOMPurify = __gcPrevPurify; else delete DOMPurify;',
+      '_graphKatexVisiblePass = __gcPrevKatexPass;',
+      '_initVizIframes = __gcPrevVizInit;',
+      'graphCanvas = __gcPrevCanvas;',
+      'graphView.selectedNodeIds = new Set(); graphView.boxSelect = null;',
+    ].join('\n'), Object.assign(sandbox, {
+      __gcPrevRaf: prevRaf, __gcPrevMarked: prevMarked, __gcPrevPurify: prevPurify,
+      __gcPrevKatexPass: prevKatexPass, __gcPrevVizInit: prevVizInit, __gcPrevCanvas: prevCanvas,
+    }));
+    restore(prev);
+  }
+});
+
+check('接线: 实体落座六处全接上（整理/拖拽三分支/改尺寸/长高/重建）＋存盘节流', () => {
+  const layout = fs.readFileSync('src/static/js/graph-render-layout.js', 'utf8');
+  const interact = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
+  const render = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
+  if (!layout.includes('function _resolveGraphNodeOverlaps(opts)')) throw new Error('实体落座函数缺失');
+  if (!layout.includes('const GRAPH_NODE_CLEARANCE = 16;')) throw new Error('净距常量缺失');
+  if (layout.includes('_resolveLayoutRectOverlaps')) throw new Error('旧矩形碰撞又回来了（别按「各让一半」推开，那会把整理好的列拆散）');
+  const arrangeAt = layout.indexOf('_resolveGraphNodeOverlaps({ prior: arrangedIds })');
+  const fitAt = layout.lastIndexOf('_fitAllGroupsToMembers();');
+  if (arrangeAt < 0 || fitAt < 0 || arrangeAt > fitAt) throw new Error('整理未在重算组框前接实体落座');
+  // 整理里列成员先落座：名单必须取自 _graphColumns（列是唯一事实源）
+  if (!layout.includes('_graphColumns().forEach(col => col.members.forEach(n => arrangedIds.push(n.id)))')) throw new Error('整理的先落座名单没取自列清单');
+  if (!layout.includes('function _scheduleGraphPositionsSave()')) throw new Error('落座存盘节流缺失');
+  if (!interact.includes('_resolveGraphNodeOverlaps({ prior: Object.keys(savedPositions) })')) throw new Error('画布重建未接实体落座（存档位优先）');
+  if (!interact.includes("_resolveGraphNodeOverlaps({ last: draggedIds, noRefitFor: draggedIds })")) throw new Error('自由落点未接实体落座');
+  if (!interact.includes('prior: committed.assigned.map(item => item.id).concat(touched),')) throw new Error('多选落点未接实体落座');
+  if (!interact.includes('prior: groupCommitted.assigned.map(item => item.id).concat(groupTouched),')) throw new Error('整组落点未接实体落座');
+  if (!interact.includes("_resolveGraphNodeOverlaps({ prior: settledIds ? [node.id].concat(settledIds) : [node.id] })")) throw new Error('单卡进列未接实体落座');
+  if (!interact.includes('_resolveGraphNodeOverlaps({ prior: [node.id], grown: [node.id], rememberHome: true })')) throw new Error('改尺寸每帧未接实体落座/未记原位');
+  if (!interact.includes('restore: _graphPushedHome')) throw new Error('改尺寸松手未接弹性回位');
+  if (interact.includes('graphView.resizeStartPositions')) throw new Error('旧的单手势回位基准仍残留');
+  if (!interact.includes('_forgetGraphNodeHome(draggedIds)') || !interact.includes('_forgetGraphNodeHome(movedIds)')) throw new Error('亲手拖过的卡未作废原位');
+  if (!layout.includes('_forgetGraphNodeHome(arrangedIds)')) throw new Error('整理未作废列成员原位');
+  if (!layout.includes('const pairGap = (idA, colA, idB, colB) => (')) throw new Error('压到判距（同列长高按 48、其余按 16）缺失');
+  // （弹性回位断言见上）
+  // （弹性回位断言见上）
+  if (!render.includes('_resolveGraphNodeOverlaps({ prior: grown, grown, skip: _graphNodesInGesture() })')) throw new Error('尺寸测量后未接实体落座（或没把长高名单交给它）');
+  if (!render.includes('_noteGraphNodeResized(node.id)')) throw new Error('测量未记「尺寸真变过」名单');
+  if (!render.includes('if (prevW > 0 && prevH > 0 &&')) throw new Error('首测不该算长高');
+  return true;
+});
+
 await drain();
 }

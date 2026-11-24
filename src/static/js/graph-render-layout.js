@@ -11,7 +11,15 @@ const GRAPH_COL_NEW_COL = 120; // 拖到两端外侧超过这个距离才新建�
 const GRAPH_COL_MAX = 40;      // 安全上限，防误拖出几十列
 const GRAPH_COL_STACK_GAP = 48; // 自动整理：列内相邻卡片的统一纵向缝
 
+// 实体落座挪人后的节流存盘状态（_scheduleGraphPositionsSave）：任何一次显式
+// _savePositions 存的都是当下全量位置，挂着没发的那一拍自然作废。
+let _graphPositionsSaveTimer = 0;
+let _graphPositionsSaveWaits = 0;
+
 function _savePositions() {
+  clearTimeout(_graphPositionsSaveTimer);
+  _graphPositionsSaveTimer = 0;
+  _graphPositionsSaveWaits = 0;
   _syncGroupMembersByContainment();
   const state = _graphState();
   state.layoutVersion = LAYOUT_VERSION;
@@ -192,6 +200,8 @@ function _pruneGraphNodeMarks(state) {
     if (!map || typeof map !== 'object') return;
     Object.keys(map).forEach(id => { if (!ids.has(id)) delete map[id]; });
   });
+  // 改尺寸记的「原位」同理：节点删了记录跟着走
+  Object.keys(_graphPushedHome).forEach(id => { if (!ids.has(id)) delete _graphPushedHome[id]; });
 }
 
 function _graphLayerIndexMap(nodes, edges, overrides) {
@@ -606,6 +616,225 @@ function _settleAssignedNodesIntoColumns(committed) {
   return Array.from(touched);
 }
 
+// ====== 实体落座：节点之间不重叠（2026-11-24）======
+// 卡片当实体：任何两张卡不许压在一起。按优先级逐张落座——先落的原地不动，后落的压到
+// 已落座的卡就沿允许的方向滑到最近空位。与自动整理不打架：整理先把列排好，这里只把
+// 挡路的卡推开，列成员一格不动；列成员永远只沿本列上下滑（x 恒为列心）。
+//   prior       先落座的 id（不动的一方）：刚长高的卡、刚插进列的卡、整理后的列成员
+//   last        最后落座的 id（让位的一方）：Alt/多选落成自由的卡、刚出现的新节点
+//   grown       刚变尺寸的卡：它们与同列邻居的缝一旦不足 48 就算压到、当场拉回 48
+//   restore     { id: {x,y} }：非 prior 节点以这份坐标为期望位；传 _graphPushedHome
+//               ＝改尺寸松手的弹性回位（回到原位的，原位记录当场作废）
+//   rememberHome 改尺寸每帧用：被推开的卡记下原位（_graphPushedHome）
+//   skip        完全不参与（正在拖着的卡＝拿在手里，不算实体）
+//   noRefitFor  这些 id 被挪时不贴它们的组框（用户亲手拖出组的卡照旧掉组）
+// 其余按节点表顺序（先建的先落座）。落座时同列两张卡留整理的 48 缝，别的组合留 16 净距。
+// 「压到」怎么判：grown 涉及的同列邻居按 48 算，其余一律按 16 算——卡片一小步一小步
+// 长高时缝始终保持 48（而不是被吃到 16 才动、越挤越近）；旧档里合法的同列紧排
+// （20px 缝）只在不长高的时候原样保留——加载/查看时只清掉真压着的。
+// 返回被动过的节点 id。被推的成员所在组框当场贴回成员（否则随后的
+// _syncGroupMembersByContainment 会把推出框的成员踢出组），内存态存档位同步跟上，
+// durable 存盘走节流（_scheduleGraphPositionsSave）。
+const GRAPH_NODE_CLEARANCE = 16;      // 非同列两张卡之间的最小净距
+const GRAPH_POSITIONS_SAVE_MS = 400;  // 落座挪人后的存盘节流
+// 被改尺寸推开过的卡的原位（id → {x,y}）：改尺寸松手时能回就回（弹性回位）。只活在
+// 内存里——刷新后让位就是定局（想复原点自动整理）；用户亲手拖过的卡、整理排过的列成员
+// 原位作废（_forgetGraphNodeHome）。AI 长高推开的卡不记原位：内容长了就是长了。
+const _graphPushedHome = {};
+
+function _forgetGraphNodeHome(ids) {
+  (ids || []).forEach(id => { delete _graphPushedHome[String(id)]; });
+}
+
+// 自上次实体落座以来真身尺寸真变过的节点：_measureNodes 量到就经 _noteGraphNodeResized
+// 累加，_scheduleEdgeResync 用 _takeGraphResizedNodeIds 取走当「先落座」名单。累加而不
+// 覆盖——流式同步 _scheduleGraphSync 与 ResizeObserver 的 rAF 各量一次，第一次量就已经
+// 把 node.w/h 更新了，若只记「本次量的差」第二次量差值为零，长高的卡就当不上先落座的一方。
+const _graphResizedNodeIds = new Set();
+
+function _noteGraphNodeResized(id) {
+  _graphResizedNodeIds.add(String(id));
+}
+
+function _takeGraphResizedNodeIds() {
+  const out = Array.from(_graphResizedNodeIds);
+  _graphResizedNodeIds.clear();
+  return out;
+}
+
+// 沿 sign 方向滑过去，返回第一个不压任何已落座矩形的位移（≥0）。
+// axis 1＝纵向（列成员只有这个方向）、0＝横向；镜像坐标让「正向滑」一个公式管两向。
+// 只有「垂直于滑动方向离得比净距近」的矩形挡路——滑多远都碰不到的不算。
+function _graphFreeShift(placed, node, cx, cy, hw, hh, axis, sign, colKey) {
+  const a0 = axis ? cy - hh : cx - hw;
+  const a1 = axis ? cy + hh : cx + hw;
+  const c0 = axis ? cx - hw : cy - hh;
+  const c1 = axis ? cx + hw : cy + hh;
+  const nodeCol = colKey[String(node.id)];
+  const spans = [];
+  for (let i = 0; i < placed.length; i++) {
+    const p = placed[i];
+    const pc0 = axis ? p.cx - p.hw : p.cy - p.hh;
+    const pc1 = axis ? p.cx + p.hw : p.cy + p.hh;
+    const gap = (p.col && p.col === nodeCol) ? GRAPH_COL_STACK_GAP : GRAPH_NODE_CLEARANCE;
+    if (pc1 <= c0 - gap || pc0 >= c1 + gap) continue;
+    const q0 = axis ? p.cy - p.hh : p.cx - p.hw;
+    const q1 = axis ? p.cy + p.hh : p.cx + p.hw;
+    let start;
+    let end;
+    if (sign > 0) { start = q0 - gap - a1; end = q1 + gap - a0; }
+    else { start = a0 - q1 - gap; end = a1 + gap - q0; }
+    if (end > 0) spans.push([start > 0 ? start : 0, end]);
+  }
+  if (!spans.length) return 0;
+  spans.sort((m, n) => m[0] - n[0]);
+  let cursor = 0;
+  for (let i = 0; i < spans.length; i++) {
+    if (spans[i][0] > cursor) break;
+    if (spans[i][1] > cursor) cursor = spans[i][1];
+  }
+  return cursor;
+}
+
+function _resolveGraphNodeOverlaps(opts) {
+  const options = opts || {};
+  const nodes = (graphView.nodes || []).filter(n => n && n.kind !== 'draft');
+  if (nodes.length < 2) return [];
+  const key = id => String(id);
+  const colKey = {};
+  if (typeof _graphColumns === 'function') {
+    _graphColumns().forEach(c => c.members.forEach(n => { colKey[key(n.id)] = c; }));
+  }
+  const skip = new Set((options.skip || []).map(key));
+  const prior = new Set((options.prior || []).map(key));
+  const last = new Set((options.last || []).map(key));
+  const noRefit = new Set((options.noRefitFor || []).map(key));
+  const grown = new Set((options.grown || []).map(key));
+  const restore = options.restore || null;
+  // 「压到」的判距：同列两张卡里有一张刚变尺寸 → 按整理的 48 缝算（长高时缝被吃到
+  // 48 以下就当场拉回，一小步一小步长也保持节奏）；其余一律 16——旧档里合法的
+  // 同列紧排（20px 缝）只在不长高的时候原样保留。
+  const pairGap = (idA, colA, idB, colB) => (
+    colA && colA === colB && (grown.has(idA) || grown.has(idB))
+      ? GRAPH_COL_STACK_GAP : GRAPH_NODE_CLEARANCE
+  );
+  // 落座顺序：prior → 其余（节点表序）→ last
+  const order = [];
+  const seen = new Set();
+  const take = test => nodes.forEach(n => {
+    const id = key(n.id);
+    if (seen.has(id) || skip.has(id) || !test(id)) return;
+    seen.add(id);
+    order.push(n);
+  });
+  take(id => prior.has(id));
+  take(id => !prior.has(id) && !last.has(id));
+  take(id => last.has(id));
+
+  const placed = [];
+  const moved = [];
+  order.forEach(node => {
+    const id = key(node.id);
+    const size = _layoutNodeSize(node);
+    const hw = Math.max(1, size.w) / 2;
+    const hh = Math.max(1, size.h) / 2;
+    const col = colKey[id] || null;
+    let cx = node.x;
+    let cy = node.y;
+    const back = (restore && !prior.has(id)) ? restore[id] : null;
+    if (back && Number.isFinite(back.x) && Number.isFinite(back.y)) {
+      cy = back.y;
+      if (!col) cx = back.x; // 列成员的 x 恒为列心，只回纵向
+    }
+    let hit = false;
+    for (let i = 0; i < placed.length; i++) {
+      const p = placed[i];
+      const gap = pairGap(id, col, p.id, p.col);
+      if (Math.abs(cx - p.cx) < hw + p.hw + gap - 0.5
+        && Math.abs(cy - p.cy) < hh + p.hh + gap - 0.5) {
+        hit = true;
+        break;
+      }
+    }
+    if (hit) {
+      // 平手取先列的：纵向优先（留在原来的「车道」）；先下后上——叠在同一位置时后建的卡
+      // 落到先建的下方，合阅读顺序；再先右后左
+      const cands = col ? [[1, 1], [1, -1]] : [[1, 1], [1, -1], [0, 1], [0, -1]];
+      let bestT = Infinity;
+      let bestAxis = 0;
+      let bestSign = 0;
+      cands.forEach(c => {
+        const t = _graphFreeShift(placed, node, cx, cy, hw, hh, c[0], c[1], colKey);
+        if (t < bestT - 0.01) { bestT = t; bestAxis = c[0]; bestSign = c[1]; }
+      });
+      if (bestAxis) cy += bestSign * bestT;
+      else cx += bestSign * bestT;
+    }
+    if (cx !== node.x || cy !== node.y) {
+      // 被改尺寸推开的卡记下原位（只记头一次）：之后哪次松手路让开了就弹回去
+      if (options.rememberHome && !prior.has(id) && !_graphPushedHome[id]) {
+        _graphPushedHome[id] = { x: node.x, y: node.y };
+      }
+      node.x = cx;
+      node.y = cy;
+      // 钉住的卡存盘读 fixedX/fixedY（不是 x/y）：让位后同步，否则下次重载失忆
+      if (node.pinned) { node.fixedX = cx; node.fixedY = cy; }
+      moved.push(node.id);
+    }
+    // 回到了原位：原位记录作废
+    if (back && restore === _graphPushedHome && cy === back.y && (col || cx === back.x)) {
+      delete _graphPushedHome[id];
+    }
+    placed.push({ id, cx, cy, hw, hh, col });
+  });
+  if (!moved.length) return moved;
+
+  // 组框贴回成员：被推的成员还在组里，框跟着走，别被随后的包含同步踢出去
+  if (typeof _fitGroupToMembers === 'function') {
+    const movedSet = new Set(moved.map(key));
+    (graphView.groups || []).forEach(group => {
+      if ((group.nodeIds || []).some(id => movedSet.has(key(id)) && !noRefit.has(key(id)))) {
+        _fitGroupToMembers(group);
+      }
+    });
+  }
+  // 内存态存档位立刻跟上：重渲读的就是它，滞后＝节点回跳后再被重排一遍
+  const state = (typeof _graphState === 'function') ? _graphState() : null;
+  if (state && state.positions && typeof state.positions === 'object') {
+    moved.forEach(id => {
+      const n = (graphView.nodeById || {})[id];
+      if (n) state.positions[id] = { x: n.x, y: n.y };
+    });
+  }
+  _scheduleGraphPositionsSave();
+  return moved;
+}
+
+// 落座挪人后的 durable 存盘节流（卡长高时每秒好几拍，整包序列化不跟着逐拍走）。
+// 手势进行中不存：_savePositions 会按包含关系结算分组成员，拖到半路的卡会被误判
+// 掉组；拖拽/改尺寸收尾自己会存一遍（顺带清掉这一拍），这里只兜没人存的情况。
+function _scheduleGraphPositionsSave() {
+  if (_graphPositionsSaveTimer) return;
+  _graphPositionsSaveTimer = setTimeout(function () {
+    _graphPositionsSaveTimer = 0;
+    if ((graphView.dragNodeId || graphView.dragGroupId || graphView.resizeNodeId || graphView.resizeGroupId)
+      && _graphPositionsSaveWaits++ < 50) {
+      _scheduleGraphPositionsSave();
+      return;
+    }
+    _graphPositionsSaveWaits = 0;
+    _savePositions();
+  }, GRAPH_POSITIONS_SAVE_MS);
+}
+
+// 正被手势拖着的节点：拿在手里的卡不算实体——不挡路，也不被推（落点由松手那一下定）。
+function _graphNodesInGesture() {
+  const out = [];
+  if (graphView.dragNodeId && graphView.dragStartPositions) out.push(...Object.keys(graphView.dragStartPositions));
+  if (graphView.dragGroupId && graphView.dragGroupNodeStartPositions) out.push(...Object.keys(graphView.dragGroupNodeStartPositions));
+  return out;
+}
+
 // 旧名保留为兼容别名：语义已换成「整列重算」——最宽节点变宽右侧右移，
 // 变窄或最宽节点换人则整排回移，不再只往右推。新代码直接调 _realignGraphColumns。
 function _squeezeLayersRightForNode(node, opts) {
@@ -668,6 +897,15 @@ function autoArrangeGraph(preservePinned) {
       cursor += h + GRAPH_COL_STACK_GAP;
     });
   });
+
+  // 4.5) 实体落座（2026-11-24）：列成员按整理结果先落座——一格不动；压到它们的自由卡
+  //      让位（滑到最近空位）。自由卡之间压着的按节点表顺序，先建的先落座。
+  //      不压到任何列成员的自由卡照旧一动不动。
+  const arrangedIds = [];
+  _graphColumns().forEach(col => col.members.forEach(n => arrangedIds.push(n.id)));
+  _resolveGraphNodeOverlaps({ prior: arrangedIds });
+  _forgetGraphNodeHome(arrangedIds); // 排过了就是新位置，旧的「原位」作废
+  _takeGraphResizedNodeIds();        // 尺寸变化已被这次整理全量吸收，不再留给下一拍
 
   // 5) 组框按最终成员重算边界（成员换列/换序后框跟着走），绝不在这里增减成员。
   _fitAllGroupsToMembers();

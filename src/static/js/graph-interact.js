@@ -237,6 +237,16 @@ function renderGraphCanvas(streaming) {
         if (needsFit) _updateNodeTransforms();
       }
     }
+    // 实体落座（2026-11-24）：旧档/导入/恢复里压着的卡在这里清掉——有存档坐标的先落座
+    // （先建的先落），还没存过位的新节点最后落座＝给所有人让位。挪了人就落盘，否则
+    // 下次重建又读回压着的旧坐标、再排一遍。
+    if (typeof _resolveGraphNodeOverlaps === 'function') {
+      const pushed = _resolveGraphNodeOverlaps({ prior: Object.keys(savedPositions) });
+      if (pushed.length) {
+        if (typeof _savePositions === 'function') _savePositions();
+        _updateNodeTransforms();
+      }
+    }
     if (!needsFit) {
       _updateNodeTransforms();
       if (typeof _scheduleGraphLayerBands === 'function') _scheduleGraphLayerBands();
@@ -2492,6 +2502,11 @@ function _applyPointerDrag(clientX, clientY) {
         const aligned = _realignGraphColumns({ force: true, silentUpdate: true, silentEdges: true });
         if (aligned && aligned.moved.length) movedIds = aligned.moved;
       }
+      // 实体落座（2026-11-24）：被拉大的卡原地不动，压到的邻居实时让位并记下原位；
+      // 松手时路让开了就弹回（见 _endPointerDrag 改尺寸分支）。
+      if (typeof _resolveGraphNodeOverlaps === 'function') {
+        movedIds = movedIds.concat(_resolveGraphNodeOverlaps({ prior: [node.id], grown: [node.id], rememberHome: true }));
+      }
       _updateNodeTransforms(movedIds);
       if (node.kind === 'ai_eval') _updateAiEvalZigzag(node);
       // resize 帧走边的增量快速路径（只改涉及边的 d/标签），整层重建退居后备
@@ -2645,6 +2660,17 @@ function _endPointerDrag(event) {
       if (group) _fitGroupToMembers(group);
       // 钉住的节点存盘读 fixedX/fixedY（不是 x/y）：改尺寸挪了中心就顺手同步，否则下次重载失忆
       if (node.pinned) { node.fixedX = node.x; node.fixedY = node.y; }
+      // 实体落座（2026-11-24）：改尺寸推开过的卡弹性回位——路让开了（卡缩回去了）就弹回
+      // 原位（与列宽「变窄回移」同一口径），还压着的就近让位。原位表跨手势有效：先拉大
+      // 松手、过会儿再拉小，邻居照样回得来。得赶在包含同步前面：被推到组框外的成员
+      // 先回到框里，才不会被当成「拖出组框」踢掉。
+      if (typeof _resolveGraphNodeOverlaps === 'function') {
+        const pushedIds = _resolveGraphNodeOverlaps({ prior: [node.id], grown: [node.id], restore: _graphPushedHome });
+        if (pushedIds.length) {
+          if (typeof _updateNodeTransforms === 'function') _updateNodeTransforms(pushedIds);
+          if (typeof _redrawEdges === 'function') _redrawEdges();
+        }
+      }
       _syncGroupMembersByContainment();
       // 收尾再落一次整排：变宽右移、变窄回移、最宽节点换人也回收列宽。
       if (typeof _realignGraphColumns === 'function') _realignGraphColumns({ force: true });
@@ -2685,6 +2711,8 @@ function _endPointerDrag(event) {
     if (group && graphView.moved) {
       _pushGraphUndo(false, { layout: true });
       const movedIds = Object.keys(graphView.dragGroupNodeStartPositions || {});
+      // 亲手拖过的卡，落点就是它的新位置：改尺寸推开时记的「原位」作废
+      if (typeof _forgetGraphNodeHome === 'function') _forgetGraphNodeHome(movedIds);
       // 归属提交：整组按各自落点中心落进既有列框，框外/缝里＝自由；Alt＝全部自由。
       let groupCommitted = null;
       if (typeof _commitGraphNodeOwnership === 'function') {
@@ -2697,9 +2725,18 @@ function _endPointerDrag(event) {
       // 整组落进列框后同样要纵向落座（2026-11-21 补，与多选同口径）。
       const groupTouched = groupCommitted && typeof _settleAssignedNodesIntoColumns === 'function'
         ? _settleAssignedNodesIntoColumns(groupCommitted) : [];
-      if (groupTouched.length) {
-        if (typeof _updateNodeTransforms === 'function') _updateNodeTransforms(groupTouched);
-        if (typeof _fitAllGroupsToMembers === 'function') _fitAllGroupsToMembers();
+      // 实体落座（2026-11-24）：落进列框的组员先落座、压到的卡让位；落在框外成了自由卡
+      // ＝最后落座、自己滑到最近空位（与多选同口径）。
+      const groupPushed = groupCommitted && typeof _resolveGraphNodeOverlaps === 'function'
+        ? _resolveGraphNodeOverlaps({
+          prior: groupCommitted.assigned.map(item => item.id).concat(groupTouched),
+          last: groupCommitted.freed,
+          noRefitFor: movedIds,
+        }) : [];
+      const groupDirty = groupTouched.concat(groupPushed.filter(id => groupTouched.indexOf(id) < 0));
+      if (groupTouched.length && typeof _fitAllGroupsToMembers === 'function') _fitAllGroupsToMembers();
+      if (groupDirty.length) {
+        if (typeof _updateNodeTransforms === 'function') _updateNodeTransforms(groupDirty);
         if (typeof _redrawEdges === 'function') _redrawEdges();
       }
       _fitDraggedGroups(movedIds);
@@ -2763,6 +2800,8 @@ function _endPointerDrag(event) {
       _pushGraphUndo(false, { layout: true });
       const state = _graphState();
       const draggedIds = Object.keys(graphView.dragStartPositions || {});
+      // 亲手拖过的卡，落点就是它的新位置：改尺寸推开时记的「原位」作废
+      if (typeof _forgetGraphNodeHome === 'function') _forgetGraphNodeHome(draggedIds);
       // 归属提交（2026-11-20 用户拍板）：Alt 松手＝全部自由、保留坐标；单卡走
       // 框内/缝里/两端判定（可插列/建列）；多选只认既有列框，框外一律自由。
       if (typeof _commitGraphNodeOwnership === 'function') {
@@ -2785,7 +2824,12 @@ function _endPointerDrag(event) {
             // 卡片和连线停在拖放原点，存档却已是列心坐标，下次重渲卡片「自己跳位」。
             // 满列插入会让位下移同列邻居（settle 返回其 id 表），一并刷 transform。
             const settledIds = _settleNodeIntoLayer(node, assigned.layer, targetMap);
-            _updateNodeTransforms(settledIds ? [node.id].concat(settledIds) : [node.id]);
+            // 实体落座（2026-11-24）：刚落进列的卡与被它挤下去的同列卡先落座（原地不动），
+            // 压到的自由卡让位。被拖的卡不在让位名单里——它亲手落的位置就是结果。
+            const pushedIds = typeof _resolveGraphNodeOverlaps === 'function'
+              ? _resolveGraphNodeOverlaps({ prior: settledIds ? [node.id].concat(settledIds) : [node.id] }) : [];
+            if (pushedIds.length) _updateNodeTransforms([node.id].concat(settledIds || [], pushedIds));
+            else _updateNodeTransforms(settledIds ? [node.id].concat(settledIds) : [node.id]);
             _redrawEdges();
             if (settledIds && typeof _fitAllGroupsToMembers === 'function') _fitAllGroupsToMembers();
           } else {
@@ -2795,15 +2839,32 @@ function _endPointerDrag(event) {
             _realignGraphColumns({ force: true });
             const touched = typeof _settleAssignedNodesIntoColumns === 'function'
               ? _settleAssignedNodesIntoColumns(committed) : [];
-            if (touched.length) {
-              if (typeof _updateNodeTransforms === 'function') _updateNodeTransforms(touched);
-              if (typeof _fitAllGroupsToMembers === 'function') _fitAllGroupsToMembers();
+            // 实体落座（2026-11-24）：落进列的卡与让位的同列卡先落座；这次落成自由卡的
+            // 那部分最后落座、自己滑到最近空位（noRefitFor：亲手拖出组的卡照旧掉组）。
+            const pushedIds = typeof _resolveGraphNodeOverlaps === 'function'
+              ? _resolveGraphNodeOverlaps({
+                prior: committed.assigned.map(item => item.id).concat(touched),
+                last: committed.freed,
+                noRefitFor: draggedIds,
+              }) : [];
+            const dirty = touched.concat(pushedIds.filter(id => touched.indexOf(id) < 0));
+            if (touched.length && typeof _fitAllGroupsToMembers === 'function') _fitAllGroupsToMembers();
+            if (dirty.length) {
+              if (typeof _updateNodeTransforms === 'function') _updateNodeTransforms(dirty);
               if (typeof _redrawEdges === 'function') _redrawEdges();
             }
           }
         } else if (committed.freed.length) {
           // 全部自由：其他列成员可能因列宽回收而回移，自由节点原地不动。
           _realignGraphColumns({ force: true });
+          // 实体落座（2026-11-24）：落成自由的卡最后落座——压到谁就自己滑到最近空位，
+          // 原地已有的卡一格不动（实体不能互相穿进去）。
+          const pushedIds = typeof _resolveGraphNodeOverlaps === 'function'
+            ? _resolveGraphNodeOverlaps({ last: draggedIds, noRefitFor: draggedIds }) : [];
+          if (pushedIds.length) {
+            _updateNodeTransforms(pushedIds);
+            _redrawEdges();
+          }
         }
       }
       // 只贴「成员全在拖动集合里」的组框，再按包含关系减成员，避免整列重算后成员掉组。
