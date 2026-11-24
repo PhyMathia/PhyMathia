@@ -268,7 +268,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/dist/app.js?v=60bb081b" defer></script>
+  <script src="/dist/app.js?v=fab03e6c" defer></script>
   <script>
     // app.js 改 defer 后本脚本先于它执行，而 APP_VERSION 是 config.js 的顶层
     // const——内联脚本无法加 defer，只能等 DOMContentLoaded：所有 defer 脚本
@@ -822,11 +822,40 @@
         <button onclick="document.getElementById('importFileInput').click()" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--surface-container);color:var(--text-primary);cursor:pointer;font-size:13px;">导入数据</button>
         <input type="file" id="importFileInput" accept=".json" style="display:none;" onchange="importData(event)">
       </div>
+      <div id="exportResult" style="margin-top:6px;font-size:11px;color:var(--text-secondary);line-height:1.5;word-break:break-all;"></div>
+      <!-- 583：导入先预览再确认；执行前服务端自动备份当前账号到 data/backups/ -->
+      <div id="importPreview" hidden style="margin-top:10px;padding:10px;border:1px solid color-mix(in srgb, var(--accent) 35%, var(--border));border-radius:8px;background:color-mix(in srgb, var(--accent) 6%, var(--surface-container));">
+        <div id="importPreviewTitle" style="font-size:13px;font-weight:600;margin-bottom:6px;"></div>
+        <div id="importPreviewStats" style="font-size:12px;color:var(--text-secondary);line-height:1.6;white-space:pre-line;"></div>
+        <div id="importPreviewConflict" style="margin-top:8px;">
+          <div class="data-import-mode-head">冲突处理</div>
+          <div class="pm-seg" id="importConflictSeg" role="radiogroup" aria-label="冲突处理">
+            <button type="button" class="pm-seg-btn active" role="radio" aria-checked="true" data-value="newer" onclick="pickImportConflict('newer')">保留较新</button>
+            <button type="button" class="pm-seg-btn" role="radio" aria-checked="false" data-value="backup" onclick="pickImportConflict('backup')">以备份为准</button>
+          </div>
+        </div>
+        <div id="importPreviewNote" class="data-import-mode-hint"></div>
+        <div id="importPreviewResult" style="font-size:12px;line-height:1.5;margin-top:6px;white-space:pre-line;"></div>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button type="button" id="importConfirmBtn" onclick="confirmImport()" style="flex:1;padding:8px;border:1px solid color-mix(in srgb, var(--accent) 45%, var(--border));border-radius:8px;background:color-mix(in srgb, var(--accent) 12%, var(--surface-container));color:var(--text-primary);cursor:pointer;font-size:13px;">确认导入</button>
+          <button type="button" id="importCancelBtn" onclick="cancelImport()" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--surface-container);color:var(--text-primary);cursor:pointer;font-size:13px;">取消</button>
+        </div>
+      </div>
       <div style="display:flex;gap:8px;margin-top:8px;">
         <button onclick="utopiaImportPick()" style="flex:1;padding:8px;border:1px solid color-mix(in srgb, var(--accent) 40%, var(--border));border-radius:8px;background:color-mix(in srgb, var(--accent) 10%, var(--surface-container));color:var(--text-primary);cursor:pointer;font-size:13px;">导入 .pmu 快照为新画布</button>
         <input type="file" id="utopiaImportFileInput" accept=".pmu" style="display:none;" onchange="if(this.files&&this.files[0])importUtopiaSnapshotFile(this.files[0])">
       </div>
       <div id="dataStats" style="margin-top:12px;font-size:12px;color:var(--text-secondary);"></div>
+      <!-- 自动备份（583，2026-11-24）：每次导入/恢复前服务端先存一份到 data/backups/，
+           这里列最近 10 份并支持一键恢复。列表渲染在 ui-backup.js。 -->
+      <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <div style="font-size:11px;color:var(--text-secondary);">自动备份（导入前）</div>
+          <button type="button" onclick="updateBackupSnapshots()"
+            style="font-size:11px;color:var(--accent);background:none;border:none;cursor:pointer;padding:2px 4px;">刷新</button>
+        </div>
+        <div id="backupSnapshotList" style="font-size:12px;color:var(--text-secondary);margin-top:4px;line-height:1.5;">正在读取…</div>
+      </div>
       <!-- 本机历史备份（2026-11-19）：浏览器 msgs_ 只是 LRU 缓存，这里显示还剩多少、
            一键推回服务端并写进项目文件夹 data/history/。统计与备份在 ui-backup.js。 -->
       <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">

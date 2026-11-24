@@ -27,6 +27,7 @@ function updateDataStats() {
   }
   updateStorageDebug();
   updateHistoryBackupStats();
+  updateBackupSnapshots();
 }
 
 // ====== 本机历史备份（2026-11-19）======
@@ -103,6 +104,121 @@ function _mergeMaps(base, extra) {
   return result;
 }
 
+// ====== 备份设置白名单（583，2026-11-24）======
+// 替换导入此前先删光当前账号全部 phymathia_*，再只回填 18 个字段——节点配方、
+// 背景/皮肤、快捷键、读数偏好与设备编号一起没。现在 replace 只清数据类键；
+// 设置按本白名单随备份走（设备编号/账号键刻意不入备份，避免跨机串号）。
+const _BACKUP_SETTINGS_KEYS = [
+  'phymathia_theme', 'phymathia_bg_dark', 'phymathia_bg_light',
+  'phymathia_flip_slow_raster', 'phymathia_node_skin', 'phymathia_graph_text_scale',
+  'phymathia_style_family', 'phymathia_theme_split', 'phymathia_style_family_dark',
+  'phymathia_style_family_light', 'phymathia_level', 'phymathia_reader_theme',
+  'phymathia_latex_repairs', 'phymathia_kp_tab', 'phymathia_quiz_source',
+  'phymathia_trash_retention', 'phymathia_settings_tab', 'phymathia_hotkey_overrides',
+  'phymathia_onboarding_done', 'phymathia_node_recipes', 'phymathia_recipe_draft',
+  'phymathia_module_hint_done', 'phymathia_followup_auto_route',
+  'phymathia_readout_speed', 'phymathia_readout_ttft', 'phymathia_readout_elapsed',
+  'phymathia_readout_progress', 'phymathia_readout_percent',
+  'phymathia_node_fs_followup_route', 'phymathia_harness_thinking',
+  'phymathia_harness_fallback', 'phymathia_harness_health'
+];
+const _BACKUP_SETTINGS_SET = new Set(_BACKUP_SETTINGS_KEYS);
+// replace 只清这些「数据」键；设置、账号、设备编号、引导标记全部保留。
+const _BACKUP_DATA_KEYS = new Set([
+  'phymathia_sessions', 'phymathia_knowledge', 'phymathia_formulas',
+  'phymathia_quiz_stats', 'phymathia_quiz_bank', 'phymathia_current_session',
+  'phymathia_knowledge_deleted', 'phymathia_formulas_deleted'
+]);
+
+function _collectBackupSettings() {
+  const out = {};
+  _BACKUP_SETTINGS_KEYS.forEach(key => {
+    const value = localStorage.getItem(key);
+    if (value !== null) out[key] = value;
+  });
+  return out;
+}
+
+function _backupItemTs(item) {
+  if (!item || typeof item !== 'object') return 0;
+  for (const field of ['updatedAt', 'createdAt']) {
+    const value = Number(item[field]);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return 0;
+}
+
+function _mergeNewerMap(serverMap, localMap) {
+  const out = { ...(serverMap || {}) };
+  for (const [key, value] of Object.entries(localMap || {})) {
+    const current = out[key];
+    if (current === undefined || _backupItemTs(value) >= _backupItemTs(current)) out[key] = value;
+  }
+  return out;
+}
+
+function _mergeMessageArrays(primary, secondary) {
+  const byKey = new Map();
+  const order = [];
+  for (const msg of [...(primary || []), ...(secondary || [])]) {
+    if (!msg || typeof msg !== 'object') continue;
+    const ts = msg.timestamp;
+    const key = (typeof ts === 'number' && ts) ? ('ts:' + ts)
+      : ('raw:' + String(msg.role || '') + '|' + String(msg.content || ''));
+    if (!byKey.has(key)) { byKey.set(key, { ...msg }); order.push(key); }
+    else {
+      const base = byKey.get(key);
+      for (const [field, value] of Object.entries(msg)) {
+        const cur = base[field];
+        const empty = cur === undefined || cur === null || cur === '' ||
+          (Array.isArray(cur) && cur.length === 0);
+        if (empty && value !== null && value !== '') base[field] = value;
+      }
+    }
+  }
+  const merged = order.map(key => byKey.get(key));
+  if (merged.length && merged.every(m => typeof m.timestamp === 'number' && m.timestamp)) {
+    merged.sort((a, b) => a.timestamp - b.timestamp);
+  }
+  return merged;
+}
+
+function _mergeMessageMaps(serverMap, localMap) {
+  const out = {};
+  const sids = new Set([...Object.keys(serverMap || {}), ...Object.keys(localMap || {})]);
+  sids.forEach(sid => {
+    out[sid] = _mergeMessageArrays((serverMap || {})[sid], (localMap || {})[sid]);
+  });
+  return out;
+}
+
+function _backupCounts(data) {
+  const countMap = value => (value && typeof value === 'object') ? Object.keys(value).length : 0;
+  const messages = data && data.messages && typeof data.messages === 'object' ? data.messages : {};
+  return {
+    sessions: countMap(data && data.sessions),
+    messages: Object.values(messages).reduce((sum, list) => sum + (Array.isArray(list) ? list.length : 0), 0),
+    knowledge: countMap(data && data.knowledge),
+    formulas: countMap(data && data.formulas),
+    graphs: countMap(data && data.graphs),
+    profiles: countMap(data && data.profiles)
+  };
+}
+
+function _formatBackupBytes(bytes) {
+  const n = Number(bytes) || 0;
+  if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
+  if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
+  return n + ' B';
+}
+
+function _backupFileName() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return 'phymathia_backup_' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) +
+    '_' + pad(d.getHours()) + pad(d.getMinutes()) + '.json';
+}
+
 function _collectLocalBackup() {
   // 画布状态本地落盘是防抖的：导出快照前先冲刷，否则最近 150ms 的画布改动不进备份
   if (typeof window.flushGraphStateLocalSave === 'function') window.flushGraphStateLocalSave();
@@ -145,18 +261,29 @@ function _collectLocalBackup() {
     currentSession: localStorage.getItem('phymathia_current_session') || '',
     level: localStorage.getItem('phymathia_level') || 'university',
     theme: _getInitialTheme(),
-    onboarding: localStorage.getItem('phymathia_onboarding_done') || ''
+    onboarding: localStorage.getItem('phymathia_onboarding_done') || '',
+    // 583：本机设置随备份走；设备编号/账号键不在白名单内，永不进备份
+    settings: _collectBackupSettings()
   };
 }
 
 function _downloadBackup(data) {
+  const filename = _backupFileName();
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'phymathia_backup_' + new Date().toISOString().slice(0, 10) + '.json';
+  a.download = filename;
+  a.style.display = 'none';
+  // 585：a 必须挂进 DOM 再 click（Firefox 对游离节点可能不触发下载），
+  // revoke 也要等浏览器真正取走 blob 之后
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => {
+    try { a.remove(); } catch (e) {}
+    try { URL.revokeObjectURL(url); } catch (e) {}
+  }, 1000);
+  return { filename: filename, bytes: blob.size };
 }
 
 function _pickNewerQuizBank(a, b) {
@@ -165,19 +292,29 @@ function _pickNewerQuizBank(a, b) {
   return (Number(a.updatedAt || 0) >= Number(b.updatedAt || 0)) ? a : b;
 }
 
+function _showExportResult(text, isWarn) {
+  const el = document.getElementById('exportResult');
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = isWarn ? 'var(--warning, #d08a2e)' : 'var(--text-secondary)';
+}
+
 async function exportData(options = {}) {
   // 查阅态拦下（T187 2026-10-07 拍板）：allowBrowse 的礼节是「只读查阅会话与
   // 知识」，整包导出是把对方全部内容一次带走，超出浏览语义（服务端同步 403）。
   // PNG 海报与单画布 .pmu 是纯前端产物，不受影响。
   if (phyIsReadonly()) { phyReadonlyBlock('导出数据'); return; }
   const local = _collectLocalBackup();
-  let data = { ...local, version: 2, exportTime: new Date().toISOString() };
+  let data = { ...local, version: 3, exportTime: new Date().toISOString() };
+  let degraded = false;
   try {
     // device_id 恒传：服务端按账号圈定备份里的画像（只带走本账号归属的设备），
     // 顺手把当前设备登记进账号绑定——画像按账号隔离的圈定键
     const resp = await fetch('/api/backup/export?device_id=' + encodeURIComponent(getDeviceId()), { cache: 'no-cache' });
-    if (!resp.ok && options.requireServer) throw new Error('备份请求失败：' + resp.status);
-    if (resp.ok) {
+    if (!resp.ok) {
+      if (options.requireServer) throw new Error('备份请求失败：' + resp.status);
+      degraded = true;
+    } else {
       const server = await resp.json();
       if (options.requireServer && (!server || !server.profiles || typeof server.profiles !== 'object' || Array.isArray(server.profiles))) {
         throw new Error('服务端备份缺少画像数据');
@@ -187,31 +324,45 @@ async function exportData(options = {}) {
       for (const [key, value] of Object.entries(kv)) {
         if (key.startsWith('graph:')) serverGraphs[key.slice(6)] = value;
       }
+      // 584：导出同样按时间取新。此前 messages/knowledge/graphs 都是本地整包覆盖
+      // 服务端，旧设备导出会把自己缓存里的旧版本写进备份，再导入就回滚新数据。
       data = {
-        version: 2,
+        version: 3,
         exportTime: new Date().toISOString(),
-        sessions: _mergeMaps(server.sessions, local.sessions),
-        messages: { ...(server.messages || {}), ...local.messages },
-        knowledge: _mergeMaps(server.knowledge, local.knowledge),
-        formulas: _mergeMaps(server.formulas, local.formulas),
+        sessions: _mergeNewerMap(server.sessions, local.sessions),
+        messages: _mergeMessageMaps(server.messages, local.messages),
+        knowledge: _mergeNewerMap(server.knowledge, local.knowledge),
+        formulas: _mergeNewerMap(server.formulas, local.formulas),
         profiles: server.profiles || {},
         kv,
-        graphs: _mergeMaps(serverGraphs, local.graphs),
-        quizStats: _mergeMaps(kv['phymathia_quiz_stats'] || {}, local.quizStats),
+        graphs: _mergeNewerMap(serverGraphs, local.graphs),
+        quizStats: _mergeNewerMap(kv['phymathia_quiz_stats'] || {}, local.quizStats),
         quizBank: _pickNewerQuizBank(kv['phymathia_quiz_bank'] || null, local.quizBank),
         userModels: local.userModels,
         activeModels: local.activeModels,
         currentSession: local.currentSession,
         level: local.level,
         theme: local.theme,
-        onboarding: local.onboarding
+        onboarding: local.onboarding,
+        settings: local.settings
       };
     }
   } catch (e) {
     if (options.requireServer) throw e;
     console.warn('[Export] Server backup unavailable, use local snapshot:', e);
+    degraded = true;
   }
-  _downloadBackup(data);
+  const downloaded = _downloadBackup(data);
+  const counts = _backupCounts(data);
+  const summary = downloaded.filename + ' · ' + _formatBackupBytes(downloaded.bytes) +
+    ' · ' + counts.sessions + ' 张画布 / ' + counts.messages + ' 条消息';
+  // 585：成功要回执；服务端失败降级为本机快照时必须明说「可能不全」
+  const text = degraded
+    ? '服务端不可用，已导出本机快照（可能不全） · ' + summary
+    : '已导出 ' + summary;
+  _showExportResult(text, degraded);
+  if (typeof showToast === 'function') showToast(text, 6000);
+  return data;
 }
 
 function _normalizeBackup(data) {
@@ -252,6 +403,14 @@ function _normalizeBackup(data) {
   result.graphs = result.graphs && typeof result.graphs === 'object' ? result.graphs : {};
   result.quizStats = result.quizStats && typeof result.quizStats === 'object' ? result.quizStats : {};
   result.quizBank = result.quizBank && typeof result.quizBank === 'object' ? result.quizBank : null;
+  // 583：设置只收白名单键与字符串值；账号/设备编号不在白名单，手编备份也塞不进来
+  result.settings = {};
+  if (data.settings && typeof data.settings === 'object' && !Array.isArray(data.settings)) {
+    for (const key of _BACKUP_SETTINGS_KEYS) {
+      const value = data.settings[key];
+      if (typeof value === 'string') result.settings[key] = value;
+    }
+  }
   return result;
 }
 
@@ -292,6 +451,14 @@ function _setStorageDebugOpen(open) {
 }
 
 function _applyLocalSettings(data) {
+  // 583：先回填备份里的本机设置（白名单内），再用顶层的 theme/level 等覆盖。
+  // 设备编号/账号键不在白名单，替换导入后仍是当前机器/当前账号。
+  if (data.settings && typeof data.settings === 'object' && !Array.isArray(data.settings)) {
+    for (const key of _BACKUP_SETTINGS_KEYS) {
+      const value = data.settings[key];
+      if (typeof value === 'string') safeLocalStorageSet(key, value);
+    }
+  }
   if (data.theme) localStorage.setItem('phymathia_theme', data.theme);
   if (data.level) localStorage.setItem('phymathia_level', data.level);
   if (data.currentSession) localStorage.setItem('phymathia_current_session', data.currentSession);
@@ -330,36 +497,75 @@ function _applyLocalSettings(data) {
   if (typeof scheduleModelsSync === 'function') scheduleModelsSync(0);
 }
 
+function _clearLocalDataForReplace() {
+  // 583：只清数据类键。此前删光 phymathia_* 会把账号键、设备编号、节点配方、
+  // 背景/皮肤、快捷键、读数偏好一起清掉——替换导入后画像按旧 device 键落盘、
+  // 当前设备却生成了新 id，AI 当场「失忆」。
+  lsKeys().forEach(key => {
+    if (_BACKUP_DATA_KEYS.has(key)) { localStorage.removeItem(key); return; }
+    if (key.startsWith('phymathia_msgs_')) { localStorage.removeItem(key); return; }
+    if (key.startsWith('phymathia_graph_history_')) { localStorage.removeItem(key); return; }
+    // phymathia_graph_text_scale 是设置键，别被 graph_ 前缀误伤
+    if (key.startsWith('phymathia_graph_') && key !== 'phymathia_graph_text_scale') {
+      localStorage.removeItem(key);
+    }
+  });
+}
+
+function _forgetDeletedIds(storageKey, ids) {
+  if (!Array.isArray(ids) || !ids.length) return;
+  const map = _safeParseJSON(localStorage.getItem(storageKey), {});
+  if (!map || typeof map !== 'object' || Array.isArray(map)) return;
+  let changed = false;
+  ids.forEach(id => {
+    if (id && Object.prototype.hasOwnProperty.call(map, id)) {
+      delete map[id];
+      changed = true;
+    }
+  });
+  if (changed) safeLocalStorageSet(storageKey, JSON.stringify(map));
+}
+
+function _forgetImportedTombstones(data) {
+  // 导入是用户明确要回来的数据：本地已删清单若还记着这些 id，下一轮同步会
+  // 把刚恢复的条目再次剔除（服务端侧 _apply_restore 已同步除名）。
+  _forgetDeletedIds('phymathia_knowledge_deleted', Object.keys((data && data.knowledge) || {}));
+  _forgetDeletedIds('phymathia_formulas_deleted', Object.keys((data && data.formulas) || {}));
+}
+
 function _applyLocalBackup(data, replace) {
-  if (replace) {
-    lsKeys().filter(k => k.startsWith('phymathia_')).forEach(k => localStorage.removeItem(k));
-  }
+  if (replace) _clearLocalDataForReplace();
   const sessions = _safeParseJSON(localStorage.getItem('phymathia_sessions'), {});
-  Object.assign(sessions, data.sessions || {});
+  for (const [sid, session] of Object.entries(data.sessions || {})) {
+    if (!session || typeof session !== 'object') continue;
+    // 584：合并模式下同名会话按 updatedAt 取新；replace 与「以备份为准」直接写
+    if (!replace && sessions[sid] && _backupItemTs(sessions[sid]) > _backupItemTs(session)) continue;
+    sessions[sid] = session;
+  }
   safeLocalStorageSet('phymathia_sessions', JSON.stringify(sessions));
 
   for (const [sid, msgs] of Object.entries(data.messages || {})) {
     if (!Array.isArray(msgs)) continue;
     const key = 'phymathia_msgs_' + sid;
     const existing = _safeParseJSON(localStorage.getItem(key), []);
-    const existingKeys = new Set(existing.map(m => m.timestamp || JSON.stringify(m)));
-    const merged = [...existing];
-    for (const msg of msgs) {
-      const msgKey = msg.timestamp || JSON.stringify(msg);
-      if (!existingKeys.has(msgKey)) {
-        existingKeys.add(msgKey);
-        merged.push(msg);
-      }
-    }
+    const merged = replace ? _mergeMessageArrays([], msgs) : _mergeMessageArrays(existing, msgs);
     safeLocalStorageSet(key, JSON.stringify(merged));
   }
 
   const knowledge = _safeParseJSON(localStorage.getItem('phymathia_knowledge'), {});
-  Object.assign(knowledge, data.knowledge || {});
+  for (const [id, item] of Object.entries(data.knowledge || {})) {
+    if (!item || typeof item !== 'object') continue;
+    if (!replace && knowledge[id] && _backupItemTs(knowledge[id]) > _backupItemTs(item)) continue;
+    knowledge[id] = item;
+  }
   safeLocalStorageSet('phymathia_knowledge', JSON.stringify(knowledge));
 
   const formulas = _safeParseJSON(localStorage.getItem('phymathia_formulas'), {});
-  Object.assign(formulas, data.formulas || {});
+  for (const [id, item] of Object.entries(data.formulas || {})) {
+    if (!item || typeof item !== 'object') continue;
+    if (!replace && formulas[id] && _backupItemTs(formulas[id]) > _backupItemTs(item)) continue;
+    formulas[id] = item;
+  }
   if (typeof setFormulaCache === 'function') setFormulaCache(formulas); else safeLocalStorageSet('phymathia_formulas', JSON.stringify(formulas));
 
   for (const [sid, state] of Object.entries(data.graphs || {})) {
@@ -369,11 +575,24 @@ function _applyLocalBackup(data, replace) {
       if (Array.isArray(state)) safeLocalStorageSet('phymathia_graph_history_' + sid.slice('history_'.length), JSON.stringify(state));
       continue;
     }
-    safeLocalStorageSet('phymathia_graph_' + sid, JSON.stringify(state));
+    const graphKey = 'phymathia_graph_' + sid;
+    if (!replace) {
+      const current = _safeParseJSON(localStorage.getItem(graphKey), null);
+      if (current && _backupItemTs(current) > _backupItemTs(state)) continue;
+    }
+    safeLocalStorageSet(graphKey, JSON.stringify(state));
   }
   for (const [sid, arr] of Object.entries(data.graphHistories || {})) {
     // T365：历史键可以是旧裸数组，也可以是 v2 信封 {v:2,e,c,l}（游标随盘）——两者原样回放
-    if (Array.isArray(arr) || (arr && Array.isArray(arr.e))) safeLocalStorageSet('phymathia_graph_history_' + sid, JSON.stringify(arr));
+    if (!(Array.isArray(arr) || (arr && Array.isArray(arr.e)))) continue;
+    const historyKey = 'phymathia_graph_history_' + sid;
+    if (!replace) {
+      const current = _safeParseJSON(localStorage.getItem(historyKey), null);
+      const currentTs = Number(current && current.t) || 0;
+      const incomingTs = Number(arr && arr.t) || 0;
+      if (currentTs > incomingTs) continue;
+    }
+    safeLocalStorageSet(historyKey, JSON.stringify(arr));
   }
   _applyLocalSettings(data);
 }
@@ -446,6 +665,10 @@ async function _pushBackupToExistingApis(data) {
 // chips / 难度卡片同语言；状态只活在内存里——导入是一次性动作，刷新回默认合并，
 // 与旧 select 每次加载都回 merge 的语义一致（刻意不落 localStorage）。
 let _importMode = 'merge';
+let _importConflict = 'newer';
+let _pendingImport = null;
+let _importBusy = false;
+let _importPreviewSeq = 0;
 
 function _importModeGet() {
   return _importMode === 'replace' ? 'replace' : 'merge';
@@ -453,67 +676,369 @@ function _importModeGet() {
 
 function _importModeHint(mode) {
   return mode === 'replace'
-    ? '先清空本账号现有的会话、知识、公式与检测记录，再写入备份'
-    : '同名条目以备份为准，备份里没有的保持不变';
+    ? '先清空当前账号的会话、知识、公式与画布，再写入备份；本机设置与设备编号保留'
+    : '同名条目按时间取较新，备份里没有的保持不变';
+}
+
+function _setSegActive(id, value) {
+  const seg = document.getElementById(id);
+  if (!seg || !seg.querySelectorAll) return;
+  Array.prototype.slice.call(seg.querySelectorAll('.pm-seg-btn')).forEach(btn => {
+    const on = String((btn.dataset || {}).value) === String(value);
+    if (btn.classList) btn.classList.toggle('active', on);
+    if (btn.setAttribute) btn.setAttribute('aria-checked', on ? 'true' : 'false');
+  });
 }
 
 function pickImportMode(mode) {
   _importMode = mode === 'replace' ? 'replace' : 'merge';
-  const seg = document.getElementById('importModeSeg');
-  if (seg && seg.querySelectorAll) {
-    Array.prototype.slice.call(seg.querySelectorAll('.pm-seg-btn')).forEach(btn => {
-      const on = String((btn.dataset || {}).value) === _importMode;
-      if (btn.classList) btn.classList.toggle('active', on);
-      if (btn.setAttribute) btn.setAttribute('aria-checked', on ? 'true' : 'false');
-    });
-  }
+  _setSegActive('importModeSeg', _importMode);
   const hint = document.getElementById('importModeHint');
   if (hint) hint.textContent = _importModeHint(_importMode);
+  // 已选好文件但还没确认时，切换模式要重算预览（替换/合并的影响面不同）
+  _refreshPendingImportPreview();
+}
+
+function pickImportConflict(value) {
+  _importConflict = value === 'backup' ? 'backup' : 'newer';
+  _setSegActive('importConflictSeg', _importConflict);
+  _refreshPendingImportPreview();
+}
+
+function _backupHasPayload(data) {
+  const has = value => !!(value && typeof value === 'object' && Object.keys(value).length);
+  return has(data && data.sessions) || has(data && data.messages) || has(data && data.knowledge) ||
+    has(data && data.formulas) || has(data && data.kv) || has(data && data.graphs) ||
+    has(data && data.quizStats) || !!(data && data.quizBank) || has(data && data.profiles) ||
+    has(data && data.settings);
+}
+
+function _localImportPreview(data, mode, conflict) {
+  return {
+    ok: false,
+    serverAvailable: false,
+    mode: mode,
+    conflict: conflict,
+    incoming: _backupCounts(data),
+    current: null,
+    conflicts: null
+  };
+}
+
+async function _requestImportPreview(data, mode, conflict) {
+  try {
+    const resp = await fetch('/api/backup/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: mode, conflict: conflict, device_id: getDeviceId(), backup: data }),
+      signal: AbortSignal.timeout(30000)
+    });
+    if (resp.ok) {
+      const preview = await resp.json();
+      if (preview && typeof preview === 'object') {
+        preview.serverAvailable = true;
+        return preview;
+      }
+    }
+  } catch (e) {
+    console.warn('[Import] Preview unavailable, use local counts:', e);
+  }
+  return _localImportPreview(data, mode, conflict);
+}
+
+function _refreshPendingImportPreview() {
+  if (!_pendingImport || _importBusy) return;
+  const seq = ++_importPreviewSeq;
+  const mode = _importModeGet();
+  const conflict = mode === 'replace' ? 'backup' : _importConflict;
+  _pendingImport.mode = mode;
+  _pendingImport.conflict = conflict;
+  _requestImportPreview(_pendingImport.data, mode, conflict).then(preview => {
+    if (seq !== _importPreviewSeq || !_pendingImport) return;
+    _pendingImport.preview = preview;
+    _renderImportPreview();
+  });
+}
+
+function _renderImportPreview() {
+  const box = document.getElementById('importPreview');
+  if (!box || !_pendingImport) return;
+  const preview = _pendingImport.preview || {};
+  const incoming = preview.incoming || _backupCounts(_pendingImport.data);
+  const current = preview.current || null;
+  const conflicts = preview.conflicts || null;
+  const mode = _importModeGet();
+
+  const title = document.getElementById('importPreviewTitle');
+  if (title) title.textContent = '准备导入「' + _pendingImport.fileName + '」';
+
+  const stats = document.getElementById('importPreviewStats');
+  if (stats) {
+    const lines = [];
+    lines.push('备份内容：' + incoming.sessions + ' 张画布 · ' + incoming.messages + ' 条消息 · ' +
+      incoming.knowledge + ' 条知识点 · ' + incoming.formulas + ' 条公式 · ' + incoming.graphs + ' 个探索网');
+    if (current) {
+      lines.push('当前账号：' + current.sessions + ' 张画布 · ' + current.messages + ' 条消息 · ' +
+        current.knowledge + ' 条知识点 · ' + current.formulas + ' 条公式 · ' + current.graphs + ' 个探索网');
+    }
+    if (mode === 'replace') {
+      lines.push('替换模式：当前账号的会话、消息、知识、公式与画布会被这份备份替换；本机设置与设备编号保留。');
+    } else if (conflicts) {
+      const bits = [];
+      if (conflicts.sessions) bits.push(conflicts.sessions + ' 个同名会话');
+      if (conflicts.messages) bits.push(conflicts.messages + ' 条同时间消息');
+      if (conflicts.knowledge) bits.push(conflicts.knowledge + ' 条同名知识点');
+      if (conflicts.formulas) bits.push(conflicts.formulas + ' 条同 id 公式');
+      if (conflicts.graphs) bits.push(conflicts.graphs + ' 张同名画布');
+      lines.push(bits.length ? ('同名冲突：' + bits.join(' · ')) : '没有同名冲突，直接合并。');
+      const older = conflicts.olderInBackup || {};
+      const olderCount = (older.sessions || 0) + (older.knowledge || 0) + (older.formulas || 0) + (older.graphs || 0);
+      if (olderCount) {
+        lines.push(_importConflict === 'backup'
+          ? ('其中 ' + olderCount + ' 项备份版本比当前旧，将按你的选择以备份为准。')
+          : ('其中 ' + olderCount + ' 项备份版本比当前旧，将保留当前较新版本。'));
+      }
+    }
+    if (!preview.serverAvailable) {
+      lines.push('服务端预览不可用：导入会先写本机缓存，联网后再补传；条数为文件内统计。');
+    }
+    stats.textContent = lines.join('\n');
+  }
+
+  const conflictBox = document.getElementById('importPreviewConflict');
+  if (conflictBox) conflictBox.style.display = mode === 'merge' ? '' : 'none';
+  _setSegActive('importConflictSeg', _importConflict);
+
+  const note = document.getElementById('importPreviewNote');
+  if (note) {
+    note.textContent = '确认后才会写入。导入前会自动把当前账号数据备份到项目文件夹，可在下方「自动备份」里恢复。';
+  }
+
+  const result = document.getElementById('importPreviewResult');
+  if (result) { result.textContent = ''; result.style.color = ''; }
+
+  const confirmBtn = document.getElementById('importConfirmBtn');
+  if (confirmBtn) {
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = mode === 'replace' ? '确认替换' : '确认合并';
+  }
+  box.hidden = false;
+  if (box.scrollIntoView) { try { box.scrollIntoView({ block: 'nearest' }); } catch (e) {} }
+}
+
+function cancelImport() {
+  _importPreviewSeq++;
+  _pendingImport = null;
+  const box = document.getElementById('importPreview');
+  if (box) box.hidden = true;
+  const input = document.getElementById('importFileInput');
+  if (input) input.value = '';
 }
 
 async function importData(event) {
   if (phyIsReadonly()) { phyReadonlyBlock('导入备份'); return; }
-  const file = event.target.files[0];
+  const input = event && event.target;
+  const file = input && input.files && input.files[0];
   if (!file) return;
+  if (input) input.value = '';
+  if (file.size > 50 * 1024 * 1024) {
+    alert('导入失败：备份文件超过 50MB，请拆分后再试。');
+    return;
+  }
   const reader = new FileReader();
+  reader.onerror = function() {
+    alert('导入失败：读取文件失败，请重试。');
+  };
   reader.onload = async function(e) {
+    let raw = null;
     try {
-      const data = _normalizeBackup(JSON.parse(e.target.result));
-      if (!data.sessions && !data.messages && !data.knowledge && !data.formulas && !data.kv && !data.quizStats && !data.quizBank) {
-        alert('导入失败：文件格式不正确，缺少有效数据');
-        return;
-      }
-      const mode = _importModeGet();
-      let serverResp = null;
-      try {
-        serverResp = await fetch('/api/backup/import', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          // device_id 同导出：服务端据此圈定 replace 清除范围与本账号画像归属
-          body: JSON.stringify({ mode, device_id: getDeviceId(), backup: data })
-        });
-      } catch (serverErr) {
-        console.warn('[Import] Server import unavailable, use local:', serverErr);
-      }
-      if (!serverResp || !serverResp.ok) {
-        _applyLocalBackup(data, mode === 'replace');
-        await _pushBackupToExistingApis(data);
-      } else {
-        _applyLocalBackup(data, mode === 'replace');
-      }
-      if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
-      if (typeof setFormulaCache === 'function') setFormulaCache(_safeParseJSON(localStorage.getItem('phymathia_formulas'), {}));
-      updateDataStats();
-      // T284：把导入后的模型配置先推到服务端再刷新（推送失败也无碍——乐观同步戳
-      // 在 scheduleModelsSync 时已落地，刷新后按「本地较新→补传」收敛）
-      if (typeof flushModelsSync === 'function') { try { await flushModelsSync(); } catch (e) {} }
-      alert('数据导入成功！页面即将刷新。');
-      location.reload();
+      raw = JSON.parse(e.target.result);
     } catch (err) {
-      console.error('[Import] Error:', err);
-      alert('导入失败：文件格式不正确 - ' + err.message);
+      alert('导入失败：文件不是有效 JSON - ' + err.message);
+      return;
     }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      alert('导入失败：文件格式不正确，缺少有效数据');
+      return;
+    }
+    if (raw.version != null && Number(raw.version) > 3) {
+      alert('这份备份来自更新的版本（v' + raw.version + '），可能包含当前版本不认识的数据；仍可尝试导入。');
+    }
+    const data = _normalizeBackup(raw);
+    if (!_backupHasPayload(data)) {
+      alert('导入失败：文件格式不正确，缺少有效数据');
+      return;
+    }
+    const mode = _importModeGet();
+    const conflict = mode === 'replace' ? 'backup' : _importConflict;
+    const preview = await _requestImportPreview(data, mode, conflict);
+    _pendingImport = {
+      data: data,
+      fileName: file.name,
+      fileSize: file.size,
+      mode: mode,
+      conflict: conflict,
+      preview: preview
+    };
+    _renderImportPreview();
   };
   reader.readAsText(file);
-  event.target.value = '';
+}
+
+async function confirmImport() {
+  if (!_pendingImport || _importBusy) return;
+  const pending = _pendingImport;
+  const data = pending.data;
+  const mode = _importModeGet();
+  const conflict = mode === 'replace' ? 'backup' : _importConflict;
+  _importBusy = true;
+  const confirmBtn = document.getElementById('importConfirmBtn');
+  const cancelBtn = document.getElementById('importCancelBtn');
+  const resultEl = document.getElementById('importPreviewResult');
+  if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = '导入中…'; }
+  if (cancelBtn) cancelBtn.disabled = true;
+  if (resultEl) { resultEl.textContent = ''; resultEl.style.color = ''; }
+
+  let serverResp = null;
+  try {
+    serverResp = await fetch('/api/backup/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // device_id 同导出：服务端据此圈定 replace 清除范围与本账号画像归属；
+      // auto_backup 让服务端在写入前把当前账号存到 data/backups/
+      body: JSON.stringify({ mode, conflict, auto_backup: true, device_id: getDeviceId(), backup: data }),
+      signal: AbortSignal.timeout(120000)
+    });
+  } catch (serverErr) {
+    console.warn('[Import] Server import unavailable, use local:', serverErr);
+  }
+
+  if (serverResp && !serverResp.ok) {
+    let detail = 'HTTP ' + serverResp.status;
+    try {
+      const body = await serverResp.json();
+      if (body && body.detail) detail = body.detail;
+    } catch (e) {}
+    _importBusy = false;
+    if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = mode === 'replace' ? '确认替换' : '确认合并'; }
+    if (cancelBtn) cancelBtn.disabled = false;
+    if (resultEl) { resultEl.textContent = '导入失败：' + detail; resultEl.style.color = 'var(--danger, #c0392b)'; }
+    if (typeof showToast === 'function') showToast('导入失败：' + detail, 6000);
+    return;
+  }
+
+  let result = null;
+  if (serverResp && serverResp.ok) {
+    try { result = await serverResp.json(); } catch (e) {}
+  }
+  try {
+    _applyLocalBackup(data, mode === 'replace');
+    _forgetImportedTombstones(data);
+    if (!serverResp) await _pushBackupToExistingApis(data);
+    if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
+    if (typeof setFormulaCache === 'function') setFormulaCache(_safeParseJSON(localStorage.getItem('phymathia_formulas'), {}));
+    updateDataStats();
+    // T284：把导入后的模型配置先推到服务端再刷新（推送失败也无碍——乐观同步戳
+    // 在 scheduleModelsSync 时已落地，刷新后按「本地较新→补传」收敛）
+    if (typeof flushModelsSync === 'function') { try { await flushModelsSync(); } catch (e) {} }
+  } catch (err) {
+    console.error('[Import] Apply error:', err);
+    _importBusy = false;
+    if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = mode === 'replace' ? '确认替换' : '确认合并'; }
+    if (cancelBtn) cancelBtn.disabled = false;
+    if (resultEl) { resultEl.textContent = '导入失败：' + err.message; resultEl.style.color = 'var(--danger, #c0392b)'; }
+    return;
+  }
+
+  const counts = result && result.ok ? result : _backupCounts(data);
+  let text = '导入完成：' + (counts.sessions || 0) + ' 张画布 · ' + (counts.messages || 0) + ' 条消息 · ' +
+    (counts.knowledge || 0) + ' 条知识点 · ' + (counts.formulas || 0) + ' 条公式';
+  if (result && result.autoBackup && result.autoBackup.id) text += ' · 已自动备份当前数据';
+  if (!serverResp) text += '（服务端不可用，仅写入本机缓存）';
+  if (resultEl) { resultEl.textContent = text; resultEl.style.color = 'var(--text-secondary)'; }
+  if (typeof showToast === 'function') showToast(text, 6000);
+  updateBackupSnapshots(true);
+  setTimeout(() => location.reload(), 1400);
+}
+
+// ====== 自动备份列表（583）======
+let _snapshotFetchBusy = false;
+
+function _snapshotReasonLabel(reason) {
+  const map = { import: '导入前', restore: '恢复前' };
+  return map[reason] || '自动备份';
+}
+
+function _renderSnapshotList(items) {
+  const list = document.getElementById('backupSnapshotList');
+  if (!list) return;
+  list.textContent = '';
+  if (!items.length) {
+    list.textContent = '还没有自动备份（每次导入前会自动生成一份）';
+    return;
+  }
+  items.forEach(item => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);';
+    const info = document.createElement('div');
+    info.style.cssText = 'font-size:12px;color:var(--text-secondary);line-height:1.4;word-break:break-all;';
+    const when = new Date(Number(item.createdAt) || Date.now());
+    const timeText = isNaN(when.getTime()) ? String(item.id) : when.toLocaleString();
+    info.textContent = timeText + ' · ' + _snapshotReasonLabel(item.reason) + ' · ' + _formatBackupBytes(item.size);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = '恢复';
+    btn.style.cssText = 'flex:none;padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface-container);color:var(--text-primary);cursor:pointer;font-size:12px;';
+    btn.addEventListener('click', () => restoreBackupSnapshot(item.id));
+    row.appendChild(info);
+    row.appendChild(btn);
+    list.appendChild(row);
+  });
+}
+
+async function updateBackupSnapshots() {
+  const list = document.getElementById('backupSnapshotList');
+  if (!list || _snapshotFetchBusy) return;
+  _snapshotFetchBusy = true;
+  try {
+    const resp = await fetch('/api/backup/snapshots', {
+      cache: 'no-cache',
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const body = await resp.json();
+    _renderSnapshotList(Array.isArray(body && body.snapshots) ? body.snapshots : []);
+  } catch (e) {
+    list.textContent = '自动备份列表暂时不可用';
+  } finally {
+    _snapshotFetchBusy = false;
+  }
+}
+
+async function restoreBackupSnapshot(id) {
+  if (phyIsReadonly()) { phyReadonlyBlock('恢复备份'); return; }
+  if (!id || !confirm('恢复这份自动备份？当前数据会先自动备份一份，然后被这份备份替换。')) return;
+  try {
+    const resp = await fetch('/api/backup/snapshots/' + encodeURIComponent(id) + '/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_id: getDeviceId() }),
+      signal: AbortSignal.timeout(120000)
+    });
+    if (!resp.ok) {
+      let detail = 'HTTP ' + resp.status;
+      try {
+        const body = await resp.json();
+        if (body && body.detail) detail = body.detail;
+      } catch (e) {}
+      alert('恢复失败：' + detail);
+      return;
+    }
+    // 本地缓存先清掉，刷新后以服务端恢复结果为准；设置与设备编号保留
+    _clearLocalDataForReplace();
+    if (typeof showToast === 'function') showToast('已恢复自动备份，页面即将刷新', 5000);
+    setTimeout(() => location.reload(), 800);
+  } catch (e) {
+    alert('恢复失败：' + e.message);
+  }
 }

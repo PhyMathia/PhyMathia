@@ -1,12 +1,15 @@
 """数据备份导出与导入。"""
 
+import math
 import os
+import re
 import time
 import uuid
 from pathlib import Path
 
-from . import accounts, trash
+from . import accounts, config, trash
 from .accounts import DEFAULT_ACCOUNT
+from .context import _message_identity, merge_message_lists
 from .knowledge import (
     _dedupe_formula_map,
     _dedupe_knowledge,
@@ -38,6 +41,217 @@ def _account_profile_keys(account: str = DEFAULT_ACCOUNT, device_id: str = "") -
         if hint:
             keys.add(hint)
     return keys or None
+
+
+_AUTO_BACKUP_KEEP = 10
+_AUTO_BACKUP_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,96}$")
+
+
+def _item_ts(item) -> float:
+    """条目更新时间：updatedAt 优先、createdAt 兜底；非数值/非有限一律 0。
+
+    备份合并按它取新（583/584）：手编或旧版条目可能缺字段，缺时间戳时
+    不能拿「新备份」的身份去覆盖同 id 的现有条目。
+    """
+    if not isinstance(item, dict):
+        return 0.0
+    for field in ("updatedAt", "createdAt"):
+        value = item.get(field)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(number):
+            return number
+    return 0.0
+
+
+def _sessions_map(data) -> dict:
+    """sessions 两吃（dict / 旧版数组），只保留对象值。"""
+    if isinstance(data, dict):
+        return {str(k): v for k, v in data.items() if isinstance(v, dict)}
+    if isinstance(data, list):
+        out = {}
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            sid = str(item.get("id") or "")
+            if sid:
+                out[sid] = item
+        return out
+    return {}
+
+
+def _payload_counts(payload: dict) -> dict:
+    sessions = _sessions_map(payload.get("sessions"))
+    messages = payload.get("messages") if isinstance(payload.get("messages"), dict) else {}
+    knowledge = _normalize_knowledge(payload.get("knowledge") or {})
+    formulas = _normalize_formula_map(payload.get("formulas") or {})
+    kv = payload.get("kv") if isinstance(payload.get("kv"), dict) else {}
+    profiles = payload.get("profiles") if isinstance(payload.get("profiles"), dict) else {}
+    return {
+        "sessions": len(sessions),
+        "messages": sum(len(v) for v in messages.values() if isinstance(v, list)),
+        "knowledge": len(knowledge),
+        "formulas": len(formulas),
+        "graphs": sum(1 for key in kv if str(key).startswith("graph:")),
+        "profiles": len(profiles),
+        "kv": len(kv),
+    }
+
+
+def _message_overlap(current_msgs, incoming_msgs) -> int:
+    if not isinstance(current_msgs, list) or not isinstance(incoming_msgs, list):
+        return 0
+    keys = set()
+    for msg in current_msgs:
+        if isinstance(msg, dict):
+            keys.add(_message_identity(msg))
+    return sum(1 for msg in incoming_msgs
+               if isinstance(msg, dict) and _message_identity(msg) in keys)
+
+
+def _preview_backup(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
+                    device_id: str = None, conflict: str = "newer") -> dict:
+    """导入预览：只读，不改任何文件。条数 + 同名冲突 + 备份里较旧的条数。
+
+    预览与真正导入分开，前端先给用户看「会动多少、哪些会被较旧备份盖回去」，
+    再让用户确认（583 的确认＋自动备份前置）。
+    """
+    current = _build_backup_payload(account, device_id)
+    incoming = backup if isinstance(backup, dict) else {}
+    effective_conflict = "backup" if replace else ("backup" if conflict == "backup" else "newer")
+
+    cur_sessions = _sessions_map(current.get("sessions"))
+    inc_sessions = _sessions_map(incoming.get("sessions"))
+    session_ids = set(cur_sessions) & set(inc_sessions)
+
+    cur_msgs = current.get("messages") if isinstance(current.get("messages"), dict) else {}
+    inc_msgs = incoming.get("messages") if isinstance(incoming.get("messages"), dict) else {}
+    msg_overlap = 0
+    for sid in set(cur_msgs) & set(inc_msgs):
+        msg_overlap += _message_overlap(cur_msgs.get(sid), inc_msgs.get(sid))
+
+    cur_knowledge = _normalize_knowledge(current.get("knowledge") or {})
+    inc_knowledge = _normalize_knowledge(incoming.get("knowledge") or {})
+    knowledge_ids = set(cur_knowledge) & set(inc_knowledge)
+
+    cur_formulas = _normalize_formula_map(current.get("formulas") or {})
+    inc_formulas = _normalize_formula_map(incoming.get("formulas") or {})
+    formula_ids = set(cur_formulas) & set(inc_formulas)
+
+    cur_kv = current.get("kv") if isinstance(current.get("kv"), dict) else {}
+    inc_kv = incoming.get("kv") if isinstance(incoming.get("kv"), dict) else {}
+    graph_keys = {str(k) for k in inc_kv if str(k).startswith("graph:")} & \
+                 {str(k) for k in cur_kv if str(k).startswith("graph:")}
+
+    return {
+        "ok": True,
+        "mode": "replace" if replace else "merge",
+        "conflict": effective_conflict,
+        "serverAvailable": True,
+        "incoming": _payload_counts(incoming),
+        "current": _payload_counts(current),
+        "conflicts": {
+            "sessions": len(session_ids),
+            "messages": msg_overlap,
+            "knowledge": len(knowledge_ids),
+            "formulas": len(formula_ids),
+            "graphs": len(graph_keys),
+            "olderInBackup": {
+                "sessions": sum(1 for sid in session_ids
+                                if _item_ts(inc_sessions.get(sid)) < _item_ts(cur_sessions.get(sid))),
+                "knowledge": sum(1 for kid in knowledge_ids
+                                 if _item_ts(inc_knowledge.get(kid)) < _item_ts(cur_knowledge.get(kid))),
+                "formulas": sum(1 for fid in formula_ids
+                                if _item_ts(inc_formulas.get(fid)) < _item_ts(cur_formulas.get(fid))),
+                "graphs": sum(1 for key in graph_keys
+                              if _item_ts(inc_kv.get(key)) < _item_ts(cur_kv.get(key))),
+            },
+        },
+    }
+
+
+def _backup_dir(account: str = DEFAULT_ACCOUNT) -> Path:
+    return Path(config.DATA_DIR) / "backups" / accounts.validate_account_id(account)
+
+
+def _auto_backup_reason(stem: str) -> str:
+    parts = str(stem or "").split("-")
+    return parts[2] if len(parts) > 2 else "backup"
+
+
+def _prune_auto_backups(directory: Path) -> None:
+    files = [p for p in directory.glob("*.json") if _AUTO_BACKUP_ID_RE.match(p.stem)]
+    files.sort(key=lambda p: p.stem, reverse=True)
+    for path in files[_AUTO_BACKUP_KEEP:]:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def create_auto_backup(account: str = DEFAULT_ACCOUNT, device_id: str = None,
+                       reason: str = "import") -> dict:
+    """导入/恢复前把当前账号数据落到 data/backups/<账号>/（保留最近 10 份）。
+
+    失败直接抛给调用方：备份没写成就不该继续做破坏性写入。
+    """
+    reason = re.sub(r"[^a-z0-9_-]", "", str(reason or "import").lower())[:24] or "import"
+    payload = _build_backup_payload(account, device_id)
+    payload["backupReason"] = reason
+    payload["backupCreatedAt"] = time.time()
+    directory = _backup_dir(account)
+    directory.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+    backup_id = f"{stamp}-{reason}-{uuid.uuid4().hex[:6]}"
+    path = directory / (backup_id + ".json")
+    _write_json(path, payload)
+    _prune_auto_backups(directory)
+    stat = path.stat()
+    return {
+        "id": backup_id,
+        "createdAt": int(stat.st_mtime * 1000),
+        "size": stat.st_size,
+        "reason": reason,
+        "counts": _payload_counts(payload),
+    }
+
+
+def list_auto_backups(account: str = DEFAULT_ACCOUNT) -> list:
+    directory = _backup_dir(account)
+    if not directory.exists():
+        return []
+    out = []
+    for path in directory.glob("*.json"):
+        if not _AUTO_BACKUP_ID_RE.match(path.stem):
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        out.append({
+            "id": path.stem,
+            "createdAt": int(stat.st_mtime * 1000),
+            "size": stat.st_size,
+            "reason": _auto_backup_reason(path.stem),
+        })
+    out.sort(key=lambda item: item["id"], reverse=True)
+    return out
+
+
+def read_auto_backup(account: str = DEFAULT_ACCOUNT, backup_id: str = "") -> dict:
+    """按 id 读一份自动备份；id 白名单校验防路径穿越。"""
+    text = str(backup_id or "")
+    if not _AUTO_BACKUP_ID_RE.match(text):
+        raise ValueError("备份 id 不合法")
+    path = _backup_dir(account) / (text + ".json")
+    payload = _read_json(path, None)
+    if not isinstance(payload, dict):
+        raise FileNotFoundError("备份不存在")
+    return payload
 
 
 def _build_backup_payload(account: str = DEFAULT_ACCOUNT, device_id: str = None) -> dict:
@@ -85,11 +299,11 @@ def _build_backup_payload(account: str = DEFAULT_ACCOUNT, device_id: str = None)
     }
 
 
-def _restore_sessions(data: dict, replace: bool, account: str = DEFAULT_ACCOUNT) -> int:
+def _restore_sessions(data: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
+                      conflict: str = "newer") -> int:
     paths = accounts.resolve_paths(account)
-    sessions = _read_json(paths.sessions_path, {})
-    if replace:
-        sessions = {}
+    existing = _read_json(paths.sessions_path, {})
+    sessions = {} if replace or not isinstance(existing, dict) else existing
     if not isinstance(data, (dict, list)):
         return 0
     count = 0
@@ -104,7 +318,7 @@ def _restore_sessions(data: dict, replace: bool, account: str = DEFAULT_ACCOUNT)
         if not sid or not _SESSION_ID_RE.match(sid):
             continue
         now = int(time.time() * 1000)
-        sessions[sid] = {
+        incoming = {
             "id": sid,
             "title": sdata.get("title", "新对话"),
             "icon": sdata.get("icon", ""),
@@ -112,6 +326,14 @@ def _restore_sessions(data: dict, replace: bool, account: str = DEFAULT_ACCOUNT)
             "createdAt": sdata.get("createdAt", now),
             "updatedAt": sdata.get("updatedAt", now),
         }
+        # 584：合并模式下同名会话按 updatedAt 取新——旧设备/旧缓存导出的备份
+        # 不能把服务端后来改过的标题与活动时间盖回去。replace 与显式「以备份
+        # 为准」仍按备份写。
+        current = sessions.get(sid)
+        if (not replace and conflict != "backup" and isinstance(current, dict)
+                and _item_ts(current) > _item_ts(incoming)):
+            continue
+        sessions[sid] = incoming
         count += 1
         restored.append(sid)
     paths.sessions_path.parent.mkdir(parents=True, exist_ok=True)
@@ -124,7 +346,8 @@ def _restore_sessions(data: dict, replace: bool, account: str = DEFAULT_ACCOUNT)
     return count
 
 
-def _restore_messages(data: dict, sessions: dict, replace: bool, account: str = DEFAULT_ACCOUNT) -> int:
+def _restore_messages(data: dict, sessions: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
+                      conflict: str = "newer") -> int:
     paths = accounts.resolve_paths(account)
     if replace:
         paths.messages_dir.mkdir(parents=True, exist_ok=True)
@@ -145,8 +368,20 @@ def _restore_messages(data: dict, sessions: dict, replace: bool, account: str = 
             msgs_path = _get_messages_path(sid, account)
         except ValueError:
             continue
-        _write_json(msgs_path, msgs)
-        count += len(msgs)
+        if replace:
+            final_msgs = msgs
+        else:
+            # 584：消息按时间戳逐条合并，而不是整份覆盖。默认现有服务端数据
+            # 在前（内容冲突时现有版本赢）；用户显式选「以备份为准」时备份在前。
+            existing = _read_json(msgs_path, [])
+            if not isinstance(existing, list):
+                existing = []
+            if conflict == "backup":
+                final_msgs = merge_message_lists(msgs, existing)
+            else:
+                final_msgs = merge_message_lists(existing, msgs)
+        _write_json(msgs_path, final_msgs)
+        count += len(final_msgs)
     return count
 
 
@@ -217,12 +452,13 @@ def _rollback_restore_targets(snap: dict, account: str = DEFAULT_ACCOUNT) -> lis
 
 
 def _restore_backup(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
-                    device_id: str = None) -> dict:
+                    device_id: str = None, conflict: str = "newer") -> dict:
     # 恢复按 sessions→消息→知识→公式→kv→画像 依次落盘，中途异常（文件被占用/
     # 磁盘满）会留下半恢复状态。这里先做内容级快照，任一环节失败即整体回滚。
     snapshot = _snapshot_restore_targets(account)
     try:
-        return _apply_restore(backup, replace, account=account, device_id=device_id)
+        return _apply_restore(backup, replace, account=account, device_id=device_id,
+                              conflict=conflict)
     except Exception as exc:
         rollback_failed = _rollback_restore_targets(snapshot, account)
         detail = f"恢复失败，已回滚到导入前状态：{exc}"
@@ -232,12 +468,13 @@ def _restore_backup(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
 
 
 def _apply_restore(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
-                   device_id: str = None) -> dict:
+                   device_id: str = None, conflict: str = "newer") -> dict:
     paths = accounts.resolve_paths(account)
     sessions = backup.get("sessions") or {}
-    session_count = _restore_sessions(sessions, replace, account)
+    session_count = _restore_sessions(sessions, replace, account, conflict=conflict)
     saved_sessions = _read_json(paths.sessions_path, {})
-    message_count = _restore_messages(backup.get("messages") or {}, saved_sessions, replace, account)
+    message_count = _restore_messages(backup.get("messages") or {}, saved_sessions, replace,
+                                      account, conflict=conflict)
 
     knowledge = _normalize_knowledge(backup.get("knowledge") or {})
     # 手编备份 JSON 能带 NaN/Infinity（json.loads 收得进）——恢复回写前统一落
@@ -252,7 +489,18 @@ def _apply_restore(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
             _write_json(target, {})
     if knowledge:
         existing_knowledge = _read_json(paths.knowledge_path, {})
-        _write_json(paths.knowledge_path, _dedupe_knowledge({**existing_knowledge, **knowledge}))
+        if not isinstance(existing_knowledge, dict):
+            existing_knowledge = {}
+        merged_knowledge = dict(existing_knowledge)
+        for item_id, item in knowledge.items():
+            current = merged_knowledge.get(item_id)
+            # 584：合并时同 id 按 updatedAt/createdAt 取新；备份版本更旧就保留
+            # 现有条目。replace 与「以备份为准」仍直接写备份版本。
+            if (not replace and conflict != "backup" and isinstance(current, dict)
+                    and _item_ts(current) > _item_ts(item)):
+                continue
+            merged_knowledge[item_id] = item
+        _write_json(paths.knowledge_path, _dedupe_knowledge(merged_knowledge))
         # 备份导入是用户明确要回来的数据，等同回收站恢复（会话侧 T271 同款纪律）：
         # 恢复条目若还在条目级墓碑登记表里，同步除名——否则下一轮 15 秒同步的
         # POST 闸门/残留自愈会按「删前时间戳 ≤ 删除时刻」把刚恢复的条目二次清除
@@ -264,11 +512,36 @@ def _apply_restore(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
             _strip_nonfinite_ts(_it, _restore_now_ms)
     if formulas:
         existing_formulas = _read_json(paths.formulas_path, {})
-        _write_json(paths.formulas_path, _dedupe_formula_map({**existing_formulas, **formulas}))
+        if not isinstance(existing_formulas, dict):
+            existing_formulas = {}
+        merged_formulas = dict(existing_formulas)
+        for item_id, item in formulas.items():
+            current = merged_formulas.get(item_id)
+            if (not replace and conflict != "backup" and isinstance(current, dict)
+                    and _item_ts(current) > _item_ts(item)):
+                continue
+            merged_formulas[item_id] = item
+        _write_json(paths.formulas_path, _dedupe_formula_map(merged_formulas))
         trash.formula_tombstone_unregister(paths, list(formulas.keys()))
 
     kv_data = backup.get("kv") or {}
     if isinstance(kv_data, dict):
+        if not replace and conflict != "backup":
+            # 584：画布状态按 updatedAt 取新；graph_history 信封按 t（保存时刻）
+            # 取新。备份里更旧的状态不覆盖当前画布，避免旧设备回滚新图。
+            existing_kv = kv_all_data(account)
+            filtered_kv = {}
+            for key, value in kv_data.items():
+                current = existing_kv.get(key)
+                if isinstance(current, dict) and isinstance(value, dict):
+                    if str(key).startswith("graph:") and _item_ts(current) > _item_ts(value):
+                        continue
+                    if (str(key).startswith("graph_history:")
+                            and _item_ts({"updatedAt": current.get("t")})
+                            > _item_ts({"updatedAt": value.get("t")})):
+                        continue
+                filtered_kv[key] = value
+            kv_data = filtered_kv
         # 拆分路由落盘：全局键合并主文件、会话键按 sid 进 data/kv/；replace 先清两边
         kv_restore_bulk(kv_data, replace, account)
 
@@ -309,4 +582,8 @@ __all__ = [
     "_apply_restore",
     "_snapshot_restore_targets",
     "_rollback_restore_targets",
+    "_preview_backup",
+    "create_auto_backup",
+    "list_auto_backups",
+    "read_auto_backup",
 ]

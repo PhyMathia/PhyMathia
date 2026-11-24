@@ -8,7 +8,14 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 
 from . import profile
-from .backup import _build_backup_payload, _restore_backup
+from .backup import (
+    _build_backup_payload,
+    _preview_backup,
+    _restore_backup,
+    create_auto_backup,
+    list_auto_backups,
+    read_auto_backup,
+)
 from .request_ctx import _account_id, _parse_json_object, _readonly_request
 
 logger = logging.getLogger(__name__)
@@ -151,6 +158,62 @@ async def api_backup_export(request: Request = None):
     return await asyncio.to_thread(_build_backup_payload, account, device_id)
 
 
+@router.post("/api/backup/preview")
+async def api_backup_preview(request: Request):
+    """导入预览：只读统计与冲突，不写盘。前端确认框据此渲染。"""
+    payload = await _parse_json_object(request)
+    backup = payload.get("backup") if isinstance(payload.get("backup"), dict) else payload
+    if not isinstance(backup, dict):
+        raise HTTPException(status_code=400, detail="Backup payload must be an object")
+    mode = str(payload.get("mode") or "merge").lower()
+    if mode not in ("merge", "replace"):
+        raise HTTPException(status_code=400, detail="mode must be merge or replace")
+    conflict = str(payload.get("conflict") or "newer").lower()
+    if conflict not in ("newer", "backup"):
+        raise HTTPException(status_code=400, detail="conflict must be newer or backup")
+    account = _account_id(request, payload)
+    device_id = str(payload.get("device_id") or "")
+    return await asyncio.to_thread(
+        _preview_backup, backup, mode == "replace", account, device_id, conflict)
+
+
+@router.get("/api/backup/snapshots")
+async def api_backup_snapshots(request: Request = None):
+    """本账号最近的自动备份（导入/恢复前自动生成，最多 10 份）。"""
+    account = _account_id(request)
+    snapshots = await asyncio.to_thread(list_auto_backups, account)
+    return {"snapshots": snapshots}
+
+
+@router.post("/api/backup/snapshots/{snapshot_id}/restore")
+async def api_backup_snapshot_restore(snapshot_id: str, request: Request):
+    if _readonly_request(request):
+        raise HTTPException(status_code=403, detail="查阅模式：只读，不能恢复备份")
+    payload = await _parse_json_object(request)
+    account = _account_id(request, payload)
+    device_id = str(payload.get("device_id") or "")
+    if device_id:
+        profile.note_device_binding(device_id, account=account)
+    try:
+        backup = await asyncio.to_thread(read_auto_backup, account, snapshot_id)
+        # 恢复本身也是破坏性写入：先把当前状态再存一份，恢复错了还能退回
+        auto = await asyncio.to_thread(create_auto_backup, account, device_id, "restore")
+        result = await asyncio.to_thread(
+            _restore_backup, backup, True, account=account, device_id=device_id,
+            conflict="backup")
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="备份不存在或已清理")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    result["restoredFrom"] = snapshot_id
+    result["autoBackup"] = auto
+    return result
+
+
 @router.post("/api/backup/import")
 async def api_backup_import(request: Request):
     payload = await _parse_json_object(request)
@@ -160,16 +223,34 @@ async def api_backup_import(request: Request):
     mode = str(payload.get("mode") or "merge").lower()
     if mode not in ("merge", "replace"):
         raise HTTPException(status_code=400, detail="mode must be merge or replace")
+    conflict = str(payload.get("conflict") or "newer").lower()
+    if conflict not in ("newer", "backup"):
+        raise HTTPException(status_code=400, detail="conflict must be newer or backup")
     account = _account_id(request, payload)
     device_id = str(payload.get("device_id") or "")
     if device_id:
         profile.note_device_binding(device_id, account=account)
+    # 583：默认先自动备份当前账号；备份没写成就不做破坏性写入。
+    auto_backup = payload.get("auto_backup", True) is not False
+    auto_meta = None
+    if auto_backup:
+        try:
+            auto_meta = await asyncio.to_thread(
+                create_auto_backup, account, device_id, "import")
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500, detail=f"导入前自动备份失败，已取消导入：{exc}")
     try:
         # T201：导入是全量写（会话/消息/知识/公式/KV），挪 to_thread 防卡事件循环
-        return await asyncio.to_thread(
-            _restore_backup, backup, mode == "replace", account=account, device_id=device_id)
+        result = await asyncio.to_thread(
+            _restore_backup, backup, mode == "replace", account=account,
+            device_id=device_id, conflict="backup" if mode == "replace" else conflict)
     except HTTPException:
         raise
     except Exception as exc:
         # _restore_backup 失败时已整体回滚，把回滚报告带回给调用方
         raise HTTPException(status_code=500, detail=str(exc))
+    # 只在调用方明确要求自动备份时回传元信息（既有 API 调用方的响应形状不变）
+    if auto_meta is not None and payload.get("auto_backup") is True:
+        result["autoBackup"] = auto_meta
+    return result
