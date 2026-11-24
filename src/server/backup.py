@@ -45,6 +45,9 @@ def _account_profile_keys(account: str = DEFAULT_ACCOUNT, device_id: str = "") -
 
 _AUTO_BACKUP_KEEP = 10
 _AUTO_BACKUP_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,96}$")
+# 备份画布桶（顶层 graphs/graphHistories）的 sid 白名单，与 storage._SESSION_ID_RE
+# 同口径（kv 拆分落盘另有同款白名单，这里前置过滤是让手编备份的脏键直接丢弃）
+_BACKUP_SID_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 
 def _item_ts(item) -> float:
@@ -525,6 +528,29 @@ def _apply_restore(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
         trash.formula_tombstone_unregister(paths, list(formulas.keys()))
 
     kv_data = backup.get("kv") or {}
+    # 浏览器导出的备份把画布放顶层 graphs/graphHistories 桶（本机 localStorage 键
+    # 拆出来的），服务端 kv 里对应 graph:<sid>/graph_history:<sid>。此前恢复只认
+    # kv——浏览器导出的备份在线导入时画布内容不入服务端存档，只活在本机缓存那
+    # 一份（2026-11-24 实测：本机缓存被配额满卡掉时画布内容就丢了）。折进 kv 后
+    # 与 kv 内 graph: 键同走下方 584 合并/replace 口径；sid 白名单与前端导入同款
+    # （^[A-Za-z0-9_-]+$，防手编备份借键名搞路径花样），history_ 前缀旧备份按
+    # 前端导入同款归位到 graph_history。
+    graphs_bucket = backup.get("graphs") if isinstance(backup.get("graphs"), dict) else {}
+    for _sid, _state in graphs_bucket.items():
+        _s = str(_sid)
+        if not _BACKUP_SID_RE.fullmatch(_s):
+            continue
+        if _s.startswith("history_"):
+            if isinstance(_state, list):
+                kv_data.setdefault("graph_history:" + _s[len("history_"):], _state)
+            continue
+        if isinstance(_state, dict):
+            kv_data.setdefault("graph:" + _s, _state)
+    histories_bucket = backup.get("graphHistories") if isinstance(backup.get("graphHistories"), dict) else {}
+    for _sid, _env in histories_bucket.items():
+        _s = str(_sid)
+        if _BACKUP_SID_RE.fullmatch(_s) and isinstance(_env, (list, dict)):
+            kv_data.setdefault("graph_history:" + _s, _env)
     if isinstance(kv_data, dict):
         if not replace and conflict != "backup":
             # 584：画布状态按 updatedAt 取新；graph_history 信封按 t（保存时刻）

@@ -97,6 +97,43 @@ class BackupMergeTest(RouteTestBase):
         self.assertEqual(_read(self.root / "formulas.json")["f1"]["concept"], "新公式")
         self.assertEqual(storage_mod.kv_read("graph:s1")["customNodes"], ["new"])
 
+    def test_browser_shape_backup_restores_graphs_and_histories(self):
+        # 浏览器导出的备份把画布放顶层 graphs/graphHistories（无 kv 桶）。此前
+        # 服务端恢复只认 kv——在线导入时画布内容不入服务端存档，只活在本机缓存
+        # 那一份（2026-11-24 实测：本机缓存被配额满卡掉时画布内容就丢了）。
+        storage_mod.kv_write("graph:s1", {"updatedAt": 300, "customNodes": ["current"]})
+        backup_mod._restore_backup({
+            "sessions": {},
+            "messages": {},
+            "knowledge": {},
+            "formulas": {},
+            "graphs": {
+                "s1": {"updatedAt": 200, "customNodes": ["browser"]},
+                "s2": {"updatedAt": 100, "customNodes": ["other"]},
+                "history_s3": ["snapshot"],
+                "../evil": {"updatedAt": 1},
+            },
+            "graphHistories": {"s1": {"v": 2, "e": [], "c": 0, "t": 200}},
+        }, replace=False)
+        # s1 现值较新：584 口径保留现值；s2 照常入库存档；旧版 history_ 前缀归位
+        self.assertEqual(storage_mod.kv_read("graph:s1")["customNodes"], ["current"])
+        self.assertEqual(storage_mod.kv_read("graph:s2")["customNodes"], ["other"])
+        self.assertEqual(storage_mod.kv_read("graph_history:s1")["v"], 2)
+        self.assertEqual(storage_mod.kv_read("graph_history:s3"), ["snapshot"])
+        self.assertIsNone(storage_mod.kv_read("graph:../evil"))
+
+    def test_browser_shape_backup_replace_restores_graphs(self):
+        storage_mod.kv_write("graph:old", {"updatedAt": 1, "customNodes": []})
+        backup_mod._restore_backup({
+            "sessions": {},
+            "messages": {},
+            "knowledge": {},
+            "formulas": {},
+            "graphs": {"s9": {"updatedAt": 5, "customNodes": ["fresh"]}},
+        }, replace=True)
+        self.assertIsNone(storage_mod.kv_read("graph:old"))
+        self.assertEqual(storage_mod.kv_read("graph:s9")["customNodes"], ["fresh"])
+
     def test_preview_is_read_only_and_counts_conflicts(self):
         self._write("sessions.json", {
             "s1": {"id": "s1", "title": "现有", "updatedAt": 300},

@@ -456,13 +456,13 @@ function _applyLocalSettings(data) {
   if (data.settings && typeof data.settings === 'object' && !Array.isArray(data.settings)) {
     for (const key of _BACKUP_SETTINGS_KEYS) {
       const value = data.settings[key];
-      if (typeof value === 'string') safeLocalStorageSet(key, value);
+      if (typeof value === 'string') _importCacheSet(key, value);
     }
   }
-  if (data.theme) localStorage.setItem('phymathia_theme', data.theme);
-  if (data.level) localStorage.setItem('phymathia_level', data.level);
-  if (data.currentSession) localStorage.setItem('phymathia_current_session', data.currentSession);
-  if (data.onboarding) localStorage.setItem('phymathia_onboarding_done', data.onboarding);
+  if (data.theme) _importCacheSet('phymathia_theme', data.theme);
+  if (data.level) _importCacheSet('phymathia_level', data.level);
+  if (data.currentSession) _importCacheSet('phymathia_current_session', data.currentSession);
+  if (data.onboarding) _importCacheSet('phymathia_onboarding_done', data.onboarding);
   if (Array.isArray(data.userModels)) {
     // 备份导出时 apiKey 被安全抹空；导入时按 id（兜底 provider+model）匹配本地条目，
     // 把本地仍持有的密钥合并回去，避免“恢复一次备份 = 所有模型密钥清零”
@@ -476,20 +476,20 @@ function _applyLocalSettings(data) {
       if (local && local.apiKey && !m.apiKey) return { ...m, apiKey: local.apiKey };
       return m;
     });
-    localStorage.setItem('phymathia_user_models', JSON.stringify(merged));
+    _importCacheSet('phymathia_user_models', JSON.stringify(merged));
     // T284：先把合并后的列表拉进内存，再恢复组密钥（importModelGroupKeys→
     // saveGroupKey 会把组密钥同步进组内条目并走统一保存出口；replace 模式刚清过
     // 存储，reload 保证内存与磁盘同源）
     if (typeof reloadModelsFromStorage === 'function') reloadModelsFromStorage();
     if (typeof importModelGroupKeys === 'function') importModelGroupKeys(data.modelGroupKeys);
   }
-  if (data.activeModels && typeof data.activeModels === 'object') localStorage.setItem('phymathia_active_models', JSON.stringify(data.activeModels));
+  if (data.activeModels && typeof data.activeModels === 'object') _importCacheSet('phymathia_active_models', JSON.stringify(data.activeModels));
   const quizStats = data.quizStats && typeof data.quizStats === 'object'
     ? data.quizStats
     : (data.kv && data.kv['phymathia_quiz_stats']) || {};
-  if (quizStats && typeof quizStats === 'object') localStorage.setItem('phymathia_quiz_stats', JSON.stringify(quizStats));
+  if (quizStats && typeof quizStats === 'object') _importCacheSet('phymathia_quiz_stats', JSON.stringify(quizStats));
   const quizBank = data.quizBank || (data.kv && data.kv['phymathia_quiz_bank']) || null;
-  if (quizBank && typeof quizBank === 'object') localStorage.setItem('phymathia_quiz_bank', JSON.stringify(quizBank));
+  if (quizBank && typeof quizBank === 'object') _importCacheSet('phymathia_quiz_bank', JSON.stringify(quizBank));
   // T284：导入绕过 save* 直写 localStorage——内存拉回最新后整包推服务端；
   // importData 在刷新前还会 await flushModelsSync 兜底（乐观同步戳已随
   // scheduleModelsSync 落地，即使这里没推成，刷新后也按「本地较新→补传」收敛）
@@ -512,6 +512,19 @@ function _clearLocalDataForReplace() {
   });
 }
 
+// 导入写满浏览器本地存储（2026-11-24 用户实测）：导入分「服务端落盘」与「本机缓存回放」
+// 两步，localStorage 配额（约 5MB）装不下大账号（画布状态＋撤销历史轻易超出），回放写满
+// 是常态而非故障。此前 _applyLocalSettings 里几处裸 localStorage.setItem 一抛就被
+// confirmImport 当成整次导入失败（「导入失败：The quota has been exceeded.」）——而服务端
+// 早已收下（刷新后数据都在），收尾步骤还被整段跳过。现在：导入路径的缓存写入统一走
+// _importCacheSet（写不进＝登记进 _importCacheMisses、不中断），结论只看服务端。
+let _importCacheMisses = [];
+function _importCacheSet(key, value) {
+  if (safeLocalStorageSet(key, value)) return true;
+  _importCacheMisses.push(key);
+  return false;
+}
+
 function _forgetDeletedIds(storageKey, ids) {
   if (!Array.isArray(ids) || !ids.length) return;
   const map = _safeParseJSON(localStorage.getItem(storageKey), {});
@@ -523,7 +536,7 @@ function _forgetDeletedIds(storageKey, ids) {
       changed = true;
     }
   });
-  if (changed) safeLocalStorageSet(storageKey, JSON.stringify(map));
+  if (changed) _importCacheSet(storageKey, JSON.stringify(map));
 }
 
 function _forgetImportedTombstones(data) {
@@ -534,6 +547,7 @@ function _forgetImportedTombstones(data) {
 }
 
 function _applyLocalBackup(data, replace) {
+  _importCacheMisses.length = 0; // 每次回放重算没写进的键，返回给 confirmImport 拼说明
   if (replace) _clearLocalDataForReplace();
   const sessions = _safeParseJSON(localStorage.getItem('phymathia_sessions'), {});
   for (const [sid, session] of Object.entries(data.sessions || {})) {
@@ -542,14 +556,14 @@ function _applyLocalBackup(data, replace) {
     if (!replace && sessions[sid] && _backupItemTs(sessions[sid]) > _backupItemTs(session)) continue;
     sessions[sid] = session;
   }
-  safeLocalStorageSet('phymathia_sessions', JSON.stringify(sessions));
+  _importCacheSet('phymathia_sessions', JSON.stringify(sessions));
 
   for (const [sid, msgs] of Object.entries(data.messages || {})) {
     if (!Array.isArray(msgs)) continue;
     const key = 'phymathia_msgs_' + sid;
     const existing = _safeParseJSON(localStorage.getItem(key), []);
     const merged = replace ? _mergeMessageArrays([], msgs) : _mergeMessageArrays(existing, msgs);
-    safeLocalStorageSet(key, JSON.stringify(merged));
+    _importCacheSet(key, JSON.stringify(merged));
   }
 
   const knowledge = _safeParseJSON(localStorage.getItem('phymathia_knowledge'), {});
@@ -558,7 +572,7 @@ function _applyLocalBackup(data, replace) {
     if (!replace && knowledge[id] && _backupItemTs(knowledge[id]) > _backupItemTs(item)) continue;
     knowledge[id] = item;
   }
-  safeLocalStorageSet('phymathia_knowledge', JSON.stringify(knowledge));
+  _importCacheSet('phymathia_knowledge', JSON.stringify(knowledge));
 
   const formulas = _safeParseJSON(localStorage.getItem('phymathia_formulas'), {});
   for (const [id, item] of Object.entries(data.formulas || {})) {
@@ -566,13 +580,22 @@ function _applyLocalBackup(data, replace) {
     if (!replace && formulas[id] && _backupItemTs(formulas[id]) > _backupItemTs(item)) continue;
     formulas[id] = item;
   }
-  if (typeof setFormulaCache === 'function') setFormulaCache(formulas); else safeLocalStorageSet('phymathia_formulas', JSON.stringify(formulas));
+  // setFormulaCache 内部 try/catch 吞掉写入失败——写前后比对原串，认出「没写进」
+  const formulasRawBefore = localStorage.getItem('phymathia_formulas');
+  if (typeof setFormulaCache === 'function') {
+    setFormulaCache(formulas);
+    if (Object.keys(formulas).length > 0 && localStorage.getItem('phymathia_formulas') === formulasRawBefore) {
+      _importCacheMisses.push('phymathia_formulas');
+    }
+  } else {
+    _importCacheSet('phymathia_formulas', JSON.stringify(formulas));
+  }
 
   for (const [sid, state] of Object.entries(data.graphs || {})) {
     if (!(state && typeof state === 'object')) continue;
     if (sid.startsWith('history_')) {
       // 旧版备份把历史快照错并进 graphs（键 history_<sid>）——归位到历史键
-      if (Array.isArray(state)) safeLocalStorageSet('phymathia_graph_history_' + sid.slice('history_'.length), JSON.stringify(state));
+      if (Array.isArray(state)) _importCacheSet('phymathia_graph_history_' + sid.slice('history_'.length), JSON.stringify(state));
       continue;
     }
     const graphKey = 'phymathia_graph_' + sid;
@@ -580,7 +603,7 @@ function _applyLocalBackup(data, replace) {
       const current = _safeParseJSON(localStorage.getItem(graphKey), null);
       if (current && _backupItemTs(current) > _backupItemTs(state)) continue;
     }
-    safeLocalStorageSet(graphKey, JSON.stringify(state));
+    _importCacheSet(graphKey, JSON.stringify(state));
   }
   for (const [sid, arr] of Object.entries(data.graphHistories || {})) {
     // T365：历史键可以是旧裸数组，也可以是 v2 信封 {v:2,e,c,l}（游标随盘）——两者原样回放
@@ -592,9 +615,10 @@ function _applyLocalBackup(data, replace) {
       const incomingTs = Number(arr && arr.t) || 0;
       if (currentTs > incomingTs) continue;
     }
-    safeLocalStorageSet(historyKey, JSON.stringify(arr));
+    _importCacheSet(historyKey, JSON.stringify(arr));
   }
   _applyLocalSettings(data);
+  return _importCacheMisses.splice(0);
 }
 
 async function _pushBackupToExistingApis(data) {
@@ -931,8 +955,14 @@ async function confirmImport() {
   if (serverResp && serverResp.ok) {
     try { result = await serverResp.json(); } catch (e) {}
   }
+  // 导入结论只看服务端：/api/backup/import 收下＝数据已完整存进电脑存档（真相源），
+  // 本机缓存只是加速副本，写满/写挂都不再把整次导入报成失败（2026-11-24 用户实测：
+  // 配额满曾被误报成「导入失败：The quota has been exceeded.」，刷新后数据其实都在）。
+  const serverImported = !!(serverResp && serverResp.ok);
+  let applyError = null;
+  let misses = [];
   try {
-    _applyLocalBackup(data, mode === 'replace');
+    misses = _applyLocalBackup(data, mode === 'replace') || [];
     _forgetImportedTombstones(data);
     if (!serverResp) await _pushBackupToExistingApis(data);
     if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
@@ -943,18 +973,40 @@ async function confirmImport() {
     if (typeof flushModelsSync === 'function') { try { await flushModelsSync(); } catch (e) {} }
   } catch (err) {
     console.error('[Import] Apply error:', err);
-    _importBusy = false;
-    if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = mode === 'replace' ? '确认替换' : '确认合并'; }
-    if (cancelBtn) cancelBtn.disabled = false;
-    if (resultEl) { resultEl.textContent = '导入失败：' + err.message; resultEl.style.color = 'var(--danger, #c0392b)'; }
-    return;
+    applyError = err;
   }
 
   const counts = result && result.ok ? result : _backupCounts(data);
   let text = '导入完成：' + (counts.sessions || 0) + ' 张画布 · ' + (counts.messages || 0) + ' 条消息 · ' +
     (counts.knowledge || 0) + ' 条知识点 · ' + (counts.formulas || 0) + ' 条公式';
   if (result && result.autoBackup && result.autoBackup.id) text += ' · 已自动备份当前数据';
-  if (!serverResp) text += '（服务端不可用，仅写入本机缓存）';
+  if (serverImported) {
+    // 服务端已收下：缓存没写全只附一句说明，刷新延时放长到 3.6s 给人读完
+    if (applyError) {
+      text += '\n本机缓存没有更新；数据已完整存入电脑存档，不影响使用。';
+      if (typeof showToast === 'function') showToast('导入完成：数据已存入电脑存档（本机缓存没有更新，不影响使用）', 6000);
+    } else if (misses.length) {
+      text += '\n浏览器本地空间不足，部分内容没有缓存到本机；数据已完整存入电脑存档，不影响使用。';
+      if (typeof showToast === 'function') showToast('导入完成：数据已存入电脑存档（浏览器本地空间不足，部分内容未缓存到本机，不影响使用）', 3600);
+    } else if (typeof showToast === 'function') showToast(text, 6000);
+    if (resultEl) { resultEl.textContent = text; resultEl.style.color = 'var(--text-secondary)'; }
+    updateBackupSnapshots(true);
+    setTimeout(() => location.reload(), (applyError || misses.length) ? 3600 : 1400);
+    return;
+  }
+  // 服务端没收到（离线兜底路）：本机缓存是唯一落点，没存全就得照实说、让人重试
+  if (applyError || misses.length) {
+    _importBusy = false;
+    if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = mode === 'replace' ? '确认替换' : '确认合并'; }
+    if (cancelBtn) cancelBtn.disabled = false;
+    if (resultEl) {
+      resultEl.textContent = '导入未完成：服务端暂时不可用，且浏览器本地空间已满，数据只存下了一部分。可在释放浏览器空间后重试导入。';
+      resultEl.style.color = 'var(--danger, #c0392b)';
+    }
+    if (typeof showToast === 'function') showToast('导入未完成：数据只存下了一部分，可重试', 6000);
+    return;
+  }
+  text += '（服务端不可用，仅写入本机缓存）';
   if (resultEl) { resultEl.textContent = text; resultEl.style.color = 'var(--text-secondary)'; }
   if (typeof showToast === 'function') showToast(text, 6000);
   updateBackupSnapshots(true);

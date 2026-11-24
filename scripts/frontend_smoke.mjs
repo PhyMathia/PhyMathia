@@ -49,6 +49,7 @@
 //   graph-scope-confirm     Φ 阶段1 先对齐再动手（2026-10-19：复述确认卡＋选中即范围警告行＋大批拆段渲染）
 //   graph-column-layout     画布列几何（2026-11-20：列宽随最宽节点、列框/列缝判定、两端建列、空列消失、变窄回移）
 //   graph-focus-release     画布按下补输入框失焦（2026-11-24：pointerdown 的 preventDefault 吞掉失焦→Delete 删字符不删节点、输入栏内容不落盘）
+//   backup-quota            导入写满浏览器本地存储（2026-11-24：服务端已收下却报「导入失败：quota exceeded」；行为链独占 fetch/setItem/getElementById 桩，域尾收口）
 //   harness-health          Φ 主动体检芯片（2026-10-26：开面板零模型体检→顶部芯片→点击预填不发送→同画布同问题只提示一次；行为链独占 fetch/getElementById 桩，域尾收口）
 //   skills-ui               skill 界面（2026-11-16 第 4 步）：分析卡「技能：…」标签＋设置页按节点分组（纯同步）
 //   skills-manage           技能管理面（2026-11-16 第 5 版）：总开关/单条开关/内置可改/删除恢复/导入确认卡（纯同步）
@@ -108,6 +109,7 @@ import { run as _graph_reflow_guards } from './frontend_smoke/graph-reflow-guard
 import { run as _graph_heavy_degrade } from './frontend_smoke/graph-heavy-degrade.mjs';
 import { run as _graph_column_layout } from './frontend_smoke/graph-column-layout.mjs';
 import { run as _graph_focus_release } from './frontend_smoke/graph-focus-release.mjs';
+import { run as _backup_quota } from './frontend_smoke/backup-quota.mjs';
 import { run as _generation_resume } from './frontend_smoke/generation-resume.mjs';
 import { run as _viz_background } from './frontend_smoke/viz-background.mjs';
 import { run as _harness_health } from './frontend_smoke/harness-health.mjs';
@@ -180,6 +182,9 @@ await _harness_health();
 // 节点工坊（2026-10-20 创造模式重做 P0–P4）：自带收口线（补丁往返用例是异步的），
 // 放在最后——它会临时替换 fetch/getActiveModelForRole 两个全局桩，用完立刻还原。
 await _workshop();
+// 导入写满浏览器本地存储（2026-11-24）：自带收口线（真跑 confirmImport，整体换
+// fetch/localStorage.setItem/document/showToast/setTimeout 桩，用毕还原），接在 workshop 之后。
+await _backup_quota();
 // T411 传染哨兵（全量收尾）：全流程跑完后桩位必须仍持有可序列化真函数
 _graph_stub_sentinel('全量收尾');
 await finish();
