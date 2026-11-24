@@ -118,6 +118,58 @@
     });
   }
 
+  // ===== 内容外链字体/样式表剔除（backlog 581，2026-11-24 拍板 A 案「剔除」）=====
+  // AI 生成的节点/消息 HTML 常自带 <link rel="preconnect" href="https://fonts.googleapis.com">
+  // 这类外链字体（齿轮会话实测：外发页一打开就发 5 个外网请求）。它们住在快照的 JSON
+  // 字符串里，模板层的内联收集与结构核对（①）都看不见。拍板：外发只读页直接剔除、退系统
+  // 字体，换真正的离线零外联；.pmu 存档不在此列（拖回主应用要保真），只挂单文件导出链。
+  // 剔的是「会拉外网」的整个向量族（Google Fonts 只是实测到的那族）：
+  // ① rel 为拉取类（stylesheet/preconnect/preload/prefetch）且 href 是绝对 http(s)/协议相对的 <link>；
+  // ② @import 到外网的规则（连同结尾分号整条拿掉）。
+  // 代码块里展示用的本地 @import 与转义过的 &lt;link…&gt; 文本不动——前者不发外网、后者不是标签。
+  var _extFetchRel = /(stylesheet|preconnect|preload|prefetch)/i;
+  var _extHrefVal = /^\s*(?:https?:)?\/\//i;
+
+  function _stripUtopiaExtStyles(value) {
+    var removed = 0;
+    var walked = [];
+    function walk(v) {
+      if (typeof v === 'string') {
+        var out = v.replace(/<link\b[^>]*>/gi, function (tag) {
+          var rel = tag.match(/\srel\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+          var href = tag.match(/\shref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+          var relVal = rel ? (rel[1] || rel[2] || rel[3] || '') : '';
+          var hrefVal = href ? (href[1] || href[2] || href[3] || '') : '';
+          if (relVal && hrefVal && _extFetchRel.test(relVal) && _extHrefVal.test(hrefVal)) {
+            removed++;
+            return '';
+          }
+          return tag;
+        });
+        return out.replace(/@import[^;{}]*(;|(?=[}\n$]))/gi, function (m) {
+          if (/(?:https?:)?\/\//i.test(m)) { removed++; return ''; }
+          return m;
+        });
+      }
+      if (Array.isArray(v)) {
+        for (var i = 0; i < v.length; i++) v[i] = walk(v[i]);
+        return v;
+      }
+      if (v && typeof v === 'object') {
+        walked.push(v);
+        for (var k in v) {
+          if (!Object.prototype.hasOwnProperty.call(v, k)) continue;
+          var child = v[k];
+          if (child && typeof child === 'object' && walked.indexOf(child) >= 0) continue; // 快照是克隆无环，防一手
+          v[k] = walk(child);
+        }
+      }
+      return v;
+    }
+    walk(value);
+    return removed;
+  }
+
   // 安全内嵌 JS 字面量：</script 序列会截断外层 <script>；<!-- 会把解析器切进
   // 「脚本数据转义」状态；U+2028/2029 是合法 JSON 但非法 JS 字符串字面量。三样全转。
   function _embedJsLiteral(value) {
@@ -424,6 +476,12 @@
       } catch (e) {
         toastMsg('快照生成失败：' + (e && e.message ? e.message : e));
         return false;
+      }
+      // 581：内容里的外网字体/样式表整族剔除（只动这份克隆，画布原件与 .pmu 存档不受影响）
+      var extStripped = _stripUtopiaExtStyles(snapshot);
+      if (extStripped) {
+        console.info('[utopia-html] 已剔除内容里的外网字体/样式表 ' + extStripped
+          + ' 处（外发页零外联，backlog 581）');
       }
 
       toastMsg('正在收集查看器资源…');

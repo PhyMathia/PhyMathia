@@ -98,6 +98,12 @@ check('utopia: 单文件网页导出（防截断转义 + 大图限流 + 双通�
     throw new Error('快照 app 标签须读 config.js 的 APP_VERSION（577），不得写死版本号');
   }
   if (!uh.includes('{ stripVersions: true }')) throw new Error('外发快照须带 stripVersions（579：节点旧版本不进单文件网页）');
+  // 581 外链字体剔除（2026-11-24 拍板 A 案）：外发页零外联——剔除器须存在，且调用接在
+  // 快照构建之后（内嵌、自检、真打开核对用的都得是剔完的那份）。
+  if (!uh.includes('function _stripUtopiaExtStyles')) throw new Error('581：缺内容外链字体/样式表剔除器（_stripUtopiaExtStyles）');
+  if (uh.indexOf('_stripUtopiaExtStyles(snapshot)') < uh.indexOf('buildUtopiaSnapshot({ stripVersions: true })')) {
+    throw new Error('581：剔除须接在快照构建之后——内嵌与自检用的必须是剔完的快照');
+  }
   if (!uj.includes('function _utopiaWithoutVersions') || !uj.includes('strip(snapshot.nodes)')) {
     throw new Error('579：剔除旧版本须同时覆盖 graph.customNodes 与 nodes 两份（齿轮会话两份合计占成品 14%）');
   }

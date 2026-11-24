@@ -61,6 +61,17 @@ function makeSnapshot() {
     ...qa('画一个弹簧振子的可视化', [
       '<viz>', '## 交互探索', '', '```html', vizPage, '```', '</viz>',
     ].join('\n'), t0 + 4000),
+    // 581 毒饵：AI 内容自带的外链字体（齿轮会话实测形态——外发页一打开就发 5 个外网请求）。
+    // link 三件套照真实会话原样抄；@import 是同族的另一种写法。导出链必须全数剔除。
+    ...qa('网页里怎么引入漂亮的中文字体？', [
+      '<physics>', '## 物理视角', '排版常用 Google Fonts：',
+      '<link rel="preconnect" href="https://fonts.googleapis.com">',
+      '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>',
+      '<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;900&display=swap" rel="stylesheet">',
+      '<style>@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono&display=swap");</style>',
+      '这类外链在离线页面里要么发外网请求、要么静默失效。', '</physics>',
+      '<math>', '## 数学本质', '字体外链不含公式。', '</math>',
+    ].join('\n'), t0 + 6000),
   ];
   return {
     format: 'phymath-utopia/graph',
@@ -95,6 +106,9 @@ async function run() {
 
   try {
     const ctx = await browser.newContext({ acceptDownloads: true, viewport: { width: 1440, height: 900 } });
+    // 581：夹具带外链字体毒饵——字体域名在本上下文内拦掉，测试全程不发真外网请求
+    // （file:// 那一段用的是新开的 viewCtx，不受这里影响，零联网断言照旧全权）
+    await ctx.route(/fonts\.(googleapis|gstatic)\.com/, (route) => route.abort());
     const page = await ctx.newPage();
     const downloads = [];
     const pageErrors = [];
@@ -183,6 +197,13 @@ async function run() {
     }
     ok('夹具导入成真实画布（' + shape.nodes + ' 节点 / ' + shape.edges + ' 连线，可视化卡 ' + shape.viz + ' 张）；app 标签 ' + appTag.app);
 
+    // ===== ②′ 581 毒饵就位：画布快照里确实带着外链字体 =====
+    // 这条不立住，后面的剔除断言就是测了个寂寞（比如夹具在入库时就被洗掉了外链）
+    const poisoned = await page.evaluate(() =>
+      JSON.stringify(window.buildUtopiaSnapshot({ stripVersions: true })).includes('fonts.googleapis'));
+    if (!poisoned) throw new Error('夹具里的外链字体没进画布快照（581 的剔除断言将空转）');
+    ok('581 毒饵就位：画布快照确带 Google Fonts 外链，等导出链剔除');
+
     // ===== ③ 真导出：走导出菜单的真按钮 =====
     // 用 DOM 级点击：隔离实例是全新浏览器配置，首访引导层可能浮在菜单上方挡住真鼠标
     const startedAt = Date.now();
@@ -236,6 +257,13 @@ async function run() {
     // 579：外发快照不带节点旧版本账本（versions 两份合计是齿轮会话 14% 的体积）
     if (text.slice(text.indexOf('window.__UTOPIA_EMBEDDED__'), text.indexOf('</script>', text.indexOf('window.__UTOPIA_EMBEDDED__'))).includes('"versions"')) {
       throw new Error('外发快照还带着节点旧版本（versions）');
+    }
+    // 581：内容里的外网字体/样式表必须已剔除（只查内嵌快照那一段，别把查看器自己的代码误伤进来）
+    const embedSlice = text.slice(text.indexOf('window.__UTOPIA_EMBEDDED__'), text.indexOf('</script>', text.indexOf('window.__UTOPIA_EMBEDDED__')));
+    const fontHits = (embedSlice.match(/fonts\.(?:googleapis|gstatic)\.com/g) || []).length;
+    if (fontHits) throw new Error('外发快照里还残留 ' + fontHits + ' 处 Google Fonts 外链（581 剔除没生效）');
+    if (/@import\s*(?:url\s*\()?\s*["']?\s*(?:https?:)?\/\//i.test(embedSlice)) {
+      throw new Error('外发快照里还有 @import 外网样式表（581 剔除没生效）');
     }
     if (/class="utopia-bar/.test(text)) throw new Error('成品里还留着查看器顶栏');
     // 内联器不得碰 data URI 内部：大陆噪点纹理的内嵌 SVG 自带 filter='url(%23g)'，
@@ -340,7 +368,7 @@ async function run() {
       if (opened.domNodes !== expected || opened.dataNodes !== expected || opened.snapNodes !== expected) {
         throw new Error('节点数对不上：' + JSON.stringify(opened) + '，画布 ' + expected);
       }
-      if (opened.snapMessages !== 6) throw new Error('会话消息没带全：' + opened.snapMessages + ' 条');
+      if (opened.snapMessages !== 8) throw new Error('会话消息没带全：' + opened.snapMessages + ' 条');
       if (opened.externalRefs) throw new Error('还留着 ' + opened.externalRefs + ' 个外链');
       if (opened.bar || !opened.searchBtn || !opened.themeBtn) throw new Error('界面口径不对：' + JSON.stringify(opened));
       if (!String(opened.title).startsWith('单文件导出回归')) throw new Error('标题不对：' + opened.title);
