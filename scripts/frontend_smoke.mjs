@@ -48,6 +48,7 @@
 //   graph-branch-workflow   分支拓展单链路化（T361/T362/T363：三入口落工作流＋删除范围真值，2026-10-17）
 //   graph-scope-confirm     Φ 阶段1 先对齐再动手（2026-10-19：复述确认卡＋选中即范围警告行＋大批拆段渲染）
 //   graph-column-layout     画布列几何（2026-11-20：列宽随最宽节点、列框/列缝判定、两端建列、空列消失、变窄回移）
+//   graph-focus-release     画布按下补输入框失焦（2026-11-24：pointerdown 的 preventDefault 吞掉失焦→Delete 删字符不删节点、输入栏内容不落盘）
 //   harness-health          Φ 主动体检芯片（2026-10-26：开面板零模型体检→顶部芯片→点击预填不发送→同画布同问题只提示一次；行为链独占 fetch/getElementById 桩，域尾收口）
 //   skills-ui               skill 界面（2026-11-16 第 4 步）：分析卡「技能：…」标签＋设置页按节点分组（纯同步）
 //   skills-manage           技能管理面（2026-11-16 第 5 版）：总开关/单条开关/内置可改/删除恢复/导入确认卡（纯同步）
@@ -106,6 +107,7 @@ import { run as _graph_cv_lazy } from './frontend_smoke/graph-cv-lazy.mjs';
 import { run as _graph_reflow_guards } from './frontend_smoke/graph-reflow-guards.mjs';
 import { run as _graph_heavy_degrade } from './frontend_smoke/graph-heavy-degrade.mjs';
 import { run as _graph_column_layout } from './frontend_smoke/graph-column-layout.mjs';
+import { run as _graph_focus_release } from './frontend_smoke/graph-focus-release.mjs';
 import { run as _generation_resume } from './frontend_smoke/generation-resume.mjs';
 import { run as _viz_background } from './frontend_smoke/viz-background.mjs';
 import { run as _harness_health } from './frontend_smoke/harness-health.mjs';
@@ -168,6 +170,7 @@ await _graph_cv_lazy();
 await _graph_reflow_guards();
 await _graph_heavy_degrade(); // 509 节点数自动降级（2026-11-19）：纯同步钉桩用例，接 reflow-guards（同为 _applyGraphTransform 域）
 await _graph_column_layout(); // 列几何（2026-11-20）：纯同步钉桩用例，接 heavy-degrade（同为层带/落位域）
+_graph_focus_release(); // 画布按下补输入框失焦（2026-11-24）：纯同步钉桩用例（换记录型假画布真派发 pointerdown，用毕还原）
 
 _generation_resume(); // 484 生成断点续跑（2026-11-19）：续跑接线静态契约＋清扫暂缓/取消口行为，纯同步
 _viz_background(); // viz 后台通道（2026-11-22）：静态接线＋节点判定/开关/取消行为，纯同步

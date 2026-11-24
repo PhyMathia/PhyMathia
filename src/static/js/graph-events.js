@@ -185,6 +185,24 @@ function _handleGraphKeydown(event) {
   }
 }
 
+// 画布按下时替浏览器补上「点别处 → 输入框失焦」（2026-11-24 用户实测）。卡头/空白/
+// 端口/分组这些手势入口都在 pointerdown 上 preventDefault（防拖拽时选中文本、触发原生
+// 拖放），而焦点转移是 mousedown 的默认动作，被一并吞掉：点进问题节点的输入栏后，点卡头、
+// 点空白焦点都退不出——Delete/Backspace 走上面 _handleGraphKeydown 的输入框放行＝删字符
+// 不删节点；更重的一面是 textarea 的 change 永不触发，「失焦即存」的内容不落盘、刷新即丢
+// （真机实测：打完点卡头再刷新，输入栏清空）。浏览器原口径是「点到的不是输入类控件，当前
+// 聚焦元素就失焦」，这里照补一次 blur。点到输入类控件时不补——那些入口本来就放行、没有
+// preventDefault，焦点交给浏览器自己转移；按钮/链接同理（点了走不走焦点是各浏览器自己的事）。
+function _releaseGraphTextFocus(target) {
+  const active = document && document.activeElement;
+  const isTextEntry = (el) => !!(el && typeof el.closest === 'function'
+    && (el.closest('input, textarea, select, iframe') || el.isContentEditable === true));
+  if (!isTextEntry(active)) return;
+  if (isTextEntry(target)) return;
+  if (target && typeof target.closest === 'function' && target.closest('button, a')) return;
+  if (typeof active.blur === 'function') active.blur();
+}
+
 function _initGraphCanvasEvents() {
   if (!graphCanvas) return;
   // 滚轮缩放按帧合并：触控板/高分辨率滚轮一次手势会连发多个 wheel 事件，逐事件同步缩放
@@ -232,6 +250,8 @@ function _initGraphCanvasEvents() {
     // 不再计入双击检测，快速右双击不会误开联系线弹窗。
     if (e.button !== 0) return;
     graphView.suppressClick = false;
+    // 先补失焦再进手势入口（见 _releaseGraphTextFocus）：点别处后 Delete 才轮得到节点
+    _releaseGraphTextFocus(e.target);
     if (graphView.selectMode) {
       if (e.target.closest('.graph-canvas-toolbar')) return;
       if (e.target.closest('button, a, input, textarea, select, iframe, .graph-port, .graph-add-port-btn, .graph-port-remove')) return;
