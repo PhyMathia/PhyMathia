@@ -77,7 +77,9 @@ function makeSnapshot() {
     format: 'phymath-utopia/graph',
     version: 1,
     exportedAt: new Date().toISOString(),
-    app: 'PhyMathia/1.5.1',
+    // 输入夹具的 app 标签刻意写成哨兵值：导出的 app 标签必须跟当前 APP_VERSION 走，
+    // 不能被快照里的旧值带跑（2026-11-25 版本进位时顺手去掉写死的旧版本号）。
+    app: 'PhyMathia/0.0.0-fixture',
     title: '单文件导出回归用快照',
     meta: { sessionId: '', level: 'university', theme: 'dark', messagesComplete: true,
             counts: { nodes: 0, edges: 0, groups: 0, messages: messages.length } },

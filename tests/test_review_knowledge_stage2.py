@@ -32,7 +32,12 @@ def evidence(tmp_path_factory):
     script = r'''
 import asyncio, json, socket, sys
 sys.path.insert(0, str(__import__('pathlib').Path.cwd() / 'src'))
-def no_network(*a, **k):
+_orig_connect = socket.socket.connect
+def no_network(self, address, *a, **k):
+    # Windows 的 socketpair 用 127.0.0.1 自连（asyncio 自管道），不是外网；
+    # 放行 loopback 才能让 asyncio.run 起来（476 余项，T416 只修了 stage1）。
+    if isinstance(address, tuple) and address and str(address[0]) in ('127.0.0.1', '::1', 'localhost'):
+        return _orig_connect(self, address, *a, **k)
     raise AssertionError('network is forbidden in E review')
 socket.socket.connect = no_network
 import main

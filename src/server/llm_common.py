@@ -262,7 +262,7 @@ def thinking_request_params(provider: str, level: str, model: str = "") -> dict:
 
 # ====== opencode.ai 网关会话头 ======
 
-PHYMATHIA_USER_AGENT = "PhyMathia/1.5.1"
+PHYMATHIA_USER_AGENT = "PhyMathia/1.5.2"
 
 
 def opencode_gateway_headers(base_url: str, session_id: str = "") -> dict:

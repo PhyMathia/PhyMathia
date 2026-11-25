@@ -3,6 +3,10 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
+// 版本号从 config.js 读（2026-11-25）：原先写死常量，版本进位后夹具永远落后。
+// 只解析常量、不执行源码，避免把浏览器顶层代码拖进 Node。
+const APP_VERSION = (readFileSync(new URL('../src/static/js/config.js', import.meta.url), 'utf8')
+  .match(/const APP_VERSION = '([^']+)'/) || [])[1] || '';
 // 用法：node scripts/review_settings_panel.mjs
 // 纯离线 DOM 桩检查：不开服务、不发请求、不依赖 playwright，只验 settings.js 的
 // 导航渲染 / setter 接线 / 记忆停留页 / 只读闸门 / 事件注册，故不受本机
@@ -91,7 +95,7 @@ const ctx = {
   ],
   LEVEL_LABELS: { middle: '中学', university: '大学', research: '科研' },
   THEME_DEFAULT_FAMILY: { night: 'aurora' },
-  APP_VERSION: '1.5.1',
+  APP_VERSION,
   STORAGE_KEY_SETTINGS_TAB: 'phymathia_settings_tab',
   STORAGE_KEY_HARNESS_THINKING: 'phymathia_harness_thinking',
   STORAGE_KEY_HARNESS_FALLBACK: 'phymathia_harness_fallback',

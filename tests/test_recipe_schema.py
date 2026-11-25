@@ -292,7 +292,9 @@ def _run_frontend_validator(samples: list) -> list:
         script = _JS_RUNNER % str(RECIPES_JS)
         result = subprocess.run(
             ["node", "-e", script, payload_path],
-            capture_output=True, text=True, cwd=str(ROOT),
+            # node 恒输出 UTF-8；不钉编码时 Windows 默认 GBK 解中文报错，
+            # reader 线程崩掉后 stdout 变 None（2026-11-25 收尾轮实踩）。
+            capture_output=True, text=True, encoding="utf-8", cwd=str(ROOT),
         )
         if result.returncode != 0:
             raise AssertionError(f"前端校验器执行失败：{result.stderr[:500]}")
@@ -429,7 +431,7 @@ def test_frontend_normalize_shape_matches_backend():
     try:
         script = runner % str(RECIPES_JS)
         result = subprocess.run(["node", "-e", script, payload_path],
-                                capture_output=True, text=True, cwd=str(ROOT))
+                                capture_output=True, text=True, encoding="utf-8", cwd=str(ROOT))
         assert result.returncode == 0, f"前端 normalize 执行失败：{result.stderr[:500]}"
         frontend_out = json.loads(result.stdout)[0]["errors"]
     finally:
