@@ -53,9 +53,9 @@ export function run() {
     return true;
   });
 
-  check('node-fs-toolbar: 桥上白名单＝追问/查找/加粗/整篇编辑四枚；收藏公式/复制为引用/解释/摘录不许回潮', () => {
+  check('node-fs-toolbar: 桥上白名单＝追问/查找/加粗/整篇编辑/公式渲染五枚；收藏公式/复制为引用/解释/摘录不许回潮', () => {
     const src = readSrc('src/static/js/node-fs-toolbar.js');
-    if (!/NODE_FS_BRIDGE_ACTIONS\s*=\s*\['followup',\s*'search',\s*'bold',\s*'edit'\]/.test(src)) return false; // edit＝渲染态编辑过桥（2026-11-20）
+    if (!/NODE_FS_BRIDGE_ACTIONS\s*=\s*\['followup',\s*'search',\s*'bold',\s*'edit',\s*'tex'\]/.test(src)) return false; // tex＝公式渲染查询（591②）
     // 只拦动作字符串字面量（'delquote' 之类的普通命名不算回潮）
     if (/'(collectFormula|quote|explain|excerpt)'/.test(src)) return false;
     if (src.includes("'收藏公式'") || src.includes("'复制为引用'")) return false;
@@ -1079,9 +1079,9 @@ export function run() {
 
   // ---------- 渲染态编辑过桥（新窗口预览页，2026-11-20）----------
 
-  check('node-fs-edit 新窗口: 桥收口——edit 进动作表，接收端异步收口带成品 html，壳兜底放宽', () => {
+  check('node-fs-edit 新窗口: 桥收口——edit/tex 进动作表，接收端异步收口带成品 html，壳兜底放宽', () => {
     const src = readSrc('src/static/js/node-fs-toolbar.js');
-    if (!src.includes("const NODE_FS_BRIDGE_ACTIONS = ['followup', 'search', 'bold', 'edit']")) return false;
+    if (!src.includes("const NODE_FS_BRIDGE_ACTIONS = ['followup', 'search', 'bold', 'edit', 'tex']")) return false;
     if (!src.includes('async function _nodeFsPreviewAction(d, source, ctx)')) return false; // 收口拆出（edit 要等成品重渲）
     if (!src.includes('await _nodeFsEditRenderFresh(node, res.src)')) return false;
     // ack 里 nextToken 仍紧跟 undo（既有 seq 断言认这个串），成品 html 排在其后
@@ -1237,6 +1237,74 @@ export function run() {
     for (const needle of ['.nfs-fmt-b', '.nfs-fmt-block', '.nfs-fmt-link[hidden]']) {
       if (!tbSrc.includes(needle)) throw new Error('预览页内嵌样式缺：' + needle);
     }
+    return true;
+  });
+
+  // ===== 公式可改可插＋符号面板（2026-11-25，backlog 591②，node-fs-fmt.js）=====
+
+  check('node-fs-fmt 公式: kit 自包含——TeX 自提（annotation）＋符号表＋双击接线＋档位/插入齐全', () => {
+    const src = readSrc('src/static/js/node-fs-fmt.js');
+    // TeX 还原必须自带（裸上下文里没有 _nodeFsKatexTex 可引）
+    if (!src.includes('annotation[encoding="application/x-tex"]')) throw new Error('TeX 提取不自带');
+    if (!src.includes("closest('.katex-display')")) throw new Error('display 归外层没了');
+    // 双击公式＝改 TeX；＋ 公式＝插入；行内/独立档；空 TeX＝删公式（与链接行同语）
+    for (const needle of ["'dblclick'", "'formula'", 'tex-ok', 'tex-no', "'display'", '清空＝删掉这条公式']) {
+      if (!src.includes(needle)) throw new Error('kit 缺：' + needle);
+    }
+    // 符号面板走 data-sym（与 data-fmt 不同名，互不相认）；模板带 {} 光标落组里
+    if (!src.includes('data-sym') || !src.includes("'{}'")) throw new Error('符号面板接线不对');
+    if (!src.includes('\\\\frac{}{}') || !src.includes('\\\\alpha')) throw new Error('符号表缺常用项');
+    // 桥接钩子（预览页无本地渲染器时走它）；本地渲染器走 window.katex
+    for (const needle of ['window.nodeFsTexBridge', 'window.katex']) {
+      if (!src.includes(needle)) throw new Error('渲染路缺：' + needle);
+    }
+    // 裸上下文仍能构造（新代码没引文件外名字——引用了这里当场 ReferenceError）
+    const bare = vm.createContext({});
+    vm.runInContext('var K = (' + String(sandbox._nodeFsFmtKit) + ')();', bare, { filename: 'fmt-kit2.js' });
+    if (!vm.runInContext('typeof K.build', bare)) throw new Error('裸上下文构造坏了');
+    return true;
+  });
+
+  check('node-fs-fmt 公式: 预览页嵌同一份 kit 的公式行——内嵌桥钩子/样式/hint 三处齐全，产物编译过', () => {
+    const script = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T', editable: true, srcSig: 's' });
+    for (const needle of ['window.nodeFsTexBridge', 'postAction("tex"', 'msg.tex=String(extra.tex)', 'msg.display=extra.display===true',
+      '.nfs-fmt-tex-in', '.nfs-fmt-tex-sym', ".cp-body[data-editing='1'] .nfs-fmt-texing",
+      '双击公式改 TeX']) {
+      if (!script.includes(needle)) throw new Error('预览脚本缺：' + needle);
+    }
+    new Function(script);
+    // file:// 无桥（或只读窗）不注钩子——kit 的 texApply 会走「这边渲染不了公式」
+    const plain = sandbox._buildNodeFsPreviewScript({ bridge: false, nodeId: 'n', title: 'T', editable: false });
+    if (!plain.includes('if(BRIDGE&&!READONLY){window.nodeFsTexBridge=')) throw new Error('钩子的运行时守卫没了');
+    // 全屏层 hint 同文案双端一致
+    const edit = readSrc('src/static/js/node-fs-edit.js');
+    if (!edit.includes('双击公式改 TeX，「＋ 公式」可插新公式')) throw new Error('全屏层 hint 没更新');
+    return true;
+  });
+
+  check('node-fs-edit 新窗口: 公式渲染查询——严格验证＋成品双渲，显示档随消息走（591②）', () => {
+    if (typeof sandbox._nodeFsTexRenderBridge !== 'function') throw new Error('_nodeFsTexRenderBridge 未暴露');
+    const fnSrc = String(sandbox._nodeFsTexRenderBridge);
+    const bare = vm.createContext({});
+    const fakeKatex = "{katex:{renderToString:function(t,o){if(o&&o.throwOnError&&t.indexOf('BAD')>=0)throw new Error('parse');"
+      + "return '<span class=\"katex' + (o&&o.displayMode?'-display':'') + '\">' + t + '</span>';}}}";
+    vm.runInContext('var window=' + fakeKatex + ';', bare);
+    const call = (tex, display) => vm.runInContext(
+      '(' + fnSrc + ')(' + JSON.stringify(tex) + ',' + JSON.stringify(display) + ')', bare);
+    const good = call('E=mc^2', false);
+    if (!good.ok || good.html !== '<span class="katex">E=mc^2</span>') throw new Error('合法 TeX 没出成品：' + JSON.stringify(good));
+    const disp = call('F=ma', true);
+    if (!disp.ok || disp.html.indexOf('katex-display') < 0) throw new Error('display 档没传到渲染参数');
+    const bad = call('BAD\\frac{', false);
+    if (bad.ok || !String(bad.message).includes('写错')) throw new Error('坏 TeX 没拒：' + JSON.stringify(bad));
+    const empty = call('  ', false);
+    if (empty.ok || !String(empty.message).includes('空')) throw new Error('空 TeX 没拒');
+    // 桥上分支接线：tex 只读不写回、不经节点/会话闸，成品走 ack 的 html 字段
+    const src = readSrc('src/static/js/node-fs-toolbar.js');
+    if (!src.includes("_nodeFsTexRenderBridge(String(d.tex || ''), d.display === true)")) return false;
+    if (!src.includes("if (ok && d.action !== 'tex') {")) return false;
+    const edit = readSrc('src/static/js/node-fs-edit.js');
+    if (!edit.includes('function _nodeFsTexRenderBridge(tex, display)')) return false;
     return true;
   });
 }

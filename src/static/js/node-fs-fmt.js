@@ -1,6 +1,7 @@
-// ===== 渲染态编辑·格式工具条（2026-11-25，backlog 591①）=====
+// ===== 渲染态编辑·格式工具条（2026-11-25，backlog 591①②）=====
 // 全屏层（node-fs-edit.js）与新窗口预览页（node-fs-toolbar.js 内嵌脚本）共用：本文件只有一个
-// 自包含工厂 _nodeFsFmtKit——函数体不引用本文件之外的名字（只用 document/window 这类真全局）。
+// 自包含工厂 _nodeFsFmtKit——函数体不引用本文件之外的名字（只用 document/window 这类真全局；
+// window.katex／window.nodeFsTexBridge 也算：主应用有前者，后者由预览页内嵌脚本注入作桥）。
 // 主应用直接调用；预览页由 _buildNodeFsPreviewScript 把它的源码（toString）原样嵌进内嵌脚本，
 // 改这里＝两处同时生效。也因此函数体里不能出现脚本闭合标签与 HTML 注释起头（嵌进 script
 // 会提前收尾，生成侧有守卫、冒烟有契约）。
@@ -36,6 +37,14 @@ function _nodeFsFmtKit() {
   let linkRow = null; // 链接地址输入行
   let urlInput = null;
   let linkEdit = null; // 输入行开着时正在改的那条链接（null＝新建）
+  let texRow = null; // 公式编辑行（591②）
+  let texInput = null;
+  let texMode = null; // 行内／独立下拉
+  let texPv = null; // 实时预览区（无本地渲染器时藏掉）
+  let texTarget = null; // 正在改的那条公式（null＝插入新公式）
+  let texSpot = null; // 插入点＝开行时记下的选区（编辑期间正文不动，节点引用一直有效）
+  let texTimer = 0;
+  let texPending = false; // 桥上渲染中（预览页异步路，ack 回来才落 DOM）
   let saved = null; // 最近一次落在编辑面里的选区（点工具条时焦点会离开编辑面）
   let hist = null; // 接管后的撤销栈
   let histTimer = 0;
@@ -890,6 +899,291 @@ function _nodeFsFmtKit() {
     }) ? { ok: true } : { ok: false, msg: BAD };
   };
 
+  // ---------- 公式（591②，2026-11-25）----------
+  // 双击公式（或「＋ 公式」）开编辑行：TeX 输入＋实时预览＋常用符号面板＋行内/独立档。
+  // 有本地渲染器（主应用 vendor 的 window.katex）同步渲同步落；没有（预览页）走
+  // window.nodeFsTexBridge 过桥渲一回、ack 回来再落 DOM——「预览页零渲染逻辑」红线不破。
+
+  // TeX 从 KaTeX 的 annotation 还原（自包含，不引文件外的 _nodeFsKatexTex）
+  const texOf = (el) => {
+    const ann = el.querySelector ? el.querySelector('annotation[encoding="application/x-tex"]') : null;
+    return ann ? String(ann.textContent || '') : '';
+  };
+  // 双击落在 .katex-display 内层 .katex 时归到外层：整条才是替换单位，display 不丢
+  const texNorm = (el) => {
+    const d = el && el.closest ? el.closest('.katex-display') : null;
+    return d && inside(container, d) ? d : el;
+  };
+  const texIsDisplay = (el) => !!(el.classList && el.classList.contains('katex-display'));
+  // strict=true 时抛错＝TeX 有误；无渲染器返回 null
+  const texRender = (tex, display, strict) => {
+    if (typeof window.katex === 'undefined' || !window.katex.renderToString) return null;
+    try { return window.katex.renderToString(tex, { throwOnError: !!strict, displayMode: !!display }); }
+    catch (e) { return null; }
+  };
+  // 三态验证：true＝合法（本地渲得出）、false＝有错、null＝无本地渲染器（走桥）。
+  // 别拿渲染产物字符串当布尔用——成功时它恒为 truthy，=== true 永远不成立（真机实锤）
+  const texValid = (tex, display) => {
+    if (typeof window.katex === 'undefined' || !window.katex.renderToString) return null;
+    try { window.katex.renderToString(tex, { throwOnError: true, displayMode: !!display }); return true; }
+    catch (e) { return false; }
+  };
+  const texBuildEl = (tex, display) => {
+    const html = texRender(tex, display, false);
+    if (!html) return null;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    const el = tmp.firstElementChild;
+    if (!el || !el.classList || (!el.classList.contains('katex') && !el.classList.contains('katex-display'))) return null;
+    lock(el);
+    return el;
+  };
+  // 光标落到公式之后（继续打字）
+  const caretAfterEl = (el) => {
+    const p = el.parentNode;
+    if (!p) return;
+    let i = 0;
+    while (i < p.childNodes.length && p.childNodes[i] !== el) i++;
+    select(point(p, i + 1));
+    focusRoot();
+  };
+  const texHighlight = (el) => {
+    const prev = container.querySelector ? container.querySelector('.nfs-fmt-texing') : null;
+    if (prev) { try { prev.classList.remove('nfs-fmt-texing'); } catch (e) { /* 沙箱兜底 */ } }
+    if (el) { try { el.classList.add('nfs-fmt-texing'); } catch (e) { /* 沙箱兜底 */ } }
+  };
+  // 预览区：有本地渲染器渲真公式；没有就把预览区藏掉（textarea 本身就在眼前，只摆源码没意义）
+  const texPreviewRender = () => {
+    if (!texPv) return;
+    const tex = String(texInput.value || '');
+    const html = tex ? texRender(tex, texMode.value === 'display', false) : null;
+    if (html) { texPv.hidden = false; texPv.innerHTML = html; }
+    else texPv.hidden = true;
+  };
+  const closeTex = (refocus) => {
+    texHighlight(null);
+    texTarget = null;
+    texSpot = null;
+    texPending = false;
+    clearTimeout(texTimer);
+    const okBtn = bar && bar.querySelector ? bar.querySelector('[data-fmt="tex-ok"]') : null;
+    if (okBtn) okBtn.disabled = false;
+    if (texRow) texRow.hidden = true;
+    if (refocus) ensure();
+  };
+  const openTex = (target) => {
+    if (!texRow) return { ok: false, msg: BAD };
+    closeLink(false);
+    texTarget = target || null;
+    texSpot = null;
+    if (!texTarget) {
+      const r = ensure();
+      if (!r) { texTarget = null; return { ok: false, msg: NO_CARET }; }
+      // 渲染管线对 pre/code 不渲公式（auto-render 默认忽略表），插进去存回来必掉
+      if (inEl(r.startContainer, 'pre, code')) { texTarget = null; return { ok: false, msg: '代码里插不了公式' }; }
+      if (inEl(r.startContainer, ATOMS)) { texTarget = null; return { ok: false, msg: NO_CARET }; }
+      if (!r.collapsed) { r.collapse(false); select(r); } // 有选区＝替换语义（同打字）
+      texSpot = snapRange(r);
+    }
+    texInput.value = texTarget ? texOf(texTarget) : '';
+    texMode.value = texTarget && texIsDisplay(texTarget) ? 'display' : 'inline';
+    texHighlight(texTarget);
+    texPending = false;
+    texRow.hidden = false;
+    texPreviewRender();
+    try { texInput.focus(); texInput.setSelectionRange(texInput.value.length, texInput.value.length); } catch (e) { /* 聚焦失败不挡 */ }
+    return { ok: true, noop: true };
+  };
+  // 应用（确定）：改＝整条换新；插＝落在开行时记下的位置。落 DOM 统一走 manual
+  // （接管撤销、快照记步），光标自己摆＝'keep'
+  const texDoApply = (tex, display, buildEl) => manual(() => {
+    const fresh = buildEl();
+    if (!fresh) return false;
+    if (texTarget) {
+      if (!inside(container, texTarget)) return false; // 保存/撤销后节点已被换掉
+      texTarget.replaceWith(fresh);
+    } else {
+      const r = rangeFrom(texSpot);
+      if (!r) return false;
+      r.insertNode(fresh);
+    }
+    caretAfterEl(fresh);
+    return 'keep';
+  });
+  const texApply = () => {
+    const tex = String(texInput.value || '').replace(/^\s+|\s+$/g, '');
+    const display = texMode.value === 'display';
+    if (!tex) {
+      // 清空＝删掉这条公式（与链接行「清空地址＝去掉链接」同语）；插入开行清空＝不插了
+      if (!texTarget) { closeTex(true); return { ok: true, noop: true }; }
+      const gone = manual(() => {
+        if (!texTarget || !inside(container, texTarget)) return false;
+        texTarget.parentNode.removeChild(texTarget);
+        return true;
+      });
+      closeTex(false);
+      return gone ? { ok: true } : { ok: false, msg: BAD };
+    }
+    const local = texValid(tex, display); // true＝合法；false＝有错；null＝无本地渲染器
+    if (local === false) { texPreviewRender(); return { ok: false, msg: 'TeX 写错了，改一改再确定' }; }
+    if (local === true) {
+      const done = texDoApply(tex, display, () => texBuildEl(tex, display));
+      closeTex(false);
+      return done ? { ok: true } : { ok: false, msg: BAD };
+    }
+    // 无本地渲染器（预览页）：过桥渲一回再落 DOM；渲染成败全在主应用那边判
+    if (typeof window.nodeFsTexBridge === 'function') {
+      texPending = true;
+      const okBtn = bar && bar.querySelector ? bar.querySelector('[data-fmt="tex-ok"]') : null;
+      if (okBtn) okBtn.disabled = true;
+      try {
+        window.nodeFsTexBridge(tex, display, (ok, html, msg) => {
+          texPending = false;
+          if (okBtn) okBtn.disabled = false;
+          if (!ok) { toast(msg || '公式渲染不了'); return; }
+          const done = texDoApply(tex, display, () => {
+            const tmp = document.createElement('div');
+            tmp.innerHTML = String(html || '');
+            const el = tmp.firstElementChild;
+            if (!el) return null;
+            lock(el);
+            return el;
+          });
+          if (!done) { toast(BAD); return; }
+          closeTex(false);
+          onDirty();
+          remember();
+          refresh();
+        });
+      } catch (e) { texPending = false; if (okBtn) okBtn.disabled = false; toast(BAD); }
+      return { ok: true, noop: true };
+    }
+    toast('这边渲染不了公式');
+    return { ok: true, noop: true };
+  };
+  // 符号插进 textarea 光标处；tex 带 {} 模板的落在第一个空组里（\frac{}{} 进分子）
+  const symIns = (raw) => {
+    if (!texInput) return { ok: true, noop: true };
+    const tex = String(raw || '');
+    if (!tex) return { ok: true, noop: true };
+    const v = String(texInput.value || '');
+    const st = texInput.selectionStart == null ? v.length : texInput.selectionStart;
+    const en = texInput.selectionEnd == null ? st : texInput.selectionEnd;
+    texInput.value = v.slice(0, st) + tex + v.slice(en);
+    let at = st + tex.length;
+    const brace = tex.indexOf('{}');
+    if (brace >= 0) at = st + brace + 1;
+    try { texInput.focus(); texInput.setSelectionRange(at, at); } catch (e) { /* 摆不进就摆末尾 */ }
+    texPreviewRender();
+    return { ok: true, noop: true };
+  };
+  // 常用符号表：字形当按钮面（两处编辑面都不需要渲染器）；[字形, TeX, 中文名(可省)]
+  const SYMS = [
+    ['希腊', [
+      ['α', '\\alpha'], ['β', '\\beta'], ['γ', '\\gamma'], ['δ', '\\delta'],
+      ['ε', '\\epsilon'], ['θ', '\\theta'], ['λ', '\\lambda'], ['μ', '\\mu'],
+      ['π', '\\pi'], ['ρ', '\\rho'], ['σ', '\\sigma'], ['φ', '\\varphi'],
+      ['ω', '\\omega'], ['Δ', '\\Delta'], ['Ω', '\\Omega'],
+    ]],
+    ['运算', [
+      ['×', '\\times'], ['÷', '\\div'], ['±', '\\pm'], ['∓', '\\mp'],
+      ['·', '\\cdot'], ['≤', '\\leq'], ['≥', '\\geq'], ['≠', '\\neq'],
+      ['≈', '\\approx'], ['≡', '\\equiv'], ['∞', '\\infty'], ['∝', '\\propto'],
+    ]],
+    ['微积分', [
+      ['∑', '\\sum'], ['∏', '\\prod'], ['∫', '\\int'], ['∬', '\\iint'],
+      ['∮', '\\oint'], ['∂', '\\partial'], ['∇', '\\nabla'], ['lim', '\\lim', '极限'],
+    ]],
+    ['集合', [
+      ['∈', '\\in'], ['∉', '\\notin'], ['⊂', '\\subset'], ['∪', '\\cup'],
+      ['∩', '\\cap'], ['∅', '\\emptyset'], ['∀', '\\forall'], ['∃', '\\exists'], ['¬', '\\neg'],
+    ]],
+    ['箭头', [
+      ['→', '\\to'], ['⇒', '\\Rightarrow'], ['↔', '\\leftrightarrow'], ['↦', '\\mapsto'],
+    ]],
+    ['结构', [
+      ['x/y', '\\frac{}{}', '分式'], ['x²', '^{}', '上标'], ['x₂', '_{}', '下标'],
+      ['√', '\\sqrt{}', '根号'], ['→x', '\\vec{}', '矢量'], ['x̂', '\\hat{}', '尖帽'],
+      ['x̄', '\\bar{}', '上横线'], ['ẋ', '\\dot{}', '一点'], ['x̃', '\\tilde{}', '波浪'],
+      ['°', '^{\circ}', '度数'], ['ℝ', '\\mathbb{R}', '实数集'], ['ℱ', '\\mathcal{F}', '花体字母'],
+    ]],
+    ['物理', [
+      ['ℏ', '\\hbar', '约化普朗克常数'], ['⟨⟩', '\\langle\\rangle', '期望值尖括号'],
+      ['≪', '\\ll', '远小于'], ['≫', '\\gg', '远大于'],
+    ]],
+  ];
+  const buildTexRow = (root) => {
+    const row = document.createElement('div');
+    row.className = 'nfs-fmt-tex';
+    row.setAttribute('hidden', '');
+    const ta = document.createElement('textarea');
+    ta.className = 'nfs-fmt-tex-in';
+    ta.rows = 2;
+    ta.spellcheck = false;
+    ta.setAttribute('aria-label', '公式 TeX');
+    ta.setAttribute('placeholder', 'LaTeX，如 \\frac{h}{2\\pi}；改已有公式时留空＝删掉它');
+    row.appendChild(ta);
+    const pv = document.createElement('div');
+    pv.className = 'nfs-fmt-tex-pv';
+    pv.setAttribute('hidden', '');
+    row.appendChild(pv);
+    const syms = document.createElement('div');
+    syms.className = 'nfs-fmt-tex-syms';
+    for (const grp of SYMS) {
+      const label = document.createElement('span');
+      label.className = 'nfs-fmt-tex-grp';
+      label.textContent = grp[0];
+      syms.appendChild(label);
+      for (const it of grp[1]) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'nfs-fmt-tex-sym';
+        b.textContent = it[0];
+        b.setAttribute('data-sym', it[1]);
+        b.setAttribute('title', it[2] || it[1]);
+        b.setAttribute('aria-label', it[2] || it[1]);
+        syms.appendChild(b);
+      }
+    }
+    row.appendChild(syms);
+    const foot = document.createElement('div');
+    foot.className = 'nfs-fmt-tex-foot';
+    const mode = document.createElement('select');
+    mode.className = 'nfs-fmt-tex-mode';
+    mode.setAttribute('title', '行内或独立');
+    mode.setAttribute('aria-label', '行内或独立');
+    for (const [v, name] of [['inline', '行内公式'], ['display', '独立公式']]) {
+      const o = document.createElement('option');
+      o.value = v;
+      o.textContent = name;
+      mode.appendChild(o);
+    }
+    foot.appendChild(mode);
+    const note = document.createElement('span');
+    note.className = 'nfs-fmt-tex-note';
+    note.textContent = '双击正文里的公式也能改';
+    foot.appendChild(note);
+    const no = document.createElement('button');
+    no.type = 'button';
+    no.className = 'nfs-fmt-b nfs-fmt-txt';
+    no.setAttribute('data-fmt', 'tex-no');
+    no.textContent = '取消';
+    no.setAttribute('title', '放弃公式改动');
+    no.setAttribute('aria-label', '放弃公式改动');
+    const ok = document.createElement('button');
+    ok.type = 'button';
+    ok.className = 'nfs-fmt-b nfs-fmt-txt nfs-fmt-ok';
+    ok.setAttribute('data-fmt', 'tex-ok');
+    ok.textContent = '确定';
+    ok.setAttribute('title', '应用公式改动');
+    ok.setAttribute('aria-label', '应用公式改动');
+    foot.appendChild(ok); // 确定在先（与链接行 link-ok/link-no 同约定）
+    foot.appendChild(no);
+    row.appendChild(foot);
+    root.appendChild(row);
+    return row;
+  };
+
   // ---------- 状态与工具条 ----------
 
   // 选区切到的字是否全在匹配 sel 的元素里——沿活 DOM 走，不用 cloneContents：
@@ -936,9 +1230,9 @@ function _nodeFsFmtKit() {
     const el = bar.querySelector('[data-fmt="' + name + '"]');
     if (el) el.setAttribute('aria-pressed', on ? 'true' : 'false');
   };
-  // 光标在哪就亮哪：五个行内钮的按下态、引用钮、段落类型下拉
+  // 光标在哪就亮哪：五个行内钮的按下态、引用钮、段落类型下拉（输入行开着时不判）
   const refresh = () => {
-    if (!bar || !blockSel || !linkRow || !linkRow.hidden) return;
+    if (!bar || !blockSel || !linkRow || !texRow || !linkRow.hidden || !texRow.hidden) return;
     const r = selRange() || rangeFrom(saved);
     const st = r ? inlineState(r) : {};
     const bs = r ? blockState(r) : { kind: '', inQuote: false };
@@ -948,7 +1242,12 @@ function _nodeFsFmtKit() {
   };
 
   const run = (name) => {
-    if (name !== 'link-ok' && name !== 'link-no' && linkRow && !linkRow.hidden) closeLink(false);
+    // 行内两个输入行的自家人不收行（sym 按钮压根不带 data-fmt，走不到这里）
+    const rowless = name === 'link-ok' || name === 'link-no' || name === 'tex-ok' || name === 'tex-no';
+    if (!rowless) {
+      if (linkRow && !linkRow.hidden) closeLink(false);
+      if (texRow && !texRow.hidden) closeTex(false);
+    }
     let res;
     try {
       if (name === 'bold' || name === 'italic' || name === 'strike') res = inline(name);
@@ -959,6 +1258,9 @@ function _nodeFsFmtKit() {
       else if (name === 'quote') res = toggleQuote();
       else if (name === 'hr') res = insertHr();
       else if (name === 'table') res = insertTable();
+      else if (name === 'formula') res = openTex(null);
+      else if (name === 'tex-ok') res = texApply();
+      else if (name === 'tex-no') { closeTex(true); res = { ok: true, noop: true }; }
       else if (name.slice(0, 6) === 'block:') res = setBlock(name.slice(6));
       else res = { ok: false };
     } catch (e) { res = { ok: false, msg: BAD }; }
@@ -995,12 +1297,14 @@ function _nodeFsFmtKit() {
       + '<span class="nfs-fmt-sep"></span>'
       + btn('hr', '插入分隔线', '＋ 分隔线', 'nfs-fmt-txt', false)
       + btn('table', '插入表格', '＋ 表格', 'nfs-fmt-txt', false)
+      + btn('formula', '插入公式', '＋ 公式', 'nfs-fmt-txt', false)
       + '</div>'
       + '<div class="nfs-fmt-link" hidden>'
       + '<input type="text" class="nfs-fmt-url" placeholder="链接地址，如 example.com；留空＝去掉链接" aria-label="链接地址" spellcheck="false">'
       + btn('link-ok', '确定', '确定', 'nfs-fmt-txt nfs-fmt-ok', false)
       + btn('link-no', '取消', '取消', 'nfs-fmt-txt', false)
       + '</div>';
+    buildTexRow(root); // 公式编辑行（591②）：DOM 程序化搭（符号表 60+ 枚，拼串没意义）
     return root;
   };
 
@@ -1016,6 +1320,10 @@ function _nodeFsFmtKit() {
     blockSel = bar.querySelector('.nfs-fmt-block');
     linkRow = bar.querySelector('.nfs-fmt-link');
     urlInput = bar.querySelector('.nfs-fmt-url');
+    texRow = bar.querySelector('.nfs-fmt-tex');
+    texInput = bar.querySelector('.nfs-fmt-tex-in');
+    texMode = bar.querySelector('.nfs-fmt-tex-mode');
+    texPv = bar.querySelector('.nfs-fmt-tex-pv');
     // 关着 styleWithCSS：加粗吐 <b> 不吐 <span style>（序列化器只认前者）
     try {
       cssWas = document.queryCommandState('styleWithCSS');
@@ -1040,6 +1348,27 @@ function _nodeFsFmtKit() {
     on(urlInput, 'keydown', (ev) => {
       if (ev.key === 'Enter') { ev.preventDefault(); ev.stopPropagation(); run('link-ok'); }
       else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); closeLink(true); }
+    });
+    // 公式行（591②）：预览跟着打字走（250ms 收敛）；Enter 不接确认——TeX 要多行，
+    // 确定只认按钮；Esc 收行让编辑态不动
+    on(texInput, 'input', () => { clearTimeout(texTimer); texTimer = setTimeout(texPreviewRender, 250); });
+    on(texMode, 'change', () => { texPreviewRender(); });
+    on(texInput, 'keydown', (ev) => {
+      if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); closeTex(true); }
+    });
+    // 符号面板：往 textarea 光标处插 TeX（data-sym 与 data-fmt 不同名，互不相认）
+    on(texRow, 'click', (ev) => {
+      const b = ev.target && ev.target.closest ? ev.target.closest('[data-sym]') : null;
+      if (!b) return;
+      if (ev.preventDefault) ev.preventDefault();
+      symIns(String(b.getAttribute('data-sym') || ''));
+    });
+    // 双击公式＝改 TeX（.katex-display 归到外层整条）；单击照旧只摆光标
+    on(container, 'dblclick', (ev) => {
+      const k = ev.target && ev.target.closest ? ev.target.closest('.katex, .katex-display') : null;
+      if (!k || !inside(container, k)) return;
+      if (ev.preventDefault) ev.preventDefault();
+      openTex(texNorm(k));
     });
     // 编辑面按键：接管后的撤销／重做；表格里 Tab／Shift+Tab 换格
     on(container, 'keydown', (ev) => {
@@ -1095,17 +1424,22 @@ function _nodeFsFmtKit() {
       destroy() {
         clearTimeout(histTimer);
         clearTimeout(refreshTimer);
+        clearTimeout(texTimer);
         for (const h of hands) { try { h[0].removeEventListener(h[1], h[2]); } catch (e) { /* 沙箱兜底 */ } }
         try { document.execCommand('styleWithCSS', false, !!cssWas); } catch (e) { /* 沙箱兜底 */ }
         if (bar && bar.parentNode) bar.parentNode.removeChild(bar);
         hist = null;
         saved = null;
         linkEdit = null;
+        texTarget = null;
+        texSpot = null;
+        texPending = false;
         container = null;
       },
       refresh,
-      // Esc 先收链接输入行；没开着返回 false（调用方照常处理 Esc）
+      // Esc 先收公式行／链接输入行；都没开着返回 false（调用方照常处理 Esc）
       escape() {
+        if (texRow && !texRow.hidden) { closeTex(true); return true; }
         if (!linkRow || linkRow.hidden) return false;
         closeLink(true);
         return true;

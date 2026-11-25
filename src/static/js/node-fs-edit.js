@@ -465,7 +465,7 @@ function openNodeFsEdit(nodeId) {
     try {
       const hint = document.createElement('div');
       hint.className = 'graph-node-fs-edit-hint';
-      hint.textContent = '直接改正文，公式与图整块保留；改完点「保存」写回节点';
+      hint.textContent = '直接改正文；双击公式改 TeX，「＋ 公式」可插新公式；改完点「保存」写回节点';
       body.insertBefore(hint, container);
     } catch (e) { /* 沙箱无真 DOM：没有 hint 不挡编辑 */ }
   }
@@ -688,6 +688,20 @@ function _nodeFsEditFromBridge(node, html, srcSig, probeRoot) {
   if (typeof _saveCustomNodes === 'function') { try { _saveCustomNodes(); } catch (e) { /* 落盘失败不挡保存 */ } }
   _nodeFsEditRefreshOverlayBody(node.id);
   return { ok: true, message: result.message || '已保存，并写回节点', src: next };
+}
+
+// 预览窗公式渲染查询（591②，2026-11-25）：预览页零渲染逻辑，渲染全在主应用——预览窗
+// 「确定」时把 TeX 过桥，这里渲好把成品 HTML 随 ack 的 html 字段带回（纯只读，不写回，
+// 节点/会话都不强求）。先按严格模式验一遍（有错如实回话，预览窗留在编辑态），过了再出成品
+function _nodeFsTexRenderBridge(tex, display) {
+  if (typeof window.katex === 'undefined' || !window.katex.renderToString) return { ok: false, message: '主应用的公式渲染器不可用' };
+  const t = String(tex || '').replace(/^\s+|\s+$/g, '');
+  if (!t) return { ok: false, message: '公式是空的' };
+  if (t.length > 8000) return { ok: false, message: '这条公式太长了' };
+  try { window.katex.renderToString(t, { throwOnError: true, displayMode: !!display }); }
+  catch (e) { return { ok: false, message: 'TeX 写错了，改一改再确定' }; }
+  try { return { ok: true, html: window.katex.renderToString(t, { throwOnError: false, displayMode: !!display }) }; }
+  catch (e) { return { ok: false, message: '主应用的公式渲染器不可用' }; }
 }
 
 // 成品重渲（ok 后给 ack 用）：离屏 holder 走 openNodeNewWindow 同一条管线

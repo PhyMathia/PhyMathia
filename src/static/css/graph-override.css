@@ -4454,6 +4454,125 @@ html[data-theme="light"] .graph-node-fs,
   border-color: var(--accent);
 }
 
+/* ---------- 公式编辑行（591②，2026-11-25）---------- */
+/* TeX 输入＋实时预览＋常用符号面板；预览页那份在 node-fs-toolbar.js 的内嵌样式串里
+   （改观感两处同步）。高亮类 nfs-fmt-texing 挂在正被编辑的那条公式上 */
+.nfs-fmt-tex {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.nfs-fmt-tex[hidden] {
+  display: none;
+}
+
+.nfs-fmt-tex-in {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 58px;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font-family: var(--font-mono, ui-monospace, Consolas, monospace);
+  font-size: 12.5px;
+  line-height: 1.5;
+  outline: none;
+}
+
+.nfs-fmt-tex-in:focus {
+  border-color: var(--accent);
+}
+
+.nfs-fmt-tex-pv {
+  padding: 8px 12px;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--text-secondary) 10%, transparent);
+  min-height: 22px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.nfs-fmt-tex-pv[hidden] {
+  display: none;
+}
+
+.nfs-fmt-tex-syms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  max-height: 118px;
+  overflow-y: auto;
+}
+
+.nfs-fmt-tex-grp {
+  flex: none;
+  width: 100%;
+  font-size: 10.5px;
+  color: var(--text-secondary);
+  opacity: 0.75;
+  margin: 3px 0 1px 2px;
+}
+
+.nfs-fmt-tex-sym {
+  height: 24px;
+  min-width: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.nfs-fmt-tex-sym:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-secondary) 14%, transparent);
+}
+
+.nfs-fmt-tex-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nfs-fmt-tex-mode {
+  height: 26px;
+  max-width: 96px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.nfs-fmt-tex-note {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+  opacity: 0.75;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graph-node-fs-content .nfs-fmt-texing {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
 /* ---------- 拖线吸附高亮（2026-10-10 ② 统一吸附）---------- */
 /* 拖线悬停在「松手即可连」的节点身上时打虚线描边；与选中态（实线）区分 */
 .graph-node.graph-link-drop-target {

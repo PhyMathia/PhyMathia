@@ -12,7 +12,7 @@
 // bold 过桥（2026-11-17）：预览窗是快照页，改原文只能回主应用写；复制/加粗的显示仍在页内完成。
 // edit 过桥（2026-11-20）：渲染态编辑整篇写回——预览页只交编辑后的 DOM（innerHTML），
 // 序列化/自检/写回全在主应用（node-fs-edit.js _nodeFsEditFromBridge），ack 带回成品 HTML
-const NODE_FS_BRIDGE_ACTIONS = ['followup', 'search', 'bold', 'edit'];
+const NODE_FS_BRIDGE_ACTIONS = ['followup', 'search', 'bold', 'edit', 'tex'];
 const NODE_FS_FOLLOWUP_DEFAULT = '请把这段再展开讲讲';
 const NODE_FS_EXCERPT_MAX = 2000;   // 追问引文截断（超出标注「已取前 2000 字」）
 const NODE_FS_EXCERPT_LINES = 3;    // 引文最多带 3 行
@@ -1041,11 +1041,22 @@ async function _nodeFsPreviewAction(d, source, ctx) {
   let message = '';
   let undo = false; // 取消加粗时带回预览页：那边要拆 <strong> 而不是再包一层（T507）
   let html = null;  // 渲染态编辑专用：写回后按成品重渲的正文（预览页零渲染逻辑，直接换）
-  if (!node) { ok = false; message = '源节点已不在画布上'; }
-  else if (String(ctx.sessionId || '') !== String((typeof currentSessionId !== 'undefined' && currentSessionId) || '')) {
-    ok = false; message = '请先切回原画布再继续'; // 不跨会话建点
+  if (d.action === 'tex') {
+    // 公式渲染查询（591②，2026-11-25）：纯只读不写回，节点/会话都不强求——预览窗
+    // 「确定」时的一次性渲染，成品 HTML 走 ack 的 html 字段带回（与 edit 同字段）
+    const r = (typeof _nodeFsTexRenderBridge === 'function')
+      ? _nodeFsTexRenderBridge(String(d.tex || ''), d.display === true)
+      : null;
+    ok = !!(r && r.ok);
+    message = (r && r.message) || (!r ? '主应用执行失败' : '');
+    if (ok) html = r.html;
+  } else {
+    if (!node) { ok = false; message = '源节点已不在画布上'; }
+    else if (String(ctx.sessionId || '') !== String((typeof currentSessionId !== 'undefined' && currentSessionId) || '')) {
+      ok = false; message = '请先切回原画布再继续'; // 不跨会话建点
+    }
   }
-  if (ok) {
+  if (ok && d.action !== 'tex') {
     // 不抢焦点：后台标签页的 window.focus() 被浏览器一律忽略（2026-10-25 真机实测），
     // 动作就地执行、用户自己切回主应用看结果；ack 文案照实说，不写「已转到主应用」
     try {
@@ -1380,6 +1391,30 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'border:1px solid var(--cp-line,rgba(139,147,184,.3));background:var(--cp-input-bg,rgba(9,13,32,.6));'
     + 'color:var(--cp-ink-strong,#e6ebff);font-size:12.5px;font-family:inherit;outline:none;}'
     + '.nfs-fmt-url:focus{border-color:var(--cp-primary,#8b93b8);}'
+    // 公式编辑行（591②）：与全屏层 graph-override.css 的 .nfs-fmt-tex-* 同观感（改观感两处同步）；
+    // 追加规则必须在收尾的 "; 之前（手册明令，生成脚本才编译得过）
+    + '.nfs-fmt-tex{display:flex;flex-direction:column;gap:6px;}'
+    + '.nfs-fmt-tex[hidden]{display:none;}'
+    + '.nfs-fmt-tex-in{width:100%;box-sizing:border-box;min-height:58px;resize:vertical;'
+    + 'padding:8px 10px;border-radius:8px;border:1px solid var(--cp-line,rgba(139,147,184,.3));'
+    + 'background:var(--cp-input-bg,rgba(9,13,32,.6));color:var(--cp-ink-strong,#e6ebff);'
+    + 'font-family:ui-monospace,Consolas,monospace;font-size:12.5px;line-height:1.5;outline:none;}'
+    + '.nfs-fmt-tex-in:focus{border-color:var(--cp-primary,#8b93b8);}'
+    + '.nfs-fmt-tex-pv{padding:8px 12px;border-radius:8px;background:var(--cp-chip-bg,rgba(139,147,184,.12));'
+    + 'min-height:22px;max-height:180px;overflow:auto;}'
+    + '.nfs-fmt-tex-pv[hidden]{display:none;}'
+    + '.nfs-fmt-tex-syms{display:flex;flex-wrap:wrap;gap:2px;max-height:118px;overflow-y:auto;}'
+    + '.nfs-fmt-tex-grp{flex:none;width:100%;font-size:10.5px;color:var(--cp-mute,#8b93b8);margin:3px 0 1px 2px;}'
+    + '.nfs-fmt-tex-sym{height:24px;min-width:26px;padding:0 6px;border:0;border-radius:6px;background:transparent;'
+    + 'color:var(--cp-ink-2,#a7b0d6);font-size:13px;line-height:1;cursor:pointer;font-family:inherit;}'
+    + '.nfs-fmt-tex-sym:hover{color:var(--cp-ink-strong,#e6ebff);background:var(--cp-chip-bg,rgba(139,147,184,.18));}'
+    + '.nfs-fmt-tex-foot{display:flex;align-items:center;gap:6px;}'
+    + '.nfs-fmt-tex-mode{height:26px;max-width:96px;padding:0 4px;border:0;border-radius:999px;background:transparent;'
+    + 'color:var(--cp-ink-2,#a7b0d6);font-size:12px;cursor:pointer;font-family:inherit;}'
+    + '.nfs-fmt-tex-note{flex:1;min-width:0;font-size:11px;color:var(--cp-mute,#8b93b8);'
+    + 'text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}'
+    + ".cp-body[data-editing='1'] .nfs-fmt-texing{outline:2px solid var(--cp-focus,rgba(45,212,191,.65));"
+    + 'outline-offset:2px;border-radius:6px;}'
     + '";'
     + 'document.head.appendChild(style);'
     + 'function toast(msg){var t=document.getElementById("cp-nfs-toast");'
@@ -1632,7 +1667,7 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'var atoms=container.querySelectorAll(".katex, .katex-display, .mermaid-container, .viz-card, pre, img, input");'
     + 'for(var i=0;i<atoms.length;i++){try{atoms[i].setAttribute("contenteditable","false");}catch(e){}}'
     + 'var hint=document.createElement("div");hint.className="cp-edit-hint";'
-    + 'hint.textContent="直接改正文，公式与图整块保留；改完点「保存」写回节点";'
+    + 'hint.textContent="直接改正文；双击公式改 TeX，「＋ 公式」可插新公式；改完点「保存」写回节点";'
     + 'if(container.parentNode)container.parentNode.insertBefore(hint,container);'
     // 格式工具条（2026-11-25）：同一个 kit（FMT），插在正文上方；起不来不挡编辑
     + 'if(FMT&&container.parentNode){try{FMTBAR=FMT.build();container.parentNode.insertBefore(FMTBAR,container);'
@@ -1691,6 +1726,9 @@ function _buildNodeFsPreviewScript(cfg) {
     // innerHTML 截断＝静默损坏，主应用侧有 NODE_FS_EDIT_HTML_MAX 硬拒
     + 'if(extra&&extra.html!=null)msg.html=String(extra.html);'
     + 'if(extra&&extra.srcSig)msg.srcSig=String(extra.srcSig);'
+    // tex/display＝公式渲染查询（591②）：预览页零渲染逻辑，确定时过桥渲一回
+    + 'if(extra&&extra.tex!=null)msg.tex=String(extra.tex);'
+    + 'if(extra&&extra.display!=null)msg.display=extra.display===true;'
     + 'var notified=false;var TMO=action==="edit"?10000:2500;'
     + 'var onAck=function(ev){var d=ev.data;'
     + 'if(!d||d.__phymathia!==1||d.kind!=="node-fs-ack")return;'
@@ -1710,6 +1748,11 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'try{window.parent.postMessage(msg,"*");}catch(e){notified=true;toast("发送失败");}'
     + 'setTimeout(function(){if(notified)return;notified=true;'
     + 'toast("主应用没回应，再点一次发送");},TMO);}'
+    // 公式渲染的桥接钩子（591②）：kit 的 texApply 在无本地渲染器时调它，ack 的 html
+    // 回去落 DOM——渲染全在主应用，预览页零渲染逻辑
+    + 'if(BRIDGE&&!READONLY){window.nodeFsTexBridge=function(tex,display,cb){'
+    + 'postAction("tex","","",{tex:String(tex||""),display:!!display},'
+    + 'function(ok,msg,undo,ack){cb(!!ok,ack&&ack.html?String(ack.html):"",msg||"");});};}'
     + 'function runAction(act){'
     + 'if(!state)return;'
     + 'if(act==="followup"){expandInput();return;}'

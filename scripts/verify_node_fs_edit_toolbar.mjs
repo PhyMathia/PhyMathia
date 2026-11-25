@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 渲染态编辑·格式工具条（backlog 591①，2026-11-25）真机回归：两处编辑面（本页全屏层＋
+// 渲染态编辑·格式工具条（backlog 591①②，2026-11-25）真机回归：两处编辑面（本页全屏层＋
 // 新窗口预览页）逐按钮验证到「保存→重开」。自带临时数据目录的隔离实例（收敛口
 // scripts/lib/test_server.mjs，端口先探后占），不碰 data/、不连 5050。
 // 跑法：node scripts/verify_node_fs_edit_toolbar.mjs      （约 1 分钟，全绿 exit 0）
@@ -238,16 +238,20 @@ const scenario = async (name, pos, act, expected, extra) => step(name, async () 
   }
 });
 
-await step('工具条挂上：11 枚按钮＋段落类型下拉＋链接输入行（收着）', async () => {
+await step('工具条挂上：14 枚按钮＋段落类型下拉＋链接/公式两行（都收着）＋符号面板', async () => {
   const info = await page.evaluate(() => ({
     fmts: Array.from(document.querySelectorAll('.nfs-fmt [data-fmt]')).map((b) => b.getAttribute('data-fmt')),
     opts: Array.from(document.querySelectorAll('.nfs-fmt-block option')).map((o) => o.value),
     linkHidden: document.querySelector('.nfs-fmt-link').hidden,
+    texHidden: document.querySelector('.nfs-fmt-tex').hidden,
+    syms: document.querySelectorAll('.nfs-fmt-tex-sym').length,
     pos: getComputedStyle(document.querySelector('.nfs-fmt')).position,
   }));
-  must(info.fmts.join(',') === 'bold,italic,strike,code,link,quote,hr,table,link-ok,link-no', '按钮名单不对', info.fmts);
+  must(info.fmts.join(',') === 'bold,italic,strike,code,link,quote,hr,table,formula,link-ok,link-no,tex-ok,tex-no', '按钮名单不对', info.fmts);
   must(info.opts.join(',') === ',p,h1,h2,h3,h4,h5,h6,ul,ol,task,code', '下拉选项不对', info.opts);
   must(info.linkHidden === true, '链接输入行默认应收着');
+  must(info.texHidden === true, '公式编辑行默认应收着');
+  must(info.syms >= 50, '符号面板应挂上常用符号', info.syms);
   must(info.pos === 'sticky', '工具条应吸顶', info.pos);
   const f = await F();
   must(f.md === BASE_MD, '基准正文拼回应与原文一致', f.md);
@@ -468,6 +472,111 @@ await step('取消：放弃工具条的全部改动', async () => {
   must(!st.bar && st.editing === null, '退出编辑应摘掉工具条与编辑标记', st);
 });
 
+// ---------- 公式可改可插＋符号面板（591②）----------
+// 双击用 evaluate 直接派发（真机 dblclick 命中测试被 <p>/滚动稳定性拖死），事件照走
+// kit 挂在容器上的真监听器
+const texOpen = async () => page.waitForSelector('.nfs-fmt-tex:not([hidden])', { timeout: 3000 });
+const dblKatex = () => page.evaluate(() => {
+  const k = document.querySelector('.graph-node-fs-content .katex');
+  if (!k) throw new Error('找不到公式');
+  k.scrollIntoView({ block: 'center' });
+  k.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+});
+const symClick = (tex) => page.evaluate((t) => {
+  const b = Array.from(document.querySelectorAll('.nfs-fmt-tex-sym')).find((x) => x.getAttribute('data-sym') === t);
+  if (!b) throw new Error('找不到符号钮：' + t);
+  b.click();
+}, tex);
+
+await scenario('双击公式＝改 TeX：预填原式、改完落回原位', () => dblKatex(), null,
+  (b) => withWord(b, '$E=mc^2$', '$E=mc^3$'), {
+    pre: async () => {
+      await texOpen();
+      const pre = await page.inputValue('.nfs-fmt-tex-in');
+      must(pre === 'E=mc^2', '应预填原 TeX', pre);
+      await page.fill('.nfs-fmt-tex-in', 'E=mc^3');
+      await click('tex-ok');
+    },
+    post: async (f) => must(f.md.includes('$E=mc^3$'), 'md 应含新公式', f.md.slice(-80)),
+  });
+// 光标 offset 4＝「第一段文|字」之间（第一段文字共 5 字）。scenario 钩子顺序是
+// pos→pre→act：开公式行的点击在 act 里做完一整串，「等行开」不能放 pre（会死等）
+await scenario('插入行内公式：落在光标处', () => caret('p', 0, 4), async () => {
+  await click('formula');
+  await texOpen();
+  await page.fill('.nfs-fmt-tex-in', 'v=v_0+at');
+  await click('tex-ok');
+}, (b) => withWord(b, '第一段文', '第一段文$v=v_0+at$'));
+await scenario('插入独立公式：档位切「独立」，存 $$ 定界', () => caret('p', 0, 4), async () => {
+  await click('formula');
+  await texOpen();
+  await page.selectOption('.nfs-fmt-tex-mode', 'display');
+  await page.fill('.nfs-fmt-tex-in', 'F=ma');
+  await click('tex-ok');
+}, (b) => b.replace('第一段文', () => '第一段文$$F=ma$$')); // $$ 在替换串里是特殊记号，走函数形态
+await scenario('符号面板：点 α 插 \\alpha 进 TeX，确定成公式', () => caret('p', 0, 4), async () => {
+  await click('formula');
+  await texOpen();
+  await symClick('\\alpha');
+  const val = await page.inputValue('.nfs-fmt-tex-in');
+  must(val === '\\alpha', '符号应插进输入框', val);
+  await click('tex-ok');
+}, (b) => withWord(b, '第一段文', '第一段文$\\alpha$'));
+await scenario('无效 TeX：确定被拒、编辑行不收、md 不动', () => caret('p', 0, 4), async () => {
+  await click('formula');
+  await texOpen();
+  await page.fill('.nfs-fmt-tex-in', '\\frac{');
+  await click('tex-ok');
+}, (b) => b, {
+  post: async (f) => {
+    must((await toastTextOf(page)) === 'TeX 写错了，改一改再确定', '提示语不对：' + await toastTextOf(page));
+    must(await page.evaluate(() => document.querySelector('.nfs-fmt-tex').hidden === false), '编辑行应收着不动');
+    must(f.md === BASE_MD, '拒绝后 md 不该动', f.md.slice(0, 60));
+    await click('tex-no'); // 收行再走保存
+  },
+});
+await scenario('清空 TeX＝删掉这条公式（与链接行同语）', () => dblKatex(), null,
+  (b) => withWord(b, '末尾段落，含公式 $E=mc^2$ 与', '末尾段落，含公式  与'), {
+    pre: async () => {
+      await texOpen();
+      await page.fill('.nfs-fmt-tex-in', '');
+      await click('tex-ok');
+    },
+  });
+await scenario('已有公式改档位：行内→独立（$ 变 $$）', () => dblKatex(), null,
+  (b) => b.replace('$E=mc^2$', () => '$$E=mc^2$$'), { // $$ 在替换串里是特殊记号，走函数形态
+    pre: async () => {
+      await texOpen();
+      must((await page.$eval('.nfs-fmt-tex-mode', (el) => el.value)) === 'inline', '应预选行内');
+      await page.selectOption('.nfs-fmt-tex-mode', 'display');
+      await click('tex-ok');
+    },
+  });
+await scenario('Esc 先收公式编辑行，编辑态不动', () => caret('p', 0, 0, 2), async () => {
+  await click('formula');
+  await texOpen();
+  await page.keyboard.press('Escape');
+}, (b) => b, {
+  post: async () => {
+    const st = await page.evaluate(() => ({ hidden: document.querySelector('.nfs-fmt-tex').hidden, editing: !!document.querySelector('.graph-node-fs-content[contenteditable="true"]') }));
+    must(st.hidden && st.editing, 'Esc 应只收公式行', st);
+  },
+});
+await step('公式替换进撤销栈：Ctrl+Z 退回旧公式、重做回来', async () => {
+  await resetToBase();
+  await dblKatex();
+  await texOpen();
+  await page.fill('.nfs-fmt-tex-in', 'E=mc^3');
+  await click('tex-ok');
+  await page.waitForTimeout(800);
+  await page.keyboard.press('Control+z');
+  const f = await F();
+  must(f.md.includes('$E=mc^2$') && !f.md.includes('$E=mc^3$'), 'Ctrl+Z 应回旧公式', f.md.slice(-80));
+  await page.keyboard.press('Control+Shift+z');
+  const f2 = await F();
+  must(f2.md.includes('$E=mc^3$') && f2.mis === false, '重做应回新公式且过自检', f2.md.slice(-80));
+});
+
 // ============================================================
 // ② 新窗口预览页（哑编辑面：同一份 kit 嵌在内嵌脚本里）
 // ============================================================
@@ -535,7 +644,7 @@ await step('预览页：铅笔进编辑后工具条挂上（同一份 kit）', a
     pos: getComputedStyle(document.querySelector('.nfs-fmt')).position,
     bg: getComputedStyle(document.querySelector('.nfs-fmt')).backgroundColor,
   }));
-  must(info.fmts.join(',') === 'bold,italic,strike,code,link,quote,hr,table,link-ok,link-no', '按钮名单不对', info.fmts);
+  must(info.fmts.join(',') === 'bold,italic,strike,code,link,quote,hr,table,formula,link-ok,link-no,tex-ok,tex-no', '按钮名单不对', info.fmts);
   must(info.pos === 'sticky' && info.bg !== 'rgba(0, 0, 0, 0)', '工具条应吸顶且有底色', info);
   const m = await pMd();
   must(m.md === BASE_MD && m.mis === false, '基准正文应能原样拼回', m.md.slice(0, 80));
@@ -594,6 +703,71 @@ await step('预览页：取消＝放弃改动', async () => {
   const m = await pMd();
   must(m.md === BASE_MD, '取消后应回基准', m.md.slice(0, 80));
   must(!(await frame.evaluate(() => !!document.querySelector('.nfs-fmt'))), '取消后应摘掉工具条');
+});
+
+// ---------- 预览页公式（591②）：无本地渲染器，确定走桥由主应用渲一回 ----------
+const pDblKatex = () => frame.evaluate(() => {
+  const k = document.querySelector('.cp-body .katex');
+  if (!k) throw new Error('找不到公式');
+  k.scrollIntoView({ block: 'center' });
+  k.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+});
+await step('预览页：双击公式改 TeX——确定走桥渲染，ack 落 DOM，保存写回', async () => {
+  await pReset();
+  await pEnter();
+  await pDblKatex();
+  await frame.waitForSelector('.nfs-fmt-tex:not([hidden])', { timeout: 3000 });
+  const pre = await frame.inputValue('.nfs-fmt-tex-in');
+  must(pre === 'E=mc^2', '应预填原 TeX', pre);
+  must(await frame.evaluate(() => document.querySelector('.nfs-fmt-tex-pv').hidden === true), '预览区应收着（无本地渲染器）');
+  await frame.fill('.nfs-fmt-tex-in', 'E=mc^3');
+  await pClick('tex-ok');
+  await frame.waitForFunction(() => {
+    const ann = document.querySelector('.cp-body .katex annotation[encoding="application/x-tex"]');
+    return !!ann && ann.textContent === 'E=mc^3';
+  }, null, { timeout: 8000 });
+  const m = await pMd();
+  must(m.md.includes('$E=mc^3$') && m.mis === false, '桥上渲好的公式应落进正文且过自检', m.md.slice(-80));
+  await frame.click('#cpEditSave');
+  await win.waitForTimeout(600);
+  const saved = await page.evaluate(() => _findGraphNode('n1').content);
+  must(saved.includes('$E=mc^3$'), '写回主应用应带新公式', saved.slice(-80));
+});
+await step('预览页：坏 TeX 走桥被主应用拒，编辑行不收', async () => {
+  await pReset();
+  await pEnter();
+  await pDblKatex();
+  await frame.waitForSelector('.nfs-fmt-tex:not([hidden])', { timeout: 3000 });
+  await frame.fill('.nfs-fmt-tex-in', '\\frac{');
+  await pClick('tex-ok');
+  await win.waitForTimeout(600);
+  must((await pToast()).includes('写错'), '应收到主应用的拒绝话', await pToast());
+  must(await frame.evaluate(() => document.querySelector('.nfs-fmt-tex').hidden === false), '编辑行应收着不动');
+});
+await step('预览页：插入公式＋符号面板——落在光标处，保存写回', async () => {
+  await pReset();
+  await pEnter();
+  await pCaret('p', 0, 4);
+  await pClick('formula');
+  await frame.waitForSelector('.nfs-fmt-tex:not([hidden])', { timeout: 3000 });
+  await frame.evaluate(() => {
+    const b = Array.from(document.querySelectorAll('.nfs-fmt-tex-sym')).find((x) => x.getAttribute('data-sym') === '\\alpha');
+    if (!b) throw new Error('找不到 α 钮');
+    b.click();
+  });
+  const val = await frame.inputValue('.nfs-fmt-tex-in');
+  must(val === '\\alpha', '符号应插进输入框', val);
+  await pClick('tex-ok');
+  await frame.waitForFunction(() => {
+    const p = document.querySelector('.cp-body p');
+    return !!(p && p.querySelector('.katex'));
+  }, null, { timeout: 8000 });
+  const m = await pMd();
+  must(m.md.includes('第一段文$\\alpha$字') && m.mis === false, '插入的公式应落在光标处', m.md.slice(0, 120));
+  await frame.click('#cpEditSave');
+  await win.waitForTimeout(600);
+  const saved = await page.evaluate(() => _findGraphNode('n1').content);
+  must(saved.includes('第一段文$\\alpha$字'), '写回应带插入的公式', saved.slice(0, 120));
 });
 
 await step('全程无页面脚本报错', async () => {
