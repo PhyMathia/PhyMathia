@@ -167,6 +167,14 @@ def capture_session(paths: accounts.AccountPaths, session_id: str, messages_path
         item_dir = trash_root(paths) / f"{session_id}__m{now}"
     else:
         item_dir = trash_root(paths) / session_id
+    # 556：复用同名目录（整删条目用裸 sid，可撞上删除链中止留下的半态残留）先
+    # 把旧内容整体清掉再重建——修前按名逐个覆盖 payload，本轮捕不到的数据保留
+    # 上一轮的旧文件（比如两次删除之间用户已清掉的知识），恢复时 setdefault 合并
+    # 把用户已明确清掉的内容复活。旧目录没有 meta 就不是条目（列表/恢复都不认，
+    # 超过一天还会被过期清理扫掉），清掉零损失；有 meta 的完整条目只会经恢复/
+    # 彻底删除/过期清理移除，正常轮不到这里重建。
+    if item_dir.exists():
+        shutil.rmtree(item_dir, ignore_errors=True)
     item_dir.mkdir(parents=True, exist_ok=True)
     counts = {
         "messages": len(payloads.get("messages.json") or []) if isinstance(payloads.get("messages.json"), list) else 0,
@@ -457,20 +465,29 @@ def _restore_cleared_messages(paths: accounts.AccountPaths, item_id: str, meta: 
     两道闸（整体拒绝，半恢复比不恢复糟）：①画布已被整删——先恢复对应的整
     画布条目再来；②画布里已有新消息——活的优先，拒绝恢复防覆盖。名单条目
     绝不写回（画布从未死过）。
+
+    555：两道闸的检查与回填整写收进同一把 _JSON_LOCK（检查-后-行动闭合）——
+    修前空检查在锁外、回填的 _write_json 单独拿锁，检查通过后、回填落盘前并发
+    POST /messages 推上的新消息会被快照整写覆盖（正是自述口径「活的优先」要防
+    的形状）。收进临界区后，并发合并（msgs updater 同持 _JSON_LOCK）要么整体
+    赶在检查前（检查看到非空 → 如实 409 拒恢复），要么排队到回填之后（合并在
+    回填结果上做 → 新消息与快照共存）；锁内全为纯本地 JSON 操作与站内目录清理
+    （RLock 同线程再入安全），持锁时长＝恢复本身耗时。
     """
     sid = _validate_item_id(str(meta.get("id") or ""))
-    sessions = storage._read_json(paths.sessions_path, {})
-    if sid not in sessions:
-        raise TrashConflictError("画布已被删除：请先恢复对应的整画布条目，再恢复这条清空快照")
-    try:
-        msgs_path = storage._get_messages_path(sid, paths.account)
-    except ValueError:
-        raise KeyError(f"invalid session id in trash meta: {sid!r}")
-    current = storage._read_json(msgs_path, [])
-    if isinstance(current, list) and current:
-        raise TrashConflictError("画布里已有新消息，恢复会覆盖它们，已中止")
-    _restore_payload_data(paths, trash_root(paths) / item_id, sid)
-    shutil.rmtree(trash_root(paths) / item_id, ignore_errors=True)
+    with storage._JSON_LOCK:
+        sessions = storage._read_json(paths.sessions_path, {})
+        if sid not in sessions:
+            raise TrashConflictError("画布已被删除：请先恢复对应的整画布条目，再恢复这条清空快照")
+        try:
+            msgs_path = storage._get_messages_path(sid, paths.account)
+        except ValueError:
+            raise KeyError(f"invalid session id in trash meta: {sid!r}")
+        current = storage._read_json(msgs_path, [])
+        if isinstance(current, list) and current:
+            raise TrashConflictError("画布里已有新消息，恢复会覆盖它们，已中止")
+        _restore_payload_data(paths, trash_root(paths) / item_id, sid)
+        shutil.rmtree(trash_root(paths) / item_id, ignore_errors=True)
     return sid
 
 

@@ -319,41 +319,51 @@ def _delete_session_sync(paths, account, session_id, msgs_path) -> None:
     残留会被回填脚本当提取料把已删会话的知识点重新入库（孤岛的「复活」通道）。
     全链在同一个工作线程里串行执行，先后次序与旧版逐句跑一致；_JSON_LOCK 是
     threading.RLock 跨线程照常串行，墓碑登记与名单删除仍同锁同刻。快照抛异常
-    ＝中止删除（500），语义不变。"""
+    ＝中止删除（500），语义不变。
+
+    553：全链再收进同一把 _JSON_LOCK（T233「mutate＋空判＋unlink 整段持锁」的
+    删除链整编版）——修前三步（capture 读消息 → unlink 毁消息 → 墓碑登记）之间
+    无锁跨越：并发 POST /messages 的合并落在 capture 之后 unlink 之前会被 unlink
+    销毁且不在快照里；落在 unlink 之后登记之前则墓碑闸门还没生效，新消息落盘成
+    孤儿文件（回收站恢复的整写还会把它盖掉）。收进临界区后，POST 的合并（msgs
+    updater 同持 _JSON_LOCK）要么整体赶在 capture 前（进快照、可恢复），要么排队
+    到登记之后（闸门如实拒收），两个竞窗都消失。锁内全是纯本地 JSON 操作与文件
+    unlink（RLock 同线程再入安全，无线程派生/等待），持锁时长＝删除本身耗时。"""
     # 回收站（2026-10-07）：动手毁数据前先整体快照进站——「防误删」的前提是删了
     # 还能回来，宁可报错不可丢数据。保留天数为 0（回收站关闭）时 capture 返回
     # False，走原删除链路。
-    trash.capture_session(paths, session_id, messages_path=msgs_path)
-    # 526：整条删除的独占知识登记墓碑（updater 内回调＝同持 _JSON_LOCK）——兄弟
-    # 标签页残留副本推回被 POST 闸门拒收；回收站恢复随回写条目除名（trash 恢复链）
-    _delete_items_by_session(paths.knowledge_path, session_id,
-                             on_removed=lambda ids: trash.knowledge_tombstone_register(paths, ids))
-    # 537：整删的独占公式同款登记（回收站恢复随回写除名）
-    _delete_items_by_session(paths.formulas_path, session_id,
-                             on_removed=lambda ids: trash.formula_tombstone_register(paths, ids))  # T146: sessionIds 感知删除
-    _purge_dangling_continent_edges(session_id, account)
-    _delete_socratic_state(session_id, account)
-    for stale in (msgs_path, paths.kv_dir / f"{session_id}.json"):
-        try:
-            if stale.exists():
-                stale.unlink()
-        except OSError as e:
-            logger.warning(f"delete session: unlink {stale.name} failed: {e}")
-    # 可读归档同步清（2026-11-19）：留着就成了「删不掉的第二份历史」，
-    # 与回收站口径也不一致（回收站管恢复，归档管可读副本）。
-    storage.remove_message_archive(session_id, account)
+    with storage._JSON_LOCK:
+        trash.capture_session(paths, session_id, messages_path=msgs_path)
+        # 526：整条删除的独占知识登记墓碑（updater 内回调＝同持 _JSON_LOCK）——兄弟
+        # 标签页残留副本推回被 POST 闸门拒收；回收站恢复随回写条目除名（trash 恢复链）
+        _delete_items_by_session(paths.knowledge_path, session_id,
+                                 on_removed=lambda ids: trash.knowledge_tombstone_register(paths, ids))
+        # 537：整删的独占公式同款登记（回收站恢复随回写除名）
+        _delete_items_by_session(paths.formulas_path, session_id,
+                                 on_removed=lambda ids: trash.formula_tombstone_register(paths, ids))  # T146: sessionIds 感知删除
+        _purge_dangling_continent_edges(session_id, account)
+        _delete_socratic_state(session_id, account)
+        for stale in (msgs_path, paths.kv_dir / f"{session_id}.json"):
+            try:
+                if stale.exists():
+                    stale.unlink()
+            except OSError as e:
+                logger.warning(f"delete session: unlink {stale.name} failed: {e}")
+        # 可读归档同步清（2026-11-19）：留着就成了「删不掉的第二份历史」，
+        # 与回收站口径也不一致（回收站管恢复，归档管可读副本）。
+        storage.remove_message_archive(session_id, account)
 
-    def updater(data):
-        existed = session_id in data
-        data.pop(session_id, None)
-        # T271：登记已删墓碑（与名单删除同锁同刻）——此后带删前 updatedAt 的
-        # 旧副本（卸载信标/同步竞态）写不回。只登记删除时刻确在名单的 id：
-        # 重复删/幻 id 不入登记表，登记表不积垃圾
-        if existed:
-            trash.tombstone_register(paths, [session_id])
-        return data
+        def updater(data):
+            existed = session_id in data
+            data.pop(session_id, None)
+            # T271：登记已删墓碑（与名单删除同锁同刻）——此后带删前 updatedAt 的
+            # 旧副本（卸载信标/同步竞态）写不回。只登记删除时刻确在名单的 id：
+            # 重复删/幻 id 不入登记表，登记表不积垃圾
+            if existed:
+                trash.tombstone_register(paths, [session_id])
+            return data
 
-    _mutate_json(paths.sessions_path, updater)
+        _mutate_json(paths.sessions_path, updater)
 
 
 @router.delete("/api/sessions/{session_id}")
@@ -417,8 +427,19 @@ async def api_clear_all_sessions(request: Request = None):
         raise HTTPException(status_code=500, detail="删除登记失败，已中止清空，请稍后重试")
 
     def _clear_all_io():
+        # 557：unlink 逐文件 try/OSError，对齐单删链口径（_delete_session_sync 同款
+        # 容错）——修前任何一个文件被占用（Windows）或权限异常都会让整段 500，留下
+        # 「名单已抹＋墓碑已登记 / 资料 half 未动」的半清态：名单写接口闸门拒收、
+        # 重试也收敛不了。容错后清理是 best-effort：单文件失败只告警，删除语义
+        # （名单空＋墓碑在）不变，漏网文件成为无引用的孤儿，与单删链同款容忍。
+        def _unlink_quiet(f) -> None:
+            try:
+                f.unlink()
+            except OSError as e:
+                logger.warning(f"clear all: unlink {f.name} failed: {e}")
+
         for f in paths.messages_dir.glob("*.json"):
-            f.unlink()
+            _unlink_quiet(f)
         # 526/537：知识/公式整库清空与墓碑登记收进同一 _mutate_json 临界区
         # （T524 会话侧同款纪律）——单删链随删登记（见 _delete_session_sync），
         # 这条清空链漏了：空登记表下兄弟标签页 15 秒同步的全量推送在 POST
@@ -438,7 +459,7 @@ async def api_clear_all_sessions(request: Request = None):
         for directory in (paths.kv_dir, paths.kv_meta_dir):
             if directory.exists():
                 for f in directory.glob("*.json"):
-                    f.unlink()
+                    _unlink_quiet(f)
 
     await asyncio.to_thread(_clear_all_io)  # T201：批量写/删文件不压事件循环
     return {"ok": True}
@@ -729,22 +750,31 @@ async def api_clear_messages(session_id: str, request: Request = None):
     # 删除画布同一纪律。清空后画布条目本身保留，故捕 kind=messages（真正会被
     # 抹掉的数据，不含 session.json）；保留天数 0＝回收站关闭，走原清空链路。
     # 捕获点必须早于前端的 graph/quiz 清理（session.js clearChat 已同步重排）。
-    trash.capture_cleared_messages(paths, session_id, messages_path=msgs_path)
-    # 清消息同样清滚动摘要并推进删除代次（阶段1 S1：复用会话 ID 不得吃旧记忆）
-    context._delete_rolling_memory(session_id, account)
-    if msgs_path.exists():
-        msgs_path.unlink()
-    _write_json(msgs_path, [])
-    # 526：清空消息连带删掉的独占知识同样登记墓碑（口径与整删一致，见上）
-    _delete_items_by_session(paths.knowledge_path, session_id,
-                             on_removed=lambda ids: trash.knowledge_tombstone_register(paths, ids))
-    # 537：整删的独占公式同款登记（回收站恢复随回写除名）
-    _delete_items_by_session(paths.formulas_path, session_id,
-                             on_removed=lambda ids: trash.formula_tombstone_register(paths, ids))  # T146: sessionIds 感知删除
-    _purge_dangling_continent_edges(session_id, account)
-    _delete_socratic_state(session_id, account)
-    # 清空消息＝用户主动抹掉内容，可读归档跟着清（同一份数据不许留后门）
-    storage.remove_message_archive(session_id, account)
+    # 554：整条清空链收进同一把 _JSON_LOCK（与 553 单删链同款纪律）——修前
+    # 「capture 读消息 → unlink → 写 []」与并发 POST /messages 的持锁合并各自
+    # 为政：POST 在锁内读到旧全量后放锁，清空的 unlink＋[] 整写插进来，POST
+    # 再把基于旧全量的合并写回＝清空被推翻（消息复活）；反过来 [] 后写＝并发
+    # 推上的新消息蒸发且不在快照里。收进临界区后二者串行：POST 要么整体赶在
+    # capture 前（进快照、可恢复），要么排在清空之后（合并落在 [] 上＝存活），
+    # 「清空后并发推上的消息不丢」成立。锁内全为纯本地 JSON 操作（RLock 同线程
+    # 再入安全），持锁时长＝清空本身耗时。
+    with storage._JSON_LOCK:
+        trash.capture_cleared_messages(paths, session_id, messages_path=msgs_path)
+        # 清消息同样清滚动摘要并推进删除代次（阶段1 S1：复用会话 ID 不得吃旧记忆）
+        context._delete_rolling_memory(session_id, account)
+        if msgs_path.exists():
+            msgs_path.unlink()
+        _write_json(msgs_path, [])
+        # 526：清空消息连带删掉的独占知识同样登记墓碑（口径与整删一致，见上）
+        _delete_items_by_session(paths.knowledge_path, session_id,
+                                 on_removed=lambda ids: trash.knowledge_tombstone_register(paths, ids))
+        # 537：整删的独占公式同款登记（回收站恢复随回写除名）
+        _delete_items_by_session(paths.formulas_path, session_id,
+                                 on_removed=lambda ids: trash.formula_tombstone_register(paths, ids))  # T146: sessionIds 感知删除
+        _purge_dangling_continent_edges(session_id, account)
+        _delete_socratic_state(session_id, account)
+        # 清空消息＝用户主动抹掉内容，可读归档跟着清（同一份数据不许留后门）
+        storage.remove_message_archive(session_id, account)
     return {"ok": True}
 
 # ====== 键值存储 API ======
