@@ -721,6 +721,13 @@ def kv_restore_bulk(data, replace: bool, account: str = DEFAULT_ACCOUNT) -> int:
     全局键合并进主文件（replace 时先清空）；会话键与族键按落点分组，合并进
     各自拆分文件（replace 时先清 data/kv/ 与 data/kv/meta/）。比逐键
     kv_write 少 O(n) 次全量写。
+
+    527：「清层→重写整段」收进同一把 _JSON_LOCK——修前各步各自持锁，replace 的
+    「清空主文件＋清空拆分层」与随后的组写入之间是裸窗口，导入期间并发的
+    kv_write 落进窗口会被组整写（主文件键）或清层（拆分文件键）无声抹掉。收进
+    临界区后，并发写要么整体赶在清层前（被 replace 语义如实抹掉——导入语义
+    如此，不算丢），要么排队到整段导入完成后做锁内合并、必然存活。RLock 同线程
+    再入安全（_write_json/_mutate_json 内部拿的是同一把锁）。
     """
     paths = accounts.resolve_paths(account)
     if not isinstance(data, dict):
@@ -729,29 +736,30 @@ def kv_restore_bulk(data, replace: bool, account: str = DEFAULT_ACCOUNT) -> int:
     for key, value in data.items():
         path = _kv_target_path(key, account) or paths.kv_path
         groups.setdefault(path, {})[key] = value
-    if replace:
-        paths.kv_path.parent.mkdir(parents=True, exist_ok=True)
-        _write_json(paths.kv_path, {})
-        for directory in (paths.kv_dir, paths.kv_meta_dir):
-            if directory.exists():
-                for p in directory.glob("*.json"):
-                    p.unlink(missing_ok=True)
-    if paths.kv_path in groups and not replace:
-        existing = _read_json(paths.kv_path, {})
-        groups[paths.kv_path] = {**(existing if isinstance(existing, dict) else {}),
-                                 **groups[paths.kv_path]}
-    for path, entries in groups.items():
-        if path is paths.kv_path and replace:
-            _write_json(paths.kv_path, entries)  # 上面已清空，直接落全局键
-            continue
+    with _JSON_LOCK:
+        if replace:
+            paths.kv_path.parent.mkdir(parents=True, exist_ok=True)
+            _write_json(paths.kv_path, {})
+            for directory in (paths.kv_dir, paths.kv_meta_dir):
+                if directory.exists():
+                    for p in directory.glob("*.json"):
+                        p.unlink(missing_ok=True)
+        if paths.kv_path in groups and not replace:
+            existing = _read_json(paths.kv_path, {})
+            groups[paths.kv_path] = {**(existing if isinstance(existing, dict) else {}),
+                                     **groups[paths.kv_path]}
+        for path, entries in groups.items():
+            if path is paths.kv_path and replace:
+                _write_json(paths.kv_path, entries)  # 上面已清空，直接落全局键
+                continue
 
-        def updater(d, _entries=entries):
-            d = dict(d) if isinstance(d, dict) else {}
-            d.update(_entries)
-            return d
+            def updater(d, _entries=entries):
+                d = dict(d) if isinstance(d, dict) else {}
+                d.update(_entries)
+                return d
 
-        path.parent.mkdir(parents=True, exist_ok=True)
-        _mutate_json(path, updater, default={})
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _mutate_json(path, updater, default={})
     _kv_warn_main_bloat(account)
     return len(data)
 

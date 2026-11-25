@@ -47,6 +47,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+# ====== 写入上限定界（530，2026-11-25）======
+# 本地单用户自伤面（防膨胀/防失控写入），不是多租户配额——上限取「正常使用永远
+# 碰不到、只有失控写入才会撞」的量级。知识/公式库存由前端定时同步**全量推送**，
+# 合法库存量级是几百条，条数上限给足一个数量级余量；单条条目合法几 KB。
+_KNOWLEDGE_ITEMS_MAX = 5000        # 单次推送条目数硬顶（失控全量推送才撞，整单 413）
+_KNOWLEDGE_ITEM_MAX_BYTES = 256 * 1024  # 单条条目序列化上限（超限丢弃该条，不拖垮整单同步）
+_FORMULAS_ITEMS_MAX = 5000         # 单次推送公式条数硬顶
+_FORMULA_LATEX_MAX_CHARS = 5000    # 单条 latex 上限（合法公式远短于此，超限视为失控跳过该条）
+
+
 # T147：GET /api/knowledge、/api/formulas 的缓存协商——前端 15 秒轮询此前每轮
 # 全量重算去重＋全表传输，库越大越卡。按文件指纹（mtime_ns+size）缓存「去重后
 # 的响应体＋ETag」：文件没变免重算，If-None-Match 命中回 304 免传输。
@@ -316,6 +326,20 @@ async def api_save_knowledge(request: Request):
     payload.pop("deleted", None)
 
     incoming = _normalize_knowledge(payload)
+    # 530 写入上限：单次推送条目数先查后写（2b33a40「542 ingest 先查限后解码」
+    # 同款口径）——合法库存是几百条、定时同步全量推，失控推送才撞得到这个量级
+    if len(incoming) > _KNOWLEDGE_ITEMS_MAX:
+        raise HTTPException(status_code=413,
+                            detail=f"单次知识推送 {len(incoming)} 条超过上限 "
+                                   f"{_KNOWLEDGE_ITEMS_MAX} 条，拒绝写入")
+    # 单条超限丢弃该条不拖垮整单（同步热路径整单拒绝会卡死 15 秒同步；超限条
+    # 视为失控数据，落不了盘即达目的，库照常收敛）
+    oversize_items = [k for k, v in incoming.items()
+                      if isinstance(v, dict) and len(json.dumps(v, ensure_ascii=False).encode("utf-8")) > _KNOWLEDGE_ITEM_MAX_BYTES]
+    for k in oversize_items:
+        incoming.pop(k, None)
+    if oversize_items:
+        logger.info(f"Ingest cap dropped {len(oversize_items)} oversize knowledge item(s) (>{_KNOWLEDGE_ITEM_MAX_BYTES // 1024}KB each)")
     # NaN/±Infinity 防线：这些条目不经 _coerce_created_at（那是公式 POST 口径），
     # 时间戳原样入库会毒化 GET /api/knowledge 响应体（浏览器 JSON.parse 全炸，
     # 15 秒同步整个 Promise.all 一并停摆）——入库前统一落当前毫秒
@@ -505,6 +529,11 @@ async def api_save_formulas(request: Request):
     if not isinstance(items, list) or any(not isinstance(it, dict) for it in items):
         # 逐项 it.get 前先挡掉契约外形状（dict/字符串进来就是 500）
         raise HTTPException(status_code=400, detail="'items' must be a list of objects")
+    # 530 写入上限：单次推送条数硬顶（公式收集链合法量级是几百条，失控推送才撞）
+    if len(items) > _FORMULAS_ITEMS_MAX:
+        raise HTTPException(status_code=413,
+                            detail=f"单次公式推送 {len(items)} 条超过上限 "
+                                   f"{_FORMULAS_ITEMS_MAX} 条，拒绝写入")
     # 客户端上报的本地已删清单（537，526 同款）：全量推送随带 {id: 删除时刻}，
     # 服务端据此补登记墓碑并清掉残留条目——DELETE 失败（网络/超时）的兜底收敛
     client_deleted = payload.get("deleted") if isinstance(payload, dict) else None
@@ -512,9 +541,10 @@ async def api_save_formulas(request: Request):
         client_deleted = {}
     count = 0
     sanitized = 0
+    oversized_latex = 0
 
     def updater(data):
-        nonlocal count, sanitized
+        nonlocal count, sanitized, oversized_latex
         paths = accounts.resolve_paths(account)
         # 537 墓碑闸门：已删条目的**删前旧副本**拒收不重建（兄弟标签页 localStorage
         # 残留副本经收集链推回）。公式无 updatedAt，时间戳只讲 createdAt；无时间戳
@@ -573,6 +603,10 @@ async def api_save_formulas(request: Request):
         for it in gated_items:
             latex = _normalize_formula(it.get("latex") or "")
             if not latex or not _looks_like_formula(latex):
+                continue
+            # 530：单条 latex 超限跳过（合法公式远短于此；超限视为失控数据）
+            if len(latex) > _FORMULA_LATEX_MAX_CHARS:
+                oversized_latex += 1
                 continue
             # 去重（T146 起全局）：同公式跨会话并进同一条，归属写 sessionIds
             existing = next((v for v in data.values()
@@ -639,6 +673,8 @@ async def api_save_formulas(request: Request):
     # 线程持锁写大文件会把全服务请求一起堵停
     account = _account_id(request, payload)
     await asyncio.to_thread(_mutate_json, accounts.resolve_paths(account).formulas_path, updater)
+    if oversized_latex:
+        logger.info(f"Formula cap skipped {oversized_latex} oversize latex item(s) (>{_FORMULA_LATEX_MAX_CHARS} chars each)")
     return {"ok": True, "count": count}
 
 

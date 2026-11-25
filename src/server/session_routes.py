@@ -25,6 +25,167 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+# ====== 写入上限定界（530，2026-11-25）======
+# 本地单用户自伤面（防膨胀/防失控写入），不是多租户配额——每条上限取「正常使用
+# 永远碰不到、只有失控写入才会撞」的量级，参照系全部来自代码内既有先例：
+# kv 主文件膨胀守卫（storage._KV_MAIN_*：64KB 单值警戒/128KB 总量）、ingest 文本
+# 截断 8000 字（543）、聊天附图 8M 字符×6 张（models_routes.CHAT_IMAGE_*）、
+# 上传 20MB（config.UPLOAD_MAX_BYTES）。
+_KV_VALUE_MAX_BYTES = 8 * 1024 * 1024        # 单个 kv value 序列化上限（任何落点；对照单图 8M 字符先例）
+_KV_MAIN_VALUE_BLOCK_BYTES = 512 * 1024      # 回落主文件的键：8× 64KB 警戒线，这个量级该走拆分路由而非落主文件
+_SESSION_TITLE_MAX_CHARS = 200               # 会话标题（前端取首问截短，正常几十字）
+_SESSION_ICON_MAX_CHARS = 64                 # 会话图标（emoji/短串）
+_MESSAGE_CONTENT_MAX_CHARS = 300_000         # 单条消息正文（助手长答/画布节点正文合法量级远小于此；截断不拒收）
+_MESSAGES_COUNT_MAX = 10_000                 # 单次消息推送条数（单个画布的合法历史远小于此；超限整单拒）
+
+
+def _json_serialized_size(value) -> int:
+    """value 的 UTF-8 JSON 序列化字节数（不可序列化记 0，交给写入路径按旧行为报错）。"""
+    try:
+        return len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+    except (TypeError, ValueError):
+        return 0
+
+
+# ====== 已知整表键的服务端合并（529，2026-11-25）======
+# 这些键的客户端是「整表提交」：双设备/双标签页并发各推一份整表时，盲替换会让
+# 后到的一方把先到一方的独有记录整份抹掉（前端只与自己上次所见合并）。对已知键
+# 改服务端锁内合并（kv_mutate 同一临界区），合并语义向后兼容：老客户端整值照发，
+# 服务端把它的整值当「其中一方」参与合并，落盘结果只多不 少。
+# 语义镜像 quiz-stats.js 的 _mergeQuizStats（前端早在做同款合并，服务端照抄口径）。
+
+def _quiz_item_ts(item) -> int:
+    """记录时间戳：last 优先 updatedAt 兜底（_quizRecordTimestamp 同口径）。"""
+    if not isinstance(item, dict):
+        return 0
+    for field in ("last", "updatedAt"):
+        try:
+            ts = int(float(item.get(field) or 0))
+        except (TypeError, ValueError):
+            continue
+        if ts > 0:
+            return ts
+    return 0
+
+
+def _wrong_question_key(item) -> str:
+    """错题快照身份：prompt|formulaText|正确项文本（_wrongQuestionKey 同输入；
+    服务端只求自身稳定，不与前端哈希函数逐字节对齐——并集去重在服务端内部一致
+    即可，前端加载时还会用它自己的键再并一次）。"""
+    if not isinstance(item, dict):
+        return ""
+    correct_text = ""
+    options = item.get("options")
+    if isinstance(options, list):
+        idx = item.get("correctIndex")
+        if isinstance(idx, int) and 0 <= idx < len(options) and isinstance(options[idx], dict):
+            correct_text = str(options[idx].get("text") or "")
+    return "|".join((str(item.get("prompt") or ""),
+                     str(item.get("formulaText") or ""), correct_text))
+
+
+def _open_result_key(item) -> str:
+    """开放题作答记录身份：id 缺省退 questionId|at（前端同输入）。"""
+    if not isinstance(item, dict):
+        return ""
+    rid = item.get("id")
+    if rid:
+        return str(rid)
+    return f"{item.get('questionId') or ''}|{_quiz_item_ts({'last': item.get('at')})}"
+
+
+def _quiz_meta_union(a, b, list_field, key_fn, ts_field, cap):
+    """_meta 里的错题/开放题清单并集：同身份留时间戳较新的一条，保留首见顺序，
+    尾部截到 cap（镜像前端 Map 并集＋slice(-cap)）。"""
+
+    def _ts(item):
+        try:
+            return int(float(item.get(ts_field) or 0)) if isinstance(item, dict) else 0
+        except (TypeError, ValueError):
+            return 0
+
+    merged = {}
+    for item in (a.get(list_field) if isinstance(a, dict) else None) or []:
+        if isinstance(item, dict):
+            merged.setdefault(key_fn(item), item)
+    for item in (b.get(list_field) if isinstance(b, dict) else None) or []:
+        if not isinstance(item, dict):
+            continue
+        k = key_fn(item)
+        prev = merged.get(k)
+        if prev is None or _ts(item) > _ts(prev):
+            merged[k] = item
+    return list(merged.values())[-cap:]
+
+
+def _merge_quiz_meta(a, b):
+    """_meta 合并：字段级 incoming 覆盖，attempts/updatedAt 取两侧较大值，
+    wrongQuestions/openResults 并集去重（QUIZ_MAX_WRONG=100 / QUIZ_MAX_OPEN_RESULTS=20
+    同前端常量），answersShuffled 两侧任一为真即真（一次性迁移不回退重放）。"""
+    a = a if isinstance(a, dict) else {}
+    b = b if isinstance(b, dict) else {}
+    merged = {**a, **b}
+    for field in ("updatedAt", "attempts"):
+        try:
+            merged[field] = max(int(float(a.get(field) or 0)), int(float(b.get(field) or 0)))
+        except (TypeError, ValueError):
+            pass
+    merged["wrongQuestions"] = _quiz_meta_union(a, b, "wrongQuestions",
+                                                _wrong_question_key, "wrongAt", 100)
+    merged["openResults"] = _quiz_meta_union(a, b, "openResults",
+                                             _open_result_key, "at", 20)
+    merged["answersShuffled"] = a.get("answersShuffled") is True or b.get("answersShuffled") is True
+    return merged
+
+
+def _merge_quiz_stats_value(current, incoming):
+    """phymathia_quiz_stats 服务端合并：逐主题键并集、同键记录新者胜（last 毫秒，
+    平局留服务端现值——镜像前端 _mergeQuizStats 的「服务端赢平局」）；_meta 走
+    _merge_quiz_meta。任一侧不是 dict 时退回整值照存（老客户端盲替换语义）。"""
+    if not isinstance(current, dict) or not isinstance(incoming, dict):
+        return incoming
+    result = {}
+    for key in {**current, **incoming}:
+        if key == "_meta":
+            continue
+        a = current.get(key)
+        b = incoming.get(key)
+        if not isinstance(a, dict) and not isinstance(b, dict):
+            continue
+        result[key] = b if _quiz_item_ts(b) > _quiz_item_ts(a) else a
+    result["_meta"] = _merge_quiz_meta(current.get("_meta"), incoming.get("_meta"))
+    return result
+
+
+def _merge_continent_edges_value(current, incoming):
+    """continent_edges 服务端合并：客户端整表提交且不带同步基线（老前端不改），
+    只能做「含新增即并集、纯子集即删除」的启发式——
+    - incoming 带 current 没有的边 id：本次是画线/恢复流，与现值并集（另一台设备
+      刚画的线不被本端整表抹掉——529 要堵的丢更新）；
+    - incoming 的 id 集是 current 的子集（含相等＝纯编辑）：本次是删线/清断桥/
+      Ctrl+Z 流，照存（删线立即生效，不被并集复活——显式删除是核心编辑手势，
+      与测验统计「只增不删」不同，不能无脑并集）。
+    并发「一删一加」且删的一方后到时仍可能抹掉新边——与盲替换持平，不新引丢失。
+    incoming 不是数组时退回整值照存（老客户端盲替换语义）。"""
+    if not isinstance(incoming, list):
+        return incoming
+    cur = continent.normalize_user_edge_payload(current)
+    inc = [e for e in incoming if isinstance(e, dict)]
+    cur_ids = {str(e.get("id")) for e in cur if e.get("id") is not None}
+    inc_ids = {str(e.get("id")) for e in inc if e.get("id") is not None}
+    if not (inc_ids - cur_ids):
+        return incoming  # 纯子集/相等：删除或编辑流，整表照存
+    extras = [e for e in cur if e.get("id") is not None and str(e.get("id")) not in inc_ids]
+    merged = inc + extras
+    return merged[:continent.USER_EDGE_LIMIT]  # 与前端 CONTINENT_USER_EDGE_LIMIT 同口径
+
+
+_KV_VALUE_MERGERS = {
+    profile.QUIZ_STATS_KEY: _merge_quiz_stats_value,
+    "continent_edges": _merge_continent_edges_value,
+}
+
+
 # ====== 账号管理 API（本地多账号 P2，2026-10-07）======
 # 存储分域靠各存储路由的 account_id 请求参数（_account_id），这里只管账号
 # 注册表本身（data/users/accounts.json）。CRUD 函数与默认名/拒删规则在
@@ -192,10 +353,18 @@ async def api_save_sessions(request: Request):
             # 备份导出（对每个 sid 取路径）永久 500，且 DELETE 拒收删不掉
             if not isinstance(sid, str) or not storage._SESSION_ID_RE.match(sid):
                 return None
+            # 530：title/icon 截断到上限（会话名单是 15 秒同步的热路径，拒绝会让
+            # 整条同步卡死；这两字段是外观性质，截断语义沿 543「截断」先例）
+            title = sdata.get("title", "新对话")
+            icon = sdata.get("icon", "")
+            if isinstance(title, str) and len(title) > _SESSION_TITLE_MAX_CHARS:
+                title = title[:_SESSION_TITLE_MAX_CHARS]
+            if isinstance(icon, str) and len(icon) > _SESSION_ICON_MAX_CHARS:
+                icon = icon[:_SESSION_ICON_MAX_CHARS]
             return {
                 "id": sid,
-                "title": sdata.get("title", "新对话"),
-                "icon": sdata.get("icon", ""),
+                "title": title,
+                "icon": icon,
                 "sessionId": sdata.get("sessionId", ""),
                 "createdAt": sdata.get("createdAt", now),
                 "updatedAt": sdata.get("updatedAt", now),
@@ -281,9 +450,16 @@ async def api_update_session(session_id: str, request: Request):
                 "updatedAt": now,
             }
         if "title" in payload:
-            data[session_id]["title"] = payload["title"]
+            title = payload["title"]
+            # 530：改名/换图标的热路径同样截断到上限（与 POST 同口径）
+            if isinstance(title, str) and len(title) > _SESSION_TITLE_MAX_CHARS:
+                title = title[:_SESSION_TITLE_MAX_CHARS]
+            data[session_id]["title"] = title
         if "icon" in payload:
-            data[session_id]["icon"] = payload["icon"]
+            icon = payload["icon"]
+            if isinstance(icon, str) and len(icon) > _SESSION_ICON_MAX_CHARS:
+                icon = icon[:_SESSION_ICON_MAX_CHARS]
+            data[session_id]["icon"] = icon
         if "sessionId" in payload:
             data[session_id]["sessionId"] = payload["sessionId"]
         data[session_id]["updatedAt"] = now
@@ -663,7 +839,19 @@ async def api_save_messages(session_id: str, request: Request, response: Respons
                             detail="'messages' must be a list or an object with a 'messages' list")
     messages = payload if isinstance(payload, list) else payload.get("messages", [])
     if isinstance(messages, list):
+        # 530 写入上限：单次推送条数硬顶（单个画布的合法历史远小于此，失控推送才
+        # 会撞——整单 413 拒，不让失控批量进合并器）；单条正文超长截断（消息保存
+        # 是同步热路径，拒绝会卡死整条保存链；助手长答/画布节点正文合法量级远
+        # 小于上限，截断语义沿 543「截断」先例）
+        if len(messages) > _MESSAGES_COUNT_MAX:
+            raise HTTPException(status_code=413,
+                                detail=f"单次消息推送 {len(messages)} 条超过上限 "
+                                       f"{_MESSAGES_COUNT_MAX} 条，拒绝写入")
         for msg in messages:
+            if isinstance(msg, dict):
+                content = msg.get("content")
+                if isinstance(content, str) and len(content) > _MESSAGE_CONTENT_MAX_CHARS:
+                    msg["content"] = content[:_MESSAGE_CONTENT_MAX_CHARS]
             if isinstance(msg, dict) and msg.get("role") == "assistant" and not str(msg.get("summary") or "").strip():
                 try:
                     msg["summary"] = _graph_message_summary(msg)
@@ -789,17 +977,50 @@ async def api_get_kv(key: str, request: Request = None):
 async def api_set_kv(key: str, request: Request):
     payload = await _parse_json_object(request)
     account = _account_id(request, payload)
-    # 隐式画像：测验/苏格拉底作答统计写入时做新旧差分，产出逐次作答事件
-    # （history 里带对错/时间戳/questionId，无需前端新增记录逻辑）
-    if key == profile.QUIZ_STATS_KEY:
-        _device_id = str(payload.get("device_id") or "")
-        if _device_id:
+    # 530 写入上限：单值序列化体积先查后写（2b33a40「542 ingest 先查限后解码」同款
+    # 口径）——任何落点 8MB 硬顶；回落主文件的键 512KB 拦截（8× 64KB 警戒线，这个
+    # 量级该补拆分路由而非落主文件，T223 守卫的拦截化）。超限 413 带一句可读错误。
+    value = payload.get("value", "")
+    value_bytes = _json_serialized_size(value)
+    if value_bytes > _KV_VALUE_MAX_BYTES:
+        raise HTTPException(status_code=413,
+                            detail=f"kv value 过大（≈{value_bytes // 1024}KB > "
+                                   f"{_KV_VALUE_MAX_BYTES // 1024}KB），拒绝写入")
+    if value_bytes > _KV_MAIN_VALUE_BLOCK_BYTES and storage._kv_target_path(key, account) is None:
+        raise HTTPException(status_code=413,
+                            detail=f"全局键 {key} 单值 ≈{value_bytes // 1024}KB 超过主文件"
+                                   f"承载上限（{_KV_MAIN_VALUE_BLOCK_BYTES // 1024}KB）——"
+                                   f"重键应走拆分路由（_KV_SOLO_KEYS/_KV_FAMILY_PREFIXES）或精简")
+    # 已知整表键（529）：服务端锁内合并，双设备并发整表提交不再互相抹掉。老客户端
+    # 整值照发照落（它的整值只是合并的其中一方）。读—合并—写整段收进 kv_mutate
+    # 同一临界区（T525 同款纪律）；合并出岔子退回整值照存（graph_merge 同款兜底）。
+    # 与现值无差时不写盘（T202 短路口径）。响应形状保持 {"ok": True}（冻结契约口径）。
+    merger = _KV_VALUE_MERGERS.get(key)
+    if merger is not None and "value" in payload:
+        old_value = storage.kv_read(key, account=account)  # 隐式画像差分基线（锁外读，最坏少计/多计一次事件）
+
+        def _merge_updater(current):
             try:
-                _events = profile.quiz_stats_events(storage.kv_read(key, account=account), payload.get("value"))
-                if _events:
-                    profile.record_implicit_event(_device_id, _events, account=account)
-            except Exception as e:
-                logger.warning(f"Quiz stats implicit diff failed: {e}")
+                merged = merger(current, payload.get("value"))
+            except Exception as e:  # noqa: BLE001 - 合并出岔子不该让保存失败
+                logger.warning(f"kv value merge failed for {key}, storing as-is: {e}")
+                merged = payload.get("value")
+            return None if merged == current else merged
+
+        merged = storage.kv_mutate(key, _merge_updater, account=account)
+        # 隐式画像：测验/苏格拉底作答统计差分改在合并结果上做——双设备各自作答的
+        # 记录已在服务端现值里时 delta≤0 自然不重复计事件（旧口径对 raw payload
+        # 差分，另一设备先同步过的答案会被重复计入）
+        if key == profile.QUIZ_STATS_KEY:
+            _device_id = str(payload.get("device_id") or "")
+            if _device_id:
+                try:
+                    _events = profile.quiz_stats_events(old_value, merged)
+                    if _events:
+                        profile.record_implicit_event(_device_id, _events, account=account)
+                except Exception as e:
+                    logger.warning(f"Quiz stats implicit diff failed: {e}")
+        return {"ok": True}
     # 画布图状态（T360）：带 graph_merge 的保存走节点级三方合并，防旧设备/旧标签页
     # 整图覆盖抹掉另一台设备刚生成的节点内容。规则见 server/graph_merge.py。
     # 读—合并—写整段收进 kv_mutate 同一临界区（T525）：原先 kv_read 在锁外读现值、
@@ -826,7 +1047,7 @@ async def api_set_kv(key: str, request: Request):
 
         merged = storage.kv_mutate(key, _merge_updater, account=account)
         return {"ok": True, "merged": did_merge, "updatedAt": merged.get("updatedAt") if isinstance(merged, dict) else None}
-    storage.kv_write(key, payload.get("value", ""), account=account)
+    storage.kv_write(key, value, account=account)
     return {"ok": True}
 
 
