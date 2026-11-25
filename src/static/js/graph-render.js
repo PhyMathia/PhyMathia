@@ -1615,33 +1615,62 @@ function _renderNodeHtml(node, messages, state) {
 // 一笔账（c-v 已把屏外卡跳掉），只是提前到插完 HTML 这一刻。元素必须是刚插入的
 // 新节点：此刻浏览器还没判过 c-v 相关性，量到的一定是占位盒；若将来在已渲染的
 // DOM 上复用本函数，可见卡会把真身记成占位，别再找第二处调用。
+//
+// T452（2026-11-25）补盲区：流式补丁（_patchGraphStreaming）新增的卡原先一条都不挂
+// c-v，因为那条路径不走全量重建。现在拆成「挑人（_nodeLazyLayoutPairs）＋挂载
+// （_mountNodeLazyLayout）」两步，全量重建与流式补丁共用同一份口径（两例外、必须有
+// 持久化尺寸），补丁只把**本轮刚插进去**的元素交给挂载原语——已在 DOM 里的元素一个
+// 都不碰（红线：二次挂载＝真身记成占位，见上段）。全新流式卡的 sizes 此刻还是空的，
+// 自然落空（首帧才测量），等生成结束那次全量重建再挂。
+function _nodeLazyLayoutPairs(nodes, elById, sizes) {
+  const pairs = [];
+  if (!nodes || !elById) return pairs;
+  const book = sizes || {};
+  for (const node of nodes) {
+    // 两个例外不动：ai_eval 的锯齿描边外扩 6px（paint 包含会裁）、minimized 无内容子树
+    if (node.kind === 'ai_eval' || node.minimized) continue;
+    const s = book[String(node.id)];
+    // 无持久化尺寸不挂：占位与真身不符反而污染 _measureNodes
+    if (!s || !(s.w > 0) || !(s.h > 0)) continue;
+    const el = elById.get(String(node.id));
+    if (!el) continue;
+    pairs.push({ el: el, size: s });
+  }
+  return pairs;
+}
+
+// 浏览器支持 c-v 才走后面所有分支（查看器/旧内核同一口径，别各写一份判据）
+function _nodeLazyLayoutSupported() {
+  return typeof CSS !== 'undefined' && !!CSS.supports && CSS.supports('content-visibility', 'auto');
+}
+
+// 挂载原语：只认**刚插入、还没进过布局**的元素（见上段红线）。样式挂完当场量一次
+// 占位盒记在元素上，_measureNodes 靠它认出「这卡还没排真身」（T393）。
+function _mountNodeLazyLayout(pairs) {
+  if (!pairs || !pairs.length) return;
+  if (!_nodeLazyLayoutSupported()) return;
+  for (const pair of pairs) {
+    pair.el.style.contentVisibility = 'auto';
+    pair.el.style.containIntrinsicSize = 'auto ' + Math.round(pair.size.w) + 'px auto ' + Math.round(pair.size.h) + 'px';
+  }
+  // 面板隐藏（display:none）时布局宽为 0，量不到占位盒——不记标记，_measureNodes
+  // 退回旧口径（此时它量到的也是 0，与本改动无关）。
+  if (!graphInner || !graphInner.offsetWidth) return;
+  for (const pair of pairs) {
+    const w = pair.el.offsetWidth;
+    const h = pair.el.offsetHeight;
+    if (w > 0 && h > 0) pair.el.__cvPlaceholder = { w: w, h: h };
+  }
+}
+
 function _applyNodeLazyLayout(state) {
-  if (!graphInner) return;
-  if (typeof CSS === 'undefined' || !CSS.supports || !CSS.supports('content-visibility', 'auto')) return;
+  if (!graphInner || !_nodeLazyLayoutSupported()) return;
   const sizes = ((state && state.sizes) || (_graphState() || {}).sizes) || {};
   const elById = new Map();
   graphInner.querySelectorAll('.graph-node[data-node-id]').forEach(el => {
     elById.set(el.dataset.nodeId, el);
   });
-  const marked = [];
-  for (const node of graphView.nodes) {
-    if (node.kind === 'ai_eval' || node.minimized) continue;
-    const s = sizes[String(node.id)];
-    if (!s || !(s.w > 0) || !(s.h > 0)) continue;
-    const el = elById.get(String(node.id));
-    if (!el) continue;
-    el.style.contentVisibility = 'auto';
-    el.style.containIntrinsicSize = 'auto ' + Math.round(s.w) + 'px auto ' + Math.round(s.h) + 'px';
-    marked.push(el);
-  }
-  // 面板隐藏（display:none）时布局宽为 0，量不到占位盒——不记标记，_measureNodes
-  // 退回旧口径（此时它量到的也是 0，与本改动无关）。
-  if (!marked.length || !graphInner.offsetWidth) return;
-  for (const el of marked) {
-    const w = el.offsetWidth;
-    const h = el.offsetHeight;
-    if (w > 0 && h > 0) el.__cvPlaceholder = { w: w, h: h };
-  }
+  _mountNodeLazyLayout(_nodeLazyLayoutPairs(graphView.nodes, elById, sizes));
 }
 
 function _measureNodes() {
@@ -2246,6 +2275,9 @@ function _patchGraphStreaming(messages, state) {
 
   const nextNodes = [];
   const nextById = {};
+  // T452：本轮补丁**新建**的节点与它们的元素（只给这些挂 c-v，已在 DOM 里的一个都不碰）
+  const freshNodes = [];
+  const freshElById = new Map();
   for (const next of data.nodes) {
     const old = oldById[next.id];
     const existingEl = graphInner.querySelector('[data-node-id="' + next.id + '"]');
@@ -2339,6 +2371,14 @@ function _patchGraphStreaming(messages, state) {
       nextNodes.push(old);
     } else {
       graphInner.insertAdjacentHTML('beforeend', _renderNodeHtml(next, messages, state));
+      // insertAdjacentHTML 追加到容器末尾：刚插进去的那张卡就是最后一个元素（SVG 边层与
+      // 列提示浮层都在它前面）。记下来交给尾部统一挂 c-v——此刻它还没进过布局。
+      // 认领前核对 id：万一日后模板套了层壳，宁可不挂（少挂无害）也别把 A 的尺寸记到 B 头上。
+      const freshEl = graphInner.lastElementChild;
+      if (freshEl && freshEl.dataset && freshEl.dataset.nodeId === String(next.id)) {
+        freshElById.set(String(next.id), freshEl);
+      }
+      freshNodes.push(next);
       next._patchSig = _graphNodeHtmlSig(next, messages, state);
       nextNodes.push(next);
     }
@@ -2349,6 +2389,12 @@ function _patchGraphStreaming(messages, state) {
   graphView.nodeById = nextById;
   graphView.defaultEdges = data.edges;
   graphView.edges = _resolveGraphEdges(state, data.edges, nextById);
+  // T452：只给本轮新建的卡挂 c-v，且必须赶在下面 _measureNodes 之前（首帧布局一过，
+  // 占位盒就量不到了）。有持久化尺寸的才挂；全新流式卡此刻 sizes 还空着，自然落空。
+  if (freshNodes.length) {
+    const sizes = (state && state.sizes) || (_graphState() || {}).sizes;
+    _mountNodeLazyLayout(_nodeLazyLayoutPairs(freshNodes, freshElById, sizes));
+  }
   _measureNodes();
   _redrawEdges();
   _updateNodeTransforms();

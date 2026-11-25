@@ -7,6 +7,10 @@
 // 成立，而边锚点是画线那一刻现读端口矩形的——卡进视口补排真身之后没人重画，线端就停在
 // 空中（实测 28/37 条边错位，最大 150.7px）。这里补两面：_observeNodeGeometry 的行为
 // （尺寸一变→合并一帧→只刷受影响的边）与三处接线/增量刷新契约。
+//
+// T452（2026-11-25）补盲区：流式补丁新增的卡原先一条都不挂 c-v。这里钉三件事——
+// 挑人口径（两例外＋必须有持久化尺寸）、挂载只作用于本轮新建元素（已有卡一个不碰）、
+// 接线位置（挂载必须在 _measureNodes 之前，且全量重建仍是 _applyNodeLazyLayout 唯一调用点）。
 import { check, drain, sandbox, vm, fs } from './_runner.mjs';
 
 export async function run() {
@@ -273,6 +277,198 @@ check('T394: 接线契约——三处重挂观察器（首帧/流式补丁/单�
     throw new Error('_scheduleEdgeResync 没走「增量优先、整层兜底」');
   }
   if (!render.includes('function _edgesTouchingNodeIds')) throw new Error('缺 _edgesTouchingNodeIds（只刷受影响的边靠它）');
+  return true;
+});
+
+check('T452: _nodeLazyLayoutPairs——只收「有持久化尺寸且非两例外」的新元素', () => {
+  const pairs = sandbox._nodeLazyLayoutPairs(
+    [
+      { id: 'n-new', kind: 'note' },
+      { id: 'n-eval', kind: 'ai_eval' },
+      { id: 'n-mini', kind: 'note', minimized: true },
+      { id: 'n-nosize', kind: 'answer' },
+      { id: 'n-zero', kind: 'note' },
+      { id: 'n-noel', kind: 'note' },
+    ],
+    new Map([
+      ['n-new', { el: 'new' }], ['n-eval', { el: 'eval' }], ['n-mini', { el: 'mini' }],
+      ['n-nosize', { el: 'nosize' }], ['n-zero', { el: 'zero' }],
+    ]),
+    {
+      'n-new': { w: 640.4, h: 880.6 }, 'n-eval': { w: 300, h: 200 }, 'n-mini': { w: 300, h: 100 },
+      'n-zero': { w: 0, h: 0 }, 'n-noel': { w: 100, h: 100 },
+    }
+  );
+  // loose 代理下缺失的全局会返回同款假对象——非数组即说明 helper 没进产物
+  if (!Array.isArray(pairs)) throw new Error('返回的不是数组：helper 未进打包产物');
+  if (pairs.length !== 1) throw new Error('够格名单不对：' + JSON.stringify(pairs.map(p => p.el.el)));
+  if (pairs[0].el.el !== 'new' || pairs[0].size.w !== 640.4) throw new Error('挑中的不是 n-new：' + JSON.stringify(pairs[0]));
+  return true;
+});
+
+check('T452: 新建卡挂 c-v＋当场记占位；已有卡不动；面板隐藏只挂样式不记占位', () => {
+  if (typeof sandbox._mountNodeLazyLayout !== 'function') throw new Error('挂载原语未暴露');
+  const keep = ['graphInner', 'CSS'];
+  const prev = {};
+  for (const k of keep) prev[k] = vm.runInContext('typeof ' + k + ' === "undefined" ? undefined : ' + k, sandbox);
+  try {
+    vm.runInContext([
+      'var __prevCSS2 = (typeof CSS === "undefined") ? null : CSS;',
+      'CSS = { supports: function(){ return true; } };',
+      // 刚插进去的新卡：还没进过布局，量到的就是占位盒
+      'var __fresh = { style: {}, offsetWidth: 700, offsetHeight: 920 };',
+      // 已在画布上的老卡：带着上一轮的 c-v 与占位标记，本轮不该被碰
+      'var __old = { style: { contentVisibility: "auto", containIntrinsicSize: "auto 100px auto 100px" }, __cvPlaceholder: { w: 100, h: 100 }, offsetWidth: 100, offsetHeight: 100 };',
+      'graphInner = { offsetWidth: 1200 };',
+      'var __sizes = { "n-new": { w: 640.4, h: 880.6 } };',
+      'var __pairs = _nodeLazyLayoutPairs([{ id: "n-new", kind: "note" }], new Map([["n-new", __fresh]]), __sizes);',
+      '_mountNodeLazyLayout(__pairs);',
+    ].join('\n'), sandbox);
+    const fresh = JSON.parse(vm.runInContext('JSON.stringify({ cv: __fresh.style.contentVisibility || null, cis: __fresh.style.containIntrinsicSize || null, ph: __fresh.__cvPlaceholder || null })', sandbox));
+    if (fresh.cv !== 'auto' || fresh.cis !== 'auto 640px auto 881px') throw new Error('新卡没挂上或占位尺寸不对：' + JSON.stringify(fresh));
+    if (!fresh.ph || fresh.ph.w !== 700 || fresh.ph.h !== 920) throw new Error('新卡没当场记占位盒：' + JSON.stringify(fresh.ph));
+    const old = JSON.parse(vm.runInContext('JSON.stringify({ cv: __old.style.contentVisibility, cis: __old.style.containIntrinsicSize, ph: __old.__cvPlaceholder })', sandbox));
+    if (old.cv !== 'auto' || old.cis !== 'auto 100px auto 100px' || old.ph.w !== 100 || old.ph.h !== 100) {
+      throw new Error('已有卡被重记了（红线）: ' + JSON.stringify(old));
+    }
+    // 面板隐藏：量不到占位（offsetWidth 为 0 时浏览器布局宽也是 0），只挂样式不记标记
+    vm.runInContext([
+      'var __fresh2 = { style: {}, offsetWidth: 0, offsetHeight: 0 };',
+      'graphInner = { offsetWidth: 0 };',
+      '_mountNodeLazyLayout(_nodeLazyLayoutPairs([{ id: "n-new", kind: "note" }], new Map([["n-new", __fresh2]]), __sizes));',
+    ].join('\n'), sandbox);
+    const hidden = JSON.parse(vm.runInContext('JSON.stringify({ cv: __fresh2.style.contentVisibility || null, ph: __fresh2.__cvPlaceholder || null })', sandbox));
+    if (hidden.cv !== 'auto') throw new Error('隐藏面板下样式也没挂：' + JSON.stringify(hidden));
+    if (hidden.ph !== null) throw new Error('隐藏面板下不该记占位盒（量不到）: ' + JSON.stringify(hidden.ph));
+    return true;
+  } finally {
+    vm.runInContext([
+      'graphInner = __prev_graphInner;',
+      'if (__prevCSS2) { CSS = __prevCSS2; } else { try { delete CSS; } catch (e) { CSS = undefined; } }',
+    ].join('\n'), Object.assign(sandbox, { __prev_graphInner: prev.graphInner }));
+  }
+});
+
+check('T452: _patchGraphStreaming 端到端——新建卡挂 c-v、无尺寸的新卡不挂、已有卡一个不动', () => {
+  if (typeof sandbox._patchGraphStreaming !== 'function') throw new Error('_patchGraphStreaming 未暴露');
+  const keep = ['graphInner', 'graphView', 'CSS', '_buildGraphData', '_renderNodeHtml', '_measureNodes', '_redrawEdges',
+    '_updateNodeTransforms', '_observeNodeGeometry', '_syncGraphHeavyClasses', '_resolveGraphEdges'];
+  const prev = {};
+  for (const k of keep) prev[k] = vm.runInContext('typeof ' + k + ' === "undefined" ? undefined : ' + k, sandbox);
+  try {
+    // 老卡：已在画布上、上一轮全量重建挂过 c-v 并记过占位盒——补丁跑完必须原样不动
+    vm.runInContext([
+      'var __prevCSS3 = (typeof CSS === "undefined") ? null : CSS;',
+      'CSS = { supports: function(){ return true; } };',
+      'var __kids = [];',
+      'var __mkEl = function(id, w, h){ return { dataset: { nodeId: id }, style: {}, offsetWidth: w, offsetHeight: h, remove: function(){ var i = __kids.indexOf(this); if (i >= 0) __kids.splice(i, 1); } }; };',
+      'var __oldEl = __mkEl("n-old", 320, 434);',
+      '__oldEl.style.contentVisibility = "auto";',
+      '__oldEl.style.containIntrinsicSize = "auto 300px auto 400px";',
+      '__oldEl.__cvPlaceholder = { w: 320, h: 434 };',
+      '__kids.push(__oldEl);',
+      // 假画布：只实现补丁真正用到的那几个成员；insertAdjacentHTML 从 HTML 里取回 id 建替身
+      'graphInner = {',
+      '  offsetWidth: 1200,',
+      '  get lastElementChild(){ return __kids.length ? __kids[__kids.length - 1] : null; },',
+      '  insertAdjacentHTML: function(pos, html){ var m = /data-node-id="([^"]+)"/.exec(html); __kids.push(__mkEl(m ? m[1] : "", 700, 900)); },',
+      '  querySelectorAll: function(){ return __kids.slice(); },',
+      '  querySelector: function(sel){ var m = /data-node-id="([^"]+)"/.exec(sel); if (!m) return null; for (var i = 0; i < __kids.length; i++) { if (__kids[i].dataset.nodeId === m[1]) return __kids[i]; } return null; },',
+      '};',
+      'var __old = { id: "n-old", kind: "answer", messageIndex: -1, timestamp: 1, analysis: "旧卡", w: 300, h: 400 };',
+      'var __fresh = { id: "n-fresh", kind: "answer", messageIndex: -1, timestamp: 2, analysis: "有尺寸的新卡", x: 0, y: 0 };',
+      'var __plain = { id: "n-plain", kind: "answer", messageIndex: -1, timestamp: 3, analysis: "没尺寸的新卡", x: 0, y: 0 };',
+      'var __state = { sizes: { "n-fresh": { w: 640.4, h: 880.6 }, "n-old": { w: 300, h: 400 } } };',
+      '__old._patchSig = _graphNodeHtmlSig(__old, [], __state);',
+      'graphView.nodeById = { "n-old": __old };',
+      'graphView.nodes = [__old];',
+      '_buildGraphData = function(){ return { nodes: [__old, __fresh, __plain], edges: [], nodeById: { "n-old": __old, "n-fresh": __fresh, "n-plain": __plain } }; };',
+      // 渲染模板换最小桩：本用例只验「哪张卡被挂 c-v」，真 renderMarkdown 要 marked 库（沙箱没有）
+      '_renderNodeHtml = function(node){ return "<div class=\\"graph-node\\" data-node-id=\\"" + node.id + "\\"></div>"; };',
+      // _measureNodes 那一刻的现场＝补丁尾部；挂载若排在它之后，这里就看不到 c-v
+      'var __atMeasure = null;',
+      '_measureNodes = function(){ __atMeasure = __kids.map(function(el){ return { id: el.dataset.nodeId, cv: el.style.contentVisibility || null, cis: el.style.containIntrinsicSize || null, ph: el.__cvPlaceholder || null }; }); };',
+      '_redrawEdges = function(){}; _updateNodeTransforms = function(){}; _observeNodeGeometry = function(){}; _syncGraphHeavyClasses = function(){}; _resolveGraphEdges = function(){ return []; };',
+      '_patchGraphStreaming([], __state);',
+    ].join('\n'), sandbox);
+    const snap = JSON.parse(vm.runInContext('JSON.stringify(__atMeasure)', sandbox));
+    const byId = {};
+    snap.forEach(r => { byId[r.id] = r; });
+    if (!byId['n-fresh']) throw new Error('新卡没插进画布：' + JSON.stringify(snap.map(r => r.id)));
+    if (byId['n-fresh'].cv !== 'auto' || byId['n-fresh'].cis !== 'auto 640px auto 881px') {
+      throw new Error('新建卡没挂上 c-v（盲区还在）：' + JSON.stringify(byId['n-fresh']));
+    }
+    if (!byId['n-fresh'].ph || byId['n-fresh'].ph.w !== 700 || byId['n-fresh'].ph.h !== 900) {
+      throw new Error('新建卡没记占位盒：' + JSON.stringify(byId['n-fresh'].ph));
+    }
+    if (byId['n-plain'].cv !== null || byId['n-plain'].ph !== null) {
+      throw new Error('无 sizes 的新卡不该挂（占位会污染测量）：' + JSON.stringify(byId['n-plain']));
+    }
+    if (byId['n-old'].cv !== 'auto' || byId['n-old'].cis !== 'auto 300px auto 400px'
+      || byId['n-old'].ph.w !== 320 || byId['n-old'].ph.h !== 434) {
+      throw new Error('已有卡被重记了（红线：真身会被记成占位高）: ' + JSON.stringify(byId['n-old']));
+    }
+    return true;
+  } finally {
+    vm.runInContext([
+      'graphInner = __prev_graphInner;',
+      '_buildGraphData = __prev__buildGraphData;',
+      '_renderNodeHtml = __prev__renderNodeHtml;',
+      '_measureNodes = __prev__measureNodes;',
+      '_redrawEdges = __prev__redrawEdges;',
+      '_updateNodeTransforms = __prev__updateNodeTransforms;',
+      '_observeNodeGeometry = __prev__observeNodeGeometry;',
+      '_syncGraphHeavyClasses = __prev__syncGraphHeavyClasses;',
+      '_resolveGraphEdges = __prev__resolveGraphEdges;',
+      'graphView.nodeById = __prev_nodeById;',
+      'graphView.nodes = __prev_nodes;',
+      'graphView.edges = __prev_edges;',
+      'graphView.defaultEdges = __prev_defaultEdges;',
+      'if (__prevCSS3) { CSS = __prevCSS3; } else { try { delete CSS; } catch (e) { CSS = undefined; } }',
+    ].join('\n'), Object.assign(sandbox, {
+      __prev_graphInner: prev.graphInner,
+      __prev__buildGraphData: prev._buildGraphData,
+      __prev__renderNodeHtml: prev._renderNodeHtml,
+      __prev__measureNodes: prev._measureNodes,
+      __prev__redrawEdges: prev._redrawEdges,
+      __prev__updateNodeTransforms: prev._updateNodeTransforms,
+      __prev__observeNodeGeometry: prev._observeNodeGeometry,
+      __prev__syncGraphHeavyClasses: prev._syncGraphHeavyClasses,
+      __prev__resolveGraphEdges: prev._resolveGraphEdges,
+      __prev_nodeById: prev.graphView ? prev.graphView.nodeById : undefined,
+      __prev_nodes: prev.graphView ? prev.graphView.nodes : undefined,
+      __prev_edges: prev.graphView ? prev.graphView.edges : undefined,
+      __prev_defaultEdges: prev.graphView ? prev.graphView.defaultEdges : undefined,
+    }));
+  }
+});
+
+check('T452: 接线契约——补丁只挂本轮新建卡（在 _measureNodes 之前），全量重建仍是唯一 _applyNodeLazyLayout 调用点', () => {
+  const render = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
+  const interact = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
+  const fnBody = (src, name) => {
+    const i = src.indexOf('function ' + name);
+    if (i < 0) throw new Error('缺函数 ' + name);
+    const j = src.indexOf('\n}', i);
+    return src.slice(i, j < 0 ? src.length : j);
+  };
+  const patch = fnBody(render, '_patchGraphStreaming');
+  const mountAt = patch.indexOf('_mountNodeLazyLayout(');
+  const measureAt = patch.indexOf('_measureNodes()');
+  if (mountAt < 0) throw new Error('流式补丁没挂 c-v——盲区还在');
+  if (measureAt < 0 || mountAt > measureAt) throw new Error('挂载跑到 _measureNodes 之后了：首帧布局一过就量不到占位盒');
+  // 红线：补丁只处理新建元素，绝不对已在渲染的卡二次调用全量挂载（真身会被记成占位）
+  if (patch.includes('_applyNodeLazyLayout(')) throw new Error('补丁里二次调用 _applyNodeLazyLayout——可见卡会把真身记成占位高');
+  if (fnBody(render, '_refreshWorkflowNodeUi').includes('_mountNodeLazyLayout(')) {
+    throw new Error('_refreshWorkflowNodeUi 换的是已排过版的卡，不是新建节点，不该挂');
+  }
+  // 全量重建仍是唯一调用点：graph-render.js 里只剩函数定义那一处，其它文件只有 graph-interact 那一处
+  if ((render.match(/_applyNodeLazyLayout\(/g) || []).length !== 1) throw new Error('graph-render.js 里出现了定义之外的 _applyNodeLazyLayout 调用');
+  if ((interact.match(/_applyNodeLazyLayout\(/g) || []).length !== 1) throw new Error('graph-interact.js 应恰好一处 _applyNodeLazyLayout 调用');
+  const stray = fs.readdirSync('src/static/js')
+    .filter(f => f.endsWith('.js') && f !== 'graph-render.js' && f !== 'graph-interact.js')
+    .filter(f => fs.readFileSync('src/static/js/' + f, 'utf8').includes('_applyNodeLazyLayout('));
+  if (stray.length) throw new Error('冒出了第三处调用点：' + stray.join(', '));
   return true;
 });
 
