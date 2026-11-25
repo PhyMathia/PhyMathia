@@ -6784,15 +6784,12 @@ html[data-theme="light"][data-panel-skin="candy"] .thinking-slider {
 .settings-switch-knob { width: 13px; height: 13px; border-radius: 50%; background: var(--text-secondary); transition: transform .16s ease; }
 .settings-switch-row input:checked + .settings-switch-track { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 28%, transparent); }
 .settings-switch-row input:checked + .settings-switch-track .settings-switch-knob { transform: translateX(15px); background: var(--accent); }
-.settings-select { padding: 7px 9px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-container); color: var(--text-primary); font-size: var(--fs-md); font-family: inherit; cursor: pointer; }
 .settings-badge { flex: none; padding: 4px 9px; border: 1px solid var(--border); border-radius: var(--r-pill); font-size: var(--fs-sm); color: var(--text-secondary); }
 .settings-actions { display: flex; flex-direction: column; gap: 8px; }
 .settings-action { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 10px 13px; border: 1px solid var(--border); border-radius: var(--r-md); background: transparent; color: var(--text-primary); font-size: var(--fs-md); font-family: inherit; text-align: left; cursor: pointer; }
 .settings-action:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .settings-action-arrow { color: var(--text-secondary); }
 .settings-note { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r-md); font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.6; }
-.settings-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.settings-chip { padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--r-md); font-size: var(--fs-sm); color: var(--text-secondary); }
 @media (max-width: 640px) {
   .settings-drawer { width: 100vw; }
   .settings-nav { width: 140px; padding: 10px 8px; }
