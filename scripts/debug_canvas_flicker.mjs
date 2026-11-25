@@ -157,6 +157,55 @@ try {
     return big;
   };
 
+  // ---- 513 层归属归因（P2 取证）：一次回答「231 层里到底有多少是 .graph-node」 ----
+  // 11-20 只数了层总数，「每节点一层」一直是假设。这里按 DOM 归属分桶，把假设变成
+  // 可判定的结论。层几何与 backendNodeId 都与渲染后端无关，headless SwiftShader 也准。
+  let attrBrief = '';
+  const attributeLayers = async () => {
+    layers.clear();
+    await page.evaluate(() => { if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas(); });
+    await wait(1500);
+    const all = [...layers.values()].filter((l) => l.width * l.height > 1);
+    if (!all.length) {
+      console.log('\n[513 归因] 层表为空（本轮没收到 layerTreeDidChange），跳过归因');
+      return { all: 0, nodeLayers: 0, nodeMp: 0 };
+    }
+    const buckets = new Map();
+    for (const l of all) {
+      const name = await layerName(l.backendNodeId);
+      const key = /\.graph-node(\.|$)/.test(name) ? '节点层(.graph-node)'
+        : /onboarding|exampleguide|spotlight/i.test(name) ? '引导遮罩'
+          : /settings|memory|knowledge|modal|drawer|panel|sidebar/i.test(name) ? '面板/抽屉'
+            : /graph-/.test(name) ? '画布骨架(容器/边层)'
+              : '其他';
+      if (!buckets.has(key)) buckets.set(key, { n: 0, mp: 0, sample: [] });
+      const b = buckets.get(key);
+      b.n += 1;
+      b.mp += l.width * l.height / 1e6;
+      if (b.sample.length < 2) b.sample.push(name);
+    }
+    const totalMp = [...buckets.values()].reduce((s, b) => s + b.mp, 0);
+    const table = [...buckets.entries()].sort((a, b) => b[1].mp - a[1].mp);
+    console.log(`\n[513 归因] 层总数 ${all.length}｜层面积合计 ${totalMp.toFixed(1)} MP`);
+    for (const [k, v] of table) {
+      console.log(`   ${k}\t${v.n} 层\t${v.mp.toFixed(1)} MP\t${(v.mp / totalMp * 100).toFixed(0)}%\t例：${v.sample.join(' / ')}`);
+    }
+    const nodeB = buckets.get('节点层(.graph-node)') || { n: 0, mp: 0 };
+    const per = nodeCount ? nodeB.n / nodeCount : 0;
+    const verdict = nodeB.n >= nodeCount * 0.8
+      ? `节点层假设成立（${nodeB.n} 层 ≈ ${nodeCount} 节点，${per.toFixed(2)} 层/节点）→ 下一步试「手势期离屏节点 visibility 隐藏」，A/B 看层总数与 >33ms 帧`
+      : nodeB.n === 0
+        ? '节点没有各自成层（0 层命中 .graph-node）→ 513 归因不成立，层来自边层滤镜/面板磨砂/滚动容器，改方向'
+        : `节点层只占 ${nodeB.n} 层（${per.toFixed(2)} 层/节点）→ 部分成立，先看面积大头`;
+
+    console.log(`   判定：${verdict}`);
+    console.log(`   若节点层合并为 1 层：层总数 ${all.length} → ${all.length - nodeB.n + 1}`);
+    attrBrief = `层总数 ${all.length}｜节点层 ${nodeB.n}（${nodeB.mp.toFixed(1)} MP）｜`
+      + table.filter(([k]) => k !== '节点层(.graph-node)').map(([k, v]) => `${k} ${v.n}`).join('｜')
+      + `｜判定：${verdict}`;
+    return { all: all.length, nodeLayers: nodeB.n, nodeMp: +nodeB.mp.toFixed(1) };
+  };
+
   const measure = async (label) => {
     // 静止段：只等帧，不动任何东西
     const still = await page.evaluate(() => window.__perfProbe(150).then(window.__stats));
@@ -188,6 +237,7 @@ try {
   const rows = [];
   rows.push(await measure('① 基线'));
   await measureLayers('① 基线');
+  await attributeLayers();
 
   const styleHandles = [];
   styleHandles.push(await page.addStyleTag({ content: '.graph-canvas-inner { will-change: auto !important; }' }));
@@ -262,6 +312,11 @@ try {
     && visIdle.exampleGuide === 'hidden' && visOpen.exampleGuide === 'visible' && visClosed.exampleGuide === 'hidden';
   console.log(visOk ? '✓ 遮罩显隐正常（静止不绘制、打开可见、关掉回落）' : '✗ 遮罩显隐异常，引导会被锁死');
   if (errors.length) console.log('\n页面错误:', errors.slice(0, 5));
+  if (attrBrief) {
+    console.log('\n===== 贴回给我：层归属一行摘要 =====');
+    console.log(attrBrief);
+    console.log('（完整层表在上面 [513 归因] 段，也可一并贴回）');
+  }
   console.log('\n隔离实例：' + srv.base);
 } finally {
   if (browser) await browser.close();
