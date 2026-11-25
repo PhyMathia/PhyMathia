@@ -61,12 +61,18 @@ try {
   page.on('response', r => { if (r.url().includes('/api/models/chat')) netLog.push('models/chat → HTTP ' + r.status()); });
   page.on('requestfailed', r => { if (r.url().includes('/api/')) netLog.push('REQ FAILED: ' + r.url().slice(-40) + ' ' + ((r.failure() && r.failure().errorText) || '')); });
   await page.addInitScript((cfg) => {
-    localStorage.setItem('phymathia_user_models', JSON.stringify([cfg.model]));
-    const act = {};
-    for (const s of cfg.slots) act[s] = cfg.model.id;
-    localStorage.setItem('phymathia_active_models', JSON.stringify(act));
-    localStorage.setItem('phymathia_onboarding_done', '1');
-    localStorage.setItem('phymathia_guide_seen', '1');
+    // 573（2026-11-25）：515 给全屏 iframe 补 sandbox 后，playwright 会把本脚本也注入
+    // 沙盒 about:blank 文档（init script 进每一帧），opaque origin 读 localStorage 抛
+    // SecurityError 成 pageerror，顶红「页面异常」闸门——沙盒内静默跳过（种子只属主文档），
+    // 体例与 572 的 review_tasks_e2e.mjs 一致。
+    try {
+      localStorage.setItem('phymathia_user_models', JSON.stringify([cfg.model]));
+      const act = {};
+      for (const s of cfg.slots) act[s] = cfg.model.id;
+      localStorage.setItem('phymathia_active_models', JSON.stringify(act));
+      localStorage.setItem('phymathia_onboarding_done', '1');
+      localStorage.setItem('phymathia_guide_seen', '1');
+    } catch (e) { /* 沙盒 iframe（opaque origin）没有 localStorage：不种也不算异常 */ }
   }, {
     model: { id: 'mock-1', name: 'mock', provider: "opencode", model: "mock-1", apiKey: 'x', baseUrl: MOCK + '/v1' },
     slots: ['agent_model', 'html_model', 'descriptor_model', 'quiz_model', 'graph_model', 'branch_model'],

@@ -54,6 +54,7 @@
 //   harness-health          Φ 主动体检芯片（2026-10-26：开面板零模型体检→顶部芯片→点击预填不发送→同画布同问题只提示一次；行为链独占 fetch/getElementById 桩，域尾收口）
 //   skills-ui               skill 界面（2026-11-16 第 4 步）：分析卡「技能：…」标签＋设置页按节点分组（纯同步）
 //   skills-manage           技能管理面（2026-11-16 第 5 版）：总开关/单条开关/内置可改/删除恢复/导入确认卡（纯同步）
+//   tasks-panel             任务面板转圈连续性（491，2026-11-25）：tick 结构指纹不变只改时钟文字，不重建 DOM（纯同步）
 import { finish } from './frontend_smoke/_runner.mjs';
 import { run as _recipes } from './frontend_smoke/recipes.mjs';
 import { run as _phi } from './frontend_smoke/phi.mjs';
@@ -114,6 +115,7 @@ import { run as _graph_focus_release } from './frontend_smoke/graph-focus-releas
 import { run as _backup_quota } from './frontend_smoke/backup-quota.mjs';
 import { run as _generation_resume } from './frontend_smoke/generation-resume.mjs';
 import { run as _viz_background } from './frontend_smoke/viz-background.mjs';
+import { run as _tasks_panel } from './frontend_smoke/tasks-panel.mjs';
 import { run as _harness_health } from './frontend_smoke/harness-health.mjs';
 import { run as _workshop } from './frontend_smoke/workshop.mjs';
 import { run as _serial_source_input } from './frontend_smoke/serial-source-input.mjs';
@@ -179,6 +181,7 @@ _graph_focus_release(); // 画布按下补输入框失焦（2026-11-24）：纯�
 
 _generation_resume(); // 484 生成断点续跑（2026-11-19）：续跑接线静态契约＋清扫暂缓/取消口行为，纯同步
 _viz_background(); // viz 后台通道（2026-11-22）：静态接线＋节点判定/开关/取消行为，纯同步
+_tasks_panel(); // 任务面板转圈连续性（491，2026-11-25）：纯同步，自带 Date.now/document.getElementById 收口
 // Φ 主动体检芯片（2026-10-26）：自带收口线（行为链用例换 fetch/getElementById 桩、
 // 用毕即还原），紧挨 workshop 之前——workshop 也换全局桩，两域整体 await 不交叠。
 await _harness_health();

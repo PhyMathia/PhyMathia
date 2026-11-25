@@ -78,6 +78,42 @@ function makeSnapshot() {
   };
 }
 
+// 538（2026-11-25）：带「版本历史 / 旧版素材篮 / 草稿」结构的快照。
+// 目的：证明这些 516 委托动作在查看器里要么点不到（版本导航整行被 hide 清单剥掉、
+// 旧版素材篮的整理按钮已隐藏），要么根本长不出来（draft 节点不进 customNodes 持久化，
+// _buildGraphData 也不认快照的 nodes 数组），并且控制台直调入口也已被 READONLY_BLOCKED 封死。
+function makeSnapshotWithActions() {
+  const snap = makeSnapshot();
+  snap.title = '只读护栏 538 回归用快照';
+  snap.graph.customNodes = [
+    {
+      id: 'ver-node-1', kind: 'answer', manual: false,
+      x: 60, y: 60, content: '第二版内容', summary: '第二版', status: 'done',
+      busy: false, generated: true,
+      versions: [
+        { content: '第一版内容', humanDone: false },
+        { content: '第二版内容', humanDone: false },
+      ],
+      activeVersion: 1,
+    },
+    {
+      id: 'legacy-source-1', kind: 'source',
+      x: 60, y: 460, fileName: '旧笔记.md', status: 'done',
+      // 没有 kind 字段＝旧格式，走 _renderSourceNodeHtml 的只读分支（带「AI 整理关系」）
+      items: [{ name: '旧知识点', text: '旧格式条目' }],
+    },
+    {
+      // 当前快照格式里长不出草稿节点：这里故意塞一份，验证 materializeCustom 会把它
+      // 降级成 blank，不会渲染出「我来回答 / 直接问AI」按钮。
+      id: 'draft-custom-1', kind: 'draft',
+      x: 560, y: 60, content: '',
+      portMeta: { type: 'socratic', question: '草稿问题', level: 'basic' },
+    },
+  ];
+  snap.meta.counts.nodes = 3;
+  return snap;
+}
+
 async function run() {
   // ===== 隔离环境：临时目录拷贝 src + harness（data/ 在 temp 下全新生成；共享模块 T161 起在 src/server 内自洽）=====
   const workDir = mkdtempSync(join(tmpdir(), 'phymathia-viewer-ro-'));
@@ -256,6 +292,81 @@ async function run() {
     if (afterRerender.extra !== 'none') throw new Error('重渲后兜网失效：' + afterRerender.extra);
     if (afterRerender.blocked < 1) throw new Error('重渲后兜网没留痕');
     ok('重渲后基线重建，兜网继续生效');
+
+    // --- 538：快照带版本历史 / 旧版素材篮 / 草稿结构时的可达性与写路径 ---
+    const loaded538 = await page.evaluate(snap => window.utopiaViewer.loadText(JSON.stringify(snap), 'readonly-538.pmu'),
+                                          makeSnapshotWithActions());
+    if (!loaded538) throw new Error('538 快照装载失败：' + (await page.textContent('#utopiaError').catch(() => '')));
+    await page.waitForTimeout(600);
+
+    const reach538 = await page.evaluate(() => {
+      const visible = el => !!el && el.getClientRects().length > 0;
+      const ver = document.querySelector('.graph-version-nav');
+      const verBtn = document.querySelector('.graph-version-btn[data-act="ver-step"]');
+      const organize = document.querySelector('.graph-source-organize-btn');
+      const node = (graphView.nodes || []).find(n => n.id === 'ver-node-1');
+      return {
+        verExists: !!ver,
+        verVisible: visible(ver),
+        verBtnVisible: visible(verBtn),
+        verActionsDisplay: ver && ver.closest('.graph-node-actions')
+          ? getComputedStyle(ver.closest('.graph-node-actions')).display : null,
+        organizeExists: !!organize,
+        organizeVisible: visible(organize),
+        socraticActions: document.querySelectorAll('.graph-socratic-actions').length,
+        draftNodeRendered: (graphView.nodes || []).some(n => n.kind === 'draft'),
+        versionContent: node ? node.content : null,
+        versionActive: node ? node.activeVersion : null,
+      };
+    });
+    if (!reach538.verExists) throw new Error('版本导航没渲染出来，测不到 538 的盲区');
+    if (reach538.verVisible || reach538.verBtnVisible) {
+      throw new Error('版本导航在查看器里可见（应被 .graph-node-actions 整行隐藏）：' + JSON.stringify(reach538));
+    }
+    if (reach538.verActionsDisplay !== 'none') {
+      throw new Error('版本导航所在的 .graph-node-actions 没被隐藏：display=' + reach538.verActionsDisplay);
+    }
+    if (!reach538.organizeExists) throw new Error('旧版素材篮的「AI 整理关系」按钮没渲染，测不到盲区');
+    if (reach538.organizeVisible) throw new Error('旧版素材篮的「AI 整理关系」按钮在只读页可见');
+    if (reach538.socraticActions !== 0 || reach538.draftNodeRendered) {
+      throw new Error('草稿节点/苏格拉底按钮在查看器里长出来了：' + JSON.stringify(reach538));
+    }
+    if (reach538.versionContent !== '第二版内容' || reach538.versionActive !== 1) {
+      throw new Error('版本节点初始内容不对：' + JSON.stringify(reach538));
+    }
+    ok('538：版本导航/旧版整理按钮均被隐藏，草稿节点不会在只读页长出苏格拉底按钮');
+
+    const blocked538 = await page.evaluate(() => {
+      const node = (graphView.nodes || []).find(n => n.id === 'ver-node-1');
+      const out = {
+        stepRet: window.graphNodeVersionStep('ver-node-1', -1),
+        contentAfterStep: node ? node.content : null,
+        activeAfterStep: node ? node.activeVersion : null,
+        delRet: window.graphNodeVersionDelete('ver-node-1'),
+        contentAfterDel: node ? node.content : null,
+        versionsAfterDel: node && Array.isArray(node.versions) ? node.versions.length : 0,
+        draftAnswerRet: window.draftSocraticAnswer('draft-custom-1'),
+        draftAiRet: window.draftAskAi('draft-custom-1'),
+        organizeRet: window.openHarnessOrganizeRelations('legacy-source-1'),
+        toast: (document.getElementById('utopiaToast') || {}).textContent || '',
+      };
+      return out;
+    });
+    for (const key of ['stepRet', 'delRet', 'draftAnswerRet', 'draftAiRet', 'organizeRet']) {
+      if (blocked538[key] !== false) {
+        throw new Error(key + ' 没被只读桩拦下（返回 ' + blocked538[key] + '）');
+      }
+    }
+    if (blocked538.contentAfterStep !== '第二版内容' || blocked538.activeAfterStep !== 1) {
+      throw new Error('控制台切版本仍改写了节点：' + JSON.stringify(blocked538));
+    }
+    if (blocked538.contentAfterDel !== '第二版内容' || blocked538.versionsAfterDel !== 2) {
+      throw new Error('控制台删版本仍改写了节点：' + JSON.stringify(blocked538));
+    }
+    if (blocked538.toast.indexOf('只读') < 0) {
+      throw new Error('538 拦截没给只读提示：toast="' + blocked538.toast + '"');
+    }
+    ok('538：控制台直调版本切换/删版/草稿按钮/整理关系入口全部被拦下，内容零变化');
 
     // --- localStorage 零污染（原有不变量，别被新代码碰坏）---
     const pollution = await page.evaluate(() => Object.keys(window.__utopiaRealLocalStorage || {}).length);

@@ -672,4 +672,35 @@ check('model-add：addModelToGroup 双框补模型（按序对应/留空用 ID/�
   sandbox.reloadModelsFromStorage();
   return true;
 });
+
+// 569（2026-11-25）：槽位徽标里的供应商名来自自定义模型，属用户可注入内容。
+// 518（0c072f0）已把 models.js:986 的 ${model.provider} 包上 escapeHtml；这里加
+// 回归断言，防止后续改徽标模板时把转义丢掉。
+check('model-badge（569）：槽位徽标供应商名一律转义', () => {
+  const mjs = fs.readFileSync('src/static/js/models.js', 'utf8');
+  const i = mjs.indexOf('function _fillModelMeta(');
+  if (i < 0) throw new Error('找不到 _fillModelMeta');
+  const body = mjs.slice(i, mjs.indexOf('\n}', i));
+  if (!/escapeHtml\(model\.provider\)/.test(body)) throw new Error('徽标供应商名没走 escapeHtml');
+  if (/<span class="model-tag">\$\{model\.provider\}<\/span>/.test(body)) {
+    throw new Error('徽标仍直插 provider（XSS）');
+  }
+
+  const prevGet = sandbox.getModelById;
+  const descEl = { textContent: '' };
+  const tagsEl = { innerHTML: '' };
+  try {
+    sandbox.getModelById = () => ({ provider: '<img src=x onerror=alert(1)>', model: 'evil', apiKey: 'k' });
+    sandbox._fillModelMeta('evil-1', descEl, tagsEl, true);
+  } finally {
+    sandbox.getModelById = prevGet;
+  }
+  if (!tagsEl.innerHTML.includes('&lt;img')) {
+    throw new Error('恶意 provider 没被转义：' + tagsEl.innerHTML);
+  }
+  if (tagsEl.innerHTML.includes('<img')) {
+    throw new Error('恶意 provider 直插了 HTML：' + tagsEl.innerHTML);
+  }
+  return true;
+});
 }

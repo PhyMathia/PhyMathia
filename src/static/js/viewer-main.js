@@ -88,7 +88,7 @@
       '.graph-node-actions,.graph-node-delete-toggle,.graph-node-edit-toggle,.graph-node-minimize-toggle,',
       '.graph-port-remove,.graph-add-port-btn,.graph-add-input-btn,.graph-resize-handle,',
       '.graph-hub-connect-btn,.graph-regen-btn,.graph-blank-actions,.graph-source-controls,',
-      '.graph-source-file-btn,.graph-source-paste-btn,.graph-relation-actions,',
+      '.graph-source-file-btn,.graph-source-paste-btn,.graph-source-organize-btn,.graph-relation-actions,',
       // 516：空白卡要求框不在历史隐藏清单里（查看器是只读快照，要求框本就不该出现）
       '.graph-blank-requirement,',
       '.graph-ai-eval-accept,.graph-ai-eval-ignore,.graph-link-btn,.graph-tool-btn[title*="新建"],',
@@ -140,6 +140,16 @@
     _deleteSelectedGraphGroups: '只读快照：不能删除分组',
     deleteBlankNode: '只读快照：不能删除节点',
     deleteCustomNode: '只读快照：不能删除节点',
+    // 538（2026-11-25）：516 委托总线的动作入口补桩。版本导航住在 .graph-node-actions
+    // 里、被上面的 hide 清单整行剥掉，用户点不到；但控制台仍可直调，且 hide 清单哪天
+    // 变化就会露出来。草稿卡按钮（draft-answer/draft-ai）在当前快照格式下长不出来
+    // （draft 只活在主应用内存，_buildGraphData 不落它），同样先堵死。旧版素材篮的
+    // 「AI 整理关系」按钮虽已隐藏，入口也一并封上。
+    graphNodeVersionStep: '只读快照：不能切换版本',
+    graphNodeVersionDelete: '只读快照：不能删除版本',
+    draftSocraticAnswer: '只读快照：不能作答追问',
+    draftAskAi: '只读快照：不能发起提问',
+    openHarnessOrganizeRelations: '只读快照：不能整理关系',
   };
 
   function installReadOnlyPanels() {

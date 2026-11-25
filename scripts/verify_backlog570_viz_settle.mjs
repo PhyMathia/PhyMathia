@@ -116,14 +116,18 @@ async function runScenario(name, mode) {
   const errs = [];
   page.on('pageerror', e => errs.push(String((e && e.message) || e)));
   await page.addInitScript((cfg) => {
-    localStorage.setItem('phymathia_user_models', JSON.stringify([cfg.model]));
-    localStorage.setItem('phymathia_active_models', JSON.stringify({
-      agent_model: cfg.model.id, html_model: cfg.model.id, descriptor_model: cfg.model.id,
-      quiz_model: cfg.model.id, graph_model: cfg.model.id, branch_model: cfg.model.id,
-    }));
-    localStorage.setItem('phymathia_onboarding_done', '1');
-    localStorage.setItem('phymathia_guide_seen', '1');
-    localStorage.setItem('phymathia_570_probe', '1');
+    // 573（2026-11-25）：init script 会随沙盒 iframe 注入 opaque origin 帧，读 localStorage
+    // 抛 SecurityError 成 pageerror——沙盒内静默跳过（种子只属主文档），体例同 572。
+    try {
+      localStorage.setItem('phymathia_user_models', JSON.stringify([cfg.model]));
+      localStorage.setItem('phymathia_active_models', JSON.stringify({
+        agent_model: cfg.model.id, html_model: cfg.model.id, descriptor_model: cfg.model.id,
+        quiz_model: cfg.model.id, graph_model: cfg.model.id, branch_model: cfg.model.id,
+      }));
+      localStorage.setItem('phymathia_onboarding_done', '1');
+      localStorage.setItem('phymathia_guide_seen', '1');
+      localStorage.setItem('phymathia_570_probe', '1');
+    } catch (e) { /* 沙盒 iframe（opaque origin）没有 localStorage：不种也不算异常 */ }
     // 看门狗 120s → 6s（只改测试环境）
     const realSetTimeout = window.setTimeout.bind(window);
     window.setTimeout = function (fn, ms, ...rest) {

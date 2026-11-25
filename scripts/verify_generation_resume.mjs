@@ -93,13 +93,17 @@ const browser = await chromium.launch();
 const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
 // initScript 挂 context：后面每个新页（④ 重开页）都自动带上模型配置
 await context.addInitScript((cfg) => {
-  localStorage.setItem('phymathia_user_models', JSON.stringify([cfg.model]));
-  localStorage.setItem('phymathia_active_models', JSON.stringify({
-    agent_model: cfg.model.id, html_model: cfg.model.id, descriptor_model: cfg.model.id,
-    quiz_model: cfg.model.id, graph_model: cfg.model.id, branch_model: cfg.model.id,
-  }));
-  localStorage.setItem('phymathia_onboarding_done', '1');
-  localStorage.setItem('phymathia_guide_seen', '1');
+  // 573（2026-11-25）：init script 会随沙盒 iframe 注入 opaque origin 帧，读 localStorage
+  // 抛 SecurityError 成 pageerror——沙盒内静默跳过（种子只属主文档），体例同 572。
+  try {
+    localStorage.setItem('phymathia_user_models', JSON.stringify([cfg.model]));
+    localStorage.setItem('phymathia_active_models', JSON.stringify({
+      agent_model: cfg.model.id, html_model: cfg.model.id, descriptor_model: cfg.model.id,
+      quiz_model: cfg.model.id, graph_model: cfg.model.id, branch_model: cfg.model.id,
+    }));
+    localStorage.setItem('phymathia_onboarding_done', '1');
+    localStorage.setItem('phymathia_guide_seen', '1');
+  } catch (e) { /* 沙盒 iframe（opaque origin）没有 localStorage：不种也不算异常 */ }
 }, { model: { id: 'mock-slow', name: 'mock', provider: 'opencode', model: 'mock-1', apiKey: 'x', baseUrl: `http://127.0.0.1:${MOCK_PORT}/v1` } });
 const page = await context.newPage();
 const pageErrors = [];

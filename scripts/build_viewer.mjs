@@ -4,7 +4,7 @@
 // 会话/AI/知识检测/Φ 全不进包——查看器是只读产物，不需要也不该带这些能力。
 import { build } from 'esbuild';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -57,6 +57,31 @@ const entries = [
   'utopia.js',
   'viewer-main.js',
 ];
+
+// ===== 漏注册守卫（491，2026-11-25）：entries 是手工维护的有序名单，viewer 家族新增
+// 源文件忘登记时构建静默跳过——文件「看起来在」却根本没进 viewer.js，线上行为与源码
+// 对不上还没报错。这里强扫 viewer-*.js：目录里每个都必须在 entries；同时校验 entries
+// 里的文件真实存在、且没有重复登记（重复会让顶层 let/const 二次声明，产物直接炸）。
+// 不做 build_frontend 那种全目录扫描——app 专用文件本来就不该进 viewer 包。
+const onDisk = (await readdir(jsDir)).filter(function (f) { return f.endsWith('.js'); });
+const unregistered = onDisk.filter(function (f) {
+  return /^viewer-.*\.js$/.test(f) && !entries.includes(f);
+});
+if (unregistered.length) {
+  console.error(`[build_viewer] viewer-*.js 发现未登记源文件（不会进 viewer.js，属漏注册）: ${unregistered.join(', ')}`);
+  console.error('[build_viewer] 在本文件 entries 数组按加载顺序登记。');
+  process.exit(1);
+}
+const absent = entries.filter(function (f) { return !onDisk.includes(f); });
+if (absent.length) {
+  console.error(`[build_viewer] entries 指向不存在的文件（名字写错或文件已删）: ${absent.join(', ')}`);
+  process.exit(1);
+}
+const duplicated = entries.filter(function (f, i) { return entries.indexOf(f) !== i; });
+if (duplicated.length) {
+  console.error(`[build_viewer] entries 重复登记（同一文件会进包两次）: ${Array.from(new Set(duplicated)).join(', ')}`);
+  process.exit(1);
+}
 
 const chunks = [];
 let totalIn = 0;
