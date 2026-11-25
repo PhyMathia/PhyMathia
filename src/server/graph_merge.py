@@ -47,6 +47,8 @@ logger = logging.getLogger(__name__)
 TOMBSTONE_TTL_MS = 30 * 24 * 3600 * 1000
 
 # 节点上的纯视图字段：留对端内容时，这些仍听本次保存（正看着画布的那台设备）
+# 新增「纯视图字段」必须同步这里：白名单外的字段跟随内容那侧，本端的值会丢
+# （契约与边界用例见 tests/test_graph_merge_sequences.py「视图字段白名单边界」）。
 _VIEW_KEYS = ("x", "y", "w", "h", "minimized", "hidden", "pinned", "z")
 
 
