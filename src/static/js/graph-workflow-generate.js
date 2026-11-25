@@ -609,6 +609,9 @@ async function _reattachOneNode(node, entry) {
     // 同页断网暂缓的后台 viz：任务已经不在服务端，结算它的任务行并让出名额；
     // 刷新场景没有 job，这里是空转（行保持 interrupted）。
     if (typeof _taskResumeSettleForNode === 'function') _taskResumeSettleForNode(node.id, false);
+    // 撤假成果联动（2026-11-25）：续跑认领没发生时上一发是空转，等这颗节点的
+    // 工作流行在这里直接翻条目＋聚合收口——不然服务重启后那行永远「进行中」。
+    if (typeof _taskFlipRunningEntriesForNode === 'function') _taskFlipRunningEntriesForNode(node.id, 'error');
     if (typeof _vizBgSettle === 'function') _vizBgSettle(node.id, 'error', '后台生成中断，可重试');
     return;
   }

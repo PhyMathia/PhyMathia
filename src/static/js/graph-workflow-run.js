@@ -214,12 +214,21 @@ async function _runWorkflowNodeConcurrent(node, subgraph, force, processed, fail
     const launched = vizBgLaunch(node, {
       force: !!shouldForce,
       // 后台 viz 的收尾落在发射器里：把工作流任务行的节点条目一起结掉，
-      // 否则条目永远停在 waiting（E2E case 2）。
+      // 否则条目永远停在 waiting（E2E case 2）。撤假成果（2026-11-25）：条目结掉
+      // 后若它是这行账最后的活条目，就地聚合结工作流行——run 收尾那拍行被扣着
+      // 不结（不再当场写 done），聚合出全 done 才在这一拍补「工作流完成」通知。
       onSettle: function(state) {
         if (!shouldCount || typeof _taskNodeFinish !== 'function') return;
         _taskNodeFinish(taskId, node.id,
           state === 'done' ? 'done' : (state === 'stopped' ? 'stopped' : 'error'),
           state === 'done' ? '' : (state === 'stopped' ? '已取消' : '失败'));
+        const finished = (typeof _taskMaybeFinishWorkflow === 'function')
+          ? _taskMaybeFinishWorkflow(taskId) : null;
+        if (finished === 'done' && typeof notifyTaskCompleted === 'function'
+            && !(typeof _hasPendingSend === 'function' && _hasPendingSend())) {
+          const row = (typeof _taskFind === 'function') ? _taskFind(taskId) : null;
+          notifyTaskCompleted(row && row.startedAt ? Date.now() - row.startedAt : 0, '工作流完成');
+        }
       },
     });
     if (launched) {
@@ -227,6 +236,21 @@ async function _runWorkflowNodeConcurrent(node, subgraph, force, processed, fail
       // 结算一定晚于这一拍。canceller 传 null——单停走 viz-bg 行自己的停止。
       if (shouldCount && typeof _taskNodeStart === 'function') {
         _taskNodeStart(taskId, node.id, label, null);
+      }
+      // 撤假成果：run 收尾后行还要等这条 viz 落地，这期间行的「停止」必须真能停——
+      // 跑动中先停前台总闸（总闸连后台 viz 一起扫）；run 已收尾就按行内 running
+      // 条目逐个取消后台 viz（只动本行的，不碰别的 run 的 viz）。
+      if (shouldCount && taskId && typeof _taskBindCancel === 'function') {
+        _taskBindCancel(taskId, () => {
+          if (typeof workflowRunActive !== 'undefined' && workflowRunActive
+              && typeof stopWorkflowRun === 'function') stopWorkflowRun();
+          const row = (typeof _taskFind === 'function') ? _taskFind(taskId) : null;
+          const runningNow = (row && Array.isArray(row.nodes))
+            ? row.nodes.filter(en => en && en.state === 'running') : [];
+          runningNow.forEach(en => {
+            if (typeof vizBgCancel === 'function') vizBgCancel(en.id, '手动停止');
+          });
+        });
       }
       processed.add(node.id);
       return true;
@@ -506,6 +530,8 @@ async function _executeParallelWorkflow(targetIds, force, meta) {
   }
   _showWorkflowProgress(totalWork);
   let completed = false;
+  // 撤假成果：run 收尾时行里还有后台 viz 条目在跑＝行 defer（不结账不报完成），见 finally。
+  let deferredNotify = false;
   try {
     completed = await _runWorkflowGraph(subgraph, force, runtime, forceTargets);
   } finally {
@@ -523,16 +549,29 @@ async function _executeParallelWorkflow(targetIds, force, meta) {
     // 任务列表结账。**必须排在 _flushSendQueue 之前**：放行排队请求可能切会话
     // （队列项自带来处），而结账用的还是这一轮任务的账本与上下文。
     if (taskId && typeof _tasksEndWorkflow === 'function') {
-      const taskState = wasAborted ? 'stopped' : (completed ? 'done' : 'partial');
-      const taskNote = wasAborted ? '手动停止'
-        : ((userCancelled || userStopped) ? '有节点被停掉' : (completed ? '' : '有节点没跑完'));
-      _tasksEndWorkflow(taskId, taskState, taskNote);
+      // 撤假成果（2026-11-25 用户拍板）：派发完≠干完——行里还有 running 条目
+      // （viz 后台通道在跑）时当场写 done 就是假成果（实测 216ms「完成」、可视化
+      // 颗粒无收）。行保持「进行中」，等最后一个条目经 onSettle 落地由
+      // _taskMaybeFinishWorkflow 聚合结算。用户主动停照旧立即结 stopped——
+      // viz-bg 行自己还在跑，两行账各自如实。
+      const rowNow = (typeof _taskFind === 'function') ? _taskFind(taskId) : null;
+      const pendingBg = !!(rowNow && Array.isArray(rowNow.nodes)
+        && rowNow.nodes.some(n => n && n.state === 'running'));
+      if (pendingBg && !wasAborted) {
+        if (_taskActiveCtx && _taskActiveCtx.taskId === taskId) _taskActiveCtx = null;
+        deferredNotify = true;
+      } else {
+        const taskState = wasAborted ? 'stopped' : (completed ? 'done' : 'partial');
+        const taskNote = wasAborted ? '手动停止'
+          : ((userCancelled || userStopped) ? '有节点被停掉' : (completed ? '' : '有节点没跑完'));
+        _tasksEndWorkflow(taskId, taskState, taskNote);
+      }
     }
     // 排队那条任务的结账在开跑前已经做过（见上面 handoffTaskId 处）：放行它的队列
     // 收尾那发 _taskFinish 找不到活账，自然空转，不会把这一轮的账搅乱。
     // 队列里还有东西时不报「工作流完成」：这轮完了但活儿没完，而且下一条马上
     // 自动开跑，完成卡片会跟新进度撞在一起（chat.js 的「回复完成」同此口径）。
-    if (!wasAborted && completed && typeof notifyTaskCompleted === 'function'
+    if (!wasAborted && completed && !deferredNotify && typeof notifyTaskCompleted === 'function'
         && !(typeof _hasPendingSend === 'function' && _hasPendingSend())) {
       let parallelInfo = '';
       const wfLogs = window.__wfLogs || [];

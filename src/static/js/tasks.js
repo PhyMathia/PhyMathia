@@ -321,6 +321,10 @@ function _taskResumeSettleForNode(nodeId, ok) {
   _flipTaskNodeState(task, nodeId, ok ? 'done' : 'error');
   _taskFinish(task.id, ok ? 'done' : 'interrupted',
     ok ? '后台续跑完成' : '后台续跑中断，可重试');
+  // 撤假成果联动（2026-11-25）：还挂着这颗节点等它的 running 工作流行就地翻条目
+  // 并聚合收口——不然续跑只结 viz-bg 行，工作流行会永远停在「进行中」。
+  // _taskFinish 已把认领的行挪进历史，这里的循环天然不会再碰它。
+  _taskFlipRunningEntriesForNode(nodeId, ok ? 'done' : 'error');
 }
 
 function _taskWasNodeCancelled(nodeId) {
@@ -374,6 +378,63 @@ function _tasksBeginWorkflow(meta) {
 function _tasksEndWorkflow(taskId, state, note) {
   if (_taskActiveCtx && _taskActiveCtx.taskId === taskId) _taskActiveCtx = null;
   _taskFinish(taskId, state, note);
+}
+
+// ===== 撤假成果（2026-11-25 用户拍板）：派发完≠干完 =====
+// viz 走后台通道后，工作流 run 收尾那一拍行里还有 running 条目——旧行为当场写
+// done（实测 216ms），用户看见「完成」而可视化什么都没出来（当夜齿轮节点六连败
+// 全被这块「完成」盖住）。现在行等最后一个条目落地，再按聚合状态结账：
+// 全 done 才是 done；有失败＝partial/error；有取消按旧口径（有 done 报 done＋
+// 「有节点被停掉」，全停才是 stopped）；卡住的 waiting＝partial「有节点没跑完」。
+function _taskWorkflowAggregate(task) {
+  const entries = (task && Array.isArray(task.nodes)) ? task.nodes : [];
+  if (!entries.length) return { state: 'done', note: '' };
+  if (entries.some(n => n && n.state === 'running')) return null;
+  if (entries.some(n => n && n.state === 'error')) {
+    return {
+      state: entries.some(n => n && n.state === 'done') ? 'partial' : 'error',
+      note: '有节点未生成成功',
+    };
+  }
+  if (entries.some(n => n && n.state === 'waiting')) {
+    return { state: 'partial', note: '有节点没跑完' };
+  }
+  if (entries.some(n => n && n.state === 'stopped')) {
+    const anyDone = entries.some(n => n && n.state === 'done');
+    return { state: anyDone ? 'done' : 'stopped', note: anyDone ? '有节点被停掉' : '已取消' };
+  }
+  return { state: 'done', note: '' };
+}
+
+// 条目全部落地的 running 行就地结账；还有 running 条目（后台 viz 在跑）的行不动。
+// 返回结账用的状态；没结＝null。
+function _taskMaybeFinishWorkflow(taskId) {
+  if (!taskId || typeof _taskFind !== 'function') return null;
+  const task = _taskFind(taskId);
+  if (!task || task.state !== 'running') return null;
+  const agg = _taskWorkflowAggregate(task);
+  if (!agg) return null;
+  _tasksEndWorkflow(taskId, agg.state, agg.note);
+  return agg.state;
+}
+
+// 节点在后台通道上定终态时，把「还在等它」的 running 工作流行条目就地翻账并聚合
+// 收口——续跑/探活只结 viz-bg 行，不翻这里的话工作流行会永远「进行中」。
+// 只动 running 行：interrupted 行的条目态留给收编链自己翻（重试时会重置）。
+function _taskFlipRunningEntriesForNode(nodeId, state) {
+  if (!nodeId) return;
+  for (const t of _taskActive) {
+    if (!t || t.state !== 'running' || !Array.isArray(t.nodes)) continue;
+    let touched = false;
+    t.nodes.forEach(n => {
+      if (n && n.id === nodeId && n.state !== 'done') {
+        n.state = state;
+        n.endedAt = state === 'running' ? 0 : Date.now();
+        touched = true;
+      }
+    });
+    if (touched && t.kind === 'workflow') _taskMaybeFinishWorkflow(t.id);
+  }
 }
 
 // ===== T313：提问工作流的「画布世界」 =====

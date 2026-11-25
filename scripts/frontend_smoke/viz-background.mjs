@@ -88,6 +88,34 @@ export async function run() {
     }
   });
 
+  check('撤假成果：工作流行等后台 viz 落地才结账（2026-11-25 静态契约）', () => {
+    const run = _read('graph-workflow-run.js');
+    const gen = _read('graph-workflow-generate.js');
+    const tasks = _read('tasks.js');
+    // run 收尾：行里还有 running 条目（viz 后台在跑）不结账；用户停照旧立即结
+    if (!run.includes('pendingBg && !wasAborted')) throw new Error('run 收尾没有 pending viz 不结账分支');
+    if (!run.includes('let deferredNotify = false') || !run.includes('&& !deferredNotify')) {
+      throw new Error('defer 时没扣住「工作流完成」通知');
+    }
+    // onSettle：条目落地后聚合结工作流行，聚合出全 done 才补完成通知
+    if (!run.includes('_taskMaybeFinishWorkflow(taskId)')) throw new Error('onSettle 没接聚合结账');
+    if (!run.includes("finished === 'done' && typeof notifyTaskCompleted")) throw new Error('聚合 done 没补完成通知');
+    // defer 期间工作流行的「停止」真能停：按行内 running 条目逐个取消后台 viz
+    if (!run.includes("vizBgCancel(en.id, '手动停止')")) throw new Error('defer 期间行停止没接 vizBgCancel');
+    // tasks：聚合器 + 只结 running 行 + 跨行翻条目
+    if (!tasks.includes('function _taskWorkflowAggregate')) throw new Error('没有聚合器');
+    if (!tasks.includes('function _taskMaybeFinishWorkflow')) throw new Error('没有条件结账器');
+    if (!tasks.includes("if (!task || task.state !== 'running') return null")) throw new Error('聚合结账没限定 running 行');
+    if (!tasks.includes('function _taskFlipRunningEntriesForNode')) throw new Error('没有跨行翻条目');
+    if (!tasks.includes("_taskFlipRunningEntriesForNode(nodeId, ok ? 'done' : 'error')")) {
+      throw new Error('续跑结算没联动工作流行');
+    }
+    // 484 探活「任务不在服务端」分支也翻工作流行（服务重启后不自愈＝永远转）
+    if (!gen.includes("_taskFlipRunningEntriesForNode(node.id, 'error')")) {
+      throw new Error('484 任务缺失分支没联动工作流行');
+    }
+  });
+
   check('viz 后台通道：节点判定 / 开关 / 上限 / 取消幂等（沙箱）', () => {
     const code = _read('viz-background.js');
     const cancelCalls = [];
