@@ -7,7 +7,9 @@
   不拖垮 ingest 请求（前端条目仍能建，内容是占位文案）；
 - 复用 ``documents._extract_image_text``（临时文件生命周期它自管）；
   空串时用 ``find_spec`` 区分「没装」与「没认出字」，两者都报 failed 供前端重试；
-- 缓存只存 done 结果——失败可能是暂时的，缓存了会把重试也挡死。
+- 缓存只存 done 结果——失败可能是暂时的，缓存了会把重试也挡死；
+- 缓存有界：按「最后使用时间」（命中即续期）淘汰，超过 30 天或 256 个
+  即清掉最旧的，本次刚写的恒保留——否则按图片内容只增不减会吃满磁盘。
 
 历史：P0 版（2026-10-22）做过「Ollama glm-ocr 优先 / auto 探测回落 RapidOCR」
 双引擎，2026-10-23 拍板删除——要更好的识别质量应该在模型设置里配视觉模型
@@ -19,6 +21,7 @@ import hashlib
 import importlib.util
 import json
 import logging
+import os
 import time
 
 from .config import DATA_DIR
@@ -27,6 +30,12 @@ logger = logging.getLogger(__name__)
 
 OCR_DIR = DATA_DIR / "ocr"
 OCR_DIR.mkdir(parents=True, exist_ok=True)
+
+# OCR 结果按图片内容只增不减，长跑会把 data/ocr 吃满（backlog 545）。
+# 每次写入后扫一遍目录：先删超过 TTL 的，再按 mtime（最后使用时间）从旧到新
+# 删到上限以内。上限只数本引擎的缓存文件，旧 -glm.json 不在此列。
+_CACHE_MAX_FILES = 256
+_CACHE_TTL_SECONDS = 30 * 24 * 3600
 
 
 def _ocr_result(text: str, engine: str, ms: int, status: str, error: str = "") -> dict:
@@ -38,21 +47,60 @@ def _cache_path(content: bytes):
 
 
 def _read_cache(content: bytes):
+    path = _cache_path(content)
     try:
-        data = json.loads(_cache_path(content).read_text("utf-8"))
+        data = json.loads(path.read_text("utf-8"))
         if isinstance(data, dict) and data.get("engine") == "rapidocr" and data.get("status") == "done":
+            try:
+                os.utime(path)  # 命中即续期：清理按「最后使用」淘汰
+            except OSError:
+                pass
             return data
     except (OSError, ValueError):
         pass
     return None
 
 
-def _write_cache(content: bytes, result: dict) -> None:
+def _prune_cache(keep=None) -> None:
+    """把缓存收进 ``_CACHE_MAX_FILES`` / ``_CACHE_TTL_SECONDS`` 以内。
+
+    本次刚写的 ``keep`` 恒保留；清理失败只记日志，绝不影响 OCR 结果返回。
+    """
     try:
-        _cache_path(content).write_text(
-            json.dumps(result, ensure_ascii=False), "utf-8")
+        cutoff = time.time() - _CACHE_TTL_SECONDS
+        entries = []
+        for path in OCR_DIR.glob("*-rapidocr.json"):
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            if mtime < cutoff:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+            elif keep is None or path != keep:
+                entries.append((mtime, path))
+        room = _CACHE_MAX_FILES - (1 if keep is not None else 0)
+        if len(entries) > room:
+            entries.sort(key=lambda item: (item[0], item[1].name))
+            for _, path in entries[: len(entries) - room]:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+    except OSError as e:
+        logger.warning(f"OCR cache prune failed: {e}")
+
+
+def _write_cache(content: bytes, result: dict) -> None:
+    path = _cache_path(content)
+    try:
+        path.write_text(json.dumps(result, ensure_ascii=False), "utf-8")
     except OSError as e:
         logger.warning(f"OCR cache write failed: {e}")
+        return
+    _prune_cache(keep=path)
 
 
 def _ocr_rapid(content: bytes) -> dict:

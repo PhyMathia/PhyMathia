@@ -3,8 +3,8 @@
 2026-10-22 输入节点重做 P0 的验收件：ingest 只做机械转写（文本抽取/图片 OCR），
 绝不调 AI。覆盖：文件类型路由、8000 字截断与全文落盘、404/413、OCR 开关、
 OCR 结果合并回传；OCR 引擎选路（auto 探测/GLM 失败回落/点名不回落）与 sha1
-缓存（done 缓存命中、失败不缓存）。**全程不联网**：OCR 引擎与 Ollama 探测
-一律 monkeypatch 桩替。
+缓存（done 缓存命中、失败不缓存、按最后使用时间的容量/TTL 清理）。**全程不联网**：
+OCR 引擎与 Ollama 探测一律 monkeypatch 桩替。
 """
 
 import base64
@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -305,6 +306,44 @@ class OcrEngineTest(unittest.TestCase):
     def test_empty_content_never_raises(self):
         got = ocr.ocr_image(b"")
         self.assertEqual(got["status"], "failed")
+
+    def _fake_cache_file(self, name: str, age: float) -> Path:
+        path = Path(self._td.name) / f"{name}-rapidocr.json"
+        path.write_text(json.dumps(self._done()), "utf-8")
+        ts = time.time() - age
+        os.utime(path, (ts, ts))
+        return path
+
+    def test_cache_evicts_oldest_beyond_limit(self):
+        oldest = self._fake_cache_file("oldest", 300)
+        middle = self._fake_cache_file("middle", 200)
+        newer = self._fake_cache_file("newer", 100)
+        with mock.patch.object(ocr, "_CACHE_MAX_FILES", 3), \
+                mock.patch.object(ocr, "_ocr_rapid", return_value=self._done()):
+            ocr.ocr_image(b"fresh")
+        files = {p.name for p in Path(self._td.name).glob("*-rapidocr.json")}
+        self.assertEqual(len(files), 3, "缓存文件数必须收在上限内")
+        self.assertNotIn(oldest.name, files, "按最后使用时间淘汰最旧的")
+        self.assertIn(middle.name, files)
+        self.assertIn(newer.name, files)
+        self.assertIn(ocr._cache_path(b"fresh").name, files, "本次刚写的不能被清理")
+
+    def test_cache_prunes_expired_entries(self):
+        stale = self._fake_cache_file("stale", ocr._CACHE_TTL_SECONDS + 60)
+        with mock.patch.object(ocr, "_ocr_rapid", return_value=self._done()):
+            ocr.ocr_image(b"fresh")
+        self.assertFalse(stale.exists(), "过期缓存应在下次写入时清掉")
+
+    def test_cache_hit_refreshes_mtime(self):
+        with mock.patch.object(ocr, "_ocr_rapid", return_value=self._done()):
+            ocr.ocr_image(b"pic")
+        path = ocr._cache_path(b"pic")
+        old = time.time() - 1000
+        os.utime(path, (old, old))
+        with mock.patch.object(ocr, "_ocr_rapid", return_value=self._done()) as rapid:
+            ocr.ocr_image(b"pic")
+        rapid.assert_not_called()
+        self.assertGreater(path.stat().st_mtime, old + 1, "命中即续期，频繁使用的缓存不该先被淘汰")
 
 
 if __name__ == "__main__":
