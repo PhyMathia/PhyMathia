@@ -423,6 +423,97 @@ async function run() {
       const polluted = await view.evaluate(() => Object.keys(window.__utopiaRealLocalStorage || {}).length);
       if (polluted) throw new Error('真实 localStorage 被写入 ' + polluted + ' 键');
     });
+
+    // 576（2026-11-25）：外发页触屏手势。手机上真正的入口是捏合与单指拖卡片——
+    // 前者原先被当成「第二根手指重开拖拽」完全不缩放，后者落在标签放行区直接 no-op。
+    await step('file:// 打开：手机触屏捏合缩放 / 单指拖卡片平移', async () => {
+      const touchCtx = await browser.newContext({
+        viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
+      });
+      try {
+        const touchPage = await touchCtx.newPage();
+        const touchErrors = [];
+        touchPage.on('pageerror', (e) => touchErrors.push(String(e && e.message || e)));
+        await touchPage.goto(pathToFileURL(okPath).href, { waitUntil: 'load', timeout: 60000 });
+        await touchPage.waitForFunction((n) => document.querySelectorAll('.graph-node').length >= n, expected, { timeout: 30000 });
+        await touchPage.waitForTimeout(700);
+        const cdp = await touchCtx.newCDPSession(touchPage);
+        const viewState = () => touchPage.evaluate(() => ({
+          pan: { ...window.__UTOPIA__.state.pan },
+          zoom: window.__UTOPIA__.state.zoom,
+        }));
+
+        const before = await viewState();
+        const cx = 195, cy = 480;
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchStart',
+          touchPoints: [
+            { x: cx - 30, y: cy, radiusX: 10, radiusY: 10, force: 1, id: 1 },
+            { x: cx + 30, y: cy, radiusX: 10, radiusY: 10, force: 1, id: 2 },
+          ],
+        });
+        for (let i = 1; i <= 12; i++) {
+          const d = 30 + (150 - 30) * i / 12;
+          await cdp.send('Input.dispatchTouchEvent', {
+            type: 'touchMove',
+            touchPoints: [
+              { x: cx - d, y: cy, radiusX: 10, radiusY: 10, force: 1, id: 1 },
+              { x: cx + d, y: cy, radiusX: 10, radiusY: 10, force: 1, id: 2 },
+            ],
+          });
+          await touchPage.waitForTimeout(16);
+        }
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await touchPage.waitForTimeout(250);
+        const afterPinch = await viewState();
+        if (!(afterPinch.zoom > before.zoom * 1.4)) {
+          throw new Error('双指捏合没放大：' + before.zoom + ' -> ' + afterPinch.zoom);
+        }
+
+        // 单指从卡片上拖：外发页里卡片占满小屏，这里必须也能平移（否则手机上无处可拖）。
+        // 找一张视口内、卡面足够大的节点，取一个不落在按钮/输入框/端口上的卡内点。
+        const label = await touchPage.evaluate(() => {
+          const nodes = Array.from(document.querySelectorAll('.graph-node'));
+          for (const node of nodes) {
+            const r = node.getBoundingClientRect();
+            if (r.width < 40 || r.height < 40) continue;
+            for (let fy = 0.25; fy <= 0.76; fy += 0.25) {
+              for (let fx = 0.25; fx <= 0.76; fx += 0.25) {
+                const x = Math.round(r.left + r.width * fx);
+                const y = Math.round(r.top + r.height * fy);
+                if (x < 8 || x > innerWidth - 8 || y < 80 || y > innerHeight - 8) continue;
+                const el = document.elementFromPoint(x, y);
+                if (!el || !node.contains(el)) continue;
+                if (el.closest('button, a, input, textarea, select, .graph-port, .graph-add-port-btn, .graph-port-remove')) continue;
+                return { x, y };
+              }
+            }
+          }
+          return null;
+        });
+        if (!label) throw new Error('视口里找不到可拖的卡片');
+        const panBefore = await viewState();
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchStart',
+          touchPoints: [{ x: label.x, y: label.y, radiusX: 10, radiusY: 10, force: 1 }],
+        });
+        for (let i = 1; i <= 10; i++) {
+          await cdp.send('Input.dispatchTouchEvent', {
+            type: 'touchMove',
+            touchPoints: [{ x: label.x + i * 6, y: label.y - i * 5, radiusX: 10, radiusY: 10, force: 1 }],
+          });
+          await touchPage.waitForTimeout(16);
+        }
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await touchPage.waitForTimeout(250);
+        const afterDrag = await viewState();
+        const moved = Math.hypot(afterDrag.pan.x - panBefore.pan.x, afterDrag.pan.y - panBefore.pan.y);
+        if (moved < 40) throw new Error('单指拖卡片标签没平移（pan 只动了 ' + moved.toFixed(1) + 'px）');
+        if (touchErrors.length) throw new Error('触屏页抛错：' + touchErrors.slice(0, 3).join(' | '));
+      } finally {
+        await touchCtx.close();
+      }
+    });
     await viewCtx.close();
   } catch (e) {
     fail('流程中断', e);

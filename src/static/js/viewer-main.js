@@ -47,6 +47,7 @@
     readOnlyGuard();
     installReadOnlyPanels();
     installReadOnlyCanvasGestures();
+    installTouchGestures();
     installReadOnlyContextMenu();
     // 换装新快照：会话面板标记为待重渲（下次打开按新 messages 重建）
     var panel = el('utopiaMsgsPanel');
@@ -331,6 +332,192 @@
       e.stopPropagation();
       toast('只读快照：不能删除连线，也不能添加节点');
     }, true);
+  }
+
+  // ---------- 触屏手势（576，2026-11-25） ----------
+  // 外发页/查看器原先只有滚轮缩放与鼠标拖拽。手机上实测两个断点：
+  // ① 一指按在卡片标签/正文上拖，pointerdown 在「选择文字放行区」直接 return——画布不动，
+  //    而 fit 之后卡片占满小屏，用户找不到空白区，看起来就是「拖不动」；
+  // ② 双指捏合会被当成「第二根手指重新开始拖拽」——zoom 一点不变，画布还跟着手指跑。
+  // 这里补一层触摸手势：一指拖画布/卡片/组框＝平移（按钮、输入框、端口、可滚动正文除外），
+  // 两指＝捏合缩放＋双指平移，锚点取两指中点（与 zoomGraph 同一套 state.pan/zoom 口径）。
+  // 仍走 pointer 事件，与既有拖拽链共用 graphView.pointerId；进入捏合先把单指/节点拖拽
+  // 整个取消，避免两套状态同时写坐标。
+  function installTouchGestures() {
+    var canvas = document.getElementById('graphCanvas');
+    if (!canvas || canvas.__utopiaTouchGestures) return;
+    canvas.__utopiaTouchGestures = true;
+
+    var touches = [];        // [{ id, x, y }]：只记 touch 指针
+    var pinch = null;        // { a, b, mid0, dist0, pan0, zoom0 }
+    var panPointerId = null; // 本层接管的单指平移
+    var pinchRaf = 0;
+    // 这些目标保留原有交互：按钮/输入框/端口点按，可滚动正文交给浏览器原生滚动。
+    var INTERACTIVE = 'button, a, input, textarea, select, iframe, [contenteditable="true"],'
+      + ' .graph-port, .graph-add-port-btn, .graph-port-remove, .graph-canvas-toolbar';
+    var SCROLLERS = '.graph-node-full-content, .graph-blank-content, .graph-draft-body, .mermaid-container';
+
+    function _touchById(id) {
+      for (var i = 0; i < touches.length; i++) if (touches[i].id === id) return touches[i];
+      return null;
+    }
+    function _mid(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
+    function _dist(a, b) { return Math.sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y)); }
+
+    // 第二根手指落下＝原手势作废：清掉拖拽/连线/框选/缩放未落帧的状态，只留平移缩放。
+    function _cancelCanvasDrags() {
+      if (typeof graphView === 'undefined' || !graphView) return;
+      var hadLinkDrag = !!graphView.linkDrag;
+      if (graphView.paintRaf) { cancelAnimationFrame(graphView.paintRaf); graphView.paintRaf = 0; }
+      graphView.paintPending = false;
+      graphView.pointerId = null;
+      graphView.panning = false;
+      graphView.moved = false;
+      graphView.dragNodeId = null;
+      graphView.dragGroupId = null;
+      graphView.resizeNodeId = null;
+      graphView.resizeGroupId = null;
+      graphView.boxSelect = null;
+      graphView.linkDrag = null;
+      graphView.dragStartPositions = {};
+      graphView.dragGroupNodeStartPositions = {};
+      graphView.suppressClick = true;
+      canvas.classList.remove('panning', 'box-selecting', 'linking');
+      var dragging = canvas.querySelectorAll('.graph-node.dragging, .graph-group.dragging');
+      Array.prototype.forEach.call(dragging, function (el) { el.classList.remove('dragging'); });
+      if (graphView.symbolsPausedForDrag) {
+        graphView.symbolsPausedForDrag = false;
+        if (typeof window.setFloatingSymbolsPaused === 'function') window.setFloatingSymbolsPaused(false);
+      }
+      if (typeof _clearLinkDragHover === 'function') _clearLinkDragHover();
+      if (typeof _clearLinkDragTypeHighlight === 'function') _clearLinkDragTypeHighlight();
+      if (hadLinkDrag && typeof _redrawEdges === 'function') _redrawEdges();
+    }
+
+    // 正文能滚就交给浏览器（长回答/模块内容），滚不动才当空白区平移。
+    function _scrollableUnder(target) {
+      var el = target && target.closest ? target.closest(SCROLLERS) : null;
+      if (!el) return null;
+      return el.scrollHeight > el.clientHeight + 2 ? el : null;
+    }
+
+    // 与 _startCanvasPan 同字段，但不 preventDefault：单击（不移动）仍要让节点选择等
+    // click 链路照常走；拖动过的手势由 _endPointerDrag 的 suppressClick 吞掉 click。
+    function _beginPan(e) {
+      if (typeof graphView === 'undefined' || !graphView) return false;
+      var state = (typeof window.getGraphState === 'function') ? window.getGraphState() : null;
+      if (!state || !state.pan) return false;
+      if (typeof _releaseGraphTextFocus === 'function') _releaseGraphTextFocus(e.target);
+      if (typeof _clearGraphTextSelection === 'function') _clearGraphTextSelection();
+      graphView.suppressClick = false;
+      graphView.panning = true;
+      graphView.pointerId = e.pointerId;
+      graphView.startX = e.clientX;
+      graphView.startY = e.clientY;
+      graphView.panStartX = state.pan.x;
+      graphView.panStartY = state.pan.y;
+      graphView.moved = false;
+      canvas.classList.add('panning');
+      panPointerId = e.pointerId;
+      return true;
+    }
+
+    function _beginPinch() {
+      var a = touches[0], b = touches[1];
+      if (!a || !b) return;
+      _cancelCanvasDrags();
+      panPointerId = null;
+      var state = (typeof window.getGraphState === 'function') ? window.getGraphState() : null;
+      if (!state || !state.pan) return;
+      pinch = {
+        a: a, b: b,
+        mid0: _mid(a, b),
+        dist0: Math.max(1, _dist(a, b)),
+        pan0: { x: state.pan.x, y: state.pan.y },
+        zoom0: state.zoom,
+      };
+    }
+
+    // 捏合＝「初始两指距离→缩放倍率 + 初始中点→当前中点」直接算最终 pan/zoom，
+    // 不用 zoomGraph 增量叠乘（双指同时平移时增量口径会漂）。
+    function _applyPinch() {
+      pinchRaf = 0;
+      if (!pinch || touches.length < 2) return;
+      var state = (typeof window.getGraphState === 'function') ? window.getGraphState() : null;
+      if (!state || !state.pan) return;
+      var rect = canvas.getBoundingClientRect();
+      var mid = _mid(pinch.a, pinch.b);
+      var mx = mid.x - rect.left;
+      var my = mid.y - rect.top;
+      var m0x = pinch.mid0.x - rect.left;
+      var m0y = pinch.mid0.y - rect.top;
+      var minZ = (typeof GRAPH_MIN_ZOOM === 'number') ? GRAPH_MIN_ZOOM : 0.1;
+      var maxZ = (typeof GRAPH_MAX_ZOOM === 'number') ? GRAPH_MAX_ZOOM : 4;
+      var nextZoom = pinch.zoom0 * (_dist(pinch.a, pinch.b) / pinch.dist0);
+      nextZoom = Math.min(maxZ, Math.max(minZ, nextZoom));
+      state.zoom = nextZoom;
+      state.pan.x = mx - (m0x - pinch.pan0.x) / pinch.zoom0 * nextZoom;
+      state.pan.y = my - (m0y - pinch.pan0.y) / pinch.zoom0 * nextZoom;
+      if (typeof _saveGraphState === 'function') {
+        _saveGraphState(state, { deferLocalWrite: true, layout: true });
+      }
+      if (typeof _applyGraphTransform === 'function') _applyGraphTransform();
+    }
+
+    canvas.addEventListener('pointerdown', function (e) {
+      if (e.pointerType !== 'touch') return;
+      if (_touchById(e.pointerId)) return;
+      touches.push({ id: e.pointerId, x: e.clientX, y: e.clientY });
+      if (touches.length >= 2) {
+        // 第二根手指不再进原处理器（否则它会重开一次 pan，pointerId 被顶掉）
+        e.preventDefault();
+        e.stopPropagation();
+        if (!pinch) _beginPinch();
+        return;
+      }
+      if (e.target && e.target.closest && e.target.closest(INTERACTIVE)) return;
+      if (_scrollableUnder(e.target)) return;
+      e.stopPropagation();
+      _beginPan(e);
+    }, { capture: true, passive: false });
+
+    canvas.addEventListener('pointermove', function (e) {
+      if (e.pointerType !== 'touch') return;
+      var t = _touchById(e.pointerId);
+      if (!t) return;
+      t.x = e.clientX;
+      t.y = e.clientY;
+      if (!pinch) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (!pinchRaf) pinchRaf = requestAnimationFrame(_applyPinch);
+    }, { capture: true, passive: false });
+
+    function _endTouch(e) {
+      if (e.pointerType !== 'touch') return;
+      var t = _touchById(e.pointerId);
+      if (!t) return;
+      touches.splice(touches.indexOf(t), 1);
+      if (panPointerId === e.pointerId) {
+        panPointerId = null;
+        if (e.type === 'pointercancel' && typeof graphView !== 'undefined' && graphView) {
+          graphView.pointerId = null;
+          graphView.panning = false;
+          graphView.moved = false;
+          canvas.classList.remove('panning');
+        }
+      }
+      if (!pinch) return;
+      // 捏合中抬起一指：还有两指就按剩余两指重新定基准（避免第三指或换指后卡死），
+      // 只剩一指则结束捏合——剩余那指不再接管平移，等全部抬起再开始新手势。
+      if (touches.indexOf(pinch.a) < 0 || touches.indexOf(pinch.b) < 0) {
+        pinch = null;
+        if (pinchRaf) { cancelAnimationFrame(pinchRaf); pinchRaf = 0; }
+        if (touches.length >= 2) _beginPinch();
+      }
+    }
+    canvas.addEventListener('pointerup', _endTouch, true);
+    canvas.addEventListener('pointercancel', _endTouch, true);
   }
 
   // 只读右键菜单：open 之后按白名单剪枝——查看器不提供新建/删除/端口增删/收藏知识点等写操作。
@@ -618,6 +805,7 @@
     installTopologyGuard();
     installReadOnlyPanels();
     installReadOnlyCanvasGestures();
+    installTouchGestures();
     installReadOnlyContextMenu();
     initToolbar();
     initDropZone();
