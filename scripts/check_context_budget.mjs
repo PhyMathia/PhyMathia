@@ -57,7 +57,9 @@ for (const { file, max, hint } of BUDGETS) {
   const pct = Math.round((chars / max) * 100);
   console.log(`  ${ok ? '✓' : '❌'} ${file.padEnd(26)} ${String(chars).padStart(7)} / ${String(max).padStart(6)}  (${pct}%)  ≈${String(tokenEst(text)).padStart(6)} token${ok ? '' : `\n     → ${hint}`}`);
 }
-// 当天块厚度：摘要里 `## <今天>` 到下个 `## ` 之间的字符数
+// 当天块厚度：摘要里 `## <今天>` 到下个 `## ` 之间的字符数。
+// 到 `### 本月更早`（当月按天索引）即截止——那段是路由索引不是当天条目，
+// 算进来会让「有当月索引」直接等于「超提醒线」，2026-11-25 实测虚报 1,343 字符。
 const summaryAbs = path.join(root, 'docs', '日志', '日志摘要.md');
 if (fs.existsSync(summaryAbs)) {
   const pad = n => String(n).padStart(2, '0');
@@ -67,7 +69,9 @@ if (fs.existsSync(summaryAbs)) {
   const start = lines.findIndex(l => l.trim() === `## ${today}`);
   if (start >= 0) {
     let end = lines.length;
-    for (let i = start + 1; i < lines.length; i++) if (lines[i].startsWith('## ')) { end = i; break; }
+    for (let i = start + 1; i < lines.length; i++) {
+      if (lines[i].startsWith('## ') || lines[i].startsWith('### 本月更早')) { end = i; break; }
+    }
     const body = lines.slice(start + 1, end);
     const chars = body.join('\n').length;
     const bullets = body.filter(l => /^\s*- /.test(l)).length;
