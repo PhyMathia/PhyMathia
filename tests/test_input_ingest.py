@@ -25,6 +25,8 @@ for p in (ROOT, SRC):
 
 os.environ.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
 
+from fastapi import HTTPException  # noqa: E402
+
 from server import documents as docs  # noqa: E402
 from server import input_routes, ocr  # noqa: E402
 
@@ -133,7 +135,24 @@ class IngestRouteTest(unittest.TestCase):
     def test_oversize_413(self):
         payload = {"fileName": "big.bin",
                    "contentBase64": base64.b64encode(b"x" * (21 * 1024 * 1024)).decode("ascii")}
-        self.assertEqual(self._post(payload).status_code, 413)
+        # T542：Content-Length 已超 body 上限，连 JSON 都不该解析、更不该进解码器
+        with mock.patch.object(input_routes.base64, "b64decode",
+                               side_effect=AssertionError("超限 payload 不得进解码器")):
+            self.assertEqual(self._post(payload).status_code, 413)
+
+    def test_chunked_oversize_rejected_before_decode(self):
+        # 无 Content-Length（分块）时 body 会长进来，但 base64 字符数闸必须在解码前拦
+        body = json.dumps({"fileName": "big.bin", "contentBase64": "AAAAAA"}).encode()
+        with mock.patch.object(input_routes, "UPLOAD_MAX_BYTES", 3):
+            with mock.patch.object(input_routes.base64, "b64decode",
+                                   side_effect=AssertionError("超限 payload 不得进解码器")):
+                resp = self.client.post(
+                    "/api/input/ingest", content=iter([body]),
+                    headers={"Content-Type": "application/json"})
+        self.assertEqual(resp.status_code, 413)
+
+    def test_invalid_base64_400(self):
+        self.assertEqual(self._post({"fileName": "坏.txt", "contentBase64": "中文"}).status_code, 400)
 
     def test_image_ocr_off_marks_skipped(self):
         data = self._post({"fileName": "a.png", "contentBase64": _b64("x"), "ocr": False}).json()
@@ -247,6 +266,28 @@ class IngestRouteTest(unittest.TestCase):
                                          params={"fileId": "abc", "page": 1}).status_code, 404)
         self.assertEqual(self.client.get("/api/input/pdf_pages",
                                          params={"fileId": "doc_000000000000", "page": 1}).status_code, 404)
+
+
+class IngestDecodeLimitTest(unittest.TestCase):
+    """_decode_ingest_base64 的闸序（T542）：字符数闸在解码前，字节数闸兜底。"""
+
+    def test_char_limit_rejects_before_decode(self):
+        # UPLOAD_MAX_BYTES=3 → 字符上限 (3+2)//3*4 = 4；6 字符必先被字符闸拦
+        with mock.patch.object(input_routes, "UPLOAD_MAX_BYTES", 3):
+            with mock.patch.object(input_routes.base64, "b64decode",
+                                   side_effect=AssertionError("超限 payload 不得进解码器")):
+                with self.assertRaises(HTTPException) as ctx:
+                    input_routes._decode_ingest_base64("AAAAAA")
+        self.assertEqual(ctx.exception.status_code, 413)
+
+    def test_byte_limit_after_decode_catches_rounding(self):
+        # UPLOAD_MAX_BYTES=4 → 字符上限 8；8 字符可解出 5 字节，靠解码后字节闸兜底
+        encoded = base64.b64encode(b"12345").decode("ascii")
+        self.assertEqual(len(encoded), 8)
+        with mock.patch.object(input_routes, "UPLOAD_MAX_BYTES", 4):
+            with self.assertRaises(HTTPException) as ctx:
+                input_routes._decode_ingest_base64(encoded)
+        self.assertEqual(ctx.exception.status_code, 413)
 
 
 class PdfScanHelperTest(unittest.TestCase):

@@ -36,6 +36,29 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tiff"}
 TEXT_EXTS = {".txt", ".md", ".markdown", ".csv", ".json", ".log", ".tex"}
 INGEST_TEXT_MAX_CHARS = 8000
 
+# 20MB 上限的前置拦截（T542）：base64 4 字符 → 3 字节，超限 payload 不能先进
+# 解码器——否则 body 全缓冲之外再整段解出一份，内存瞬时翻倍。JSON 外壳留 64KB
+# 余量（fileName/ocr 等键）；浏览器 fetch 恒带 Content-Length，正常请求走这层。
+_INGEST_BODY_MAX_BYTES = (UPLOAD_MAX_BYTES + 2) // 3 * 4 + 64 * 1024
+
+
+def _decode_ingest_base64(raw: str) -> bytes:
+    """按 20MB 上限解码 contentBase64：先查编码长度，超限不进解码器。
+
+    4 字符→3 字节的取整允许 20MB+1 字节混过字符数闸（20MB 不是 3 的倍数），
+    所以解码后仍留一道字节数兜底；解码产物最多就是上限+1，内存有界。
+    """
+    encoded = str(raw or "")
+    if len(encoded) > (UPLOAD_MAX_BYTES + 2) // 3 * 4:
+        raise HTTPException(status_code=413, detail="文件超过 20MB 限制")
+    try:
+        content = base64.b64decode(encoded)
+    except Exception:
+        raise HTTPException(status_code=400, detail="文件内容格式错误")
+    if len(content) > UPLOAD_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="文件超过 20MB 限制")
+    return content
+
 
 def _ingest_kind(filename: str) -> str:
     ext = Path(filename).suffix.lower()
@@ -59,6 +82,15 @@ def _write_fulltext(file_id: str, text: str) -> None:
 
 @router.post("/api/input/ingest")
 async def api_input_ingest(request: Request):
+    # 声明体长先拦（T542）：request.body() 会整段缓冲，超限的 JSON 根本别读进来。
+    # 无 Content-Length（分块）时落到 _decode_ingest_base64 的字符数闸，解码前仍拦得住。
+    try:
+        declared = int(request.headers.get("content-length") or 0)
+    except (TypeError, ValueError):
+        declared = 0
+    if declared > _INGEST_BODY_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="文件超过 20MB 限制")
+
     payload = await _parse_json_object(request)
 
     filename = _sanitize_filename(str(payload.get("fileName") or "素材"))
@@ -71,15 +103,10 @@ async def api_input_ingest(request: Request):
         entry, content = loaded
         filename = _sanitize_filename(entry.get("filename") or filename)
     else:
-        try:
-            content = await asyncio.to_thread(
-                base64.b64decode, str(payload.get("contentBase64") or ""))
-        except Exception:
-            raise HTTPException(status_code=400, detail="文件内容格式错误")
+        content = await asyncio.to_thread(
+            _decode_ingest_base64, str(payload.get("contentBase64") or ""))
         if not content:
             raise HTTPException(status_code=400, detail="缺少文件内容")
-        if len(content) > UPLOAD_MAX_BYTES:
-            raise HTTPException(status_code=413, detail="文件超过 20MB 限制")
         file_id = "doc_" + uuid.uuid4().hex[:12]
         await asyncio.to_thread(_save_upload, file_id, filename, content)
 
