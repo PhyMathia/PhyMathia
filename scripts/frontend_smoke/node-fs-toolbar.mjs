@@ -1181,4 +1181,62 @@ export function run() {
       vm.runInContext('_nodeFsEditSession = null', sandbox);
     }
   });
+
+  // ===== 格式工具条（2026-11-25，backlog 591①，node-fs-fmt.js）=====
+
+  check('node-fs-fmt: 自包含工厂可在裸上下文里构造，safeUrl 三档口径（补协议/拒危险协议/空）', () => {
+    if (typeof sandbox._nodeFsFmtKit !== 'function') throw new Error('_nodeFsFmtKit 未暴露');
+    const bare = vm.createContext({});   // 只有真全局，没有任何应用函数——引用了外部名字这里当场炸
+    vm.runInContext('var K = (' + String(sandbox._nodeFsFmtKit) + ')();', bare, { filename: 'fmt-kit.js' });
+    const K = vm.runInContext('K', bare);
+    if (K.safeUrl('example.com/a(b)') !== 'https://example.com/a%28b%29') throw new Error('补协议/括号转义口径变了');
+    if (K.safeUrl('javascript:alert(1)') !== null) throw new Error('危险协议必须拒');
+    if (K.safeUrl('  ') !== '' || K.safeUrl('https://x.org') !== 'https://x.org') throw new Error('空与完整地址口径变了');
+    return true;
+  });
+
+  check('node-fs-fmt: 原子块清单与全屏编辑会话锁的那串一致（两处必须同源）', () => {
+    const K = sandbox._nodeFsFmtKit();
+    const editSrc = readSrc('src/static/js/node-fs-edit.js');
+    const m = /const atomSel = '([^']+)';/.exec(editSrc);
+    if (!m) throw new Error('node-fs-edit.js 里找不到 atomSel 清单');
+    if (K.atoms !== m[1]) throw new Error('kit 的 ATOMS 与编辑会话的 atomSel 不一致: ' + K.atoms + ' vs ' + m[1]);
+    return true;
+  });
+
+  check('node-fs-fmt: 全屏层接线——挂载/销毁/Esc 让位链接输入行三处齐全', () => {
+    const src = readSrc('src/static/js/node-fs-edit.js');
+    if (!src.includes('session.fmt = fmt.mount({ container, bar: fmtBar, onDirty: () => { session.dirty = true; }, toast: _nodeFsEditToast })')) throw new Error('开编辑没挂工具条');
+    if (!src.includes('session.fmt.destroy()')) throw new Error('退出编辑没摘工具条');
+    if (!src.includes('_nodeFsEditSession.fmt.escape()')) throw new Error('Esc 没先问链接输入行');
+    return true;
+  });
+
+  check('node-fs-fmt: 预览页嵌同一份 kit——嵌入源码、挂载/销毁/Esc 三处齐全，产物编译过', () => {
+    const script = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T', editable: true, srcSig: 's' });
+    for (const needle of ['var FMT=(function _nodeFsFmtKit', 'FMTMOUNT=FMT.mount({container:container,bar:FMTBAR', 'FMTMOUNT.destroy()', 'FMTMOUNT&&FMTMOUNT.escape()', 'nfs-fmt-block', '.nfs-fmt-link[hidden]{display:none;}']) {
+      if (!script.includes(needle)) throw new Error('预览脚本缺：' + needle);
+    }
+    new Function(script);
+    // kit 源码里的 "</svg>" 这类闭合标签必须已换成 "<\/"（写进 script 会提前收尾）
+    const i = script.indexOf('var FMT=');
+    const j = script.indexOf(';var FMTBAR');
+    const seg = script.slice(i, j);
+    if (seg.includes('</')) throw new Error('嵌入的 kit 源码里有未转义的闭合标签');
+    return true;
+  });
+
+  check('node-fs-fmt: 构建登记在 node-fs-edit 之后；样式两处各有一份（类名同名）', () => {
+    const buildSrc = readSrc('scripts/build_frontend.mjs');
+    if (!(buildSrc.indexOf("'node-fs-edit.js'") < buildSrc.indexOf("'node-fs-fmt.js'"))) throw new Error('构建顺序不对');
+    const css = readSrc('src/static/css/graph-override.css');
+    for (const needle of ['.nfs-fmt-b', '.nfs-fmt-block', '.nfs-fmt-link[hidden]', '.nfs-fmt-g']) {
+      if (!css.includes(needle)) throw new Error('全屏层样式缺：' + needle);
+    }
+    const tbSrc = readSrc('src/static/js/node-fs-toolbar.js');
+    for (const needle of ['.nfs-fmt-b', '.nfs-fmt-block', '.nfs-fmt-link[hidden]']) {
+      if (!tbSrc.includes(needle)) throw new Error('预览页内嵌样式缺：' + needle);
+    }
+    return true;
+  });
 }

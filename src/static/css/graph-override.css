@@ -4318,6 +4318,142 @@ html[data-theme="light"] .graph-node-fs,
   text-align: center;
 }
 
+/* ---------- 格式工具条（2026-11-25，node-fs-fmt.js，backlog 591①）---------- */
+/* 编辑态吸顶一行：加粗/斜体/删除线/行内代码/链接｜段落类型下拉＋引用｜插入分隔线/表格。
+   DOM 与行为在自包含 kit 里（新窗口预览页嵌同一份源码），类名 nfs-fmt-* 两处同名；
+   这里是全屏层的皮，预览页那份在 node-fs-toolbar.js 的内嵌样式串里（改观感两处同步）。
+   磨砂底由 .aurora-glass 提供（挂载时另加，与 .node-fs-bar 同一套玻璃语言） */
+.nfs-fmt {
+  position: sticky;
+  top: 6px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 760px;
+  margin: 0 auto 12px;
+  padding: 4px;
+  border-radius: var(--r-md);
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.nfs-fmt-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.nfs-fmt-b {
+  height: 28px;
+  min-width: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-ui, inherit);
+  font-size: 12.5px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.nfs-fmt-b:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-secondary) 14%, transparent);
+}
+
+.nfs-fmt-b:focus-visible,
+.nfs-fmt-block:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 按下态＝光标所在处已是这种格式（或已在引用里）：主色浅底 */
+.nfs-fmt-b[aria-pressed="true"] {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* 三个字形钮沿用划词浮条的口径（T507 用户拍板）：不写中文，字形即含义 */
+.nfs-fmt-g {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 14px;
+}
+
+.nfs-fmt-bold { font-weight: 700; }
+.nfs-fmt-italic { font-style: italic; }
+.nfs-fmt-strike { text-decoration: line-through; }
+
+.nfs-fmt-mono {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+}
+
+.nfs-fmt-icon svg {
+  display: block;
+}
+
+.nfs-fmt-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 6px;
+  background: var(--border);
+}
+
+.nfs-fmt-block {
+  height: 28px;
+  max-width: 118px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.nfs-fmt-block:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-secondary) 14%, transparent);
+}
+
+/* 链接地址输入行（点「链接」才展开；[hidden] 要显式压掉 flex） */
+.nfs-fmt-link {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nfs-fmt-link[hidden] {
+  display: none;
+}
+
+.nfs-fmt-url {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12.5px;
+  outline: none;
+}
+
+.nfs-fmt-url:focus {
+  border-color: var(--accent);
+}
+
 /* ---------- 拖线吸附高亮（2026-10-10 ② 统一吸附）---------- */
 /* 拖线悬停在「松手即可连」的节点身上时打虚线描边；与选中态（实线）区分 */
 .graph-node.graph-link-drop-target {

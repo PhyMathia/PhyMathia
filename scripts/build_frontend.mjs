@@ -58,6 +58,9 @@ const entries = [
   // 渲染态直接编辑（2026-11-18）：全屏正文 contenteditable 会话＋DOM→markdown 序列化，
   // 复用 toolbar 的取文/写回/归一助手（运行期调用），紧跟其后同族归堆
   'node-fs-edit.js',
+  // 渲染态编辑的格式工具条（2026-11-25，backlog 591①）：自包含工厂 _nodeFsFmtKit，
+  // 全屏层直接调用、预览页由 toolbar 的脚本生成器嵌源码；加载期零副作用，viewer 不载
+  'node-fs-fmt.js',
   'graph-recipe-edit.js',
   // 官方配方包（P4 生态，2026-11-01）：数据＋勾选清单弹窗，加载期零副作用；
   // 依赖 graph-recipes.js 的导入核心与 graph-recipe-edit.js 的 _recipeRefreshAddPanel

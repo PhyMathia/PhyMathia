@@ -61,7 +61,9 @@ function _nodeFsEditInline(node) {
   const inner = _nodeFsEditInlineChildren(node);
   if (tag === 'STRONG' || tag === 'B') return inner ? '**' + inner + '**' : '';
   if (tag === 'EM' || tag === 'I') return inner ? '*' + inner + '*' : '';
-  if (tag === 'DEL' || tag === 'S') return inner ? '~~' + inner + '~~' : '';
+  // STRIKE 一并认（591①，2026-11-25）：浏览器原生删除线命令（工具条与右键菜单走同一条）
+  // 吐的是 <strike>，此前拆壳取内容＝存完静默丢，与下划线同一类
+  if (tag === 'DEL' || tag === 'S' || tag === 'STRIKE') return inner ? '~~' + inner + '~~' : '';
   // 下划线与上下标（591，2026-11-24）：此前走「拆壳取内容」＝存完静默丢。markdown 无
   // 原生记号，走 HTML 直写——marked 原样透传、DOMPurify 默认白名单放行 u/ins/sup/sub，
   // 存回后重开往返校验两侧同形（sig walk 本就认未知 tag，两侧一致）
@@ -363,14 +365,36 @@ function _nodeFsEditAtomicCounts(el) {
 }
 
 // 右侧/左侧共用的取文管：整树克隆由调用方负责（本函数吃克隆，绝不碰活 DOM）——
-// 折公式成 $tex$/$$tex$$，摘掉 mermaid/viz/pre/img/svg/input/button 的渲染字形，取 textContent
+// 折公式成 $tex$/$$tex$$，摘掉 mermaid/viz/pre/img/svg/input/button 的渲染字形，再按
+// _nodeFsEditBlockText 取字（2026-11-25 起不再直接取 textContent，见该函数注释）
 function _nodeFsEditFoldVisible(clone) {
   if (typeof _nodeFsKatexFragmentText === 'function') _nodeFsKatexFragmentText(clone, true);
   const nodes = clone.querySelectorAll('.mermaid-container, .viz-card, pre, img, input, svg, button');
   for (let i = nodes.length - 1; i >= 0; i--) {
     try { if (nodes[i].parentNode) nodes[i].parentNode.removeChild(nodes[i]); } catch (e) { /* 沙箱兜底 */ }
   }
-  return String(clone.textContent || '');
+  return _nodeFsEditBlockText(clone);
+}
+
+// 块边界＝分隔（591①，2026-11-25 真机实锤的老 bug）：对账两侧的「可见文字」此前直接取
+// textContent，块与块之间有没有空白全看渲染器当时吐没吐换行——marked 的产物块间带 \n，
+// 而浏览器编辑时新造的块（段落中回车、列表项末回车、标题后回车）彼此之间没有空白节点：
+// 右侧「甲乙」对左侧「甲 乙」，一回车就「有内容没能对上」存不了。空白文本节点不是内容、
+// 块边界才是——这里在进/出块级元素处各补一个换行，两侧同一把尺，块间有没有空白节点
+// 不再影响结论；块内行内文字的空格照旧逐字比（真丢了空格仍然拦）。
+// 假 DOM（冒烟）没有 childNodes 时退回 textContent
+const NODE_FS_EDIT_BLOCK_SEP = /^(P|DIV|H[1-6]|UL|OL|LI|BLOCKQUOTE|PRE|TABLE|THEAD|TBODY|TR|TH|TD|HR|DL|DT|DD|BR)$/;
+function _nodeFsEditBlockText(node) {
+  if (!node) return '';
+  if (node.nodeType === 3) return String(node.nodeValue != null ? node.nodeValue : (node.textContent || ''));
+  if (node.nodeType !== 1) return '';
+  const kids = node.childNodes;
+  if (!kids) return String(node.textContent || '');
+  const sep = NODE_FS_EDIT_BLOCK_SEP.test(String(node.tagName || '').toUpperCase());
+  let out = sep ? '\n' : '';
+  for (let i = 0; i < kids.length; i++) out += _nodeFsEditBlockText(kids[i]);
+  if (sep) out += '\n';
+  return out;
 }
 
 function _nodeFsEditVisibleFacts(container) {
@@ -424,7 +448,7 @@ function openNodeFsEdit(nodeId) {
   const scroller = overlay.querySelector ? overlay.querySelector('.graph-node-fs-body') : null;
   const body = overlay.querySelector ? overlay.querySelector('.graph-node-fs-body') : null;
   const actions = overlay.querySelector ? overlay.querySelector('.graph-node-fs-head-actions') : null;
-  const session = { nodeId: node.id, overlay, container, scroller, origSrc: src, dirty: false, handlers: [], headHtml: null };
+  const session = { nodeId: node.id, overlay, container, scroller, origSrc: src, dirty: false, handlers: [], headHtml: null, fmt: null };
   // 正文开编辑
   container.setAttribute('contenteditable', 'true');
   container.setAttribute('data-editing', '1');
@@ -444,6 +468,18 @@ function openNodeFsEdit(nodeId) {
       hint.textContent = '直接改正文，公式与图整块保留；改完点「保存」写回节点';
       body.insertBefore(hint, container);
     } catch (e) { /* 沙箱无真 DOM：没有 hint 不挡编辑 */ }
+  }
+  // 格式工具条（591①，2026-11-25）：加粗/斜体/删除线/行内代码/链接＋段落类型＋引用＋插入
+  // 分隔线/表格。DOM 与行为全在自包含 kit（node-fs-fmt.js，新窗口预览页嵌同一份源码），
+  // 这里只负责挂上去、给它 dirty 回调；退出时 destroy 会连工具条一起摘掉
+  if (body && typeof document.createElement === 'function' && typeof _nodeFsFmtKit === 'function') {
+    try {
+      const fmt = _nodeFsFmtKit();
+      const fmtBar = fmt.build();
+      fmtBar.classList.add('aurora-glass', 'aurora-glass--compact');
+      body.insertBefore(fmtBar, container);
+      session.fmt = fmt.mount({ container, bar: fmtBar, onDirty: () => { session.dirty = true; }, toast: _nodeFsEditToast });
+    } catch (e) { /* 工具条起不来不挡编辑 */ }
   }
   // 头部换成保存/取消（其余动作收起，编辑期间不误触）
   if (actions) {
@@ -496,6 +532,7 @@ function _nodeFsEditExit(reRender) {
   for (let i = 0; i < hs.length; i++) {
     try { hs[i][0].removeEventListener(hs[i][1], hs[i][2]); } catch (e) { /* 沙箱兜底 */ }
   }
+  if (session.fmt) { try { session.fmt.destroy(); } catch (e) { /* 沙箱兜底 */ } session.fmt = null; }
   const container = session.container;
   try { container.removeAttribute('contenteditable'); container.removeAttribute('data-editing'); } catch (e) {}
   try {
@@ -577,6 +614,8 @@ document.addEventListener('keydown', (ev) => {
   if (!ev || ev.key !== 'Escape' || !_nodeFsEditSession) return;
   if (ev.preventDefault) ev.preventDefault();
   if (ev.stopPropagation) ev.stopPropagation();
+  // 工具条的链接输入行开着：这一下 Esc 只收输入行，编辑态不动
+  if (_nodeFsEditSession.fmt && _nodeFsEditSession.fmt.escape()) return;
   if (_nodeFsEditSession.dirty) { _nodeFsEditToast('有未保存的修改——点「保存」写回或「取消」放弃'); return; }
   _nodeFsEditExit(true);
   _nodeFsEditToast('已退出编辑');

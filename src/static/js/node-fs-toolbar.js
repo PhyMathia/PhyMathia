@@ -1246,6 +1246,12 @@ function _buildNodeFsPreviewScript(cfg) {
     qLines: _nodeFsExcerptLines(),
   };
   const json = JSON.stringify(conf).replace(/<\//g, '<\\/'); // 防标题带 </script> 提前闭合
+  // 格式工具条（591①，2026-11-25）：与全屏层同一份自包含 kit，源码原样嵌进来（只写一份）。
+  // kit 源码里的闭合标签（"</svg>" 这类，都在字符串里）写进 script 会提前收尾：换成等价的
+  // "<\/"（字符串与正则里同义）。换完整份脚本还须编译得过——冒烟的 new Function 契约兜底；
+  // 混进 HTML 注释起头就不嵌（预览页没工具条，编辑照旧）
+  const fmtSrc = typeof _nodeFsFmtKit === 'function' ? String(_nodeFsFmtKit) : '';
+  const fmtJs = fmtSrc && fmtSrc.indexOf('<!--') < 0 ? '(' + fmtSrc.replace(/<\//g, '<\\/') + ')()' : 'null';
   return '(function(){'
     + 'var CFG=' + json + ';'
     + 'var TOKEN=CFG.token||"";'
@@ -1264,6 +1270,8 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'var bar=null,picked=null,state=null,selTimer=0;'
     // 渲染态编辑会话（2026-11-20）：哑编辑面只管 DOM 与收发，序列化/自检/写回全在主应用
     + 'var EDITING=false,EDITDIRTY=false,EDITBUSY=false,EDITORIG="",EDITHANDS=[],PENCIL=null;'
+    + 'var FMT=' + fmtJs + ';'
+    + 'var FMTBAR=null,FMTMOUNT=null;'
     + 'var style=document.createElement("style");'
     + 'style.textContent=".cp-nfs-bar{position:fixed;z-index:60;display:flex;align-items:center;gap:2px;padding:4px;'
     + 'border-radius:999px;background:rgba(15,21,48,.92);border:1px solid rgba(139,147,184,.28);'
@@ -1344,6 +1352,34 @@ function _buildNodeFsPreviewScript(cfg) {
     + ".cp-body[data-editing='1'] .mermaid-container:hover,.cp-body[data-editing='1'] .viz-card:hover,"
     + ".cp-body[data-editing='1'] pre:hover{outline:1px solid var(--cp-focus,rgba(139,147,184,.55));"
     + 'outline-offset:2px;border-radius:6px;}'
+    // 格式工具条（2026-11-25）：与全屏层 graph-override.css 的 .nfs-fmt-* 同观感，吃 --cp-* 令牌；
+    // 吸在头部（50px）下面。追加规则必须在收尾的 "; 之前（手册明令，生成脚本才编译得过）
+    + '.nfs-fmt{position:sticky;top:58px;z-index:15;display:flex;flex-direction:column;gap:4px;'
+    + 'max-width:var(--cp-measure,748px);margin:0 auto 10px;padding:4px;border-radius:12px;'
+    + 'background:var(--cp-bar-bg,rgba(15,21,48,.92));border:1px solid var(--cp-line,rgba(139,147,184,.28));'
+    + 'box-shadow:0 10px 30px var(--cp-shadow,rgba(2,6,23,.5));font-size:12.5px;color:var(--cp-ink-2,#a7b0d6);}'
+    + '.nfs-fmt-row{display:flex;align-items:center;flex-wrap:wrap;gap:2px;}'
+    + '.nfs-fmt-b{height:28px;min-width:28px;padding:0 8px;border:0;border-radius:999px;background:transparent;'
+    + 'color:var(--cp-ink-2,#a7b0d6);font-size:12.5px;line-height:1;cursor:pointer;display:inline-flex;'
+    + 'align-items:center;justify-content:center;gap:4px;white-space:nowrap;font-family:inherit;}'
+    + '.nfs-fmt-b:hover{color:var(--cp-ink-strong,#e6ebff);background:var(--cp-chip-bg,rgba(139,147,184,.14));}'
+    + '.nfs-fmt-b:focus-visible,.nfs-fmt-block:focus-visible{outline:2px solid var(--cp-focus,rgba(139,147,184,.7));outline-offset:1px;}'
+    + '.nfs-fmt-b[aria-pressed=true]{color:var(--cp-primary,#0e74e9);'
+    + 'background:color-mix(in srgb,var(--cp-primary,#8b93b8) 16%,transparent);}'
+    + '.nfs-fmt-g{font-family:Georgia,\'Times New Roman\',serif;font-size:14px;}'
+    + '.nfs-fmt-bold{font-weight:700;}.nfs-fmt-italic{font-style:italic;}.nfs-fmt-strike{text-decoration:line-through;}'
+    + '.nfs-fmt-mono{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;}'
+    + '.nfs-fmt-icon svg{display:block;}'
+    + '.nfs-fmt-sep{width:1px;height:18px;margin:0 6px;background:var(--cp-line,rgba(139,147,184,.28));}'
+    + '.nfs-fmt-block{height:28px;max-width:118px;padding:0 6px;border:0;border-radius:999px;background:transparent;'
+    + 'color:var(--cp-ink-2,#a7b0d6);font-size:12.5px;cursor:pointer;font-family:inherit;}'
+    + '.nfs-fmt-block:hover{color:var(--cp-ink-strong,#e6ebff);background:var(--cp-chip-bg,rgba(139,147,184,.14));}'
+    + '.nfs-fmt-link{display:flex;align-items:center;gap:4px;}'
+    + '.nfs-fmt-link[hidden]{display:none;}'
+    + '.nfs-fmt-url{flex:1 1 auto;min-width:0;height:30px;padding:0 10px;border-radius:8px;'
+    + 'border:1px solid var(--cp-line,rgba(139,147,184,.3));background:var(--cp-input-bg,rgba(9,13,32,.6));'
+    + 'color:var(--cp-ink-strong,#e6ebff);font-size:12.5px;font-family:inherit;outline:none;}'
+    + '.nfs-fmt-url:focus{border-color:var(--cp-primary,#8b93b8);}'
     + '";'
     + 'document.head.appendChild(style);'
     + 'function toast(msg){var t=document.getElementById("cp-nfs-toast");'
@@ -1598,6 +1634,9 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'var hint=document.createElement("div");hint.className="cp-edit-hint";'
     + 'hint.textContent="直接改正文，公式与图整块保留；改完点「保存」写回节点";'
     + 'if(container.parentNode)container.parentNode.insertBefore(hint,container);'
+    // 格式工具条（2026-11-25）：同一个 kit（FMT），插在正文上方；起不来不挡编辑
+    + 'if(FMT&&container.parentNode){try{FMTBAR=FMT.build();container.parentNode.insertBefore(FMTBAR,container);'
+    + 'FMTMOUNT=FMT.mount({container:container,bar:FMTBAR,onDirty:function(){EDITDIRTY=true;},toast:toast});}catch(e){FMTBAR=null;FMTMOUNT=null;}}'
     + 'if(PENCIL)PENCIL.style.display="none";'
     + 'var head=document.querySelector(".cp-head");var themeBtn=document.getElementById("cpTheme");'
     + 'if(head){var save=document.createElement("button");save.id="cpEditSave";save.type="button";'
@@ -1625,6 +1664,7 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'for(var i=0;i<EDITHANDS.length;i++){try{EDITHANDS[i][0].removeEventListener(EDITHANDS[i][1],EDITHANDS[i][2]);}catch(e){}}'
     + 'EDITHANDS=[];var container=editContainer();'
     + 'if(container){try{container.removeAttribute("contenteditable");container.removeAttribute("data-editing");}catch(e){}}'
+    + 'if(FMTMOUNT){try{FMTMOUNT.destroy();}catch(e){}FMTMOUNT=null;FMTBAR=null;}'   // 连工具条一起摘掉
     + 'var hint=document.querySelector(".cp-edit-hint");if(hint&&hint.parentNode)hint.parentNode.removeChild(hint);'
     + 'var s=document.getElementById("cpEditSave"),c=document.getElementById("cpEditCancel");'
     + 'if(s&&s.parentNode)s.parentNode.removeChild(s);if(c&&c.parentNode)c.parentNode.removeChild(c);'
@@ -1692,6 +1732,8 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'if(ev.key!=="Escape")return;'
     // 渲染态编辑中 Esc 先管编辑（与全屏层同文案）：有改动拦下指路，干净退出编辑
     + 'if(EDITING){ev.preventDefault();ev.stopPropagation();'
+    // 链接输入行开着：这一下 Esc 只收输入行（与全屏层同款）
+    + 'if(FMTMOUNT&&FMTMOUNT.escape())return;'
     + 'if(EDITDIRTY){toast("有未保存的修改——点「保存」写回或「取消」放弃");return;}'
     + 'exitEdit(true);toast("已退出编辑");return;}'
     + 'if(!bar)return;ev.preventDefault();ev.stopPropagation();hideBar();},true);'
