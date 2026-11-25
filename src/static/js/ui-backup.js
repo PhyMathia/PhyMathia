@@ -195,13 +195,34 @@ function _mergeMessageMaps(serverMap, localMap) {
 function _backupCounts(data) {
   const countMap = value => (value && typeof value === 'object') ? Object.keys(value).length : 0;
   const messages = data && data.messages && typeof data.messages === 'object' ? data.messages : {};
+  // 586：技能/回收站按顶层条目计（目录型技能与单文件各算一条；回收站顶层
+  // `_deleted_sessions.json` 是墓碑登记表，不算条目）
+  const topLevel = (value, skipUnderscore) => {
+    if (!value || typeof value !== 'object') return 0;
+    const keys = new Set();
+    Object.keys(value).forEach(rel => {
+      const top = String(rel).split('/')[0];
+      if (!top || (skipUnderscore && top.startsWith('_'))) return;
+      keys.add(top);
+    });
+    return keys.size;
+  };
+  const uploads = data && data.uploads && typeof data.uploads === 'object' ? data.uploads : {};
+  const models = data && data.models && typeof data.models === 'object' ? data.models : {};
+  const hasModels = (Array.isArray(models.userModels) && models.userModels.length > 0) ||
+    (models.activeModels && typeof models.activeModels === 'object' && Object.keys(models.activeModels).length > 0);
   return {
     sessions: countMap(data && data.sessions),
     messages: Object.values(messages).reduce((sum, list) => sum + (Array.isArray(list) ? list.length : 0), 0),
     knowledge: countMap(data && data.knowledge),
     formulas: countMap(data && data.formulas),
     graphs: countMap(data && data.graphs),
-    profiles: countMap(data && data.profiles)
+    profiles: countMap(data && data.profiles),
+    skills: topLevel(data && data.skills, false),
+    trash: topLevel(data && data.trash, true),
+    usage: Array.isArray(data && data.usage) ? data.usage.length : 0,
+    uploads: countMap(uploads.meta),
+    models: hasModels ? 1 : 0
   };
 }
 
@@ -338,13 +359,23 @@ async function exportData(options = {}) {
         graphs: _mergeNewerMap(serverGraphs, local.graphs),
         quizStats: _mergeNewerMap(kv['phymathia_quiz_stats'] || {}, local.quizStats),
         quizBank: _pickNewerQuizBank(kv['phymathia_quiz_bank'] || null, local.quizBank),
-        userModels: local.userModels,
-        activeModels: local.activeModels,
+        userModels: (server.models && Array.isArray(server.models.userModels) && server.models.userModels.length)
+          ? server.models.userModels : local.userModels,
+        activeModels: (server.models && server.models.activeModels && typeof server.models.activeModels === 'object' &&
+          Object.keys(server.models.activeModels).length) ? server.models.activeModels : local.activeModels,
         currentSession: local.currentSession,
         level: local.level,
         theme: local.theme,
         onboarding: local.onboarding,
-        settings: local.settings
+        settings: local.settings,
+        // 586：服务端覆盖补齐的五类（技能/模型槽位/回收站/用量/素材）。本机
+        // 缓存没有这些副本，直接取服务端；降级到本机快照时自然缺省。
+        skills: server.skills || {},
+        skillsState: server.skillsState || {},
+        models: server.models || {},
+        trash: server.trash || {},
+        usage: Array.isArray(server.usage) ? server.usage : [],
+        uploads: server.uploads || {}
       };
     }
   } catch (e) {
@@ -355,7 +386,8 @@ async function exportData(options = {}) {
   const downloaded = _downloadBackup(data);
   const counts = _backupCounts(data);
   const summary = downloaded.filename + ' · ' + _formatBackupBytes(downloaded.bytes) +
-    ' · ' + counts.sessions + ' 张画布 / ' + counts.messages + ' 条消息';
+    ' · ' + counts.sessions + ' 张画布 / ' + counts.messages + ' 条消息' +
+    (counts.uploads ? ' / ' + counts.uploads + ' 个素材' : '');
   // 585：成功要回执；服务端失败降级为本机快照时必须明说「可能不全」
   const text = degraded
     ? '服务端不可用，已导出本机快照（可能不全） · ' + summary
@@ -902,7 +934,19 @@ function _backupHasPayload(data) {
   return has(data && data.sessions) || has(data && data.messages) || has(data && data.knowledge) ||
     has(data && data.formulas) || has(data && data.kv) || has(data && data.graphs) ||
     has(data && data.quizStats) || !!(data && data.quizBank) || has(data && data.profiles) ||
-    has(data && data.settings);
+    has(data && data.settings) || has(data && data.skills) || has(data && data.trash) ||
+    has(data && data.uploads) || has(data && data.models) ||
+    (Array.isArray(data && data.usage) && data.usage.length > 0);
+}
+
+function _slimBackupForPreview(data) {
+  // 586：附件字节是备份里唯一的大块，预览不读它们；元数据保留供计数。
+  if (!data || typeof data !== 'object') return data;
+  const light = { ...data };
+  if (light.uploads && typeof light.uploads === 'object') {
+    light.uploads = { ...light.uploads, files: {}, fulltext: {} };
+  }
+  return light;
 }
 
 function _localImportPreview(data, mode, conflict) {
@@ -922,7 +966,10 @@ async function _requestImportPreview(data, mode, conflict) {
     const resp = await fetch('/api/backup/preview', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode: mode, conflict: conflict, device_id: getDeviceId(), backup: data }),
+      // 586：预览只要条数——附件字节（可能几十 MB）不进预览请求，避免选一次
+      // 文件、切一次模式就把整包重发一遍；导入本身照旧带全量。
+      body: JSON.stringify({ mode: mode, conflict: conflict, device_id: getDeviceId(),
+        backup: _slimBackupForPreview(data) }),
       signal: AbortSignal.timeout(30000)
     });
     if (resp.ok) {
@@ -969,12 +1016,21 @@ function _renderImportPreview() {
     const lines = [];
     lines.push('备份内容：' + incoming.sessions + ' 张画布 · ' + incoming.messages + ' 条消息 · ' +
       incoming.knowledge + ' 条知识点 · ' + incoming.formulas + ' 条公式 · ' + incoming.graphs + ' 个探索网');
+    // 586：覆盖补齐的附带内容只在真有货时出现，不占常驻版面
+    const extras = [];
+    if (incoming.skills) extras.push('技能 ' + incoming.skills + ' 个');
+    if (incoming.uploads) extras.push('素材 ' + incoming.uploads + ' 个');
+    if (incoming.usage) extras.push('用量记录 ' + incoming.usage + ' 条');
+    if (incoming.trash) extras.push('回收站 ' + incoming.trash + ' 项');
+    if (incoming.models) extras.push('模型槽位');
+    if (extras.length) lines.push('附带：' + extras.join(' · '));
+    if (incoming.models) lines.push('模型槽位随备份恢复；密钥不在备份内，换机器后需重新填写。');
     if (current) {
       lines.push('当前账号：' + current.sessions + ' 张画布 · ' + current.messages + ' 条消息 · ' +
         current.knowledge + ' 条知识点 · ' + current.formulas + ' 条公式 · ' + current.graphs + ' 个探索网');
     }
     if (mode === 'replace') {
-      lines.push('替换模式：当前账号的会话、消息、知识、公式与画布会被这份备份替换；本机设置与设备编号保留。');
+      lines.push('替换模式：会话、消息、知识、公式、画布与技能按备份替换；素材、用量与回收站只增不删，本机设置与设备编号保留。');
     } else if (conflicts) {
       const bits = [];
       if (conflicts.sessions) bits.push(conflicts.sessions + ' 个同名会话');

@@ -226,7 +226,15 @@ class _HTTPChecks(unittest.TestCase):
         self.assertEqual(profile["explicit"]["style"]["detail"], "详细")
         return {"version": 3, "sessions": sessions, "messages": messages,
                 "knowledge": knowledge, "formulas": formulas, "kv": kv,
-                "profiles": {self.device: profile}}
+                "profiles": {self.device: profile},
+                # 586：覆盖补齐的六类——本夹具都没播种，导出应是空壳/默认态
+                "skills": {},
+                "skillsState": {"router": True, "disabled": [], "scope": {}},
+                "models": {"userModels": [], "activeModels": {},
+                           "disabledProviders": {}, "updatedAt": 0},
+                "trash": {}, "usage": [],
+                "uploads": {"meta": {}, "files": {}, "fulltext": {},
+                            "skipped": 0, "bytes": 0}}
 
     @staticmethod
     def stable_backup(payload):
@@ -235,6 +243,10 @@ class _HTTPChecks(unittest.TestCase):
         # save_profile's top-level updatedAt during import. Do NOT strip nested
         # fact/history timestamps, session times, message times or KV times.
         result.pop("exportedAt")
+        # 586：回收站也进了备份，但 roundtrip 中途的 DELETE 会新增墓碑文件
+        # （_deleted_*.json）——那是删除链的正常产物、与导入无关，回收站的
+        # 恢复口径由 tests/test_backup_coverage.py 单独覆盖。
+        result["trash"] = {}
         for profile in result["profiles"].values():
             profile.pop("updatedAt")
         return result
@@ -262,7 +274,10 @@ class _HTTPChecks(unittest.TestCase):
             self.assertEqual(cleared[key], {}, key)
         self.assertEqual(self.request("POST", "/api/backup/import", json={"mode": mode, "backup": before}),
                          {"ok": True, "sessions": 2, "messages": 4, "knowledge": 2,
-                          "formulas": 2, "kv": 1, "profiles": 1})
+                          "formulas": 2, "kv": 1, "profiles": 1,
+                          # 586：空备份下只有 skillsState 默认壳会被写一次
+                          "skills": 0, "skillsState": 1, "models": 0,
+                          "trash": 0, "usage": 0, "uploads": 0})
         after = self.request("GET", "/api/backup/export")
         self.assertGreater(after["exportedAt"], before["exportedAt"])
         self.assertGreater(after["profiles"][self.device]["updatedAt"],

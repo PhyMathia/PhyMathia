@@ -1,5 +1,7 @@
 """数据备份导出与导入。"""
 
+import base64
+import json
 import math
 import os
 import re
@@ -48,6 +50,19 @@ _AUTO_BACKUP_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,96}$")
 # 备份画布桶（顶层 graphs/graphHistories）的 sid 白名单，与 storage._SESSION_ID_RE
 # 同口径（kv 拆分落盘另有同款白名单，这里前置过滤是让手编备份的脏键直接丢弃）
 _BACKUP_SID_RE = re.compile(r"[A-Za-z0-9_-]+")
+
+# 586（2026-11-25）：备份覆盖补齐。四类内容与既有会话/知识不同——它们是
+# 「只增不删」的补集（恢复从不删除本机现有内容），各自有体积上限：
+# 附件按原始字节进 JSON（base64 涨 33%），超限的记 skipped 由 UI 说明；
+# 用量/回收站/技能是纯文本，上限只是防病态体积把备份撑爆。
+_UPLOAD_BACKUP_MAX_TOTAL = 64 * 1024 * 1024
+_UPLOAD_FILE_ID_RE = re.compile(r"^doc_[0-9a-f]{12}$")
+_USAGE_BACKUP_MAX_BYTES = 16 * 1024 * 1024
+_SKILLS_BACKUP_MAX_BYTES = 4 * 1024 * 1024
+_SKILL_FILE_MAX_BYTES = 512 * 1024
+_TRASH_BACKUP_MAX_BYTES = 16 * 1024 * 1024
+_TRASH_FILE_MAX_BYTES = 8 * 1024 * 1024
+_BACKUP_TEXT_EXTS = {".md", ".txt", ".json", ".yaml", ".yml"}
 
 
 def _finite_ts(value) -> float:
@@ -148,6 +163,12 @@ def _payload_counts(payload: dict) -> dict:
     formulas = _normalize_formula_map(payload.get("formulas") or {})
     kv = payload.get("kv") if isinstance(payload.get("kv"), dict) else {}
     profiles = payload.get("profiles") if isinstance(payload.get("profiles"), dict) else {}
+    skills = payload.get("skills") if isinstance(payload.get("skills"), dict) else {}
+    trash = payload.get("trash") if isinstance(payload.get("trash"), dict) else {}
+    usage = payload.get("usage") if isinstance(payload.get("usage"), list) else []
+    uploads = payload.get("uploads") if isinstance(payload.get("uploads"), dict) else {}
+    upload_meta = uploads.get("meta") if isinstance(uploads.get("meta"), dict) else {}
+    models = payload.get("models") if isinstance(payload.get("models"), dict) else {}
     return {
         "sessions": len(sessions),
         "messages": sum(len(v) for v in messages.values() if isinstance(v, list)),
@@ -156,6 +177,14 @@ def _payload_counts(payload: dict) -> dict:
         "graphs": sum(1 for key in kv if str(key).startswith("graph:")),
         "profiles": len(profiles),
         "kv": len(kv),
+        # 586：技能按「顶层条目」计（单文件 md 与目录型各算一条）；回收站按
+        # 条目目录计（顶层 `_deleted_sessions.json` 不算条目）；素材按元数据条数。
+        "skills": len({str(rel).split("/")[0] for rel in skills}),
+        "trash": len({str(rel).split("/")[0] for rel in trash
+                      if not str(rel).startswith("_")}),
+        "usage": len(usage),
+        "uploads": len(upload_meta),
+        "models": 1 if models.get("userModels") or models.get("activeModels") else 0,
     }
 
 
@@ -178,7 +207,8 @@ def _preview_backup(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
     再让用户确认（583 的确认＋自动备份前置）。逐项选择（manual）额外返回
     内容确有差异的冲突条目清单，供前端逐项翻面；相同条目不需要判断，不列。
     """
-    current = _build_backup_payload(account, device_id)
+    # 586：预览只要条数——不读附件字节（几十 MB），元数据足以算数
+    current = _build_backup_payload(account, device_id, include_files=False)
     incoming = backup if isinstance(backup, dict) else {}
     effective_conflict = "backup" if replace else (
         conflict if conflict in ("backup", "manual") else "newer")
@@ -344,7 +374,9 @@ def create_auto_backup(account: str = DEFAULT_ACCOUNT, device_id: str = None,
     失败直接抛给调用方：备份没写成就不该继续做破坏性写入。
     """
     reason = re.sub(r"[^a-z0-9_-]", "", str(reason or "import").lower())[:24] or "import"
-    payload = _build_backup_payload(account, device_id)
+    # 586：自动备份不带附件字节（素材只增不删，恢复不会碰它们）——否则每份
+    # 快照平白多出几十 MB，10 份轮转把 data/backups 撑爆。
+    payload = _build_backup_payload(account, device_id, include_files=False)
     payload["backupReason"] = reason
     payload["backupCreatedAt"] = time.time()
     directory = _backup_dir(account)
@@ -398,7 +430,223 @@ def read_auto_backup(account: str = DEFAULT_ACCOUNT, backup_id: str = "") -> dic
     return payload
 
 
-def _build_backup_payload(account: str = DEFAULT_ACCOUNT, device_id: str = None) -> dict:
+def _uploads_dir() -> Path:
+    """附件目录。调用时由 config.DATA_DIR 派生——config.UPLOAD_DIR 是 import 期
+    捕获的常量，测试补丁 DATA_DIR 后不会跟着变（accounts.resolve_paths 同款口径）。"""
+    return Path(config.DATA_DIR) / "uploads"
+
+
+def _uploads_meta_path() -> Path:
+    return Path(config.DATA_DIR) / "uploads.json"
+
+
+def _usage_dir() -> Path:
+    """用量账本目录。同样调用时由 config.DATA_DIR 派生：usage_stats.USAGE_DIR 是
+    import 期捕获的常量，隔离测试把 DATA_DIR 改到临时目录后它仍指真仓库。"""
+    return Path(config.DATA_DIR) / "usage"
+
+
+def _safe_rel_path(value):
+    """备份里的相对路径 → 安全 Path；绝对路径/盘符/`..`/隐藏文件一律拒绝。
+
+    手编备份能把任意字符串塞进 skills/trash 的文件名——这里只放行纯相对
+    路径（最多 6 段），写入前再由调用方拼到固定根目录下。
+    """
+    text = str(value or "").replace("\\", "/").strip()
+    if not text or text.startswith("/") or text.startswith("~"):
+        return None
+    parts = []
+    for part in text.split("/"):
+        if part in ("", "."):
+            continue
+        if part == ".." or ":" in part or part.startswith("."):
+            return None
+        parts.append(part)
+    if not parts or len(parts) > 6:
+        return None
+    return Path(*parts)
+
+
+def _collect_text_tree(base: Path, max_total: int, max_file: int) -> dict:
+    """把目录下的文本文件收成 {相对路径: 文本}；二进制/超限文件跳过。"""
+    files = {}
+    if not base.is_dir():
+        return files
+    total = 0
+    for path in sorted(base.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in _BACKUP_TEXT_EXTS:
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        if size > max_file or total + size > max_total:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        files[path.relative_to(base).as_posix()] = text
+        total += size
+    return files
+
+
+def _usage_signature(value):
+    """用量条目去重签名：按 key 排序的规范 JSON（同一条记录写法不同也能认）。"""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return "raw:" + value.strip()
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):
+        return "raw:" + str(value)
+
+
+def _collect_usage() -> list:
+    base = _usage_dir()
+    entries = []
+    total = 0
+    if not base.is_dir():
+        return entries
+    for path in sorted(base.glob("*.jsonl")):
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(entry, dict):
+                continue
+            entries.append(entry)
+            total += len(line) + 1
+            if total >= _USAGE_BACKUP_MAX_BYTES:
+                return entries
+    return entries
+
+
+def _collect_uploads(include_files: bool = True) -> dict:
+    """素材篮附件：元数据照抄 + 文件字节（base64）。
+
+    只收「元数据在、.bin 也在」的条目（本机就有元数据残留但文件已不在的旧账，
+    收进去只会在新机器上变成断卡）。总量超 _UPLOAD_BACKUP_MAX_TOTAL 时按
+    savedAt 新→旧收录，其余记 skipped 供 UI 说明。
+    """
+    meta = _read_json(_uploads_meta_path(), {})
+    if not isinstance(meta, dict):
+        meta = {}
+    upload_dir = _uploads_dir()
+    out_meta, files, fulltext = {}, {}, {}
+    total = 0
+    skipped = 0
+    ordered = sorted(
+        ((fid, entry) for fid, entry in meta.items()
+         if _UPLOAD_FILE_ID_RE.match(str(fid)) and isinstance(entry, dict)),
+        key=lambda pair: -_finite_ts(pair[1].get("savedAt")),
+    )
+    for file_id, entry in ordered:
+        path = upload_dir / (str(file_id) + ".bin")
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        if total + size > _UPLOAD_BACKUP_MAX_TOTAL:
+            skipped += 1
+            continue
+        out_meta[str(file_id)] = {
+            "id": str(file_id),
+            "filename": str(entry.get("filename") or ""),
+            "savedAt": entry.get("savedAt"),
+        }
+        total += size
+        if not include_files:
+            continue
+        try:
+            files[str(file_id)] = base64.b64encode(path.read_bytes()).decode("ascii")
+        except OSError:
+            out_meta.pop(str(file_id), None)
+            total -= size
+            continue
+        txt = upload_dir / (str(file_id) + ".txt")
+        if txt.is_file():
+            try:
+                fulltext[str(file_id)] = txt.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                pass
+    return {"meta": out_meta, "files": files, "fulltext": fulltext,
+            "skipped": skipped, "bytes": total}
+
+
+def _sanitize_models_payload(data) -> dict:
+    """模型配置只留非密钥字段：密钥住 auth.json，任何 apiKey/组密钥都不进备份。"""
+    if not isinstance(data, dict):
+        return {}
+    models = []
+    value = data.get("userModels")
+    if isinstance(value, list):
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            models.append({k: v for k, v in item.items()
+                           if k not in ("apiKey", "api_key", "key")})
+    return {
+        "userModels": models,
+        "activeModels": dict(data.get("activeModels")) if isinstance(data.get("activeModels"), dict) else {},
+        "disabledProviders": dict(data.get("disabledProviders")) if isinstance(data.get("disabledProviders"), dict) else {},
+        "updatedAt": _finite_ts(data.get("updatedAt")),
+    }
+
+
+def _sanitize_skills_state(data) -> dict:
+    """技能开关只收已知形状：router 布尔、disabled 字符串数组、scope 字符串数组表。"""
+    if not isinstance(data, dict):
+        return {}
+    disabled = []
+    for item in (data.get("disabled") or []):
+        text = str(item or "")[:64]
+        if text and text not in disabled:
+            disabled.append(text)
+        if len(disabled) >= 200:
+            break
+    scope = {}
+    raw_scope = data.get("scope")
+    if isinstance(raw_scope, dict):
+        for key, value in list(raw_scope.items())[:200]:
+            if isinstance(value, list):
+                modules = [str(item)[:64] for item in value if str(item)][:32]
+                scope[str(key)[:64]] = modules
+    return {"router": bool(data.get("router", True)), "disabled": disabled, "scope": scope}
+
+
+def _collect_skills(account: str = DEFAULT_ACCOUNT) -> dict:
+    return _collect_text_tree(accounts.resolve_paths(account).skills_dir,
+                              _SKILLS_BACKUP_MAX_BYTES, _SKILL_FILE_MAX_BYTES)
+
+
+def _collect_skills_state(account: str = DEFAULT_ACCOUNT) -> dict:
+    return _sanitize_skills_state(
+        _read_json(accounts.resolve_paths(account).root / "skills_state.json", {}))
+
+
+def _collect_trash(account: str = DEFAULT_ACCOUNT) -> dict:
+    return _collect_text_tree(accounts.resolve_paths(account).trash_dir,
+                              _TRASH_BACKUP_MAX_BYTES, _TRASH_FILE_MAX_BYTES)
+
+
+def _collect_models(account: str = DEFAULT_ACCOUNT) -> dict:
+    path = accounts.resolve_paths(account).root / "models.json"
+    return _sanitize_models_payload(_read_json(path, {}))
+
+
+def _build_backup_payload(account: str = DEFAULT_ACCOUNT, device_id: str = None,
+                          include_files: bool = True) -> dict:
     paths = accounts.resolve_paths(account)
     sessions = _read_json(paths.sessions_path, {})
     messages = {}
@@ -440,6 +688,14 @@ def _build_backup_payload(account: str = DEFAULT_ACCOUNT, device_id: str = None)
         # 合并视图：主文件 + data/kv/ 会话文件（graph:<sid> 等会话键已拆分存放）
         "kv": kv_all_data(account),
         "profiles": profiles,
+        # 586 覆盖补齐：技能与技能开关、模型槽位（密钥住 auth.json，不在这里）、
+        # 回收站、用量账本、素材篮附件。恢复口径见 _apply_restore 尾部。
+        "skills": _collect_skills(account),
+        "skillsState": _collect_skills_state(account),
+        "models": _collect_models(account),
+        "trash": _collect_trash(account),
+        "usage": _collect_usage(),
+        "uploads": _collect_uploads(include_files=include_files),
     }
 
 
@@ -559,7 +815,12 @@ def _restore_messages(data: dict, sessions: dict, replace: bool, account: str = 
 
 def _restore_target_paths(account: str = DEFAULT_ACCOUNT) -> list:
     p = accounts.resolve_paths(account)
-    paths = [p.sessions_path, p.knowledge_path, p.formulas_path, p.kv_path]
+    paths = [p.sessions_path, p.knowledge_path, p.formulas_path, p.kv_path,
+             # 586：模型槽位会整包覆盖、技能文件在 replace 下会先清空——三者
+             # 都进回滚快照；素材/用量只增不删，不需要快照（回收站同理，但
+             # 它会被同名覆盖，一并纳入）
+             p.root / "models.json", p.root / "skills_state.json",
+             _uploads_meta_path()]
     paths.extend(sorted(p.messages_dir.glob("*.json")))
     # 画像按账号隔离（T189）：快照与回滚枚举只覆盖本账号归属的画像——回滚第二
     # 段「快照外新文件一并移除」用同一枚举，不过滤会把导入窗口内邻账号新建的
@@ -575,6 +836,10 @@ def _restore_target_paths(account: str = DEFAULT_ACCOUNT) -> list:
     # 族拆分文件（socratic/mem/quiz/continent）同理
     if p.kv_meta_dir.exists():
         paths.extend(sorted(p.kv_meta_dir.glob("*.json")))
+    # 用户技能与回收站文件（都是小 JSON/文本；目录项跳过——快照按字节读）
+    for base in (p.skills_dir, p.trash_dir):
+        if base.exists():
+            paths.extend(sorted(path for path in base.rglob("*") if path.is_file()))
     return paths
 
 
@@ -621,6 +886,205 @@ def _rollback_restore_targets(snap: dict, account: str = DEFAULT_ACCOUNT) -> lis
             except OSError:
                 failed.append(p.name)
     return failed
+
+
+def _restore_skills(files, replace: bool, account: str = DEFAULT_ACCOUNT) -> int:
+    """恢复用户技能文件（skills/<id>.md 或 skills/<id>/…）。"""
+    if not isinstance(files, dict):
+        return 0
+    base = accounts.resolve_paths(account).skills_dir
+    if replace and base.is_dir():
+        # 只清空技能目录内部（路径固定，不碰账号其它文件）；replace 的语义是
+        # 「以备份为准」，与 sessions/knowledge 的替换口径一致。
+        for path in sorted(base.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+            try:
+                if path.is_symlink() or path.is_file():
+                    path.unlink()
+                elif path.is_dir():
+                    path.rmdir()
+            except OSError:
+                continue
+    count = 0
+    for rel, text in files.items():
+        rp = _safe_rel_path(rel)
+        if rp is None or not isinstance(text, str) or rp.suffix.lower() not in _BACKUP_TEXT_EXTS:
+            continue
+        target = base / rp
+        if target.exists() and not replace:
+            continue  # 合并模式不覆盖本机同名技能（没有时间戳可判新旧）
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding="utf-8")
+        except OSError:
+            continue
+        count += 1
+    return count
+
+
+def _restore_skills_state(data, replace: bool, account: str = DEFAULT_ACCOUNT) -> int:
+    """技能开关/范围：replace 整包写；合并按「本机优先、关闭取并集」。"""
+    data = _sanitize_skills_state(data)
+    if not data:
+        return 0
+    path = accounts.resolve_paths(account).root / "skills_state.json"
+    current = _read_json(path, {})
+    if replace or not isinstance(current, dict) or not current:
+        _write_json(path, data)
+        return 1
+    merged = dict(current)
+    if "router" in data and "router" not in current:
+        merged["router"] = bool(data.get("router"))
+    disabled = [str(item) for item in (current.get("disabled") or []) if str(item)]
+    for item in (data.get("disabled") or []):
+        text = str(item or "")
+        if text and text not in disabled:
+            disabled.append(text)
+    merged["disabled"] = disabled
+    scope = data.get("scope") if isinstance(data.get("scope"), dict) else {}
+    scope = dict(scope)
+    scope.update(current.get("scope") or {})  # 本机已指定的范围优先
+    merged["scope"] = scope
+    _write_json(path, merged)
+    return 1
+
+
+def _restore_models(data, replace: bool, account: str = DEFAULT_ACCOUNT) -> int:
+    """模型槽位/供应商开关：备份较新才盖（合并模式），密钥文件 auth.json 不碰。"""
+    payload = _sanitize_models_payload(data)
+    if not payload.get("userModels") and not payload.get("activeModels") \
+            and not payload.get("disabledProviders"):
+        return 0
+    path = accounts.resolve_paths(account).root / "models.json"
+    if not replace:
+        current = _read_json(path, {})
+        if isinstance(current, dict) and current:
+            if _finite_ts(current.get("updatedAt")) > _finite_ts(payload.get("updatedAt")):
+                return 0
+    _write_json(path, payload)
+    return 1
+
+
+def _restore_trash(files, replace: bool, account: str = DEFAULT_ACCOUNT) -> int:
+    """回收站快照：只写进回收站目录，绝不还原成活数据；merge 不覆盖同名条目。"""
+    if not isinstance(files, dict):
+        return 0
+    base = accounts.resolve_paths(account).trash_dir
+    count = 0
+    for rel, text in files.items():
+        rp = _safe_rel_path(rel)
+        if rp is None or not isinstance(text, str) or rp.suffix.lower() != ".json":
+            continue
+        target = base / rp
+        if target.exists() and not replace:
+            continue
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding="utf-8")
+        except OSError:
+            continue
+        count += 1
+    return count
+
+
+def _restore_usage(entries) -> int:
+    """用量账本：只追加缺的条目（按规范 JSON 去重），replace 也不清历史。"""
+    if not isinstance(entries, list) or not entries:
+        return 0
+    base = _usage_dir()
+    seen = set()
+    if base.is_dir():
+        for path in sorted(base.glob("*.jsonl")):
+            try:
+                raw = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            for line in raw.splitlines():
+                line = line.strip()
+                if line:
+                    seen.add(_usage_signature(line))
+    by_day = {}
+    appended = 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        line = json.dumps(entry, ensure_ascii=False, sort_keys=True)
+        signature = _usage_signature(line)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        ts = str(entry.get("ts") or "")
+        day = ts[:10] if re.match(r"^\d{4}-\d{2}-\d{2}$", ts[:10]) else time.strftime("%Y-%m-%d")
+        by_day.setdefault(day, []).append(line)
+        appended += 1
+    if not appended:
+        return 0
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        for day, lines in by_day.items():
+            with (base / (day + ".jsonl")).open("a", encoding="utf-8") as handle:
+                for line in lines:
+                    handle.write(line + "\n")
+    except OSError:
+        return 0
+    return appended
+
+
+def _restore_uploads(data, replace: bool, account: str = DEFAULT_ACCOUNT) -> int:
+    """素材篮附件：文件按 id 落盘（同 id 内容相同，merge 不重写），元数据合并。"""
+    if not isinstance(data, dict):
+        return 0
+    files = data.get("files") if isinstance(data.get("files"), dict) else {}
+    fulltext = data.get("fulltext") if isinstance(data.get("fulltext"), dict) else {}
+    meta_in = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+    if not files:
+        return 0
+    base = _uploads_dir()
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return 0
+    meta = _read_json(_uploads_meta_path(), {})
+    if not isinstance(meta, dict):
+        meta = {}
+    count = 0
+    changed = False
+    for file_id, encoded in files.items():
+        file_id = str(file_id)
+        if not _UPLOAD_FILE_ID_RE.match(file_id) or not isinstance(encoded, str):
+            continue
+        try:
+            content = base64.b64decode(encoded, validate=True)
+        except (ValueError, TypeError):
+            continue
+        target = base / (file_id + ".bin")
+        if not target.exists() or replace:
+            try:
+                target.write_bytes(content)
+            except OSError:
+                continue
+            count += 1
+        txt = fulltext.get(file_id)
+        if isinstance(txt, str):
+            try:
+                (base / (file_id + ".txt")).write_text(txt, encoding="utf-8")
+            except OSError:
+                pass
+        entry = meta_in.get(file_id)
+        if isinstance(entry, dict):
+            clean = {
+                "id": file_id,
+                "filename": str(entry.get("filename") or ""),
+                "savedAt": entry.get("savedAt"),
+            }
+            if file_id not in meta or replace:
+                meta[file_id] = clean
+                changed = True
+    if changed:
+        try:
+            _write_json(_uploads_meta_path(), meta)
+        except OSError:
+            pass
+    return count
 
 
 def _restore_backup(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
@@ -778,6 +1242,16 @@ def _apply_restore(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
                 save_profile(str(dev), pdata)
                 profile_count += 1
 
+    # 586：补集内容（技能/模型槽位/回收站/用量/素材）。恢复口径统一为
+    # 「不删本机现有内容」——素材与用量只增、回收站只写进回收站目录，
+    # replace 也不清；技能与模型槽位随 replace 整包替换（有导入前自动备份兜底）。
+    skills_count = _restore_skills(backup.get("skills"), replace, account)
+    skills_state_count = _restore_skills_state(backup.get("skillsState"), replace, account)
+    models_count = _restore_models(backup.get("models"), replace, account)
+    trash_count = _restore_trash(backup.get("trash"), replace, account)
+    usage_count = _restore_usage(backup.get("usage"))
+    upload_count = _restore_uploads(backup.get("uploads"), replace)
+
     return {
         "ok": True,
         "sessions": session_count,
@@ -786,6 +1260,12 @@ def _apply_restore(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
         "formulas": len(formulas),
         "kv": len(kv_data) if isinstance(kv_data, dict) else 0,
         "profiles": profile_count,
+        "skills": skills_count,
+        "skillsState": skills_state_count,
+        "models": models_count,
+        "trash": trash_count,
+        "usage": usage_count,
+        "uploads": upload_count,
     }
 
 
