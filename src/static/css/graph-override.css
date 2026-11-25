@@ -9810,6 +9810,59 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   word-break: break-all;
 }
 
+/* 截断素材的全文查看区（backlog 543）：按需展开，只读，不挤占可编辑正文框 */
+.graph-source-fulltext {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-container, rgba(255, 255, 255, 0.06));
+}
+
+.graph-source-fulltext[hidden] {
+  display: none;
+}
+
+.graph-source-fulltext-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+}
+
+.graph-source-fulltext-head button {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.graph-source-fulltext-head button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+#sourceItemFulltextBody {
+  margin: 0;
+  max-height: 300px;
+  overflow: auto;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.graph-network-modal-actions .graph-source-fulltext-btn {
+  margin-right: auto;
+}
+
 #sourceItemText {
   width: 100%;
   min-height: 220px;

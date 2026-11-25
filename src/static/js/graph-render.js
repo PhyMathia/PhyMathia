@@ -2464,6 +2464,8 @@ var _GRAPH_MODAL_ACT_TABLE = {
     'fs-newwin': function (el) { openNodeNewWindow(el.dataset.nodeId); },
     'source-ocr-retry': function (el) { retrySourceItemOcr(el.dataset.nodeId, el.dataset.itemId); },
     'source-item-save': function (el) { saveSourceItemText(el.dataset.nodeId, el.dataset.itemId); },
+    'source-fulltext': function (el) { toggleSourceItemFulltext(el); },
+    'source-fulltext-copy': function () { copySourceItemFulltext(); },
   },
 };
 

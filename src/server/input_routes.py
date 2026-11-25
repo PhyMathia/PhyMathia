@@ -174,6 +174,24 @@ async def api_input_file(file_id: str):
     return Response(content=content, media_type=_guess_mime(str(entry.get("filename") or "")))
 
 
+# 截断素材的全文取回（2026-11-25，backlog 543）：ingest 只在 text 超 8000 字时
+# 落 <fileId>.txt，此前全仓没有读它的路由，卡片上的「全文在后端」无法兑现。
+# 只回原始抽取文本，不参与发送链——条目 text 仍按 8000 字上限进模型；这份全文
+# 供素材弹窗查看/复制。id 形状白名单与 files 路由同口径。
+@router.get("/api/input/fulltext/{file_id}")
+async def api_input_fulltext(file_id: str):
+    if not _FILE_ID_RE.match(file_id):
+        raise HTTPException(status_code=404, detail="全文不存在")
+    path = UPLOAD_DIR / f"{file_id}.txt"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="该素材没有全文")
+    try:
+        text = await asyncio.to_thread(path.read_text, "utf-8")
+    except (OSError, UnicodeDecodeError):
+        raise HTTPException(status_code=404, detail="全文不存在")
+    return Response(content=text, media_type="text/plain; charset=utf-8")
+
+
 # 扫描版 PDF 页转图（T382，2026-10-23）：发送时按需渲染，服务端不缓存、不落盘。
 # 页号 1-based，只放行前 PDF_PAGE_MAX 页——多页扫描件全发既超配额（一条消息 4 张）
 # 又烧时延；配额的分配规则在前端（_allocateSendImageRefs），这里只做单页渲染。

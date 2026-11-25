@@ -626,6 +626,52 @@ check('附图取字节分流源码契约：页图走 pdf_pages 路由、原图�
   if (!customSrc.includes('item.scanned = data.pdf.scanned === true;')) throw new Error('ingest 的扫描版标记未落条目');
 });
 
+check('素材全文取回：截断且后端有全文才给「查看全文」，本地超限不给', () => {
+  const realEsc = sandbox.escapeHtml;
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
+  try {
+    seedNode([{
+      id: 'it1', kind: 'text', name: '长文', text: '前八千', chars: 12000,
+      truncated: true, fulltext: true, fileId: 'doc_aaaaaaaaaaaa',
+    }]);
+    sandbox.openSourceItemModal('src-test', 'it1');
+    const html = vm.runInContext('sourceItemModalOverlay.innerHTML', sandbox);
+    for (const frag of [
+      'data-mact="source-fulltext"', 'data-mact="source-fulltext-copy"',
+      'id="sourceItemFulltext"', 'id="sourceItemFulltextBody"', '查看全文', '复制全文',
+    ]) {
+      if (!html.includes(frag)) throw new Error('截断素材弹窗缺全文入口：' + frag);
+    }
+    sandbox.closeSourceItemModal();
+
+    // 本地编辑超限（fulltext=false）：后端没有 <fileId>.txt，不给入口
+    seedNode([{
+      id: 'it2', kind: 'text', name: '本地长文', text: '前八千', chars: 12000,
+      truncated: true, fulltext: false, fileId: 'doc_bbbbbbbbbbbb',
+    }]);
+    sandbox.openSourceItemModal('src-test', 'it2');
+    const localHtml = vm.runInContext('sourceItemModalOverlay.innerHTML', sandbox);
+    if (localHtml.includes('data-mact="source-fulltext"')) {
+      throw new Error('本地超限条目不该给全文入口（后端无全文文件）');
+    }
+    sandbox.closeSourceItemModal();
+
+    // 未截断：resp.text 即全文，不另落文件
+    seedNode([{
+      id: 'it3', kind: 'text', name: '短文', text: '短文', chars: 2,
+      truncated: false, fulltext: false, fileId: '',
+    }]);
+    sandbox.openSourceItemModal('src-test', 'it3');
+    const shortHtml = vm.runInContext('sourceItemModalOverlay.innerHTML', sandbox);
+    if (shortHtml.includes('source-fulltext')) throw new Error('未截断条目不该有全文入口');
+    sandbox.closeSourceItemModal();
+  } finally {
+    sandbox.escapeHtml = realEsc;
+    sandbox.closeSourceItemModal();
+  }
+  return true;
+});
+
 check('附图发送与回落：带图直发；4xx 去图重发一次并提示开 OCR；5xx 原样抛', async () => {
   // 本文件异步用例在 drain() 的 Promise.all 里并发收口（addSourceText 还挂着
   // 20ms 回填计时器）——本用例全程不碰共享 graphView：按口收集打桩（它有专门

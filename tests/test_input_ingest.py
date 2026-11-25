@@ -194,6 +194,25 @@ class IngestRouteTest(unittest.TestCase):
         for bad in ("abc", "doc_xyz", "doc_12345", "DOC_0123456789ab"):
             self.assertEqual(self.client.get("/api/input/files/" + bad).status_code, 404, bad)
 
+    # ===== 543（2026-11-25）：截断全文取回路由 =====
+
+    def test_fulltext_route_returns_exact_text(self):
+        text = "物理直觉很重要。" * 1200  # 9600 字 > 8000
+        data = self._post({"fileName": "长文.txt", "contentBase64": _b64(text)}).json()
+        resp = self.client.get("/api/input/fulltext/" + data["fileId"])
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.text, text, "取回路由必须回完整原文，不是截断后的 text")
+        self.assertIn("text/plain", resp.headers.get("content-type", ""))
+
+    def test_fulltext_route_404_when_not_truncated(self):
+        data = self._post({"fileName": "短.txt", "contentBase64": _b64("短")}).json()
+        self.assertEqual(
+            self.client.get("/api/input/fulltext/" + data["fileId"]).status_code, 404)
+
+    def test_fulltext_route_unknown_or_bad_id_404(self):
+        for bad in ("doc_000000000000", "abc", "doc_xyz", "DOC_0123456789ab"):
+            self.assertEqual(self.client.get("/api/input/fulltext/" + bad).status_code, 404, bad)
+
     # ===== T382（2026-10-23）：扫描版 PDF 打标与页转图路由 =====
 
     def test_scanned_pdf_marked_on_ingest(self):

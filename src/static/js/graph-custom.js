@@ -1481,6 +1481,10 @@ function _sourceDropItem(node, item, data) {
   item.text = String(data.text || '');
   item.chars = Number(data.chars) || item.text.length;
   item.truncated = !!data.truncated;
+  // 截断时服务端落了 <fileId>.txt（全文）；未截断时 resp.text 即全文，没有该文件。
+  // 素材弹窗的「查看全文」只在这个标记为真时出现，避免把「本地编辑后超限」的
+  // 条目也指向一个不存在的后端文件（旧条目没有该字段，按 true 兼容）。
+  item.fulltext = !!data.truncated;
   item.mime = data.mime || item.mime;
   item.size = Number(data.size) || item.size;
   item.ocr = data.ocr ? {
@@ -1558,6 +1562,7 @@ function addSourceText(nodeId, text) {
       text: '',
       chars: value.length,
       truncated: true,
+      fulltext: false, // ingest 回填时置真（此时后端还没有 <fileId>.txt）
       fileId: '',
       fileName: name + '.txt',
       mime: 'text/plain',
@@ -1580,6 +1585,7 @@ function addSourceText(nodeId, text) {
     text: value,
     chars: value.length,
     truncated: false,
+    fulltext: false,
     fileId: '',
     fileName: '',
     mime: 'text/plain',
@@ -1620,6 +1626,7 @@ function addSourceFiles(nodeId, files) {
       text: '',
       chars: 0,
       truncated: false,
+      fulltext: false,
       fileId: '',
       fileName: file.name || '',
       mime: file.type || '',
@@ -1829,9 +1836,12 @@ function openSourceItemModal(nodeId, itemId) {
   const item = (node.items || []).find(it => it && it.id === itemId);
   if (!item) return;
   closeSourceItemModal();
+  // 全文文件只在 ingest 截断时落盘；本地编辑超限的条目没有后端全文，不给出入口
+  const hasFulltext = !!(item.truncated && item.fileId && item.fulltext !== false);
   const metaBits = ['类型：' + (item.kind === 'image' ? '图片' : item.kind === 'text' ? '文本' : '文件')];
   if (item.fileName) metaBits.push('文件：' + item.fileName);
-  metaBits.push('字数：' + (item.chars || String(item.text || '').length || 0) + (item.truncated ? '（已截断，全文在后端）' : ''));
+  metaBits.push('字数：' + (item.chars || String(item.text || '').length || 0)
+    + (item.truncated ? (hasFulltext ? '（已截断，全文在后端）' : '（已截断）') : ''));
   if (item.kind === 'image') {
     metaBits.push('转写：' + (_sourceOcrStatusText(item) || '未转写')
       + (item.ocr && item.ocr.engine ? '（引擎 ' + item.ocr.engine + (item.ocr.ms ? '，' + item.ocr.ms + 'ms' : '') + '）' : ''));
@@ -1843,7 +1853,16 @@ function openSourceItemModal(nodeId, itemId) {
     + '<button onclick="closeSourceItemModal()" title="关闭">×</button></div>'
     + '<div class="graph-source-item-meta">' + escapeHtml(metaBits.join(' · ')) + '</div>'
     + '<textarea id="sourceItemText" rows="12" placeholder="该素材的可读文本（可修改）">' + escapeHtml(item.text || '') + '</textarea>'
+    + (hasFulltext
+      ? '<div class="graph-source-fulltext" id="sourceItemFulltext" hidden>'
+        + '<div class="graph-source-fulltext-head"><span id="sourceItemFulltextCount">全文</span>'
+        + '<button type="button" data-mact="source-fulltext-copy">复制全文</button></div>'
+        + '<pre id="sourceItemFulltextBody"></pre></div>'
+      : '')
     + '<div class="graph-network-modal-actions">'
+    + (hasFulltext
+      ? '<button type="button" class="graph-source-fulltext-btn" data-mact="source-fulltext" data-node-id="' + escapeHtml(node.id) + '" data-item-id="' + escapeHtml(item.id) + '">查看全文</button>'
+      : '')
     + (item.kind === 'image'
       ? '<button type="button" class="graph-source-ocr-retry" data-mact="source-ocr-retry" data-node-id="' + escapeHtml(node.id) + '" data-item-id="' + escapeHtml(item.id) + '">重新识别</button>'
       : '')
@@ -1861,6 +1880,80 @@ function closeSourceItemModal() {
   if (sourceItemModalOverlay) {
     sourceItemModalOverlay.remove();
     sourceItemModalOverlay = null;
+  }
+}
+
+// 截断素材的全文按需取回（backlog 543）：不在打开弹窗时就拉——20MB 源文件抽出的
+// 文本可能很大，只有用户真点「查看全文」才发请求；取回后缓存在本次弹窗的 <pre> 里，
+// 收起再展开不重复请求。404 说明条目是本地编辑超限（后端没有全文），给一句人话。
+async function toggleSourceItemFulltext(btn) {
+  const box = document.getElementById('sourceItemFulltext');
+  const body = document.getElementById('sourceItemFulltextBody');
+  if (!box || !body || !btn) return;
+  if (!box.hidden) {
+    box.hidden = true;
+    btn.textContent = '查看全文';
+    return;
+  }
+  if (body.dataset.loaded === '1') {
+    box.hidden = false;
+    btn.textContent = '收起全文';
+    return;
+  }
+  const node = _findGraphNode(btn.dataset.nodeId);
+  const item = node && (node.items || []).find(it => it && it.id === btn.dataset.itemId);
+  if (!item || !item.fileId) return;
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '取回中…';
+  try {
+    const resp = await fetch('/api/input/fulltext/' + encodeURIComponent(item.fileId));
+    if (!resp.ok) {
+      throw new Error(resp.status === 404 ? '后端没有该素材的全文' : '全文取回失败');
+    }
+    const text = await resp.text();
+    body.textContent = text;
+    body.dataset.loaded = '1';
+    const count = document.getElementById('sourceItemFulltextCount');
+    if (count) count.textContent = '全文 ' + text.length + ' 字';
+    box.hidden = false;
+    btn.textContent = '收起全文';
+  } catch (err) {
+    btn.textContent = label;
+    if (typeof showToast === 'function') {
+      showToast(err && err.message ? err.message : '全文取回失败');
+    }
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function copySourceItemFulltext() {
+  const body = document.getElementById('sourceItemFulltextBody');
+  const text = body ? String(body.textContent || '') : '';
+  if (!text) return;
+  const done = () => {
+    if (typeof showToast === 'function') showToast('已复制全文');
+  };
+  const fallback = () => {
+    // file:// 或非安全上下文下 navigator.clipboard 不可用，退回 execCommand
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;left:-9999px;top:0;';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      if (typeof showToast === 'function') showToast(ok ? '已复制全文' : '复制失败，请手动选择文本');
+    } catch (e) {
+      if (typeof showToast === 'function') showToast('复制失败，请手动选择文本');
+    }
+  };
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    navigator.clipboard.writeText(text).then(done, fallback);
+  } else {
+    fallback();
   }
 }
 
@@ -2023,6 +2116,8 @@ window.openSourceItemModal = openSourceItemModal;
 window.closeSourceItemModal = closeSourceItemModal;
 window.saveSourceItemText = saveSourceItemText;
 window.retrySourceItemOcr = retrySourceItemOcr;
+window.toggleSourceItemFulltext = toggleSourceItemFulltext;
+window.copySourceItemFulltext = copySourceItemFulltext;
 window.toggleSourceOcr = toggleSourceOcr;
 window.openHarnessOrganizeRelations = openHarnessOrganizeRelations;
 
