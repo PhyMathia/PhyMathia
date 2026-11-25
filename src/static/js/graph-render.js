@@ -1655,6 +1655,16 @@ function _measureNodes() {
   });
   const zigzagNodes = [];
   const composite = _graphCompositeScale();
+  // 2026-11-25 占位判据补「整盒在画布视口外」前提：__cvPlaceholder 是插入瞬间量的，
+  // 卡在视口内时浏览器当场排了真身，戳里记的其实就是真身盒——此后每次真读数都等于戳、
+  // 被当占位扔掉，陈旧 sizes 永不自愈（viz 卡等待壳 234 → 真身 594 实踩，复现见
+  // verify_viz_node_stale_size.mjs：整理按 234 排，594 真身盖住下面的卡）。
+  // 真占位只发生在屏外卡（c-v 跳过 contents，读数=占位盒）；视口内的卡一律收实测。
+  // 卡自身的盒读数不会解开跳过（contents 不排版），可以安全比较；别改读子元素盒——
+  // 几何查询会把跳过的内容强迫排版，探出假「已排版」。画布盒每批量一次即可。
+  const canvasRect = (typeof graphCanvas !== 'undefined' && graphCanvas && graphCanvas.getBoundingClientRect)
+    ? graphCanvas.getBoundingClientRect()
+    : null;
   graphView.nodes.forEach(node => {
     const el = elById.get(String(node.id));
     if (!el) return;
@@ -1662,11 +1672,15 @@ function _measureNodes() {
     const w = r.width / composite;
     const h = r.height / composite;
     // T393：content-visibility 跳过的卡报的是占位盒（不是真身，见 _applyNodeLazyLayout），
-    // 与占位读数吻合就跳过——保留 _buildGraphData 从持久化 sizes 垫的初值，等卡进视口
-    // 由 ResizeObserver 补测真身。若不挡，_savePositions 会把占位再次存进 sizes，形成
-    // 「存盘值→下次占位→再存回」的自我强化（自动排版间距与分组边界跟着偏）。
+    // 与占位读数吻合且卡整盒在画布视口外才跳过——保留 _buildGraphData 从持久化 sizes
+    // 垫的初值，等卡进视口由 ResizeObserver 补测真身。若不挡，_savePositions 会把占位
+    // 再次存进 sizes，形成「存盘值→下次占位→再存回」的自我强化（自动排版间距与分组
+    // 边界跟着偏）。视口内的卡读数==戳时戳里记的就是真身（见上），必须收下。
     const ph = el.__cvPlaceholder;
-    if (ph && Math.abs(w - ph.w) <= 1 && Math.abs(h - ph.h) <= 1) return;
+    if (ph && Math.abs(w - ph.w) <= 1 && Math.abs(h - ph.h) <= 1
+      && canvasRect && canvasRect.width > 0 && canvasRect.height > 0
+      && (r.right <= canvasRect.left || r.left >= canvasRect.right
+        || r.bottom <= canvasRect.top || r.top >= canvasRect.bottom)) return;
     const prevW = Number(node.w) || 0;
     const prevH = Number(node.h) || 0;
     node.w = w;

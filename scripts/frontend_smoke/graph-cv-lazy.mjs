@@ -60,19 +60,21 @@ check('T376: _applyNodeLazyLayout——有尺寸卡挂 c-v＋占位尺寸，ai_e
   }
 });
 
-check('T393: _measureNodes 把占位读数挡在存盘外——占位没变保留旧尺寸，真身变了才收', () => {
+check('T393: _measureNodes 把占位读数挡在存盘外——屏外卡占位没变保留旧尺寸，真身变了才收', () => {
   if (typeof sandbox._measureNodes !== 'function') throw new Error('helper 未暴露');
-  const keep = ['graphInner', 'graphView', '_graphCompositeScale', '_syncGroupMembersByContainment'];
+  const keep = ['graphInner', 'graphView', 'graphCanvas', '_graphCompositeScale', '_syncGroupMembersByContainment'];
   const prev = {};
   for (const k of keep) prev[k] = vm.runInContext('typeof ' + k + ' === "undefined" ? undefined : ' + k, sandbox);
   try {
     vm.runInContext([
-      // 占位盒：contain-intrinsic-size 的内容尺寸 + padding/border（320×934），量到的仍是它
-      'var __elPh = { dataset: { nodeId: "n-ph" }, __cvPlaceholder: { w: 320, h: 934 }, getBoundingClientRect: function(){ return { width: 320, height: 934 }; } };',
+      // 画布盒 1200×800；2026-11-25 判据加「整盒在视口外」前提，假卡都给足坐标
+      'graphCanvas = { getBoundingClientRect: function(){ return { left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 }; } };',
+      // 占位盒：contain-intrinsic-size 的内容尺寸 + padding/border（320×934），量到的仍是它；整盒在视口外
+      'var __elPh = { dataset: { nodeId: "n-ph" }, __cvPlaceholder: { w: 320, h: 934 }, getBoundingClientRect: function(){ return { left: 0, top: 5000, right: 320, bottom: 5934, width: 320, height: 934 }; } };',
       // 同一张卡已经排过真身：读数离开占位盒，必须收
-      'var __elReal = { dataset: { nodeId: "n-real" }, __cvPlaceholder: { w: 320, h: 934 }, getBoundingClientRect: function(){ return { width: 520, height: 1200 }; } };',
+      'var __elReal = { dataset: { nodeId: "n-real" }, __cvPlaceholder: { w: 320, h: 934 }, getBoundingClientRect: function(){ return { left: 40, top: 100, right: 560, bottom: 1300, width: 520, height: 1200 }; } };',
       // 没挂 c-v 的新卡：照旧全收
-      'var __elPlain = { dataset: { nodeId: "n-plain" }, getBoundingClientRect: function(){ return { width: 280, height: 140 }; } };',
+      'var __elPlain = { dataset: { nodeId: "n-plain" }, getBoundingClientRect: function(){ return { left: 100, top: 100, right: 380, bottom: 240, width: 280, height: 140 }; } };',
       'var __els = [__elPh, __elReal, __elPlain];',
       'graphInner = { querySelectorAll: function(){ return __els; } };',
       'graphView.nodes = [',
@@ -92,11 +94,59 @@ check('T393: _measureNodes 把占位读数挡在存盘外——占位没变保�
   } finally {
     vm.runInContext([
       'graphInner = __prev_graphInner;',
+      'graphCanvas = __prev_graphCanvas;',
       'graphView.nodes = __prev_graphView_nodes;',
       '_graphCompositeScale = __prev__graphCompositeScale;',
       '_syncGroupMembersByContainment = __prev__syncGroupMembersByContainment;',
     ].join('\n'), Object.assign(sandbox, {
       __prev_graphInner: prev.graphInner,
+      __prev_graphCanvas: prev.graphCanvas,
+      __prev_graphView_nodes: prev.graphView ? prev.graphView.nodes : undefined,
+      __prev__graphCompositeScale: prev._graphCompositeScale,
+      __prev__syncGroupMembersByContainment: prev._syncGroupMembersByContainment,
+    }));
+  }
+});
+
+check('T393b: 视口内插入的卡 __cvPlaceholder 记到的就是真身盒——读数==戳也必须收并记入长高名单（2026-11-25 viz 压叠根因）', () => {
+  if (typeof sandbox._measureNodes !== 'function') throw new Error('helper 未暴露');
+  const keep = ['graphInner', 'graphView', 'graphCanvas', '_graphCompositeScale', '_syncGroupMembersByContainment'];
+  const prev = {};
+  for (const k of keep) prev[k] = vm.runInContext('typeof ' + k + ' === "undefined" ? undefined : ' + k, sandbox);
+  try {
+    vm.runInContext([
+      'graphCanvas = { getBoundingClientRect: function(){ return { left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 }; } };',
+      // 视口内的 viz 卡：插入即强制布局，戳里记的是真身盒（594），与后续每次读数都相同
+      'var __elOn = { dataset: { nodeId: "v1" }, __cvPlaceholder: { w: 682, h: 594 }, getBoundingClientRect: function(){ return { left: 40, top: 100, right: 722, bottom: 694, width: 682, height: 594 }; } };',
+      // 屏外的卡：c-v 真跳过，读数=占位盒，照旧跳过不收
+      'var __elOff = { dataset: { nodeId: "f1" }, __cvPlaceholder: { w: 342, h: 234 }, getBoundingClientRect: function(){ return { left: 0, top: 5000, right: 342, bottom: 5234, width: 342, height: 234 }; } };',
+      'var __els = [__elOn, __elOff];',
+      'graphInner = { querySelectorAll: function(){ return __els; } };',
+      'graphView.nodes = [',
+      '  { id: "v1", kind: "module", w: 640, h: 234 },',
+      '  { id: "f1", kind: "note", w: 300, h: 200 },',
+      '];',
+      '_graphCompositeScale = function(){ return 1; };',
+      '_syncGroupMembersByContainment = function(){};',
+      '_takeGraphResizedNodeIds();', // 清掉前面用例的残留，长高名单只看本轮
+      '_measureNodes();',
+    ].join('\n'), sandbox);
+    const got = JSON.parse(vm.runInContext('JSON.stringify(graphView.nodes.map(function(n){ return [n.w, n.h]; }))', sandbox));
+    if (got[0][0] !== 682 || got[0][1] !== 594) throw new Error('视口内的卡读数==戳没被收下（陈旧 234 永不自愈的根因）：' + JSON.stringify(got[0]));
+    if (got[1][0] !== 300 || got[1][1] !== 200) throw new Error('屏外卡的占位读数被误收：' + JSON.stringify(got[1]));
+    const grown = JSON.parse(vm.runInContext('JSON.stringify(_takeGraphResizedNodeIds())', sandbox));
+    if (JSON.stringify(grown) !== '["v1"]') throw new Error('长高名单应为 [v1]（f1 没变尺寸不该进）：' + grown);
+    return true;
+  } finally {
+    vm.runInContext([
+      'graphInner = __prev_graphInner;',
+      'graphCanvas = __prev_graphCanvas;',
+      'graphView.nodes = __prev_graphView_nodes;',
+      '_graphCompositeScale = __prev__graphCompositeScale;',
+      '_syncGroupMembersByContainment = __prev__syncGroupMembersByContainment;',
+    ].join('\n'), Object.assign(sandbox, {
+      __prev_graphInner: prev.graphInner,
+      __prev_graphCanvas: prev.graphCanvas,
       __prev_graphView_nodes: prev.graphView ? prev.graphView.nodes : undefined,
       __prev__graphCompositeScale: prev._graphCompositeScale,
       __prev__syncGroupMembersByContainment: prev._syncGroupMembersByContainment,
