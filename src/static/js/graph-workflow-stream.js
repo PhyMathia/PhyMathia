@@ -56,6 +56,12 @@ function _scheduleGraphSync() {
 // 超时是失败（该报错、该可重试）。上限取 2 分钟：思考型模型两次增量之间偶有长静默，
 // 别把正常慢流误判成挂死。
 const GRAPH_STREAM_IDLE_TIMEOUT_MS = 120000;
+// 正文进度看门狗（610，2026-11-25 夜实锤后落地）：静默看门狗只看「有没有字节」——
+// 病态上游滴 reasoning／保活字节就能把它无限喂着，正文一个不出用户就永远转圈
+// （当夜一条流 27 分钟零正文；另有两条挂 14／8 分钟才断）。按「正文增量」另设一只
+// 表：超时掐连接、按 TimeoutError 失败结算——思考慢可以等（4 分钟余量足够思考型
+// 出首段正文），黑洞不行。
+const GRAPH_STREAM_CONTENT_IDLE_TIMEOUT_MS = 240000;
 function _readStreamChunk(reader) {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -107,8 +113,23 @@ async function* _sseContentFrames(resp, opts) {
   const decoder = new TextDecoder();
   let buffer = '';
   let frameCount = 0;
+  let contentIdleTimer = null;
+  let contentIdleErr = null;
   try {
     const reader = resp.body.getReader();
+    // 正文进度看门狗（GRAPH_STREAM_CONTENT_IDLE_TIMEOUT_MS）：只按「正文增量」重置，
+    // 非正文字节（reasoning／保活）喂不死它；到点火先 cancel 读流（挂起的 read 以
+    // done 收场、循环退出），循环外把攒下的 err 抛出去——流按失败结算而非静默收尾。
+    const armContentIdle = () => {
+      if (contentIdleTimer) clearTimeout(contentIdleTimer);
+      contentIdleTimer = setTimeout(() => {
+        if (contentIdleErr) return;
+        contentIdleErr = new Error('AI 流式内容超时：' + Math.round(GRAPH_STREAM_CONTENT_IDLE_TIMEOUT_MS / 60000) + ' 分钟没有任何正文增量，已断开');
+        contentIdleErr.name = 'TimeoutError';
+        try { reader.cancel(); } catch (e) { /* 已结束/已取消：忽略 */ }
+      }, GRAPH_STREAM_CONTENT_IDLE_TIMEOUT_MS);
+    };
+    armContentIdle();
     while (true) {
       const { done, value } = await _readStreamChunk(reader);
       if (done) break;
@@ -132,6 +153,7 @@ async function* _sseContentFrames(resp, opts) {
           const delta = data && data.choices && data.choices[0] && data.choices[0].delta;
           if (delta && typeof _streamMeterAddDelta === 'function') _streamMeterAddDelta(meter, delta);
           if (delta && delta.content) {
+            armContentIdle();   // 正文到账＝重置正文进度表（读帧本身到账不重置）
             yield delta.content;
             frameCount++;
             if (frameCount % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
@@ -139,7 +161,9 @@ async function* _sseContentFrames(resp, opts) {
         }
       }
     }
+    if (contentIdleErr) throw contentIdleErr;
   } finally {
+    if (contentIdleTimer) clearTimeout(contentIdleTimer);
     if (typeof _streamMeterEnd === 'function') _streamMeterEnd(meter);
   }
 }

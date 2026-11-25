@@ -44,6 +44,11 @@ export async function run() {
     if (!stream.includes('if (!_bg) _scheduleWorkflowStreamProgress(content.length)')) {
       throw new Error('viz 后台进度串到了前台胶囊');
     }
+    // 610 正文进度看门狗：按正文增量计时（字节滴流喂不死它），超时按 TimeoutError 失败
+    if (!stream.includes('GRAPH_STREAM_CONTENT_IDLE_TIMEOUT_MS = 240000')) throw new Error('正文进度看门狗没落');
+    if (!stream.includes("contentIdleErr.name = 'TimeoutError'")) throw new Error('正文超时没按 TimeoutError 失败结算');
+    if (!/armContentIdle\(\);[^\n]*\n\s*yield delta\.content/.test(stream)) throw new Error('正文增量没重置看门狗');
+    if (!stream.includes('if (contentIdleErr) throw contentIdleErr;')) throw new Error('正文超时错误没有抛出');
     if (!gen.includes('if (!_bg && typeof _nodeGenBegin') || !gen.includes('if (!_bg && typeof _nodeGenEnd')) {
       throw new Error('viz 后台仍进节点级排队闸');
     }
