@@ -778,10 +778,16 @@
       display: flex;
       flex-direction: column;
       transform: translateX(-100%);
-      transition: transform 0.3s ease;
+      /* 静止态彻底不绘制（2026-11-25，backlog 514）：关着的抽屉只是被 transform 推出视口，
+         元素仍在合成树里占一张整高表面，显存一紧就丢层重合成。visibility 参与过渡但延迟到
+         滑出结束再落，入场即时可见（同 2026-11-20 两块引导遮罩的写法）。 */
+      visibility: hidden;
+      transition: transform 0.3s ease, visibility 0s linear 0.3s;
     }
     .sidebar.open {
       transform: translateX(0);
+      visibility: visible;
+      transition: transform 0.3s ease, visibility 0s linear 0s;
     }
 
     .sidebar-header {
@@ -3258,7 +3264,10 @@
        关着时只是被 transform 推出视口，元素仍在、仍是整高——各占一张全高 backdrop-filter
        渲染表面。四张全高表面常驻，GPU 表面吃紧时最先丢的就是它们和顶栏（用户截图：顶栏
        整条消失、左右两侧各一条纯色竖带）。关着时模糊结果没有任何像素能看到，摘掉零观感损失；
-       展开态（.open / .active / .show）保留磨砂。 */
+       展开态（.open / .active / .show）保留磨砂。
+       2026-11-25（backlog 514 收尾）：光摘磨砂层还在——推进视口的整高元素照样占合成表面。
+       静止态 visibility: hidden 落在各组件规则里（styles-panels.css 的 .knowledge-panel /
+       .settings-overlay、本文件的 .sidebar），过渡延迟到滑出结束，观感不变。 */
     .sidebar.aurora-glass:not(.open),
     .knowledge-panel.aurora-glass:not(.active),
     .settings-overlay:not(.show) .settings-drawer.aurora-glass {

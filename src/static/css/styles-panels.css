@@ -2,10 +2,18 @@
     .knowledge-panel {
       position: fixed; top: 0; right: 0; bottom: 0; z-index: var(--z-toast);
       width: min(560px, 92vw);
-      transform: translateX(100%); transition: transform 0.35s cubic-bezier(0.4,0,0.2,1);
+      transform: translateX(100%);
+      /* 静止态彻底不绘制（2026-11-25，backlog 514）：知识/记忆两块面板关着时仍在合成树里
+         占整高表面。visibility 延迟到滑出结束再落，入场即时（同 2026-11-20 引导遮罩写法）。 */
+      visibility: hidden;
+      transition: transform 0.35s cubic-bezier(0.4,0,0.2,1), visibility 0s linear 0.35s;
       display: flex; flex-direction: column; overflow: hidden;
     }
-    .knowledge-panel.active { transform: translateX(0); }
+    .knowledge-panel.active {
+      transform: translateX(0);
+      visibility: visible;
+      transition: transform 0.35s cubic-bezier(0.4,0,0.2,1), visibility 0s linear 0s;
+    }
 
     /* Knowledge panel - 底色/磨砂交给 .aurora-glass--panel（本规则再写 background 简写会盖掉极光层）。
        第 4 轮「所有面板统一极光磨砂」：这里原来自带一团 CSS 极光（::before/::after 两团 + 两个
@@ -6738,8 +6746,10 @@ html[data-theme="light"][data-panel-skin="candy"] .thinking-slider {
    （6% 白的次级薄层色），整块面板近乎全透（2026-11-11 用户实拍）；且本表在
    styles-panels.min.css（后加载），background 简写会把 .aurora-glass 的极光
    background-image 一并重置。 */
-.settings-overlay { position: fixed; inset: 0; z-index: 9000; background: rgba(0, 0, 0, .45); opacity: 0; pointer-events: none; transition: opacity .18s ease; }
-.settings-overlay.show { opacity: 1; pointer-events: auto; }
+.settings-overlay { position: fixed; inset: 0; z-index: 9000; background: rgba(0, 0, 0, .45); opacity: 0; pointer-events: none; visibility: hidden; transition: opacity .18s ease, visibility 0s linear .22s; }
+/* visibility 延迟取抽屉滑出的 .22s（不是遮罩淡出的 .18s）——早落 40ms 会把尾巴裁掉。
+   入场那条把延迟归零，否则抽屉要等半秒才可见（同 2026-11-20 引导遮罩写法）。 */
+.settings-overlay.show { opacity: 1; pointer-events: auto; visibility: visible; transition: opacity .18s ease, visibility 0s linear 0s; }
 /* T448：抽屉 720→880——模型页右栏标题要和「更新列表/删除分组」两个文字按钮同行，
    720 下标题只剩约 80px 必截断；全局加宽各页签一起呼吸，小屏仍走 94vw（≤640px 全屏）。 */
 .settings-drawer { position: absolute; top: 0; right: 0; height: 100%; width: min(880px, 94vw); display: flex; flex-direction: column; border-left: 1px solid var(--border); color: var(--text-primary); transform: translateX(102%); transition: transform .22s ease; }
@@ -6905,6 +6915,9 @@ html[data-theme="light"][data-panel-skin="candy"] .thinking-slider {
   background: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+  /* 抽屉把记忆面板（.knowledge-panel，无 .active）搬进来内嵌：静止态那条
+     visibility: hidden 会连它一起藏掉，这里显式放行。归位后本类摘掉，隐藏照常生效。 */
+  visibility: visible !important;
   overflow: visible !important;
   z-index: auto !important;
 }
