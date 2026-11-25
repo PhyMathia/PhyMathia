@@ -8,6 +8,7 @@
     "verify": "node scripts/check_context_budget.mjs && node scripts/frontend_smoke.mjs && python3 -m pytest tests/ -q",
     "check:ctx": "node scripts/check_context_budget.mjs",
     "perf:layers": "node scripts/debug_canvas_flicker.mjs",
+    "perf:gate": "node scripts/perf_gate.mjs",
     "version:bump": "node scripts/bump_version.mjs"
   },
   "devDependencies": {
