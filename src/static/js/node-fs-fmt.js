@@ -45,6 +45,9 @@ function _nodeFsFmtKit() {
   let texSpot = null; // 插入点＝开行时记下的选区（编辑期间正文不动，节点引用一直有效）
   let texTimer = 0;
   let texPending = false; // 桥上渲染中（预览页异步路，ack 回来才落 DOM）
+  let tblRow = null; // 表格行列增删行（591③，光标进格子才亮）
+  let langRow = null; // 代码语言行（591③，代码块选中才亮）
+  let langInput = null;
   let saved = null; // 最近一次落在编辑面里的选区（点工具条时焦点会离开编辑面）
   let hist = null; // 接管后的撤销栈
   let histTimer = 0;
@@ -1184,6 +1187,332 @@ function _nodeFsFmtKit() {
     return row;
   };
 
+  // ---------- 结构补全（591③，2026-11-25）：表格加减行列／代码块选语言／粘贴保格式 ----------
+
+  // 光标所在格＋所属表（表格不是原子块，格子照常可编辑——行列增删都围着这个格做）
+  const tblAt = () => {
+    const r = selRange() || rangeFrom(saved);
+    const cell = r ? cellOf(container, r.startContainer) : null;
+    const table = cell && cell.closest ? cell.closest('table') : null;
+    if (!cell || !table || !inside(container, table)) return null;
+    const row = cell.closest('tr');
+    if (!row) return null;
+    return { cell, table, row, cells: kids(row.children), rows: kids(table.querySelectorAll('tr')) };
+  };
+  const alignOf = (el) => {
+    const m = /text-align\s*:\s*(center|right|left)/i.exec(String((el && el.getAttribute && el.getAttribute('style')) || ''));
+    return m ? 'text-align:' + m[1].toLowerCase() + ';' : '';
+  };
+  const dropTable = (table) => {
+    const p = table.parentNode;
+    const next = table.nextElementSibling;
+    table.remove();
+    if (p && !isTextBlock(next)) p.insertBefore(emptyP(), next);
+  };
+  // 行列增删（全走 manual 接管撤销；删到只剩一行/一列＝连表一起收，光标挪到表后）
+  const tableOp = (kind) => {
+    const t = tblAt();
+    if (!t) return { ok: false, msg: '光标先点进一个格子里' };
+    const ci = t.cells.indexOf(t.cell);
+    return manual(() => {
+      if (kind === 'row-add') {
+        const nr = document.createElement('tr');
+        // 光标在表头：新行落到表体开头（表头只有一行才是合法表格）；在表体：紧跟当前行
+        const inHead = tagOf(t.row.parentNode) === 'THEAD';
+        for (const c of t.cells) {
+          const nc = document.createElement(!inHead && tagOf(c) === 'TH' ? 'th' : 'td');
+          const al = alignOf(c);
+          if (al) nc.setAttribute('style', al);
+          nr.appendChild(nc);
+        }
+        if (inHead) {
+          let body = t.table.querySelector('tbody');
+          if (!body) {
+            // 只有表头的表（粘贴单行表常这样）：补个表体再落行——裸 tr 直插 table 会被
+            // 序列化器按文档序当表头行，表头反倒挪去表体，行列全错位（2026-11-25 实踩）
+            body = document.createElement('tbody');
+            t.table.appendChild(body);
+          }
+          body.insertBefore(nr, body.firstChild);
+        } else {
+          t.row.parentNode.insertBefore(nr, t.row.nextSibling);
+        }
+        caretAt(nr.children[Math.min(ci, nr.children.length - 1)], true);
+        return 'keep';
+      }
+      if (kind === 'col-add') {
+        let first = null;
+        for (const tr of t.rows) {
+          const tcs = kids(tr.children);
+          const ref = tcs[Math.min(ci, tcs.length - 1)];
+          if (!ref) continue;
+          const nc = document.createElement(tagOf(ref) === 'TH' ? 'th' : 'td');
+          const al = alignOf(ref);
+          if (al) nc.setAttribute('style', al);
+          tr.insertBefore(nc, ref.nextSibling);
+          if (!first && tr === t.row) first = nc;
+        }
+        if (first) caretAt(first, true);
+        return 'keep';
+      }
+      if (kind === 'row-del') {
+        t.row.remove();
+        if (!t.table.querySelector('tr')) dropTable(t.table);
+        return true;
+      }
+      if (kind === 'col-del') {
+        for (const tr of t.rows) {
+          const tcs = kids(tr.children);
+          if (tcs[ci]) tcs[ci].remove();
+        }
+        if (!t.table.querySelector('th, td')) dropTable(t.table);
+        return true;
+      }
+      return false;
+    }) ? { ok: true } : { ok: false, msg: BAD };
+  };
+
+  // 代码语言：序列化器本就认 code 的 language-* 类（存成 ```lang），这里补「写」的入口。
+  // 代码块是原子块（contenteditable=false），点它＝整块选中，语言行在工具条上亮出来
+  const LANG_RE = /^[\w#+.\-]{1,20}$/;
+  const langOf = (pre) => {
+    const code = pre && pre.querySelector ? pre.querySelector('code') : null;
+    const m = /language-([\w#+.\-]+)/.exec(String((code && code.className) || ''));
+    return m ? m[1] : '';
+  };
+  const preAt = () => {
+    const r = selRange() || rangeFrom(saved);
+    const pre = r ? soloPre(r) : null;
+    if (!pre || !inside(container, pre)) {
+      const el = r ? elOf(r.startContainer) : null;
+      const p2 = el && el.closest ? el.closest('pre') : null;
+      return (p2 && inside(container, p2)) ? p2 : null;
+    }
+    return pre;
+  };
+  const applyLang = () => {
+    const pre = preAt();
+    if (!pre) return { ok: false, msg: '先点一下代码块选中它' };
+    const raw = String(langInput && langInput.value || '').trim();
+    if (raw && !LANG_RE.test(raw)) return { ok: false, msg: '语言用字母数字和 #-+.，20 字内' };
+    return manual(() => {
+      const code = pre.querySelector('code') || pre;
+      if (raw) code.setAttribute('class', 'language-' + raw);
+      else code.removeAttribute('class');
+      return true;
+    }) ? { ok: true, msg: raw ? '语言已设为 ' + raw : '语言已清掉' } : { ok: false, msg: BAD };
+  };
+
+  // 粘贴保格式：剪贴板 text/html → 白名单转换 → 光标处插入。拍板口径（2026-11-25）：
+  // https 外链图收、截图类内嵌数据（data:/blob:）与相对地址不收；其余只收编辑面认识的
+  // 结构（标题/列表/引用/表格/代码/行内件），不认识的壳拆掉取内容。返回 true＝已处理
+  //（调用方不再走纯文本路），false＝转不动、回纯文本路
+  const PASTE_MAX = 500000; // html 字符上限：超出整段降级纯文字（转也没意义）
+  const PASTE_BLOCK = /^(P|H[1-6]|UL|OL|LI|BLOCKQUOTE|PRE|TABLE|THEAD|TBODY|TR|TH|TD|HR|DIV|SECTION|ARTICLE|MAIN|HEADER|FOOTER|ASIDE|NAV|FIGURE|FIGCAPTION|ADDRESS|DL|DT|DD|CENTER)$/;
+  const PASTE_DROP = /^(SCRIPT|STYLE|META|LINK|IFRAME|OBJECT|EMBED|TEMPLATE|NOSCRIPT|SVG|CANVAS|VIDEO|AUDIO|SOURCE|TRACK|MAP|AREA|FORM|BUTTON|INPUT|SELECT|TEXTAREA|HEAD)$/;
+  const PASTE_MAP = { B: 'b', STRONG: 'b', I: 'i', EM: 'i', S: 'strike', DEL: 'strike', STRIKE: 'strike', U: 'u', INS: 'u', SUB: 'sub', SUP: 'sup', CODE: 'code' };
+  const convInlineKids = (src, out) => {
+    for (const c of kids(src.childNodes)) convNode(c, out);
+  };
+  const convTable = (src, out) => {
+    const trs = kids(src.querySelectorAll('tr'));
+    if (!trs.length) return;
+    let width = 0;
+    const grid = trs.map((tr) => {
+      const cells = kids(tr.children).map((c) => {
+        const holder = document.createElement('div');
+        convInlineKids(c, holder);
+        return String(holder.textContent || '').replace(/\s+/g, ' ').trim();
+      });
+      if (cells.length > width) width = cells.length;
+      return cells;
+    });
+    for (const row of grid) { while (row.length < width) row.push(''); row.length = width; }
+    const tb = document.createElement('table');
+    const head = document.createElement('thead');
+    const hr2 = document.createElement('tr');
+    for (const t of grid[0]) { const th = document.createElement('th'); th.textContent = t; hr2.appendChild(th); }
+    head.appendChild(hr2);
+    tb.appendChild(head);
+    if (grid.length > 1) {
+      const body = document.createElement('tbody');
+      for (let r2 = 1; r2 < grid.length; r2++) {
+        const tr3 = document.createElement('tr');
+        for (const t of grid[r2]) { const td = document.createElement('td'); td.textContent = t; tr3.appendChild(td); }
+        body.appendChild(tr3);
+      }
+      tb.appendChild(body);
+    }
+    out.appendChild(tb);
+  };
+  const convNode = (src, out) => {
+    if (!src) return;
+    if (src.nodeType === 3) { out.appendChild(document.createTextNode(String(src.nodeValue || ''))); return; }
+    if (src.nodeType !== 1) return;
+    const tag = String(src.tagName || '').toUpperCase();
+    if (PASTE_DROP.test(tag)) return;
+    if (src.classList && (src.classList.contains('katex') || src.classList.contains('katex-display'))) {
+      // 复制带公式的页面：annotation 里有 TeX 原文——还原成 $…$，存回重渲还是公式
+      const tex = texOf(src);
+      if (tex) out.appendChild(document.createTextNode((src.classList.contains('katex-display') ? '\n$$' : '$') + tex + (src.classList.contains('katex-display') ? '$$\n' : '$')));
+      return;
+    }
+    if (tag === 'IMG') {
+      const u = String(src.getAttribute('src') || '');
+      if (!/^https?:\/\//i.test(u)) return; // 截图内嵌数据/相对地址：不收（拍板口径）
+      const img = document.createElement('img');
+      img.setAttribute('src', u);
+      const alt = String(src.getAttribute('alt') || '').slice(0, 200);
+      if (alt) img.setAttribute('alt', alt);
+      out.appendChild(img);
+      return;
+    }
+    if (tag === 'BR') { out.appendChild(document.createElement('br')); return; }
+    if (tag === 'HR') { out.appendChild(document.createElement('hr')); return; }
+    if (tag === 'TABLE') { convTable(src, out); return; }
+    if (tag === 'PRE') {
+      const pre = document.createElement('pre');
+      const code = document.createElement('code');
+      code.textContent = String(src.textContent || '').replace(/\n$/, '');
+      const m = /language-([\w#+.\-]+)/.exec(String(src.className || '') + ' ' + String((src.firstElementChild && src.firstElementChild.className) || ''));
+      if (m) code.setAttribute('class', 'language-' + m[1]);
+      pre.appendChild(code);
+      out.appendChild(pre);
+      return;
+    }
+    if (tag === 'LI') {
+      const li = document.createElement('li');
+      for (const c of kids(src.childNodes)) {
+        const t2 = String(c.tagName || '').toUpperCase();
+        if (t2 === 'P' || t2 === 'DIV') convInlineKids(c, li); // 松散壳拆平，粘贴产物一律紧排
+        else convNode(c, li);
+      }
+      out.appendChild(li);
+      return;
+    }
+    if (PASTE_MAP[tag]) {
+      const el = document.createElement(PASTE_MAP[tag]);
+      convInlineKids(src, el);
+      out.appendChild(el);
+      if (!el.firstChild) return; // 空壳不落
+      return;
+    }
+    if (tag === 'A') {
+      const el = document.createElement('a');
+      const href = safeUrl(String(src.getAttribute('href') || ''));
+      if (href) el.setAttribute('href', href);
+      convInlineKids(src, el);
+      out.appendChild(el);
+      return;
+    }
+    if (PASTE_BLOCK.test(tag)) {
+      // 标题/列表/引用照认；DIV 一类壳：全是行内容→当段落，含块→透明拆壳
+      if (/^H[1-6]$/.test(tag)) {
+        const h = document.createElement(tag.toLowerCase());
+        convInlineKids(src, h);
+        out.appendChild(h);
+        return;
+      }
+      if (tag === 'UL' || tag === 'OL') {
+        const l = document.createElement(tag.toLowerCase());
+        for (const c of kids(src.children)) {
+          if (tagOf(c) === 'LI') convNode(c, l);
+          else { const li = document.createElement('li'); convNode(c, li); l.appendChild(li); }
+        }
+        if (l.firstElementChild) out.appendChild(l);
+        return;
+      }
+      if (tag === 'BLOCKQUOTE') {
+        const q = document.createElement('blockquote');
+        for (const c of kids(src.childNodes)) convNode(c, q);
+        if (q.firstChild) out.appendChild(q);
+        return;
+      }
+      const blockyKid = kids(src.children).some((c) => PASTE_BLOCK.test(tagOf(c)));
+      if (!blockyKid) {
+        const p = document.createElement('p');
+        convInlineKids(src, p);
+        if (p.firstChild) out.appendChild(p);
+        return;
+      }
+      convInlineKids(src, out);
+      return;
+    }
+    convInlineKids(src, out); // 未知壳：透明拆掉取内容
+  };
+  const convPaste = (html) => {
+    const raw = String(html || '');
+    if (!raw || raw.length > PASTE_MAX || typeof DOMParser === 'undefined') return null;
+    let body = null;
+    try { body = new DOMParser().parseFromString(raw, 'text/html').body; } catch (e) { return null; }
+    if (!body) return null;
+    const root = document.createElement('div');
+    for (const c of kids(body.childNodes)) convNode(c, root);
+    if (!String(root.textContent || '').trim() && !root.querySelector('img')) return null;
+    return root;
+  };
+  const relockAtoms = () => {
+    try {
+      const atoms = container.querySelectorAll(ATOMS);
+      for (const a of atoms) lock(a);
+    } catch (e) {}
+  };
+  const paste = (ev) => {
+    let html = '';
+    try { html = ev && ev.clipboardData ? String(ev.clipboardData.getData('text/html') || '') : ''; } catch (e) { html = ''; }
+    if (!html) return false;
+    const root = convPaste(html);
+    if (!root) return false;
+    if (ev && ev.preventDefault) ev.preventDefault();
+    const r = ensure();
+    if (!r) { toast(NO_CARET); return true; }
+    const inCell = !!cellOf(container, r.startContainer);
+    const hasBlock = kids(root.children).some((c) => PASTE_BLOCK.test(tagOf(c)) || atom(c));
+    return manual(() => {
+      const live2 = selRange() || rangeFrom(saved);
+      if (!live2) return false;
+      if (inCell || !hasBlock) {
+        // 格子里／纯行内容：就地插（不劈块）
+        if (!live2.collapsed) live2.deleteContents();
+        const frag = document.createDocumentFragment();
+        while (root.firstChild) frag.appendChild(root.firstChild);
+        live2.insertNode(frag);
+        live2.collapse(false);
+        select(live2);
+        relockAtoms();
+        return 'keep';
+      }
+      // 带结构：光标所在的叶子从光标处劈成两半，块序列插中间，后缀落回新叶子
+      const leaf = leafOf(container, live2.startContainer) || leafOf(container, live2.endContainer);
+      if (!leaf || leaf === container) {
+        const anchor = container;
+        anchor.appendChild(root);
+        if (!isTextBlock(anchor.lastElementChild)) anchor.appendChild(emptyP());
+        caretAt(anchor.lastElementChild, true);
+        relockAtoms();
+        return 'keep';
+      }
+      const tail = document.createElement(tagOf(leaf));
+      const after = document.createRange();
+      after.setStart(live2.startContainer, live2.startOffset);
+      after.setEnd(leaf, leaf.childNodes.length);
+      tail.appendChild(after.extractContents());
+      // 先快照子序列（kids 拷贝数组）——不能 while(root.firstChild) 推着摸：push 不挪节点，
+      // 摸不到头会转到数组爆长才停（2026-11-25 实踩：粘贴带结构内容必挂）。insertBefore
+      // 本身会把节点从 root 挪出去，快照后逐个搬即可
+      const seq = kids(root.childNodes);
+      let at = leaf.nextSibling;
+      for (const n of seq) { leaf.parentNode.insertBefore(n, at); }
+      leaf.parentNode.insertBefore(tail, at);
+      const last = seq.length ? seq[seq.length - 1] : leaf;
+      if (isTextBlock(last)) caretAt(last, false);
+      else caretAt(tail, true);
+      for (const n of seq) { if (tagOf(n) === 'UL' || tagOf(n) === 'OL') mergeLists(n); }
+      relockAtoms();
+      return 'keep';
+    });
+  };
+
   // ---------- 状态与工具条 ----------
 
   // 选区切到的字是否全在匹配 sel 的元素里——沿活 DOM 走，不用 cloneContents：
@@ -1230,7 +1559,8 @@ function _nodeFsFmtKit() {
     const el = bar.querySelector('[data-fmt="' + name + '"]');
     if (el) el.setAttribute('aria-pressed', on ? 'true' : 'false');
   };
-  // 光标在哪就亮哪：五个行内钮的按下态、引用钮、段落类型下拉（输入行开着时不判）
+  // 光标在哪就亮哪：五个行内钮的按下态、引用钮、段落类型下拉（输入行开着时不判）；
+  // 表格行/语言行按光标落点亮（591③）——开行那一刻才填当前值，不盖正在打的字
   const refresh = () => {
     if (!bar || !blockSel || !linkRow || !texRow || !linkRow.hidden || !texRow.hidden) return;
     const r = selRange() || rangeFrom(saved);
@@ -1239,6 +1569,12 @@ function _nodeFsFmtKit() {
     for (const k of ['bold', 'italic', 'strike', 'code', 'link']) setPressed(k, !!st[k]);
     setPressed('quote', !!bs.inQuote);
     blockSel.value = /^(p|h[1-6]|ul|ol|task|code)$/.test(bs.kind) ? bs.kind : '';
+    if (tblRow) tblRow.hidden = bs.kind !== 'cell';
+    if (langRow) {
+      const show = bs.kind === 'code';
+      if (show && langRow.hidden) langInput.value = langOf(preAt());
+      langRow.hidden = !show;
+    }
   };
 
   const run = (name) => {
@@ -1261,6 +1597,11 @@ function _nodeFsFmtKit() {
       else if (name === 'formula') res = openTex(null);
       else if (name === 'tex-ok') res = texApply();
       else if (name === 'tex-no') { closeTex(true); res = { ok: true, noop: true }; }
+      else if (name === 'tbl-row-add') res = tableOp('row-add');
+      else if (name === 'tbl-col-add') res = tableOp('col-add');
+      else if (name === 'tbl-row-del') res = tableOp('row-del');
+      else if (name === 'tbl-col-del') res = tableOp('col-del');
+      else if (name === 'lang-ok') res = applyLang();
       else if (name.slice(0, 6) === 'block:') res = setBlock(name.slice(6));
       else res = { ok: false };
     } catch (e) { res = { ok: false, msg: BAD }; }
@@ -1299,6 +1640,19 @@ function _nodeFsFmtKit() {
       + btn('table', '插入表格', '＋ 表格', 'nfs-fmt-txt', false)
       + btn('formula', '插入公式', '＋ 公式', 'nfs-fmt-txt', false)
       + '</div>'
+      // 表格上下文行（591③）：光标进格子才亮，加减都围着当前格/当前列做
+      + '<div class="nfs-fmt-tbl" hidden>'
+      + btn('tbl-row-add', '在下面加一行', '＋ 行', 'nfs-fmt-txt', false)
+      + btn('tbl-col-add', '在右边加一列', '＋ 列', 'nfs-fmt-txt', false)
+      + btn('tbl-row-del', '删掉当前行', '－ 行', 'nfs-fmt-txt', false)
+      + btn('tbl-col-del', '删掉当前列', '－ 列', 'nfs-fmt-txt', false)
+      + '</div>'
+      // 代码语言行（591③）：代码块选中才亮；序列化器本就认 language-* 类
+      + '<div class="nfs-fmt-lang" hidden>'
+      + '<span class="nfs-fmt-lang-lab">代码语言</span>'
+      + '<input type="text" class="nfs-fmt-lang-in" placeholder="如 js、python；留空＝无" aria-label="代码语言" spellcheck="false">'
+      + btn('lang-ok', '设定语言', '设定', 'nfs-fmt-txt nfs-fmt-ok', false)
+      + '</div>'
       + '<div class="nfs-fmt-link" hidden>'
       + '<input type="text" class="nfs-fmt-url" placeholder="链接地址，如 example.com；留空＝去掉链接" aria-label="链接地址" spellcheck="false">'
       + btn('link-ok', '确定', '确定', 'nfs-fmt-txt nfs-fmt-ok', false)
@@ -1324,6 +1678,9 @@ function _nodeFsFmtKit() {
     texInput = bar.querySelector('.nfs-fmt-tex-in');
     texMode = bar.querySelector('.nfs-fmt-tex-mode');
     texPv = bar.querySelector('.nfs-fmt-tex-pv');
+    tblRow = bar.querySelector('.nfs-fmt-tbl');
+    langRow = bar.querySelector('.nfs-fmt-lang');
+    langInput = bar.querySelector('.nfs-fmt-lang-in');
     // 关着 styleWithCSS：加粗吐 <b> 不吐 <span style>（序列化器只认前者）
     try {
       cssWas = document.queryCommandState('styleWithCSS');
@@ -1355,6 +1712,10 @@ function _nodeFsFmtKit() {
     on(texMode, 'change', () => { texPreviewRender(); });
     on(texInput, 'keydown', (ev) => {
       if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); closeTex(true); }
+    });
+    // 语言行（591③）：Enter 设定；Esc 不归这行管（语言行不是弹层，Esc 留给退出编辑）
+    on(langInput, 'keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); ev.stopPropagation(); run('lang-ok'); }
     });
     // 符号面板：往 textarea 光标处插 TeX（data-sym 与 data-fmt 不同名，互不相认）
     on(texRow, 'click', (ev) => {
@@ -1434,6 +1795,9 @@ function _nodeFsFmtKit() {
         texTarget = null;
         texSpot = null;
         texPending = false;
+        tblRow = null;
+        langRow = null;
+        langInput = null;
         container = null;
       },
       refresh,
@@ -1444,6 +1808,14 @@ function _nodeFsFmtKit() {
         closeLink(true);
         return true;
       },
+      // 存完留编辑态用（591④）：正文被成品 HTML 换过之后撤销栈重开一页——旧栈快照
+      // 对着已不存在的 DOM，放任 Ctrl+Z 会把换之前的旧正文整份翻回来
+      reset() {
+        clearTimeout(histTimer);
+        hist = container ? { undo: [], redo: [], base: snap(), clean: true } : null;
+      },
+      // 富文本粘贴（591③）：处理成功返回 true（已 preventDefault，调用方不用再走纯文本路）
+      paste,
     };
   };
 

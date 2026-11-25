@@ -4573,6 +4573,105 @@ html[data-theme="light"] .graph-node-fs,
   border-radius: var(--r-xs);
 }
 
+/* ---------- 591③ 结构补全：表格行列行／代码语言行（预览页内嵌串同观感，改观感两处同步）---------- */
+.nfs-fmt-tbl,
+.nfs-fmt-lang {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: wrap;
+}
+
+.nfs-fmt-tbl[hidden],
+.nfs-fmt-lang[hidden] {
+  display: none;
+}
+
+.nfs-fmt-lang-lab {
+  font-size: 11px;
+  color: var(--text-secondary);
+  opacity: 0.75;
+  padding: 0 4px 0 2px;
+}
+
+.nfs-fmt-lang-in {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--glass-border);
+  background: color-mix(in srgb, var(--panel-bg) 60%, transparent);
+  color: var(--text-primary);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12.5px;
+  outline: none;
+}
+
+.nfs-fmt-lang-in:focus {
+  border-color: var(--accent);
+}
+
+/* ---------- 591④ 小修余项：拒存指段闪烁＋关闭三选条 ---------- */
+/* 对不上的那块闪红框（_nodeFsEditFlashBad 打类，2.6s 后自摘） */
+.graph-node-fs-content .nfs-edit-badblock {
+  outline: 2px solid color-mix(in srgb, #e5484d 75%, transparent);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+  animation: nfs-badblock-flash 0.9s ease-in-out 2;
+}
+
+@keyframes nfs-badblock-flash {
+  50% {
+    background: color-mix(in srgb, #e5484d 14%, transparent);
+  }
+}
+
+/* 三选条：改动未保存时关编辑给出路（保存并退出／放弃修改／继续编辑），
+   挂在全屏 body 里、吸顶工具条下方；预览页同款在 node-fs-toolbar.js 内嵌串 */
+.graph-node-fs-edit-confirm {
+  position: sticky;
+  top: 96px;
+  z-index: 16;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  max-width: var(--measure, 748px);
+  margin: 10px auto 0;
+  padding: 8px 12px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--glass-border);
+  background: var(--panel-bg);
+  box-shadow: var(--shadow-l);
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.graph-node-fs-edit-confirm-msg {
+  flex: none;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-right: 2px;
+}
+
+.graph-node-fs-edit-confirm button {
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--text-secondary) 14%, transparent);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.graph-node-fs-edit-confirm button:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-secondary) 24%, transparent);
+}
+
 /* ---------- 拖线吸附高亮（2026-10-10 ② 统一吸附）---------- */
 /* 拖线悬停在「松手即可连」的节点身上时打虚线描边；与选中态（实线）区分 */
 .graph-node.graph-link-drop-target {

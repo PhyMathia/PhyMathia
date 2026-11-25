@@ -98,7 +98,8 @@ const facts = (p, rootSel, barSel) => p.evaluate(({ rootSel, barSel, ATOMS }) =>
   const block = bar ? bar.querySelector('.nfs-fmt-block') : null;
   return {
     md,
-    mis: (typeof _nodeFsEditVisibleMismatch === 'function' && c) ? _nodeFsEditVisibleMismatch(md, c) : null,
+    mis: (typeof _nodeFsEditMismatchBlock === 'function' && c) ? (_nodeFsEditMismatchBlock(md, c) != null) : null,
+    bad: (typeof _nodeFsSerializeVerified === 'function' && c) ? _nodeFsSerializeVerified(c).bad : null,
     sel,
     pressed,
     block: block ? block.value : null,
@@ -247,7 +248,7 @@ await step('工具条挂上：14 枚按钮＋段落类型下拉＋链接/公式�
     syms: document.querySelectorAll('.nfs-fmt-tex-sym').length,
     pos: getComputedStyle(document.querySelector('.nfs-fmt')).position,
   }));
-  must(info.fmts.join(',') === 'bold,italic,strike,code,link,quote,hr,table,formula,link-ok,link-no,tex-ok,tex-no', '按钮名单不对', info.fmts);
+  must(info.fmts.join(',') === 'bold,italic,strike,code,link,quote,hr,table,formula,tbl-row-add,tbl-col-add,tbl-row-del,tbl-col-del,lang-ok,link-ok,link-no,tex-ok,tex-no', '按钮名单不对', info.fmts);
   must(info.opts.join(',') === ',p,h1,h2,h3,h4,h5,h6,ul,ol,task,code', '下拉选项不对', info.opts);
   must(info.linkHidden === true, '链接输入行默认应收着');
   must(info.texHidden === true, '公式编辑行默认应收着');
@@ -577,6 +578,169 @@ await step('公式替换进撤销栈：Ctrl+Z 退回旧公式、重做回来', a
   must(f2.md.includes('$E=mc^3$') && f2.mis === false, '重做应回新公式且过自检', f2.md.slice(-80));
 });
 
+// ---------- ③④ 结构补全＋小修余项（2026-11-25）----------
+
+await step('591④ 手打 # 按字面存：新段落行首打 #，保存自动转义、重开还是普通文字', async () => {
+  await resetToBase();
+  await caret('p', 0, 4);
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('# 手打的标题');
+  await page.waitForTimeout(400);
+  // 保存：对账先不符（拼回会变标题），转义修补后放行
+  await page.click('.graph-node-fs-head-actions button:has-text("保存")');
+  await page.waitForFunction(() => !document.querySelector('.graph-node-fs-content[contenteditable="true"]'), null, { timeout: 5000 });
+  const saved = await page.evaluate(() => _findGraphNode('n1').content);
+  must(saved.includes('\\# 手打的标题'), '手打的 # 应转义成普通文字', saved);
+  must(!saved.includes('\n# 手打的标题'), '不该变成真标题', saved);
+  await openEdit();
+  const again = await page.evaluate(() => _nodeFsSerializeVerified(document.querySelector('.graph-node-fs-content')).md);
+  must(again === saved, '重开（带转义修补）应与存的一致（往返稳）', { again, saved });
+});
+
+await step('591④ 手打 - 与 1. 同口径：转义存普通文字', async () => {
+  await resetToBase();
+  await caret('p', 0, 4);
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('- 手打的列表');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('1. 手打的序号');
+  await page.waitForTimeout(400);
+  await page.click('.graph-node-fs-head-actions button:has-text("保存")');
+  await page.waitForFunction(() => !document.querySelector('.graph-node-fs-content[contenteditable="true"]'), null, { timeout: 5000 });
+  const saved = await page.evaluate(() => _findGraphNode('n1').content);
+  must(saved.includes('\\- 手打的列表') && saved.includes('1\\. 手打的序号'), '手打 - 与 1. 应按字面转义', saved);
+  must(!saved.includes('\n- 手打的列表') && !saved.includes('\n1. 手打的序号'), '不该变成真列表/真序号', saved);
+});
+
+await step('591④ 拒存指明哪段：转不动的坏写法指段落＋闪框＋留在编辑态', async () => {
+  await resetToBase();
+  // 手打行内图记号（![]()）＝转义修不动的那种：拼回重渲会把这行变成真 <img>，和 DOM
+  // 里的普通文字对不上账，且三种转义档都救不了（转义不删图）——如实拒存。手打 <u>
+  // 这类反而没事：渲染器把裸 HTML 按字面转义，能对上账、正常存（2026-11-25 实测）
+  await caret('p', 2, 0);
+  await page.keyboard.type('![图](https://example.com/i.png)');
+  await page.waitForTimeout(300);
+  await page.click('.graph-node-fs-head-actions button:has-text("保存")');
+  await page.waitForTimeout(400);
+  const toast = await toastTextOf(page);
+  must(toast.includes('对不上') && toast.includes('![图]('), '拒存话应带段落开头文字', toast);
+  must(await page.evaluate(() => !!document.querySelector('.nfs-edit-badblock')), '对不上的段落应闪框');
+  must(await page.evaluate(() => !!document.querySelector('.graph-node-fs-content[contenteditable="true"]')), '拒存后应留在编辑态');
+});
+
+await step('591④ Ctrl+S 快存：存完留在编辑态、写回节点；Esc 三选条「保存并退出」收尾', async () => {
+  await resetToBase();
+  await caret('p', 0, 5); // 0 基偏移：落在「第一段文字」之后
+  await page.keyboard.type('快存甲');
+  await page.keyboard.press('Control+s');
+  await page.waitForTimeout(600);
+  must(await page.evaluate(() => !!document.querySelector('.graph-node-fs-content[contenteditable="true"]')), '快存后应留在编辑态');
+  const saved = await page.evaluate(() => _findGraphNode('n1').content);
+  must(saved.includes('第一段文字快存甲'), '快存应写回节点', saved.slice(0, 80));
+  must((await toastTextOf(page)).includes('仍在编辑'), '应说清还在编辑');
+  await caret('p', 0, 99);
+  await page.keyboard.type('乙');
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.graph-node-fs-edit-confirm', { timeout: 3000 });
+  await page.click('.graph-node-fs-edit-confirm [data-c="save"]');
+  await page.waitForFunction(() => !document.querySelector('.graph-node-fs-content[contenteditable="true"]'), null, { timeout: 5000 });
+  const saved2 = await page.evaluate(() => _findGraphNode('n1').content);
+  must(saved2.includes('在这里。乙'), '三选条的保存并退出应写回', saved2.slice(0, 80));
+});
+
+await step('591④ 三选条：继续编辑＝只收条；放弃修改＝还原基准', async () => {
+  await resetToBase();
+  await caret('p', 0, 4);
+  await page.keyboard.type('不要我');
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.graph-node-fs-edit-confirm', { timeout: 3000 });
+  await page.click('.graph-node-fs-edit-confirm [data-c="stay"]');
+  await page.waitForTimeout(200);
+  must(await page.evaluate(() => !document.querySelector('.graph-node-fs-edit-confirm')), '继续编辑应收条');
+  must(await page.evaluate(() => !!document.querySelector('.graph-node-fs-content[contenteditable="true"]')), '应还在编辑');
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.graph-node-fs-edit-confirm', { timeout: 3000 });
+  await page.click('.graph-node-fs-edit-confirm [data-c="discard"]');
+  await page.waitForFunction(() => !document.querySelector('.graph-node-fs-content[contenteditable="true"]'), null, { timeout: 5000 });
+  must((await page.evaluate(() => _findGraphNode('n1').content)) === BASE_MD, '放弃修改应还原基准');
+});
+
+await step('591③ 表格加减行列：光标进格子亮行，加行/加列/删列写回后重开还在', async () => {
+  await resetToBase();
+  await caret('td', 0, 0);
+  await page.waitForTimeout(300);
+  must(await page.evaluate(() => document.querySelector('.nfs-fmt-tbl').hidden === false), '光标进格子应亮出表格行');
+  await click('tbl-row-add');
+  let f = await F();
+  must(f.md === withWord(BASE_MD, '| 1 | 2 |', '| 1 | 2 |\n|  |  |'), '加行应落在当前行下面', f.md);
+  await click('tbl-row-del');
+  f = await F();
+  must(f.md === BASE_MD, '删掉当前行（刚加的）应回基准', f.md);
+  await caret('td', 0, 0);
+  await click('tbl-col-add');
+  f = await F();
+  must(f.md.includes('| 列A |  | 列B |') && f.md.includes('| 1 |  | 2 |'), '加列应落在当前列右边', f.md);
+  await click('tbl-col-del');
+  f = await F();
+  must(f.md === BASE_MD, '删掉当前列（刚加的）应回基准', f.md);
+  await caret('td', 0, 0);
+  await click('tbl-row-add');
+  await page.click('.graph-node-fs-head-actions button:has-text("保存")');
+  await page.waitForFunction(() => !document.querySelector('.graph-node-fs-content[contenteditable="true"]'), null, { timeout: 5000 });
+  await openEdit();
+  const again = await page.evaluate(() => _nodeFsSerializeContent(document.querySelector('.graph-node-fs-content')));
+  must(again.includes('| 1 | 2 |\n|  |  |'), '加的一行重开还在', again);
+});
+
+await step('591③ 代码块选语言：点代码块亮语言行（预填 python），改 js 写回；坏语言拒绝', async () => {
+  await resetToBase();
+  await page.click('.graph-node-fs-content pre');
+  await page.waitForSelector('.nfs-fmt-lang:not([hidden])', { timeout: 3000 });
+  must((await page.inputValue('.nfs-fmt-lang-in')) === 'python', '应预填当前语言');
+  await page.fill('.nfs-fmt-lang-in', 'a b');
+  await click('lang-ok');
+  await page.waitForTimeout(200);
+  must((await toastTextOf(page)).includes('语言用字母数字'), '坏语言应拒绝', await toastTextOf(page));
+  await page.fill('.nfs-fmt-lang-in', 'js');
+  await click('lang-ok');
+  const f = await F();
+  must(f.md === withWord(BASE_MD, '```python', '```js'), '语言应写进围栏', f.md);
+  await page.click('.graph-node-fs-head-actions button:has-text("保存")');
+  await page.waitForFunction(() => !document.querySelector('.graph-node-fs-content[contenteditable="true"]'), null, { timeout: 5000 });
+  await openEdit();
+  const again = await page.evaluate(() => _nodeFsSerializeContent(document.querySelector('.graph-node-fs-content')));
+  must(again === withWord(BASE_MD, '```python', '```js'), '重开语言还在', again);
+  await page.click('.graph-node-fs-content pre');
+  await page.waitForSelector('.nfs-fmt-lang:not([hidden])', { timeout: 3000 });
+  must((await page.inputValue('.nfs-fmt-lang-in')) === 'js', '重开后语言行应显示 js');
+});
+
+await step('591③ 粘贴保格式：标题/粗体/列表/表格转进来，外链图收、截图内嵌不收', async () => {
+  await resetToBase();
+  await caret('p', 2, 0);
+  await page.evaluate(() => {
+    const c = document.querySelector('.graph-node-fs-content');
+    const dt = new DataTransfer();
+    dt.setData('text/html', '<h3>贴的标题</h3><p>有<b>粗体</b>和'
+      + '<img src="https://example.com/x.png" alt="图"><img src="data:image/png;base64,AAAA"></p>'
+      + '<ul><li>贴项一</li></ul><table><tr><td>甲</td><td>乙</td></tr><tr><td>1</td><td>2</td></tr></table>');
+    dt.setData('text/plain', '纯文本不该走这条');
+    c.focus();
+    c.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  });
+  await page.waitForTimeout(400);
+  const f = await F();
+  const tail = '末尾段落，含公式 $E=mc^2$ 与 **加粗** 与 [链接](https://example.com)。';
+  const want = BASE_MD.replace(tail, '### 贴的标题\n\n有**粗体**和![图](https://example.com/x.png)\n\n- 贴项一\n\n| 甲 | 乙 |\n| --- | --- |\n| 1 | 2 |\n\n' + tail);
+  must(f.md === want, '粘贴应按白名单转成结构', { got: f.md, want });
+  must(!f.md.includes('data:image'), '截图内嵌图不收（拍板口径）', f.md);
+  must(f.mis === false, '粘贴产物应过自检');
+  await page.click('.graph-node-fs-head-actions button:has-text("保存")');
+  await page.waitForFunction(() => !document.querySelector('.graph-node-fs-content[contenteditable="true"]'), null, { timeout: 5000 });
+  const saved = await page.evaluate(() => _findGraphNode('n1').content);
+  must(saved === want, '粘贴后写回一致', saved.slice(-160));
+});
+
 // ============================================================
 // ② 新窗口预览页（哑编辑面：同一份 kit 嵌在内嵌脚本里）
 // ============================================================
@@ -602,26 +766,6 @@ const pOpen = async () => {
   win = w;
   frame = f;
 };
-await pOpen();
-const PF = () => facts(win, '.cp-body', '.nfs-fmt').catch((e) => ({ err: String(e) }));
-const pClick = (name) => frame.click('.nfs-fmt [data-fmt="' + name + '"]');
-const pCaret = (sel, idx, offset, endOffset) => frame.evaluate(`(${placeAt})('.cp-body', ${JSON.stringify(sel)}, ${idx}, ${offset}, ${endOffset == null ? 'null' : endOffset}, ${JSON.stringify(ATOMS)})`);
-const pToast = () => frame.evaluate(() => String((document.getElementById('cp-nfs-toast') || {}).textContent || ''));
-// 预览页没有序列化器：md 由主应用侧的同一套函数算（探针把 innerHTML 交给主应用页面）
-const pMd = async () => {
-  const html = await frame.evaluate(() => document.querySelector('.cp-body').innerHTML);
-  return page.evaluate((html) => {
-    const d = document.createElement('div');
-    d.innerHTML = html;
-    const md = _nodeFsSerializeContent(d);
-    return { md, mis: _nodeFsEditVisibleMismatch(md, d) };
-  }, html);
-};
-const pEnter = async () => {
-  await frame.evaluate(() => { if (document.getElementById('cpEdit')) document.getElementById('cpEdit').click(); });
-  await win.waitForTimeout(200);
-  await frame.waitForSelector('.nfs-fmt [data-fmt]', { timeout: 5000 });
-};
 const pReset = async () => {
   await page.evaluate(() => { closeNodeFullscreen(); openNodeFullscreen('n1'); });
   await page.waitForSelector('.graph-node-fs-content', { timeout: 15000 });
@@ -635,6 +779,26 @@ const pReset = async () => {
   await page.waitForFunction(() => !document.querySelector('.graph-node-fs-content[contenteditable="true"]'), null, { timeout: 5000 });
   await pOpen();
 };
+await pReset(); // 先把节点摁回基准——上一段 591③④ 全屏用例可能已把节点内容改掉并保存（2026-11-25 实踩：铅笔步对着粘贴版内容对基准断言）
+const PF = () => facts(win, '.cp-body', '.nfs-fmt').catch((e) => ({ err: String(e) }));
+const pClick = (name) => frame.click('.nfs-fmt [data-fmt="' + name + '"]');
+const pCaret = (sel, idx, offset, endOffset) => frame.evaluate(`(${placeAt})('.cp-body', ${JSON.stringify(sel)}, ${idx}, ${offset}, ${endOffset == null ? 'null' : endOffset}, ${JSON.stringify(ATOMS)})`);
+const pToast = () => frame.evaluate(() => String((document.getElementById('cp-nfs-toast') || {}).textContent || ''));
+// 预览页没有序列化器：md 由主应用侧的同一套函数算（探针把 innerHTML 交给主应用页面）
+const pMd = async () => {
+  const html = await frame.evaluate(() => document.querySelector('.cp-body').innerHTML);
+  return page.evaluate((html) => {
+    const d = document.createElement('div');
+    d.innerHTML = html;
+    const md = _nodeFsSerializeContent(d);
+    return { md, mis: _nodeFsEditMismatchBlock(md, d) != null };
+  }, html);
+};
+const pEnter = async () => {
+  await frame.evaluate(() => { if (document.getElementById('cpEdit')) document.getElementById('cpEdit').click(); });
+  await win.waitForTimeout(200);
+  await frame.waitForSelector('.nfs-fmt [data-fmt]', { timeout: 5000 });
+};
 
 await step('预览页：铅笔进编辑后工具条挂上（同一份 kit）', async () => {
   await frame.waitForSelector('#cpEdit', { timeout: 15000 });
@@ -644,7 +808,7 @@ await step('预览页：铅笔进编辑后工具条挂上（同一份 kit）', a
     pos: getComputedStyle(document.querySelector('.nfs-fmt')).position,
     bg: getComputedStyle(document.querySelector('.nfs-fmt')).backgroundColor,
   }));
-  must(info.fmts.join(',') === 'bold,italic,strike,code,link,quote,hr,table,formula,link-ok,link-no,tex-ok,tex-no', '按钮名单不对', info.fmts);
+  must(info.fmts.join(',') === 'bold,italic,strike,code,link,quote,hr,table,formula,tbl-row-add,tbl-col-add,tbl-row-del,tbl-col-del,lang-ok,link-ok,link-no,tex-ok,tex-no', '按钮名单不对', info.fmts);
   must(info.pos === 'sticky' && info.bg !== 'rgba(0, 0, 0, 0)', '工具条应吸顶且有底色', info);
   const m = await pMd();
   must(m.md === BASE_MD && m.mis === false, '基准正文应能原样拼回', m.md.slice(0, 80));
@@ -768,6 +932,79 @@ await step('预览页：插入公式＋符号面板——落在光标处，保�
   await win.waitForTimeout(600);
   const saved = await page.evaluate(() => _findGraphNode('n1').content);
   must(saved.includes('第一段文$\\alpha$字'), '写回应带插入的公式', saved.slice(0, 120));
+});
+
+// ---------- 预览页 ③④（2026-11-25）：同一份 kit／内嵌脚本的新四件 ----------
+const pPasteHtml = (html) => frame.evaluate((html) => {
+  const c = document.querySelector('.cp-body');
+  const dt = new DataTransfer();
+  dt.setData('text/html', html);
+  dt.setData('text/plain', '纯文本不该走这条');
+  c.focus();
+  c.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+}, html);
+
+await step('预览页 591④：Ctrl+S 快存留编辑态，连存两次（ack.sig 刷新原文指纹）都成', async () => {
+  await pReset();
+  await pEnter();
+  await pCaret('p', 0, 0, 4);
+  await pClick('bold');
+  await win.keyboard.press('Control+s');
+  await win.waitForTimeout(900);
+  must(await frame.evaluate(() => !!document.querySelector('.cp-body[contenteditable="true"]')), '快存后应留在编辑态');
+  const saved = await page.evaluate(() => _findGraphNode('n1').content);
+  must(saved.includes('**第一段文**'), '第一次快存应写回', saved.slice(0, 80));
+  // 原文指纹已随 ack.sig 刷新：再改一处、再快存，不该被「开窗后有更新」的对账拒掉
+  await pCaret('p', 0, 99);
+  await win.keyboard.type('丙');
+  await win.waitForTimeout(200);
+  await win.keyboard.press('Control+s');
+  await win.waitForTimeout(900);
+  must(await frame.evaluate(() => !!document.querySelector('.cp-body[contenteditable="true"]')), '第二次快存也应留编辑态');
+  const saved2 = await page.evaluate(() => _findGraphNode('n1').content);
+  must(saved2.includes('在这里。丙'), '第二次快存应写回（指纹已刷新）', saved2.slice(0, 160));
+});
+
+await step('预览页 591④：Esc 有改动弹三选条——继续编辑／放弃修改两路', async () => {
+  await pReset();
+  await pEnter();
+  await pCaret('p', 0, 0, 4);
+  await pClick('bold');
+  await win.keyboard.press('Escape');
+  await frame.waitForSelector('.cp-edit-confirm', { timeout: 3000 });
+  await frame.click('.cp-edit-confirm [data-c="stay"]');
+  await win.waitForTimeout(200);
+  must(await frame.evaluate(() => !document.querySelector('.cp-edit-confirm') && !!document.querySelector('.cp-body[contenteditable="true"]')), '继续编辑应收条留编辑');
+  await win.keyboard.press('Escape');
+  await frame.waitForSelector('.cp-edit-confirm', { timeout: 3000 });
+  await frame.click('.cp-edit-confirm [data-c="discard"]');
+  await win.waitForTimeout(400);
+  must(await frame.evaluate(() => !document.querySelector('.cp-body[contenteditable="true"]') && !document.querySelector('.nfs-fmt')), '放弃修改应退编辑');
+  const m = await pMd();
+  must(m.md === BASE_MD, '放弃后正文回基准', m.md.slice(0, 80));
+});
+
+await step('预览页 591③：粘贴保格式＋表格加行——桥上写回一致', async () => {
+  await pReset();
+  await pEnter();
+  await pCaret('p', 2, 0);
+  await pPasteHtml('<h2>贴标题</h2><p>有<b>粗</b><img src="https://example.com/p.png"><img src="data:image/png;base64,AA"></p><table><tr><td>一</td><td>二</td></tr></table>');
+  await win.waitForTimeout(400);
+  const m = await pMd();
+  must(m.md.includes('## 贴标题') && m.md.includes('有**粗**![](https://example.com/p.png)'), '粘贴应转成结构', m.md.slice(-160));
+  must(!m.md.includes('data:image'), '截图内嵌不收', m.md);
+  must(m.mis === false, '粘贴产物应过自检');
+  // 贴进来的表只有表头行（convTable 单行不造 tbody）：光标进它的 th（文档里第 3 个 th，
+  // 前两个是基准表的列A/列B）——表头加行应补出表体、空行落表体开头
+  await pCaret('th', 2, 0);
+  await frame.waitForSelector('.nfs-fmt-tbl:not([hidden])', { timeout: 3000 });
+  await pClick('tbl-row-add');
+  const m2 = await pMd();
+  must(m2.md.includes('| 一 | 二 |\n| --- | --- |\n|  |  |'), '预览页加行应生效', m2.md.slice(-140));
+  await frame.click('#cpEditSave');
+  await win.waitForTimeout(900);
+  const saved = await page.evaluate(() => _findGraphNode('n1').content);
+  must(saved.includes('| 一 | 二 |\n| --- | --- |\n|  |  |'), '桥上写回应带加的一行', saved.slice(-160));
 });
 
 await step('全程无页面脚本报错', async () => {

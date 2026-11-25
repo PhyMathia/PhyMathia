@@ -199,6 +199,7 @@ function _nodeFsEditListMd(el) {
   const startAttr = el && el.getAttribute ? parseInt(el.getAttribute('start') || '1', 10) : 1;
   if (Number.isFinite(startAttr) && startAttr > 0) idx = startAttr;
   const lines = [];
+  const items = []; // 每个 li 的行数组（591③：松散列表要按项插空行，先攒再拼）
   const kids = (el && el.childNodes) || [];
   for (let i = 0; i < kids.length; i++) {
     const li = kids[i];
@@ -229,7 +230,25 @@ function _nodeFsEditListMd(el) {
       const nl = _nodeFsEditListMd(nested[n]).split('\n');
       for (let l = 0; l < nl.length; l++) itemLines.push(pad + nl[l]);
     }
-    for (let l = 0; l < itemLines.length; l++) lines.push(itemLines[l]);
+    items.push(itemLines);
+  }
+  // 松散列表（591③）：li 里直接包 p/div 的（AI 写的空行分隔列表、marked 的产物）按
+  // markdown 松散口径拼——项与项之间空一行。紧排会渲染回 li 包 p（入场往返校验两侧
+  // 不同形、进不了编辑）；空行分隔 marked 才认回「松散」，两侧同形
+  let loose = false;
+  for (let i = 0; i < kids.length; i++) {
+    const li = kids[i];
+    if (!li || li.nodeType !== 1 || String(li.tagName || '').toUpperCase() !== 'LI') continue;
+    const lk = li.childNodes || [];
+    for (let j = 0; j < lk.length; j++) {
+      const t = lk[j] && lk[j].nodeType === 1 ? String(lk[j].tagName || '').toUpperCase() : '';
+      if (t === 'P' || t === 'DIV') { loose = true; break; }
+    }
+    if (loose) break;
+  }
+  for (let i = 0; i < items.length; i++) {
+    if (loose && i > 0) lines.push('');
+    for (let l = 0; l < items[i].length; l++) lines.push(items[i][l]);
   }
   return lines.join('\n');
 }
@@ -406,20 +425,201 @@ function _nodeFsEditVisibleFacts(container) {
   return { text, counts: _nodeFsEditAtomicCounts(clone) };
 }
 
-function _nodeFsEditVisibleMismatch(next, domContainer) {
-  if (typeof _nodeFsBoldScan !== 'function' || typeof renderMarkdown !== 'function' || typeof renderMath !== 'function') return false;
+// 逐块取事实（591④，2026-11-25）：把容器的顶层子节点逐个套 _nodeFsEditVisibleFacts 同款
+// 管道（折公式、摘原子块、块边界取字、原子家数），返回数组供逐块对账。ei＝元素序号
+// （container.children 的下标）：childNodes 里夹着渲染器吐的空白文本节点，按 childNodes
+// 计数会和修补器取元素的 children 错位（实锤：轻则查错块、重则 undefined 崩保存）。
+// 空段（没文字也没原子）记 empty——序列化器本来就不产出空块，两侧先滤空再对齐
+function _nodeFsEditChildFactsList(container) {
+  if (!container || !container.childNodes || typeof document.createElement !== 'function') return null;
+  const out = [];
+  const kidsArr = container.childNodes;
+  let ei = 0;
+  for (let i = 0; i < kidsArr.length; i++) {
+    const c = kidsArr[i];
+    let facts = null;
+    if (c.nodeType === 1) {
+      const holder = document.createElement('div');
+      try { holder.appendChild(c.cloneNode(true)); } catch (e) { return null; }
+      facts = _nodeFsEditVisibleFacts(holder);
+    } else if (c.nodeType === 3) {
+      facts = { text: String(c.nodeValue != null ? c.nodeValue : ''), counts: '0/0/0/0' };
+    } else continue;
+    if (!facts) return null;
+    const text = (typeof _nodeFsBoldScan === 'function') ? _nodeFsBoldScan(facts.text).text : facts.text;
+    const isEl = c.nodeType === 1;
+    out.push({ text, counts: String(facts.counts || ''), ei: isEl ? ei : -1, empty: !text && String(facts.counts || '') === '0/0/0/0' });
+    if (isEl) ei++;
+  }
+  return out;
+}
+
+// 首个对不上的块（591④「拒存指明哪段」）：两侧＝拼回 md 重渲的顶层块流 vs 编辑 DOM 的
+// 顶层块流，滤空后逐块比对可见文字与原子家数，返回 { domIndex, quote }——domIndex 是
+// DOM 侧子节点序号（转义修补要用），quote 是那块开头的可见文字（toast 里指路用）。
+// 全对上返回 null。渲染器缺席返回 null（宁宽进严出，与旧口径一致）
+function _nodeFsEditMismatchBlock(next, domContainer) {
+  if (typeof _nodeFsBoldScan !== 'function' || typeof renderMarkdown !== 'function' || typeof renderMath !== 'function') return null;
   let left = null;
   try {
     const holder = document.createElement('div');
     holder.innerHTML = renderMarkdown(String(next || ''), {});
     try { renderMath(holder); } catch (e0) { /* 公式折不动：放行，宁宽进严出 */ }
-    left = _nodeFsEditVisibleFacts(holder);
-  } catch (e) { return false; }
-  const right = _nodeFsEditVisibleFacts(domContainer);
-  if (!left || !right) return false;
-  return left.counts !== right.counts
-    || _nodeFsBoldScan(left.text).text !== _nodeFsBoldScan(right.text).text;
+    left = _nodeFsEditChildFactsList(holder);
+  } catch (e) { return null; }
+  const right = _nodeFsEditChildFactsList(domContainer);
+  if (!left || !right) return null;
+  const L = left.filter((x) => !x.empty);
+  const R = right.filter((x) => !x.empty);
+  const n = Math.max(L.length, R.length);
+  for (let i = 0; i < n; i++) {
+    const a = L[i];
+    const b = R[i];
+    if (!a || !b || a.text !== b.text || a.counts !== b.counts) {
+      const src = b || a;
+      // domIndex 用元素序号 ei（修补器按 container.children 取块）；行内碎片/顶层裸文本＝-1
+      const domIndex = b ? b.ei : -1;
+      let ordinal = 1;
+      for (let k = 0; k < right.length && right[k] !== b; k++) { if (!right[k].empty) ordinal++; }
+      return { domIndex, ordinal, quote: String((src && src.text) || '').replace(/\s+/g, ' ').trim().slice(0, 12) };
+    }
+  }
+  return null;
 }
+
+// 按字面转义（591④ 拍板：结构操作全走工具条，手打记号就是普通文字）。mode：
+// 'struct'＝行首结构记号（#/引用/列表/序号/围栏）前加反斜杠；'inline'＝成对的行内记号
+// （*_~`）逐个转义；'both'＝两样都来。shell＝这个块自己的结构壳（'list'/'quote'/'head'，
+// 正文块传 ''）——为非空时行首的壳记号先剥掉、只转义壳后面的内容：壳是结构本身不能动，
+// 且壳型按块的 tag 一层一层传，不用贪心正则猜（猜会把内容里的 `#` 误当成壳）。产出是否
+// 真的「渲染回去和 DOM 同形」由调用方重跑对账判定——这里只管生成候选。
+function _nodeFsEditEscapeChunkMd(md, mode, shell) {
+  const lines = String(md || '').split('\n');
+  const shellRe = shell === 'list' ? /^(\s*(?:[-+*]\s+|\d{1,9}[.)]\s+))/
+    : shell === 'quote' ? /^(\s*(?:>\s?)+)/
+      : shell === 'head' ? /^(#{1,6}\s)/
+        : null;
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    let prefix = '';
+    let rest = lines[i];
+    if (shellRe) {
+      const pm = shellRe.exec(rest);
+      prefix = pm ? pm[1] : '';
+      rest = rest.slice(prefix.length);
+    }
+    if (mode === 'struct' || mode === 'both') {
+      rest = rest.replace(/^(#{1,6})(?=\s)/, (m0) => '\\' + m0.split('').join('\\'));
+      rest = rest.replace(/^>/, '\\>');
+      rest = rest.replace(/^([-+*])(?=\s)/, '\\$1');
+      rest = rest.replace(/^(\d{1,9})([.)])(?=\s)/, '$1\\$2');
+      rest = rest.replace(/^```/, '\\`\\`\\`');
+    }
+    if (mode === 'inline' || mode === 'both') {
+      rest = rest.replace(/([*_~`])/g, '\\$1');
+    }
+    out.push(prefix + rest);
+  }
+  return out.join('\n');
+}
+
+// 逐子节点的序列化（转义修补的落点）：与 _nodeFsEditFlowMd 同一趟走法，但每个顶层子节点
+// 各产一块（行内碎片并进同一段、owner 记它属于哪个元素的序号，与 _nodeFsEditChildFactsList
+// 的 ei 同一把尺），md 拼法与整篇序列化一致
+function _nodeFsSerializeAligned(container) {
+  const chunks = [];
+  const owner = [];
+  let buf = [];
+  let bufOwner = -1;
+  const flush = () => {
+    const t = buf.join('').replace(/^\s+/, '').replace(/\s+$/, '');
+    if (t) { chunks.push(t); owner.push(bufOwner); }
+    buf = [];
+  };
+  const kidsArr = (container && container.childNodes) || [];
+  let ei = 0;
+  for (let i = 0; i < kidsArr.length; i++) {
+    const c = kidsArr[i];
+    const isBlock = c && c.nodeType === 1
+      && (NODE_FS_EDIT_BLOCK_TAGS.test(String(c.tagName || '').toUpperCase())
+        || (c.classList && (c.classList.contains('mermaid-container') || c.classList.contains('viz-card'))));
+    if (!isBlock) {
+      if (c.nodeType === 1 && bufOwner < 0) bufOwner = ei;
+      buf.push(_nodeFsEditInline(c));
+      if (c.nodeType === 1) ei++;
+      continue;
+    }
+    flush();
+    const md = _nodeFsEditBlockMd(c);
+    if (md) { chunks.push(md); owner.push(ei); }
+    ei++;
+  }
+  flush();
+  return { chunks, owner, md: chunks.join('\n\n') };
+}
+
+// 序列化＋按字面修补一条龙（591④）：先照常拼回，对不上账就定位那一块、按「结构记号→
+// 行内记号→双管齐下」三档顺序生成转义候选、真变了 md 才收、收完立刻重跑对账——同一块
+// 还有别的记号下一轮接着转，别的块也轮得到（一篇里可以有多个坏块，比如同时手打了 -
+// 和 1.：修补档位必须按块轮转，不能挂在全局轮数上，否则第二块永远等不到自己的档）。
+// inline/both 不是幂等转义（已转过的 * 再转会双反斜杠），收过就不重复试。外层带预算，
+// 六轮修不动才如实报 bad（带块位置与开头文字）。转义只落在正文/列表/引用这类「可修」
+// 的块上；代码块/图/可视化是逐字还原的原子块，对不上＝结构性问题，转义只会越修越坏，
+// 直接拒。渲染器缺席（沙箱）＝不修补直接放行，旧口径不变
+function _nodeFsSerializeVerified(container) {
+  const base = _nodeFsSerializeContent(container);
+  if (typeof renderMarkdown !== 'function' || typeof _nodeFsBoldScan !== 'function'
+    || typeof renderMath !== 'function' || typeof document.createElement !== 'function') {
+    return { md: base, bad: null };
+  }
+  const al = _nodeFsSerializeAligned(container);
+  let md = al.md;
+  let bad = _nodeFsEditMismatchBlock(md, container);
+  const modes = ['struct', 'inline', 'both'];
+  const triedByChunk = {}; // 块序 → 已收过的档（防 inline/both 叠转）
+  for (let round = 0; round < 6 && bad; round++) {
+    let ci = -1;
+    for (let k = 0; k < al.owner.length; k++) { if (al.owner[k] === bad.domIndex) { ci = k; break; } }
+    if (ci < 0) break; // 对不上的是行内碎片/顶层裸节点：转义落不进去，如实拒
+    const el = container.children[bad.domIndex];
+    const tag = el && el.nodeType === 1 ? String(el.tagName || '').toUpperCase() : '';
+    if (tag === 'PRE' || (el.classList && (el.classList.contains('mermaid-container') || el.classList.contains('viz-card')))) break;
+    // 壳型按块的 tag 定（一层壳一套正则，转义只打壳后内容）；正文块（P/DIV）行首即内容
+    const shell = /^(UL|OL)$/.test(tag) ? 'list'
+      : tag === 'BLOCKQUOTE' ? 'quote'
+        : /^H[1-6]$/.test(tag) ? 'head'
+          : ''; // 表格/其余：行首多是管道/无壳，转义记号不命中，无害
+    const tried = triedByChunk[ci] || (triedByChunk[ci] = []);
+    const inlineSpent = tried.indexOf('inline') >= 0 || tried.indexOf('both') >= 0; // inline 不幂等：收过（含 both 里捎带的）就封死，防越转越多
+    let adopted = null;
+    for (let mi = 0; mi < modes.length && !adopted; mi++) {
+      const mode = modes[mi];
+      if (mode !== 'struct' && inlineSpent) continue;
+      const cand = al.chunks.slice();
+      cand[ci] = _nodeFsEditEscapeChunkMd(al.chunks[ci], mode, shell);
+      const joined = cand.join('\n\n');
+      if (joined === md) continue; // 这档变不出新 md（多半已转过/没这种记号）：换下一档
+      tried.push(mode);
+      al.chunks = cand; // 收下这档，同块下一轮在它基础上加码
+      md = joined;
+      adopted = true;
+    }
+    if (!adopted) break; // 三档都变不出新 md：这一块修不动，如实拒
+    bad = _nodeFsEditMismatchBlock(md, container);
+  }
+  return { md, bad };
+}
+
+// 拒存指路的文案（两处编辑面同一句式）：第 N 段＝滤空后的内容块序号，引开头文字帮定位
+function _nodeFsEditBadMessage(bad) {
+  if (!bad) return '这次改动保存不了：有内容没能对上，检查刚改的部分';
+  const where = bad.ordinal ? '第 ' + bad.ordinal + ' 段' : '';
+  const quote = bad.quote ? '「' + bad.quote + '…」' : '';
+  return '这次改动保存不了：' + (where || '有一段') + quote + '对不上——试试删掉这段重打';
+}
+
+// （旧 _nodeFsEditVisibleMismatch 整批对账已于 2026-11-25 拆成 _nodeFsEditMismatchBlock
+// 逐块定位＋_nodeFsSerializeVerified 转义修补一条龙，全屏保存/桥上保存/入场校验同一把尺）
 
 // ---------- 编辑会话 ----------
 
@@ -439,8 +639,9 @@ function openNodeFsEdit(nodeId) {
   const message = node.messageIndex >= 0 ? messages[node.messageIndex] : null;
   const src = typeof _nodeFsSourceText === 'function' ? String(_nodeFsSourceText(node, message) || '') : '';
   if (!src.trim()) return;
-  // 入场往返校验：序列化器对这篇内容必须能原样拼回，才放行进入编辑
-  const domNow = _nodeFsSerializeContent(container);
+  // 入场往返校验：序列化器对这篇内容必须能原样拼回，才放行进入编辑（591④ 起拼回带
+  // 按字面转义修补——手打记号的内容也进得来了）
+  const domNow = _nodeFsSerializeVerified(container).md;
   if (_nodeFsEditRoundTripDiff(src, domNow)) {
     _nodeFsEditToast('这种内容暂时不支持渲染态编辑（有不认识的写法）');
     return;
@@ -487,9 +688,14 @@ function openNodeFsEdit(nodeId) {
     actions.innerHTML = '<button type="button" class="graph-node-fs-edit-btn" onclick="saveNodeFsEdit()" title="保存并写回节点">✓ 保存</button>'
       + '<button type="button" class="graph-node-fs-edit-btn" onclick="cancelNodeFsEdit()" title="放弃这次改动">× 取消</button>';
   }
-  // 会话监听：dirty 标记 / 粘贴只收纯文本 / 编辑态点链接只放光标不跳转
+  // 会话监听：dirty 标记 / 粘贴先走 kit 的保格式转换（591③），转不动回纯文本 / 编辑态点链接只放光标不跳转
   const onInput = () => { session.dirty = true; };
   const onPaste = (ev) => {
+    if (session.fmt && typeof session.fmt.paste === 'function') {
+      let handled = false;
+      try { handled = !!session.fmt.paste(ev); } catch (e) { handled = false; }
+      if (handled) { session.dirty = true; return; }
+    }
     let text = '';
     try { text = ev.clipboardData ? String(ev.clipboardData.getData('text/plain') || '') : ''; } catch (e) { text = ''; }
     if (ev && ev.preventDefault) ev.preventDefault();
@@ -527,6 +733,7 @@ function openNodeFsEdit(nodeId) {
 function _nodeFsEditExit(reRender) {
   const session = _nodeFsEditSession;
   if (!session) return;
+  _nodeFsEditConfirmHide(); // 三选条开着的话一起收（保存/取消各路都会走到这）
   _nodeFsEditSession = null;
   const hs = session.handlers || [];
   for (let i = 0; i < hs.length; i++) {
@@ -564,18 +771,21 @@ function _nodeFsEditExit(reRender) {
   if (typeof _renderNotebookRich === 'function') { try { _renderNotebookRich(container); } catch (e) {} }
 }
 
-function saveNodeFsEdit() {
+function saveNodeFsEdit(stay) {
   const session = _nodeFsEditSession;
   if (!session) return;
   const node = typeof _findGraphNode === 'function' ? _findGraphNode(session.nodeId) : null;
   if (!node) { _nodeFsEditToast('源节点已不在画布上'); _nodeFsEditExit(false); return; }
   const messages = typeof _getChatHistory === 'function' ? _getChatHistory() : [];
   const message = node.messageIndex >= 0 ? messages[node.messageIndex] : null;
-  const next = _nodeFsSerializeContent(session.container);
+  // 序列化＋按字面修补一条龙：手打 `#`/`-` 等记号自动转义成普通文字（591④ 拍板）；
+  // 三档转义都对不上才拒存，且指明是哪一段
+  const ser = _nodeFsSerializeVerified(session.container);
+  const next = ser.md;
   if (!String(next || '').trim()) { _nodeFsEditToast('正文全空就不保存了——要删节点请在画布上操作'); return; }
-  // 可见文本自检：拼回的 markdown 重渲与编辑后 DOM 同形才放行（防静默丢块）
-  if (_nodeFsEditVisibleMismatch(next, session.container)) {
-    _nodeFsEditToast('这次改动保存不了：有内容没能对上，检查刚改的部分');
+  if (ser.bad) {
+    _nodeFsEditToast(_nodeFsEditBadMessage(ser.bad));
+    _nodeFsEditFlashBad(session.container, ser.bad);
     return;
   }
   const result = (typeof _nodeFsBoldWrite === 'function')
@@ -588,37 +798,132 @@ function saveNodeFsEdit() {
     try { _markNodeHumanFinalized(node); } catch (e) { /* 标记失败不挡保存 */ }
   }
   if (typeof _saveCustomNodes === 'function') { try { _saveCustomNodes(); } catch (e) { /* 落盘失败不挡保存 */ } }
-  _nodeFsEditExit(true);
-  _nodeFsEditToast(result.message || '已保存，并写回节点');
+  if (stay) _nodeFsEditStay(session, node, message, next);
+  else _nodeFsEditExit(true);
+  _nodeFsEditToast(stay ? '已保存，仍在编辑（Ctrl+S 快存）' : (result.message || '已保存，并写回节点'));
 }
 
 function cancelNodeFsEdit() {
   if (!_nodeFsEditSession) return;
+  _nodeFsEditConfirmHide();
   _nodeFsEditExit(true);
   _nodeFsEditToast('已取消编辑，改动已还原');
 }
 
+// ---------- 存完留编辑态（591④，Ctrl+S）＋关闭三选（591④）＋拒存指段闪烁 ----------
+
+// 对不上的那块闪一下红框（拒存指路的视觉落点；预览窗跨 iframe 闪不了，只全屏层用）
+let _nodeFsEditFlashTimer = null;
+function _nodeFsEditFlashBad(container, bad) {
+  if (!container || !bad || bad.domIndex < 0 || typeof document.createElement !== 'function') return;
+  try {
+    const el = container.children[bad.domIndex];
+    if (!el || !el.classList) return;
+    container.querySelectorAll('.nfs-edit-badblock').forEach((x) => { try { x.classList.remove('nfs-edit-badblock'); } catch (e) {} });
+    el.classList.add('nfs-edit-badblock');
+    if (_nodeFsEditFlashTimer) clearTimeout(_nodeFsEditFlashTimer);
+    _nodeFsEditFlashTimer = setTimeout(() => {
+      try { el.classList.remove('nfs-edit-badblock'); } catch (e) {}
+      _nodeFsEditFlashTimer = null;
+    }, 2600);
+  } catch (e) { /* 假 DOM 闪不了不挡保存 */ }
+}
+
+// 三选条（改动未保存时关编辑面给出路：保存并退出／放弃修改／继续编辑）。
+// 全屏层挂在全屏 body 上；预览页同款在内嵌脚本里各写一份（DOM 与行为不跨框）
+let _nodeFsEditConfirmEl = null;
+function _nodeFsEditConfirmHide() {
+  if (_nodeFsEditConfirmEl) {
+    try { _nodeFsEditConfirmEl.remove(); } catch (e) {}
+    _nodeFsEditConfirmEl = null;
+  }
+}
+function _nodeFsEditConfirmShow() {
+  const session = _nodeFsEditSession;
+  if (!session || _nodeFsEditConfirmEl || typeof document.createElement !== 'function') return;
+  const host = (session.overlay && session.overlay.querySelector) ? session.overlay.querySelector('.graph-node-fs-body') : null;
+  if (!host || !host.appendChild) return;
+  const bar = document.createElement('div');
+  bar.className = 'graph-node-fs-edit-confirm aurora-glass aurora-glass--compact';
+  bar.innerHTML = '<span class="graph-node-fs-edit-confirm-msg">改动还没保存</span>'
+    + '<button type="button" data-c="save" title="保存并退出编辑">保存并退出</button>'
+    + '<button type="button" data-c="discard" title="不保存，退出编辑">放弃修改</button>'
+    + '<button type="button" data-c="stay" title="回到编辑">继续编辑</button>';
+  bar.addEventListener('click', (ev) => {
+    const b = ev && ev.target && ev.target.closest ? ev.target.closest('[data-c]') : null;
+    if (!b) return;
+    if (ev.preventDefault) ev.preventDefault();
+    const c = String(b.getAttribute('data-c') || '');
+    _nodeFsEditConfirmHide();
+    if (c === 'save') saveNodeFsEdit(false);
+    else if (c === 'discard') cancelNodeFsEdit();
+    // stay：只收条子，编辑态不动
+  });
+  host.appendChild(bar);
+  _nodeFsEditConfirmEl = bar;
+}
+
+// 保存后不退出：按新原文重渲正文、锁原子块、session 基线跟着新原文走（origSrc 不更新的话
+// 下次保存的对账就会拿旧文比新文），撤销栈重开一页（旧栈的快照对着已被换掉的 DOM）。
+// 与 _nodeFsEditExit 的重渲段同一套取材口径，只是不收会话
+function _nodeFsEditStay(session, node, message, src) {
+  _nodeFsEditConfirmHide();
+  const container = session.container;
+  const keep = session.scroller ? session.scroller.scrollTop : 0;
+  try {
+    container.innerHTML = (typeof _nodeFsRenderedHtml === 'function')
+      ? _nodeFsRenderedHtml(src, { parentId: String((message && message.timestamp) || node.timestamp || ''), sourceModule: node.moduleKey || '' })
+      : '';
+  } catch (e) { /* 渲染器缺席：正文保持编辑后的 DOM */ }
+  try {
+    const atoms = container.querySelectorAll('.katex, .katex-display, .mermaid-container, .viz-card, pre, img, input');
+    for (let i = 0; i < atoms.length; i++) { try { atoms[i].setAttribute('contenteditable', 'false'); } catch (e) {} }
+  } catch (e) {}
+  session.origSrc = src;
+  session.dirty = false;
+  if (session.fmt && typeof session.fmt.reset === 'function') { try { session.fmt.reset(); } catch (e) {} }
+  try {
+    const meta = session.overlay && session.overlay.querySelector ? session.overlay.querySelector('.graph-node-fs-meta') : null;
+    if (meta && typeof _nodeFsReadingMeta === 'function') meta.textContent = _nodeFsReadingMeta(src);
+  } catch (e) {}
+  if (session.scroller) { try { session.scroller.scrollTop = keep; } catch (e) {} }
+  if (typeof _renderNotebookRich === 'function') { try { _renderNotebookRich(container); } catch (e) {} }
+}
+
 // 关闭全屏的守卫（graph-custom.closeNodeFullscreen 开头调用）：编辑中且有未保存改动
-// → 拦下并指路；干净 → 顺手收会话放行
+// → 弹三选条拦下（591④）；干净 → 顺手收会话放行
 function _nodeFsEditCloseGuard() {
   const session = _nodeFsEditSession;
   if (!session) return false;
   if (!session.dirty) { _nodeFsEditExit(true); return false; }
-  _nodeFsEditToast('有未保存的修改——点「保存」写回或「取消」放弃');
+  _nodeFsEditConfirmShow();
   return true;
 }
 
 // Esc capture（与浮条同口径：先收编辑、ui.js 的「Esc 关全屏」这轮不触发）：
-// 有改动先拦下指路，干净则退出编辑、全屏留着（第二次 Esc 才是关全屏）
+// 有改动先弹三选条，干净则退出编辑、全屏留着（第二次 Esc 才是关全屏）
 document.addEventListener('keydown', (ev) => {
   if (!ev || ev.key !== 'Escape' || !_nodeFsEditSession) return;
   if (ev.preventDefault) ev.preventDefault();
   if (ev.stopPropagation) ev.stopPropagation();
+  // 三选条开着：这一下 Esc 只收条子，编辑态不动
+  if (_nodeFsEditConfirmEl) { _nodeFsEditConfirmHide(); return; }
   // 工具条的链接输入行开着：这一下 Esc 只收输入行，编辑态不动
   if (_nodeFsEditSession.fmt && _nodeFsEditSession.fmt.escape()) return;
-  if (_nodeFsEditSession.dirty) { _nodeFsEditToast('有未保存的修改——点「保存」写回或「取消」放弃'); return; }
+  if (_nodeFsEditSession.dirty) { _nodeFsEditConfirmShow(); return; }
   _nodeFsEditExit(true);
   _nodeFsEditToast('已退出编辑');
+}, true);
+
+// Ctrl+S＝快存不退出（591④）：存完留在编辑态继续改；✓ 保存按钮照旧存完退出。
+// 输入行（链接/公式）开着时这一下只收行——带未定稿输入去保存会拿旧 DOM 存
+document.addEventListener('keydown', (ev) => {
+  if (!ev || ev.key !== 's' && ev.key !== 'S' || !(ev.ctrlKey || ev.metaKey) || ev.altKey) return;
+  if (!_nodeFsEditSession) return;
+  if (ev.preventDefault) ev.preventDefault();
+  if (ev.stopPropagation) ev.stopPropagation();
+  if (_nodeFsEditSession.fmt && _nodeFsEditSession.fmt.escape()) return;
+  saveNodeFsEdit(true);
 }, true);
 
 // ---------- 新窗口渲染态编辑（2026-11-20，2026-11-18 三拍的第三块）----------
@@ -675,19 +980,20 @@ function _nodeFsEditFromBridge(node, html, srcSig, probeRoot) {
     return { ok: false, message: '本页全屏层正在编辑这个节点：先在那边保存或取消' };
   }
   const probe = probeRoot || _nodeFsEditParseProbe(html);
-  const next = _nodeFsSerializeContent(probe);
+  // 序列化＋按字面修补一条龙（与全屏保存同一把尺，591④）：手打记号自动转义；
+  // 三档都对不上才拒，文案指明哪一段（预览窗闪不了框，文字里带开头几个字帮定位）
+  const ser = _nodeFsSerializeVerified(probe);
+  const next = ser.md;
   if (!String(next || '').trim()) return { ok: false, message: '正文全空就不保存了——要删节点请在画布上操作' };
-  // 可见文本自检与全屏保存同一把尺（序列化器不认识桥来的构造时在这里现形）
-  if (_nodeFsEditVisibleMismatch(next, probe)) {
-    return { ok: false, message: '这次改动保存不了：有内容没能对上，检查刚改的部分' };
-  }
+  if (ser.bad) return { ok: false, message: _nodeFsEditBadMessage(ser.bad) };
   const result = _nodeFsBoldWrite(node, message, next, { summary: '渲染态编辑（新窗口）', okMessage: '已保存，并写回节点', verb: '编辑' });
   if (!result || !result.ok) return { ok: false, message: (result && result.message) || '保存失败' };
   // 人工定稿（T355 口径）＋自有节点落盘——与全屏保存同款双守卫
   if (typeof _markNodeHumanFinalized === 'function') { try { _markNodeHumanFinalized(node); } catch (e) { /* 标记失败不挡保存 */ } }
   if (typeof _saveCustomNodes === 'function') { try { _saveCustomNodes(); } catch (e) { /* 落盘失败不挡保存 */ } }
   _nodeFsEditRefreshOverlayBody(node.id);
-  return { ok: true, message: result.message || '已保存，并写回节点', src: next };
+  // sig＝保存后的新原文指纹：预览窗 Ctrl+S 快存（存完留编辑态）要用它过下一轮对账
+  return { ok: true, message: result.message || '已保存，并写回节点', src: next, sig: _nodeFsEditSrcSig(next) };
 }
 
 // 预览窗公式渲染查询（591②，2026-11-25）：预览页零渲染逻辑，渲染全在主应用——预览窗

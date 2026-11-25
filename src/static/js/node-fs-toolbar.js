@@ -1041,6 +1041,7 @@ async function _nodeFsPreviewAction(d, source, ctx) {
   let message = '';
   let undo = false; // 取消加粗时带回预览页：那边要拆 <strong> 而不是再包一层（T507）
   let html = null;  // 渲染态编辑专用：写回后按成品重渲的正文（预览页零渲染逻辑，直接换）
+  let sig = null;   // 渲染态编辑专用：保存后新原文指纹（591④，Ctrl+S 快存留编辑态用）
   if (d.action === 'tex') {
     // 公式渲染查询（591②，2026-11-25）：纯只读不写回，节点/会话都不强求——预览窗
     // 「确定」时的一次性渲染，成品 HTML 走 ack 的 html 字段带回（与 edit 同字段）
@@ -1073,11 +1074,13 @@ async function _nodeFsPreviewAction(d, source, ctx) {
         undo = !!res.undo;
       }
       else if (d.action === 'edit') {
-        // 整篇写回：校验＋写回全在主应用（同步段，node-fs-edit.js），ok 后成品重渲随 ack 回
+        // 整篇写回：校验＋写回全在主应用（同步段，node-fs-edit.js），ok 后成品重渲随 ack 回；
+        // sig＝保存后新原文指纹（591④），预览窗 Ctrl+S 快存留编辑态时过下一轮对账用
         if (typeof _nodeFsEditFromBridge === 'function') {
           const res = _nodeFsEditFromBridge(node, d.html, d.srcSig);
           ok = !!res.ok;
           message = res.message || '';
+          sig = res.sig || null;
           if (res.ok && typeof _nodeFsEditRenderFresh === 'function') {
             html = await _nodeFsEditRenderFresh(node, res.src);
           }
@@ -1095,8 +1098,8 @@ async function _nodeFsPreviewAction(d, source, ctx) {
     source.postMessage(
       // seq 原样回显：预览侧按序号认领自己的 ack，并发动作不再串台（2026-11-18）；
       // undo＝这次是取消加粗（T507），预览页好就地拆 <strong> 而不是再包一层；
-      // html＝edit 的成品正文（其余动作恒 null）
-      { kind: 'node-fs-ack', __phymathia: 1, token: d.token, seq: d.seq, ok, message, undo, nextToken, html },
+      // html＝edit 的成品正文（其余动作恒 null）；sig＝edit 的新原文指纹（591④，恒 null）
+      { kind: 'node-fs-ack', __phymathia: 1, token: d.token, seq: d.seq, ok, message, undo, nextToken, html, sig },
       location.origin,
     );
   } catch (e2) { /* 预览窗已关，无从应答 */ }
@@ -1415,6 +1418,25 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}'
     + ".cp-body[data-editing='1'] .nfs-fmt-texing{outline:2px solid var(--cp-focus,rgba(45,212,191,.65));"
     + 'outline-offset:2px;border-radius:6px;}'
+    // 表格/语言上下文行（591③）与三选条（591④）：与全屏层 graph-override.css 同观感（改观感两处同步）；
+    // 追加规则必须在收尾的 "; 之前（手册明令，生成脚本才编译得过）
+    + '.nfs-fmt-tbl,.nfs-fmt-lang{display:flex;align-items:center;gap:2px;flex-wrap:wrap;}'
+    + '.nfs-fmt-tbl[hidden],.nfs-fmt-lang[hidden]{display:none;}'
+    + '.nfs-fmt-lang-lab{font-size:11px;color:var(--cp-mute,#8b93b8);padding:0 4px 0 2px;}'
+    + '.nfs-fmt-lang-in{flex:1 1 auto;min-width:0;height:28px;padding:0 10px;border-radius:8px;'
+    + 'border:1px solid var(--cp-line,rgba(139,147,184,.3));background:var(--cp-input-bg,rgba(9,13,32,.6));'
+    + 'color:var(--cp-ink-strong,#e6ebff);font-size:12.5px;font-family:ui-monospace,Consolas,monospace;outline:none;}'
+    + '.nfs-fmt-lang-in:focus{border-color:var(--cp-primary,#8b93b8);}'
+    + '.cp-edit-confirm{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:10px auto 0;'
+    + 'max-width:var(--cp-measure,748px);padding:8px 12px;border-radius:12px;'
+    + 'background:var(--cp-bar-bg,rgba(15,21,48,.92));border:1px solid var(--cp-line,rgba(139,147,184,.28));'
+    + 'box-shadow:0 10px 30px var(--cp-shadow,rgba(2,6,23,.5));font-size:12.5px;color:var(--cp-ink-2,#a7b0d6);}'
+    + '.cp-edit-confirm-msg{flex:none;font-weight:600;color:var(--cp-ink-strong,#e6ebff);margin-right:2px;}'
+    + '.cp-edit-confirm button{height:28px;padding:0 10px;border:0;border-radius:999px;'
+    + 'background:var(--cp-chip-bg,rgba(139,147,184,.14));color:var(--cp-ink-2,#a7b0d6);'
+    + 'font-size:12.5px;cursor:pointer;font-family:inherit;}'
+    + '.cp-edit-confirm button:hover{color:var(--cp-ink-strong,#e6ebff);'
+    + 'background:var(--cp-chip-bg,rgba(139,147,184,.24));}'
     + '";'
     + 'document.head.appendChild(style);'
     + 'function toast(msg){var t=document.getElementById("cp-nfs-toast");'
@@ -1683,7 +1705,10 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'head.insertBefore(save,themeBtn&&themeBtn.parentNode===head?themeBtn:null);'
     + 'head.insertBefore(cancel,save);}'
     + 'var onInput=function(){EDITDIRTY=true;};'
-    + 'var onPaste=function(ev){var text="";try{text=ev.clipboardData?String(ev.clipboardData.getData("text/plain")||""):"";}catch(e){text="";}'
+    // 富文本粘贴（591③）：kit 的 paste 先上（白名单转换，处理成功已 preventDefault）；
+    // 转不动（无 text/html／超限／全空）回纯文本路
+    + 'var onPaste=function(ev){if(FMTMOUNT&&FMTMOUNT.paste){var h=false;try{h=!!FMTMOUNT.paste(ev);}catch(e){h=false;}if(h){EDITDIRTY=true;return;}}'
+    + 'var text="";try{text=ev.clipboardData?String(ev.clipboardData.getData("text/plain")||""):"";}catch(e){text="";}'
     + 'if(ev&&ev.preventDefault)ev.preventDefault();if(!text)return;'
     + 'try{if(document.execCommand)document.execCommand("insertText",false,text);else throw new Error("no execCommand");}catch(e){'
     + 'try{var sel=window.getSelection?window.getSelection():null;if(sel&&sel.rangeCount){var r=sel.getRangeAt(0);r.deleteContents();r.insertNode(document.createTextNode(text));r.collapse(false);}}catch(e2){}}'
@@ -1695,7 +1720,7 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'EDITING=true;try{container.focus();}catch(e){}}'
     // 退编辑：收监听/摘标记/去 hint/还原头部；reStore＝把开窗快照整份放回（取消路）。
     // 保存成功路传 false——正文刚被 ack 的成品 HTML 换过，不再回快照
-    + 'function exitEdit(reStore){if(!EDITING)return;EDITING=false;'
+    + 'function exitEdit(reStore){if(!EDITING)return;EDITING=false;hideEditConfirm();'
     + 'for(var i=0;i<EDITHANDS.length;i++){try{EDITHANDS[i][0].removeEventListener(EDITHANDS[i][1],EDITHANDS[i][2]);}catch(e){}}'
     + 'EDITHANDS=[];var container=editContainer();'
     + 'if(container){try{container.removeAttribute("contenteditable");container.removeAttribute("data-editing");}catch(e){}}'
@@ -1705,15 +1730,38 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'if(s&&s.parentNode)s.parentNode.removeChild(s);if(c&&c.parentNode)c.parentNode.removeChild(c);'
     + 'if(PENCIL)PENCIL.style.display="";EDITDIRTY=false;EDITBUSY=false;'
     + 'if(reStore&&container&&EDITORIG){try{container.innerHTML=EDITORIG;}catch(e){}}EDITORIG="";}'
-    + 'function saveEdit(){if(!EDITING||EDITBUSY)return;var container=editContainer();if(!container)return;'
+    + 'function relockAtoms(c){var as=c.querySelectorAll(".katex, .katex-display, .mermaid-container, .viz-card, pre, img, input");'
+    + 'for(var i=0;i<as.length;i++){try{as[i].setAttribute("contenteditable","false");}catch(e){}}}'
+    // 三选条（591④）：改动未保存时关编辑给出路——保存并退出／放弃修改／继续编辑。
+    // DOM 与行为全在内嵌脚本（预览窗是独立 iframe，主应用的条子够不着）
+    + 'var CONFIRMEL=null;'
+    + 'function hideEditConfirm(){if(CONFIRMEL){try{CONFIRMEL.remove();}catch(e){}CONFIRMEL=null;}}'
+    + 'function showEditConfirm(){if(!EDITING||CONFIRMEL)return;var host=editContainer();'
+    + 'if(!host||!host.parentNode)return;'
+    + 'var bar=document.createElement("div");bar.className="cp-edit-confirm";'
+    + 'bar.innerHTML="<span class=\'cp-edit-confirm-msg\'>改动还没保存</span>'
+    + '<button type=\'button\' data-c=\'save\'>保存并退出</button>'
+    + '<button type=\'button\' data-c=\'discard\'>放弃修改</button>'
+    + '<button type=\'button\' data-c=\'stay\'>继续编辑</button>";'
+    + 'bar.addEventListener("click",function(ev){var b=ev&&ev.target&&ev.target.closest?ev.target.closest("[data-c]"):null;'
+    + 'if(!b)return;if(ev.preventDefault)ev.preventDefault();var c=b.getAttribute("data-c");hideEditConfirm();'
+    + 'if(c==="save")saveEdit(false);else if(c==="discard")cancelEdit();});'
+    + 'host.parentNode.insertBefore(bar,host.nextSibling);CONFIRMEL=bar;}'
+    // Ctrl+S＝快存不退出（591④）：存完留在编辑态继续改。输入行开着只收行（带未定稿
+    // 输入去保存会拿旧 DOM 存）；没在编辑不拦，浏览器默认行为照旧
+    + 'function saveEdit(stay){if(!EDITING||EDITBUSY)return;var container=editContainer();if(!container)return;'
     + 'EDITBUSY=true;setEditBusy(true);'
     + 'postAction("edit","","",{html:String(container.innerHTML||""),srcSig:CFG.srcSig||""},'
     + 'function(ok,msg,undo,ack){EDITBUSY=false;setEditBusy(false);'
     + 'if(ok){var fresh=ack&&ack.html?String(ack.html):null;'
     + 'if(fresh){try{container.innerHTML=fresh;}catch(e){}}'
-    + 'exitEdit(false);try{recalcMeta();}catch(e0){}toast(msg||"已保存，并写回节点");}'
+    + 'if(ack&&ack.sig)CFG.srcSig=String(ack.sig);'
+    + 'if(stay){if(fresh)EDITORIG=fresh;if(container)relockAtoms(container);'
+    + 'if(FMTMOUNT&&FMTMOUNT.reset)try{FMTMOUNT.reset();}catch(e0){}'
+    + 'EDITDIRTY=false;hideEditConfirm();try{recalcMeta();}catch(e1){}toast(msg||"已保存，仍在编辑");}'
+    + 'else{exitEdit(false);try{recalcMeta();}catch(e2){}toast(msg||"已保存，并写回节点");}}'
     + 'else{toast(msg||"保存失败，还停在编辑态");}});}'
-    + 'function cancelEdit(){if(!EDITING||EDITBUSY)return;exitEdit(true);toast("已取消编辑，改动已还原");}'
+    + 'function cancelEdit(){if(!EDITING||EDITBUSY)return;hideEditConfirm();exitEdit(true);toast("已取消编辑，改动已还原");}'
     + 'function postAction(action,text,route,extra,onDone){'
     + 'if(!BRIDGE){toast("此窗口未连接主应用，只能复制");return;}'
     + 'var msg={kind:"node-fs-action",__phymathia:1,token:TOKEN,seq:++SEQ,action:action,'
@@ -1772,14 +1820,22 @@ function _buildNodeFsPreviewScript(cfg) {
     + 'var btn=t&&t.closest?t.closest("[data-act]"):null;'
     + 'if(btn&&bar.contains(btn)){ev.preventDefault();runAction(btn.getAttribute("data-act"));}});'
     + 'document.addEventListener("keydown",function(ev){'
+    // Ctrl+S＝快存不退出（591④）：没在编辑不拦，浏览器默认行为照旧
+    + 'if((ev.ctrlKey||ev.metaKey)&&!ev.altKey&&(ev.key==="s"||ev.key==="S")){'
+    + 'if(!EDITING)return;ev.preventDefault();ev.stopPropagation();'
+    + 'if(FMTMOUNT&&FMTMOUNT.escape())return;saveEdit(true);return;}'
     + 'if(ev.key!=="Escape")return;'
-    // 渲染态编辑中 Esc 先管编辑（与全屏层同文案）：有改动拦下指路，干净退出编辑
+    // 渲染态编辑中 Esc 先管编辑（与全屏层同口径）：三选条开着只收条子；有改动弹条（591④）
     + 'if(EDITING){ev.preventDefault();ev.stopPropagation();'
+    + 'if(CONFIRMEL){hideEditConfirm();return;}'
     // 链接输入行开着：这一下 Esc 只收输入行（与全屏层同款）
     + 'if(FMTMOUNT&&FMTMOUNT.escape())return;'
-    + 'if(EDITDIRTY){toast("有未保存的修改——点「保存」写回或「取消」放弃");return;}'
+    + 'if(EDITDIRTY){showEditConfirm();return;}'
     + 'exitEdit(true);toast("已退出编辑");return;}'
     + 'if(!bar)return;ev.preventDefault();ev.stopPropagation();hideBar();},true);'
+    // 关窗守卫（591④）：编辑中且有未保存改动，浏览器原生弹确认；存过／没进编辑不拦
+    + 'window.addEventListener("beforeunload",function(ev){if(!EDITING||!EDITDIRTY)return;'
+    + 'ev.preventDefault();ev.returnValue="";});'
     // 浮条内部滚动（输入框字符超宽后光标跟随横滚）不收，口径同主应用侧
     + 'document.addEventListener("scroll",function(ev){if(!bar)return;var t=ev.target;'
     + 'if(t&&t.nodeType===1&&bar.contains(t))return;hideBar();},true);'

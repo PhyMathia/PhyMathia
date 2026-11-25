@@ -883,8 +883,11 @@ export function run() {
     const src = readSrc('src/static/js/node-fs-edit.js');
     if (!src.includes('_nodeFsBoldAvailable(node)')) return false;       // 与划词加粗同闸
     if (!src.includes("summary: '渲染态编辑'")) return false;
-    // 可见文本自检（2026-11-20 真机重写）：两边都取「渲染后的可见文字」按加粗同管归一对撞；入场往返校验过 renderMarkdown 管道
-    if (!src.includes("_nodeFsBoldScan(left.text).text") || !src.includes("_nodeFsBoldScan(right.text).text")) return false;
+    // 可见文本自检（2026-11-25 起 591④ 一条龙）：逐块定位对账（_nodeFsEditMismatchBlock，
+    // 逐块 bold-scan 归一）＋按字面转义修补（_nodeFsSerializeVerified）＋入场往返校验过 renderMarkdown 管道
+    if (!src.includes('_nodeFsBoldScan(facts.text).text')) return false;
+    if (!src.includes('function _nodeFsEditMismatchBlock') || !src.includes('function _nodeFsSerializeVerified')) return false;
+    if (!src.includes('function _nodeFsEditEscapeChunkMd') || !src.includes('_nodeFsSerializeVerified(container).md')) return false;
     if (!src.includes('_nodeFsEditSignature(src)') || !src.includes('_nodeFsEditSignature(domMd)')) return false;
     // 人工定稿（T355）＋自有节点落盘，双 typeof 守卫
     if (!src.includes("_markNodeHumanFinalized(node)") || !src.includes('_saveCustomNodes()')) return false;
@@ -1084,8 +1087,9 @@ export function run() {
     if (!src.includes("const NODE_FS_BRIDGE_ACTIONS = ['followup', 'search', 'bold', 'edit', 'tex']")) return false;
     if (!src.includes('async function _nodeFsPreviewAction(d, source, ctx)')) return false; // 收口拆出（edit 要等成品重渲）
     if (!src.includes('await _nodeFsEditRenderFresh(node, res.src)')) return false;
-    // ack 里 nextToken 仍紧跟 undo（既有 seq 断言认这个串），成品 html 排在其后
-    if (!src.includes('undo, nextToken, html }')) return false;
+    // ack 里 nextToken 仍紧跟 undo（既有 seq 断言认这个串），成品 html、新原文指纹 sig 排其后（591④）
+    if (!src.includes('undo, nextToken, html, sig }')) return false;
+    if (!src.includes('sig = res.sig || null;')) return false;
     // 校验/写回（同步段）＋重渲（异步段）分居 node-fs-edit.js，五件套全暴露
     const edit = readSrc('src/static/js/node-fs-edit.js');
     for (const fn of ['_nodeFsEditSrcSig', '_nodeFsEditParseProbe', '_nodeFsEditFromBridge', '_nodeFsEditRenderFresh', '_nodeFsEditRefreshOverlayBody']) {
@@ -1105,8 +1109,15 @@ export function run() {
     const scriptOff = sandbox._buildNodeFsPreviewScript({ bridge: true, token: 't', nodeId: 'n', title: 'T' });
     if (!scriptOff.includes('"editable":false')) return false; // 没传就缺省 false＝铅笔缺席
     new Function(script); new Function(scriptOff); // 坏拼接当场炸
-    for (const s of ['id="cpEdit"', 'cpEditSave', 'cpEditCancel', 'cp-edit-hint', 'function enterEdit()', 'function saveEdit()', 'function cancelEdit()', 'msg.html=String(extra.html)', 'var TMO=action==="edit"?10000:2500', 'if(EDITING)return;if(state&&state.expanded)return']) {
+    for (const s of ['id="cpEdit"', 'cpEditSave', 'cpEditCancel', 'cp-edit-hint', 'function enterEdit()', 'function saveEdit(stay)', 'function cancelEdit()', 'msg.html=String(extra.html)', 'var TMO=action==="edit"?10000:2500', 'if(EDITING)return;if(state&&state.expanded)return']) {
       if (!script.includes(s)) throw new Error('生成脚本缺：' + s);
+    }
+    // 591③④：粘贴先走 kit 保格式路、Ctrl+S 快存留编辑态（ack.sig 回填 CFG.srcSig）、关闭三选条＋关窗守卫
+    for (const s of ['if(FMTMOUNT&&FMTMOUNT.paste)', 'function saveEdit(stay)', 'if(ack&&ack.sig)CFG.srcSig=String(ack.sig);',
+      'if(FMTMOUNT&&FMTMOUNT.reset)try{FMTMOUNT.reset();}catch(e0){}', 'function showEditConfirm()', 'function hideEditConfirm()',
+      'if(CONFIRMEL){hideEditConfirm();return;}', 'if(EDITDIRTY){showEditConfirm();return;}',
+      'window.addEventListener("beforeunload"', 'saveEdit(true);return;']) {
+      if (!script.includes(s)) throw new Error('生成脚本缺（591③④）：' + s);
     }
     // 编辑中 Esc 先管编辑（文案与全屏层同款）；onDone 第 4 参拿完整 ack（成品 html 在上面）
     if (!script.includes('if(EDITING){ev.preventDefault();ev.stopPropagation();')) return false;
@@ -1305,6 +1316,104 @@ export function run() {
     if (!src.includes("if (ok && d.action !== 'tex') {")) return false;
     const edit = readSrc('src/static/js/node-fs-edit.js');
     if (!edit.includes('function _nodeFsTexRenderBridge(tex, display)')) return false;
+    return true;
+  });
+
+  // ===== 结构补全＋小修余项（2026-11-25，backlog 591③④）=====
+
+  check('node-fs-fmt 结构: 表格行列行/代码语言行进工具条，加减/设定走 data-fmt，上下文亮行在 refresh', () => {
+    const src = readSrc('src/static/js/node-fs-fmt.js');
+    for (const needle of ["'tbl-row-add'", "'tbl-col-add'", "'tbl-row-del'", "'tbl-col-del'", "'lang-ok'",
+      'nfs-fmt-tbl', 'nfs-fmt-lang', 'language-']) {
+      if (!src.includes(needle)) throw new Error('kit 缺：' + needle);
+    }
+    // 语言白名单与序列化器 codeMd 的 language-* 同族（\w#+.\-）；非法语言拒
+    if (!src.includes('/^[\\w#+.\\-]{1,20}$/')) throw new Error('语言白名单口径变了');
+    // mount 返回面加了 reset（存完留编辑态重开撤销页）与 paste（富文本粘贴入口）
+    for (const needle of ['reset() {', 'paste,']) {
+      if (!src.includes(needle)) throw new Error('mount 返回面缺：' + needle);
+    }
+    return true;
+  });
+
+  check('node-fs-fmt 粘贴: 白名单转换——危险件整族拒、截图内嵌图不收、外链图收、公式回 TeX', () => {
+    const src = readSrc('src/static/js/node-fs-fmt.js');
+    // 危险/交互件整族不进正文（PASTE_DROP 正则一行点名）
+    if (!src.includes('SCRIPT|STYLE|META|LINK|IFRAME|OBJECT|EMBED|TEMPLATE')) throw new Error('粘贴丢弃名单缺外围件');
+    if (!src.includes('SVG|CANVAS|VIDEO|AUDIO')) throw new Error('粘贴丢弃名单缺媒体件');
+    if (!src.includes('FORM|BUTTON|INPUT|SELECT|TEXTAREA')) throw new Error('粘贴丢弃名单缺交互件');
+    // 拍板口径（2026-11-25）：外链图进、截图内嵌数据不收
+    if (!src.includes('/^https?:\\/\\//i')) throw new Error('图片只收 http(s) 外链的口径变了');
+    if (!src.includes('PASTE_MAX = 500000')) throw new Error('超大粘贴降级纯文字的上限没了');
+    // 复制带公式：annotation 的 TeX 还原成 $…$（存回重渲还是公式）
+    if (!src.includes("annotation[encoding=\"application/x-tex\"]")) throw new Error('粘贴公式还原缺');
+    // DOMParser 只在调用时用（裸上下文构造不炸——typeof 守卫）
+    if (!src.includes('typeof DOMParser === \'undefined\'')) throw new Error('DOMParser 缺守卫（沙箱/老内核会炸）');
+    return true;
+  });
+
+  check('node-fs-edit 按字面: 转义函数可裸跑——正文块行首记号转义、结构块壳不动壳后内容转、行内记号转义', () => {
+    const fnSrc = String(sandbox._nodeFsEditEscapeChunkMd);
+    if (typeof sandbox._nodeFsEditEscapeChunkMd !== 'function') throw new Error('_nodeFsEditEscapeChunkMd 未暴露');
+    const bare = vm.createContext({});
+    vm.runInContext('var F=(' + fnSrc + ');', bare, { filename: 'escape.js' });
+    const call = (md, mode, shell) => vm.runInContext('F(' + JSON.stringify(md) + ',' + JSON.stringify(mode) + ',' + JSON.stringify(shell) + ')', bare);
+    // 正文块（shell=false）：行首出现什么结构记号都按手打内容转义
+    if (call('# 标题', 'struct', false) !== '\\# 标题') throw new Error('标题记号没转义：' + call('# 标题', 'struct', false));
+    if (call('- 项', 'struct', false) !== '\\- 项') throw new Error('列表记号没转义');
+    if (call('> 引用', 'struct', false) !== '\\> 引用') throw new Error('引用记号没转义');
+    if (call('1. 序号', 'struct', false) !== '1\\. 序号') throw new Error('序号没转义：' + call('1. 序号', 'struct', false));
+    if (call('```js', 'struct', false) !== '\\`\\`\\`js') throw new Error('围栏没转义：' + call('```js', 'struct', false));
+    // 结构块（shell 按块的 tag 传 'list'/'quote'/'head'）：壳记号原样保留，壳后面的内容才转义
+    if (call('- # 内容', 'struct', 'list') !== '- \\# 内容') throw new Error('壳保护/内容转义不对：' + call('- # 内容', 'struct', 'list'));
+    if (call('## 内容', 'struct', 'head') !== '## 内容') throw new Error('标题壳被误转：' + call('## 内容', 'struct', 'head'));
+    if (call('> # 引容', 'struct', 'quote') !== '> \\# 引容') throw new Error('引用壳不对：' + call('> # 引容', 'struct', 'quote'));
+    if (call('1. # 序内', 'struct', 'list') !== '1. \\# 序内') throw new Error('序号壳不对：' + call('1. # 序内', 'struct', 'list'));
+    // 行内成对记号：*_~` 逐个转义（两档 shell 都走得到）
+    if (call('*斜*_体', 'inline', '') !== '\\*斜\\*\\_体') throw new Error('行内记号没转义：' + call('*斜*_体', 'inline', ''));
+    if (call('- _x_', 'inline', 'list') !== '- \\_x\\_') throw new Error('壳内行内记号没转义：' + call('- _x_', 'inline', 'list'));
+    return true;
+  });
+
+  check('node-fs-edit 小修: Ctrl+S 快存留编辑态／关闭三选条／拒存指段闪烁，四处接线齐全', () => {
+    const src = readSrc('src/static/js/node-fs-edit.js');
+    // Ctrl+S：存完留编辑态（stay 路重渲＋基线更新＋撤销栈重开）
+    if (!src.includes('saveNodeFsEdit(true)')) throw new Error('Ctrl+S 没接快存');
+    if (!src.includes('function _nodeFsEditStay(')) throw new Error('stay 保存路缺');
+    if (!src.includes('session.origSrc = src;') || !src.includes('session.dirty = false;')) throw new Error('stay 路没更新会话基线');
+    if (!src.includes('session.fmt.reset()')) throw new Error('stay 路没重开撤销栈');
+    // 三选条：Esc 与关全屏守卫都弹条；退出收条
+    if (!src.includes('function _nodeFsEditConfirmShow()') || !src.includes('function _nodeFsEditConfirmHide()')) throw new Error('三选条缺');
+    if (!src.includes('_nodeFsEditConfirmShow();\n  return true;')) throw new Error('关全屏守卫没弹条');
+    if (!src.includes('_nodeFsEditConfirmHide(); // 三选条开着的话一起收')) throw new Error('退出没收条');
+    // 拒存指段：文案带段号与开头文字＋闪框
+    if (!src.includes('function _nodeFsEditBadMessage(')) throw new Error('指段文案缺');
+    if (!src.includes('对不上——试试删掉这段重打')) throw new Error('指路文案变了');
+    if (!src.includes('function _nodeFsEditFlashBad(')) throw new Error('拒存闪烁缺');
+    // 桥上保存同一把尺＋新原文指纹随结果带回
+    if (!src.includes('_nodeFsSerializeVerified(probe)')) throw new Error('桥上保存没走一条龙');
+    if (!src.includes('sig: _nodeFsEditSrcSig(next)')) throw new Error('新原文指纹没带回');
+    return true;
+  });
+
+  check('node-fs-edit 松散列表: 序列化器认 li 包 p（项间空行），紧排不误伤', () => {
+    const src = readSrc('src/static/js/node-fs-edit.js');
+    if (!src.includes("if (t === 'P' || t === 'DIV') { loose = true; break; }")) throw new Error('松散判定缺');
+    if (!src.includes('if (loose && i > 0) lines.push(\'\');')) throw new Error('项间空行缺');
+    return true;
+  });
+
+  check('node-fs-fmt 结构: 全屏层粘贴钩子接 kit（转不动回纯文本路），样式两处各一份', () => {
+    const edit = readSrc('src/static/js/node-fs-edit.js');
+    if (!edit.includes('session.fmt.paste(ev)')) throw new Error('全屏层粘贴没接 kit');
+    const css = readSrc('src/static/css/graph-override.css');
+    for (const needle of ['.nfs-fmt-tbl', '.nfs-fmt-lang', '.nfs-edit-badblock', '.graph-node-fs-edit-confirm']) {
+      if (!css.includes(needle)) throw new Error('全屏层样式缺：' + needle);
+    }
+    const tbSrc = readSrc('src/static/js/node-fs-toolbar.js');
+    for (const needle of ['.nfs-fmt-tbl', '.nfs-fmt-lang', '.cp-edit-confirm']) {
+      if (!tbSrc.includes(needle)) throw new Error('预览页内嵌样式缺：' + needle);
+    }
     return true;
   });
 }
