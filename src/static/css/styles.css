@@ -1391,11 +1391,6 @@
       width: 20px;
       height: 20px;
     }
-    .onboarding-card .ob-icon svg {
-      width: 40px;
-      height: 40px;
-      display: block;
-    }
 
     /* ====== 主应用容器 ====== */
     .app-container {

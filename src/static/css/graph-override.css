@@ -2610,24 +2610,6 @@ html[data-theme="light"][data-wallpaper="night"] {
   margin-left: 4px;
 }
 
-.graph-blank-generate-btn {
-  flex: 0 0 auto;
-  height: 42px;
-  padding: 0 14px;
-  border: 1px solid var(--accent);
-  border-radius: var(--r-md);
-  background: var(--accent);
-  color: var(--on-accent);
-  font-size: var(--fs-md);
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.graph-blank-generate-btn:disabled {
-  opacity: 0.55;
-  cursor: wait;
-}
-
 .graph-add-node-overlay {
   position: fixed;
   inset: 0;

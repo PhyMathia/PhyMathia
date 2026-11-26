@@ -290,66 +290,6 @@ html[data-theme="light"][data-panel-skin="inkstone"] .phi-pet {
   transition: opacity 320ms ease, transform 240ms ease;
 }
 
-.phi-happy-eyes {
-  position: absolute;
-  left: 38.5%;
-  top: 48.2%;
-  width: 23%;
-  height: 12%;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 320ms ease, background-color 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease;
-}
-
-.phi-happy-eye {
-  position: absolute;
-  top: 24%;
-  width: 2.7%;
-  height: 1.9%;
-  border: 3px solid #2d3242;
-  border-bottom: none;
-  border-radius: 100% 100% 0 0;
-  box-shadow: 0 0 6px rgba(45, 50, 66, 0.35);
-}
-
-.phi-happy-eye-left { left: 11%; }
-.phi-happy-eye-right { right: 11%; }
-
-.phi-success-glow {
-  position: absolute;
-  left: 48.4%;
-  top: 5%;
-  width: 3.2%;
-  height: 4.8%;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 320ms ease;
-}
-
-.phi-success-glow::before,
-.phi-success-glow::after {
-  content: "";
-  position: absolute;
-  background: #fde047;
-  box-shadow: 0 0 12px 4px rgba(253, 224, 71, 0.85);
-}
-
-.phi-success-glow::before {
-  left: 0;
-  top: 50%;
-  width: 100%;
-  height: 34%;
-  transform: translateY(-50%);
-}
-
-.phi-success-glow::after {
-  left: 50%;
-  top: 0;
-  width: 34%;
-  height: 100%;
-  transform: translateX(-50%);
-}
-
 .phi-eyes-x {
   opacity: 0;
 }
@@ -477,10 +417,6 @@ html[data-theme="light"][data-panel-skin="inkstone"] .phi-pet {
   opacity: 0;
 }
 
-.phi-pet.is-celebrating .phi-happy-eyes {
-  opacity: 1;
-}
-
 .phi-pet.is-celebrating .phi-lamp-on {
   opacity: 1;
   animation: phi-celebrate-lamp 640ms ease-in-out infinite;
@@ -489,11 +425,6 @@ html[data-theme="light"][data-panel-skin="inkstone"] .phi-pet {
 .phi-pet.is-celebrating .phi-lamp-off {
   opacity: 0;
   animation: none;
-}
-
-.phi-pet.is-celebrating .phi-success-glow {
-  opacity: 1;
-  animation: phi-cross-glow 900ms ease-in-out infinite;
 }
 
 .phi-pet.is-celebrating .phi-celebrate {
@@ -534,17 +465,6 @@ html[data-theme="light"][data-panel-skin="inkstone"] .phi-pet {
 .phi-pet.is-erroring .phi-lamp-off {
   opacity: 1;
   animation: none;
-}
-
-.phi-pet.is-erroring .phi-success-glow {
-  opacity: 1;
-  animation: phi-error-glow 420ms ease-in-out infinite;
-}
-
-.phi-pet.is-erroring .phi-success-glow::before,
-.phi-pet.is-erroring .phi-success-glow::after {
-  background: #4b5563;
-  box-shadow: 0 0 8px 3px rgba(75, 85, 99, 0.7);
 }
 
 .phi-pet.is-erroring .phi-bubbles {
@@ -619,7 +539,6 @@ html[data-theme="light"][data-panel-skin="inkstone"] .phi-pet {
 
 /* 被点一下：眼睛变弯，身体先压后弹（点击同时仍会开面板，不抢交互） */
 .phi-pet.is-poked .phi-eyes { opacity: 0; }
-.phi-pet.is-poked .phi-happy-eyes { opacity: 1; }
 
 /* 鼠标靠近：眼睛睁大一点，像注意到你了 */
 .phi-pet-root:hover .phi-pet:not(.is-working):not(.is-celebrating):not(.is-erroring) .phi-eyes-wrap {
@@ -647,7 +566,6 @@ html[data-theme="light"][data-panel-skin="inkstone"] .phi-pet {
 .phi-pet.is-phi-mode-transitioning .phi-lamp-off {
   animation-play-state: paused;
 }
-
 
 @keyframes phi-bounce {
   0%, 100% { transform: translateY(0) scaleY(1); }
@@ -809,11 +727,6 @@ html[data-theme="light"][data-panel-skin="inkstone"] .phi-pet {
   50% { filter: brightness(1.9) saturate(1.5); }
 }
 
-@keyframes phi-cross-glow {
-  0%, 100% { transform: scale(1); opacity: 0.85; }
-  50% { transform: scale(1.25); opacity: 1; }
-}
-
 @keyframes phi-confetti-rise {
   0% { transform: translateY(0) rotate(0) scale(0.4); opacity: 0; }
   15% { transform: translateY(-8px) rotate(8deg) scale(0.9); opacity: 1; }
@@ -849,11 +762,6 @@ html[data-theme="light"][data-panel-skin="inkstone"] .phi-pet {
   60% { transform: rotate(26deg); }
   80% { transform: rotate(-16deg); }
   100% { transform: rotate(14deg); }
-}
-
-@keyframes phi-error-glow {
-  0%, 100% { transform: scale(0.88); opacity: 0.55; }
-  50% { transform: scale(1.08); opacity: 1; }
 }
 
 @keyframes phi-bubble-rise {
@@ -975,11 +883,6 @@ html[data-theme="light"] .phi-pet-root {
 
   .phi-pet.is-celebrating .phi-eyes {
     opacity: 0;
-  }
-
-  .phi-pet.is-celebrating .phi-happy-eyes,
-  .phi-pet.is-celebrating .phi-success-glow {
-    opacity: 1;
   }
 
   .phi-pet.is-erroring .phi-character,
