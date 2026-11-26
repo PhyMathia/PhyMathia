@@ -1,0 +1,21 @@
+{
+  // 前端类型地基（2026-11-25，计划 P0）。页面加载的是 scripts/build_frontend.mjs
+  // 把 entries 里 79 个无 import/export 的脚本拼成的**一个** <script>，因此 tsc 必须
+  // 按「脚本」而非「模块」检查：module:none 让每个文件共享同一个全局作用域，跨文件
+  // 裸名调用才看得见。改成 esnext 会让 79 个文件互不可见，检查全废。
+  //
+  // checkJs:false 是刻意的：类型检查只对首行标了 // @ts-check 的文件生效（逐个点亮，
+  // 错误数只许降不许升）。全量打开会一次炸出上万条，方案会被直接放弃。
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "none",
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "noImplicitAny": false,
+    "types": []
+  },
+  "include": ["src/static/js/**/*.js"]
+}

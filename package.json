@@ -5,7 +5,9 @@
   "scripts": {
     "build:js": "node scripts/build_frontend.mjs",
     "build:viewer": "node scripts/build_viewer.mjs",
-    "verify": "node scripts/check_context_budget.mjs && node scripts/frontend_smoke.mjs && python3 -m pytest tests/ -q",
+    "verify": "tsc --noEmit && node scripts/check_load_order.mjs && node scripts/check_context_budget.mjs && node scripts/frontend_smoke.mjs && python3 -m pytest tests/ -q",
+    "check:types": "tsc --noEmit",
+    "check:load-order": "node scripts/check_load_order.mjs",
     "check:ctx": "node scripts/check_context_budget.mjs",
     "perf:layers": "node scripts/debug_canvas_flicker.mjs",
     "perf:gate": "node scripts/perf_gate.mjs",
@@ -13,6 +15,7 @@
   },
   "devDependencies": {
     "esbuild": "0.25.6",
-    "playwright": "1.63.0"
+    "playwright": "1.63.0",
+    "typescript": "^5.9.3"
   }
 }
