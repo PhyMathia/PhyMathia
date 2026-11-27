@@ -259,6 +259,20 @@ function _graphLayerIndexMap(nodes, edges, overrides) {
   return map;
 }
 
+// 父节点表（自动整理列内聚类用）：每个节点只认第一条结构入边，草稿/联系横连不算——
+// 与 _graphLayerIndexMap 的分层口径逐条一致，别单独放宽。返回 {子 id: 父 id}。
+function _graphParentMap(nodes, edges) {
+  const map = {};
+  const byId = {};
+  (nodes || []).forEach(n => { if (n && n.kind !== 'draft') byId[n.id] = n; });
+  (edges || []).forEach(e => {
+    if (!e || e.draft || e.link) return;
+    if (!byId[e.from] || !byId[e.to]) return; // 指向图外/草稿的边不建父关系
+    if (!Object.prototype.hasOwnProperty.call(map, e.to)) map[e.to] = e.from;
+  });
+  return map;
+}
+
 // 列清单：唯一事实源。opts 可传 nodes/edges/overrides/layerMap/excludeIds。
 // 空层不建列、层号跳号不重编号；列宽只看本列最宽节点，列心按列缝累进。
 // 自由节点（state.freeNodes）不算列成员、不影响列宽；拖进列前调用方先摘标记。
@@ -882,19 +896,46 @@ function autoArrangeGraph(preservePinned) {
   // 3) 列几何重算：成员回列心（换列/宽度变化都在这里统一落位）。
   _realignGraphColumns({ force: true, silentUpdate: true, silentEdges: true });
 
-  // 4) 每列按当前 y 排序，统一 48px 缝，整列垂直居中到 y=0。列内上下顺序＝用户摆的顺序，
-  //    整理只拉间距、不重排；自由节点不在任何列成员表里，因此不会被卷进来。
-  _graphColumns().forEach(col => {
-    const members = col.members.slice().sort((a, b) => a.y - b.y);
-    if (!members.length) return;
+  // 4) 列内排序：同一父节点的子卡聚成一簇，簇与簇之间按父节点的纵向顺序排；
+  //    簇内仍按用户摆的当前 y（同簇才谈「用户顺序」，跨簇不再让 y 把两家的孩子交错）。
+  //    父节点必须先定序，所以按列从左到右处理，用父节点的终点 y 当簇锚。
+  //    找不到锚的卡（无父边、父节点同列或在右侧、父节点不在本图）落到列尾，按自身 y 排。
+  const parentOf = _graphParentMap(graphView.nodes, graphView.edges);
+  const colsInOrder = _graphColumns().slice().sort((a, b) => a.layer - b.layer);
+  const colIndexOf = {};
+  colsInOrder.forEach((col, ci) => col.members.forEach(n => { colIndexOf[n.id] = ci; }));
+  const finalY = {};
+  colsInOrder.forEach((col, ci) => {
+    if (!col.members.length) return;
+    const keyed = col.members.map(n => {
+      const pid = parentOf[n.id];
+      const pci = pid != null ? colIndexOf[pid] : undefined;
+      const anchored = pci != null && pci < ci && finalY[pid] != null;
+      return { node: n, pci: anchored ? pci : Infinity, py: anchored ? finalY[pid] : Infinity };
+    });
+    keyed.sort((A, B) => {
+      if (A.pci !== B.pci) {
+        if (A.pci === Infinity) return 1;   // 无锚的整段排在有锚的簇之后
+        if (B.pci === Infinity) return -1;
+        return A.pci - B.pci;               // 父节点在更左的列 → 簇更靠前
+      }
+      if (A.py !== B.py) {
+        if (A.py === Infinity) return 1;
+        if (B.py === Infinity) return -1;
+        return A.py - B.py;                 // 簇序 = 父节点自上而下的顺序
+      }
+      if (A.node.y !== B.node.y) return A.node.y - B.node.y; // 簇内＝用户摆的顺序
+      return A.node.id < B.node.id ? -1 : (A.node.id > B.node.id ? 1 : 0);
+    });
     let total = 0;
-    members.forEach(n => { total += _layoutNodeSize(n).h; });
-    total += GRAPH_COL_STACK_GAP * (members.length - 1);
+    keyed.forEach(k => { total += _layoutNodeSize(k.node).h; });
+    total += GRAPH_COL_STACK_GAP * (keyed.length - 1);
     let cursor = -total / 2;
-    members.forEach(n => {
-      const h = _layoutNodeSize(n).h;
-      n.y = Math.round(cursor + h / 2);
+    keyed.forEach(k => {
+      const h = _layoutNodeSize(k.node).h;
+      k.node.y = Math.round(cursor + h / 2);
       cursor += h + GRAPH_COL_STACK_GAP;
+      finalY[k.node.id] = k.node.y;
     });
   });
 

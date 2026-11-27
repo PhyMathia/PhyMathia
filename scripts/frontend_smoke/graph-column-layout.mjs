@@ -292,6 +292,39 @@ check('自动整理: 列归属/列内顺序不变、48 缝、整列居中、自�
   } finally { restore(prev); }
 });
 
+check('自动整理: 同父子卡聚簇、簇序跟父节点上下顺序、簇内保留 y、二次整理定点', () => {
+  const prev = capture();
+  try {
+    const kids = (p, ys) => ys.map((y, i) => ({ id: p + (i + 1), x: 452, y, w: 200, h: 60 }));
+    const edges = [];
+    ['a', 'b', 'c'].forEach(p => {
+      for (let i = 1; i <= 3; i++) edges.push({ from: p, to: p + i, type: 'primary' });
+    });
+    const nodes = seed({
+      nodes: [
+        { id: 'a', x: 140, y: -200, w: 200, h: 60 },
+        { id: 'b', x: 140, y: 0, w: 200, h: 60 },
+        { id: 'c', x: 140, y: 200, w: 200, h: 60 },
+        ...kids('a', [-300, -100, 100]),
+        ...kids('b', [-250, -50, 150]),
+        ...kids('c', [-200, 0, 200]),
+      ],
+      edges,
+      layerOf: { a: 0, b: 0, c: 0, a1: 1, a2: 1, a3: 1, b1: 1, b2: 1, b3: 1, c1: 1, c2: 1, c3: 1 },
+    });
+    vm.runInContext('autoArrangeGraph()', sandbox);
+    const order = nodes.slice(3).slice().sort((p, q) => p.y - q.y).map(n => n.id).join(',');
+    if (order !== 'a1,a2,a3,b1,b2,b3,c1,c2,c3') {
+      throw new Error('同父未聚簇或簇序没跟父节点走：' + order);
+    }
+    const once = nodes.map(n => n.id + ':' + n.y).join(',');
+    vm.runInContext('autoArrangeGraph()', sandbox);
+    const twice = nodes.map(n => n.id + ':' + n.y).join(',');
+    if (once !== twice) throw new Error('整理两次不是定点：' + once + ' vs ' + twice);
+    return true;
+  } finally { restore(prev); }
+});
+
 check('自动整理: 物理列框外归最近列，不新建列', () => {
   const prev = capture();
   try {
