@@ -15,6 +15,13 @@ function _continentSyncEdgeLabels() {
   labels.forEach(el => {
     if (el && el.style) el.style.transform = 'translate(-50%,-50%) scale(' + k + ')';
   });
+  // 命中层宽度也是「屏幕恒定」件：随缩放反算（14 屏幕 px）。出生时渲染段已写过一次，
+  // 这里负责缩放后校准——漏了的话远景档命中带会跟着缩细，等于又点不中。
+  const hitW = _continentRouteHitWidth(_continentZoom);
+  world.querySelectorAll('.continent-route-hit').forEach(el => {
+    // style 而非属性：CSS 里的兜底 stroke-width 会盖住 presentation attribute
+    el.style.strokeWidth = String(hitW);
+  });
   return labels.length;
 }
 
@@ -774,6 +781,7 @@ window._continentGatePendingCards = _continentGatePendingCards;
 window._continentRoute = _continentRoute;
 window._continentBorderPoint = _continentBorderPoint;
 window._continentRouteStroke = _continentRouteStroke;
+window._continentRouteHitWidth = _continentRouteHitWidth;   // 2026-11-27 命中层宽度（纯函数）
 // v8 顶栏搜索 / 族表编辑 / 纠正信号：纯函数（无 DOM），smoke 直接断言
 window._continentSearchMatches = _continentSearchMatches;
 window._continentFamilyParseTerms = _continentFamilyParseTerms;

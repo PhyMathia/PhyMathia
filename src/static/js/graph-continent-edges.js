@@ -406,6 +406,25 @@ function _continentDrawEdgeLayer(data, layout, edgeLayer, labelWrap) {
       _continentEdgePopover(e, ev);
     });
     _kact(path);  // T143 键盘可达（SVG path 可挂 tabindex）
+    // 命中层（2026-11-27，用户「点不到那条线」）：核心线太细，指针偏一两像素就落空，
+    // 而它又是「加备注/改样式」的唯一入口。垫一条透明宽 stroke 专收指针事件——先 append
+    // （压在核心线下面），视觉零变化；只有指针落在核心线外的那圈时才由它接管 hover，
+    // 给核心线挂 is-hover 补同样的发光，不然鼠标还没点就先「看不出能点」。
+    const hit = document.createElementNS(svgNS, 'path');
+    hit.setAttribute('class', 'continent-route-hit');
+    hit.setAttribute('d', route.d);
+    hit.setAttribute('data-edge-id', e.id);
+    hit.setAttribute('data-sids', sidsAttr);
+    // 宽度必须走 style 而不是 presentation attribute：SVG 属性优先级低于 CSS 规则
+    // （.continent-route-hit 里的兜底值会把它盖回 20，实测 6px 外就点不中）
+    hit.style.strokeWidth = String(_continentRouteHitWidth(_continentZoom));
+    hit.addEventListener('pointerdown', ev => {
+      ev.stopPropagation();
+      _continentEdgePopover(e, ev);
+    });
+    hit.addEventListener('pointerenter', () => path.classList.add('is-hover'));
+    hit.addEventListener('pointerleave', () => path.classList.remove('is-hover'));
+    edgeLayer.appendChild(hit);
     edgeLayer.appendChild(path);
     // 端点圆珠（站点）：摆在岛框**外侧**一点——SVG 连线层在世界层最底下，正好压在
     // 岛框边上的圆会被岛牌盖掉半截，沿「岛心→出岛点」方向外推才完整可见
@@ -561,6 +580,18 @@ function _kact(el) {
 const CONTINENT_ROUTE_PREFS_KEY = 'phymathia_continent_routes'; // 非会话键（全局显示偏好）
 const CONTINENT_ROUTE_DASH = { solid: '', dashed: '7 5', dotted: '2 4' };
 const CONTINENT_ROUTE_WIDTH = { thin: 1.2, normal: 2, thick: 3.2 };
+
+// 航线命中层宽度（世界 px）：核心线只有 1.2–3.2 世界 px，远景档再乘 zoom 0.2 就剩
+// 半像素——用户实测「点不到那条线」。垫一条不可见、更宽的 stroke 专收指针事件（视觉
+// 仍由核心线出），宽度按 1/zoom 反算成恒定 **14 屏幕 px** 左右。不用
+// vector-effect:non-scaling-stroke：这里的缩放是父层 HTML 的 CSS transform，不在 SVG
+// 坐标系里，该属性和没有一样。夹在 [6, 90] 世界 px：近景不粗成一片挡住拖拽，远景
+// 不细回去。纯函数，脏倍率兜底 1。
+const CONTINENT_ROUTE_HIT_SCREEN_PX = 14;
+function _continentRouteHitWidth(zoom) {
+  const z = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+  return Math.min(90, Math.max(6, CONTINENT_ROUTE_HIT_SCREEN_PX / z));
+}
 
 // 查阅态：航线显示偏好在内存影子生效（重渲读影子不弹回），跳过落盘；
 // 非查阅恒 null 走 localStorage，路径零改动

@@ -643,6 +643,22 @@ check('graph-continent: v7.2 航线（绕行不穿岛 / 直连可穿对照 / 沿
    '.continent-route-grid', '.continent-route-casing', '.continent-route-end'].forEach(sel => {
     if (!css.includes(sel)) throw new Error('航线样式缺失：' + sel);
   });
+  // 2026-11-27 命中层：核心线只有 1.2–3.2 世界 px（远景档再乘 zoom 更细），用户实测
+  // 「点不到那条线，也就无法改文字」——垫透明宽 stroke 专收点击，宽度须屏幕恒定
+  const hitWidth = sandbox._continentRouteHitWidth;
+  if (typeof hitWidth !== 'function') throw new Error('命中层宽度纯函数未暴露（_continentRouteHitWidth）');
+  if (hitWidth(1) !== 14) throw new Error('zoom=1 命中带应为 14 世界 px：' + hitWidth(1));
+  if (Math.abs(hitWidth(0.2) * 0.2 - 14) > 1e-9) throw new Error('远景档命中带未按 1/zoom 反算：' + hitWidth(0.2));
+  if (hitWidth(2.5) * 2.5 < 14) throw new Error('近景档命中带被下界夹得过细：' + hitWidth(2.5));
+  if (hitWidth(NaN) !== 14 || hitWidth(0) !== 14) throw new Error('脏倍率未兜底成 1');
+  if (!code.includes("'continent-route-hit'")) throw new Error('渲染段未建命中层');
+  if (!code.includes("hit.addEventListener('pointerenter'")) throw new Error('命中层未联动核心线 hover 观感');
+  if (!/\.continent-route-hit\s*\{/.test(css)) throw new Error('命中层样式缺失');
+  if (!/\.continent-route\.is-hover/.test(css)) throw new Error('命中层 hover 观感样式缺失');
+  const labelSyncSrc = fs.readFileSync('src/static/js/graph-continent-view.js', 'utf8');
+  if (labelSyncSrc.indexOf(".continent-route-hit") < 0) {
+    throw new Error('缩放后未校准命中层宽度（远景档会跟着缩细）');
+  }
   return true;
 });
 
