@@ -27,7 +27,7 @@
 //   层检＋静止帧段：48 节点／6 列长文本、无连线（11-20 用户截图场景，基线都出自
 //     这个配置——连线会加边层，别混进层检段）；注入的 zoom 0.17 会被新画布自动
 //     fit 压到 ≈0.113，层检前用 zoomGraph 钉回 0.17（钉与不钉层总数差 ~10 层）；
-//   手势段：追加 46 连线、zoom 基线 ≈1.6 起摆 ×1.08^7↔×0.92^7 跨 2.0–2.2 滞回带
+//   手势段：追加 46 连线、zoom 基线 ≈1.6 起摆 ×1.12^7↔×0.88^7 跨 2.0–2.2 滞回带
 //     （2/3 两个基线出自 debug_zoom_flicker.mjs 这个配置）。
 //
 // 用法：npm run perf:gate（入口 scripts/perf_gate.mjs 薄壳）。不并入 verify（要
@@ -249,7 +249,7 @@ export async function runPerfGate({ port = 5091 } = {}) {
       const z0 = (typeof _graphState === 'function' && _graphState().zoom) || 0;
       if (z0 > 0 && typeof zoomGraph === 'function') zoomGraph(1.6 / z0, null, null);
     });
-    // 8 周期单摆：1.6 ×1.08^7≈2.74、×0.92^7≈0.89——每周期都跨 2.0–2.2 滞回带
+    // 8 周期单摆：1.6 ×1.12^7≈3.54、×0.88^7≈0.65——每周期都跨 2.0–2.2 滞回带
     //（同 11-21 探针口径；摆幅故意不到 zoom 4，无头 SwiftShader 高倍缩放一帧数秒）
     const TICKS_PER_SWING = 7;
     for (let cycle = 0; cycle < 8; cycle++) {

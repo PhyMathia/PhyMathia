@@ -203,6 +203,11 @@ function _releaseGraphTextFocus(target) {
   if (typeof active.blur === 'function') active.blur();
 }
 
+// 滚轮每格缩放系数（2026-11-28 用户要求：灵敏度＝原来的 150%）：原步长 ±8% 按 1.5× 放大成
+// ±12%，即放大 1.12、缩小 0.88。只作用于滚轮；缩放按钮/双击/适应视口仍走各自既有系数。
+const GRAPH_WHEEL_ZOOM_IN_FACTOR = 1.12;
+const GRAPH_WHEEL_ZOOM_OUT_FACTOR = 0.88;
+
 function _initGraphCanvasEvents() {
   if (!graphCanvas) return;
   // 滚轮缩放按帧合并：触控板/高分辨率滚轮一次手势会连发多个 wheel 事件，逐事件同步缩放
@@ -215,7 +220,7 @@ function _initGraphCanvasEvents() {
     const scroller = e.target.closest('.graph-node-full-content, .graph-node .mermaid-container');
     if (scroller) return;
     e.preventDefault();
-    _graphWheelFactor *= e.deltaY < 0 ? 1.08 : 0.92;
+    _graphWheelFactor *= e.deltaY < 0 ? GRAPH_WHEEL_ZOOM_IN_FACTOR : GRAPH_WHEEL_ZOOM_OUT_FACTOR;
     _graphWheelX = e.clientX;
     _graphWheelY = e.clientY;
     // 缩放手势窗（2026-11-21 缩放闪烁修复）：每个 wheel 刷新 deadline 并累计 tick，窗内

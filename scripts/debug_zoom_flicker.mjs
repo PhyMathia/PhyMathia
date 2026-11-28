@@ -172,7 +172,7 @@ try {
   // canvas 子树里、CDP wheel 到不了监听器；③注入 zoom 1.6 被启动期自动 fit（≈0.101）盖掉，
   // 手势前先直接写状态置基线。摆幅故意不到 zoom 4：无头 SwiftShader 高倍缩放一帧要数秒，
   // 跨阈值的翻转机制量得到就行，量帧成本不是本支判据（同 11-20 口径）。
-  const TICKS_PER_SWING = 7; // 1.6 ×1.08^7≈2.74 ；×0.92^7≈0.89 —— 跨 2.2 的单摆
+  const TICKS_PER_SWING = 7; // 1.6 ×1.12^7≈3.54 ；×0.88^7≈0.65 —— 跨 2.2 的单摆
   async function wheelTick(deltaY) {
     await page.evaluate((dy) => {
       graphCanvas.dispatchEvent(new WheelEvent('wheel', {
